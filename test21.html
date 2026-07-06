@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMTU Searchable Pokédex</title>
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+            background-image: url("https://img.magnific.com/free-photo/blue-hex-backgrounds-networking_23-2149755770.jpg");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }
+
+        /* Buttons */
+        #open-filters-btn, #open-pokedex-btn {
+            position: fixed;
+            bottom: 15px;
+            background-color: #444;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            cursor: pointer;
+            border-radius: 30px;
+            font-size: 18px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+        }
+
+        #open-filters-btn {
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+        }
+
+        #open-pokedex-btn {
+            left: 15px;
+            z-index: 1501;
+        }
+
+        #overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.35);
+            display: none;
+            z-index: 998;
+        }
+        #overlay.visible { display: block; }
+
+        /* Filter Panel */
+        #filter-panel {
+            position: fixed;
+            left: 0;
+            width: 100%;
+            height: min(50vh, 90vh);
+            min-height: 300px;
+            background: #ffffff;
+            box-shadow: 0 -4px 10px rgba(0,0,0,0.25);
+            border-radius: 15px 15px 0 0;
+            transition: bottom 0.35s ease;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #filter-top {
+            padding: 20px 20px 15px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        #filter-scroll {
+            overflow-y: auto;
+            padding: 15px 20px 90px;
+            flex-grow: 1;
+        }
+
+        .filter-section-header {
+            font-size: 20px;
+            font-weight: bold;
+            margin: 10px 0 5px;
+        }
+
+        .filter-btn {
+            background-color: #ddd;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        .filter-btn.include { background-color: #007bff; color: white; }
+        .filter-btn.exclude { background-color: #ff4d4d; color: white; }
+
+        #tag-search {
+            padding: 10px;
+            width: 300px;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+
+        /* ⭐ Responsive Gallery Grid */
+        .gallery-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 15%));
+            gap: 15px;
+            max-width: 100%;
+            margin: 20px auto;
+            padding: 0 10px;
+		justify-content: center;
+		place-content: center;
+        }
+
+        .image-card {
+            width: 100%;
+            background: transparent;
+            display: none;
+        }
+        .image-card.show { display: block; }
+
+        .image-card img {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            object-fit: contain;
+            cursor: pointer;
+            filter:
+                drop-shadow(-3px -3px 4px rgba(255,255,255,0.55))
+                drop-shadow(3px 3px 4px rgba(0,0,0,0.55));
+        }
+
+        /* Fullscreen viewer */
+        #image-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        #image-overlay.visible { display: flex; }
+
+        #viewer-frame {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #image-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+
+        #overlay-img {
+            max-width: 90vw;
+            max-height: 90vh;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            filter: none;
+        }
+
+        #image-close-btn {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            border: none;
+            font-size: 24px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        /* Pokédex Panel */
+        #pokedex-panel {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background-image: url("https://img.magnific.com/free-photo/blue-hex-backgrounds-networking_23-2149755770.jpg");
+            background-size: cover;
+            background-position: center;
+            z-index: 1500;
+            transition: transform 0.4s ease;
+            transform: translateY(0);
+        }
+
+        #pokedex-panel.closed {
+            transform: translateY(-100%);
+        }
+
+        #pokedex-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        #pokedex-logo {
+            width: 250px;
+            height: 250px;
+            object-fit: contain;
+        }
+
+        #pokedex-credit {
+            margin-top: 15px;
+            font-size: 22px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 2px 2px 4px black;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>My Photo Gallery</h1>
+
+    <button id="open-pokedex-btn">Close Pokédex</button>
+    <button id="open-filters-btn">Filters</button>
+
+    <div id="overlay"></div>
+
+    <div id="pokedex-panel">
+        <div id="pokedex-content">
+            <img id="pokedex-logo"
+                 src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Pok%C3%A9_Ball_icon.svg/960px-Pok%C3%A9_Ball_icon.svg.png?_=20161023215848"
+                 alt="Poké Ball">
+            <div id="pokedex-credit">Made by Darkprince909</div>
+        </div>
+    </div>
+
+    <div id="filter-panel">
+        <div id="filter-top">
+            <button id="reset-filters-btn" class="filter-btn">Show All Pokémon</button>
+            <br>
+            <input type="text" id="tag-search" placeholder="Search tags (space-separated, use -tag to exclude)">
+        </div>
+
+        <div id="filter-scroll">
+            <div class="filter-section-header">Generation</div>
+            <div id="generation-section">
+                <button class="filter-btn" data-tag="gen1">Gen 1</button>
+                <button class="filter-btn" data-tag="gen2">Gen 2</button>
+                <button class="filter-btn" data-tag="gen3">Gen 3</button>
+                <button class="filter-btn" id="show-all-generation">Show All Generation</button>
+            </div>
+
+            <div class="filter-section-header">Stage</div>
+            <div id="stage-section">
+                <button class="filter-btn" data-tag="stage1">Stage 1</button>
+                <button class="filter-btn" data-tag="stage2">Stage 2</button>
+                <button class="filter-btn" id="show-all-stage">Show All Stage</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="gallery-container" id="gallery"></div>
+
+    <div id="image-overlay">
+        <div id="viewer-frame">
+            <div id="image-wrapper">
+                <img id="overlay-img" src="" alt="">
+                <button id="image-close-btn">✕</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let includeFilters = [];
+        let excludeFilters = [];
+
+        const gallery = document.getElementById("gallery");
+        const panel = document.getElementById('filter-panel');
+        const overlay = document.getElementById('overlay');
+        const openBtn = document.getElementById('open-filters-btn');
+
+        const pokedexPanel = document.getElementById("pokedex-panel");
+        const pokedexBtn = document.getElementById("open-pokedex-btn");
+
+        pokedexBtn.addEventListener("click", () => {
+            const isClosed = pokedexPanel.classList.contains("closed");
+
+            if (panel.classList.contains("open")) {
+                panel.classList.remove("open");
+                overlay.classList.remove("visible");
+                setPanelClosedPosition();
+            }
+
+            if (isClosed) {
+                pokedexPanel.classList.remove("closed");
+                pokedexBtn.textContent = "Close Pokédex";
+            } else {
+                pokedexPanel.classList.add("closed");
+                pokedexBtn.textContent = "Open Pokédex";
+            }
+        });
+
+        fetch("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/pokemon-data.json")
+            .then(response => response.json())
+            .then(data => {
+                data.forEach(p => {
+                    const card = document.createElement("div");
+                    card.className = "image-card";
+                    card.dataset.tags = p.tags.join(" ");
+
+                    const img = document.createElement("img");
+                    img.src = p.src;
+                    img.alt = p.name;
+
+                    card.appendChild(img);
+                    gallery.appendChild(card);
+                });
+
+                attachImageEvents();
+                filterGallery();
+            });
+
+        function attachImageEvents() {
+            document.querySelectorAll('.image-card img').forEach(img => {
+                img.addEventListener('click', () => openImageViewer(img.src));
+            });
+        }
+
+        function setPanelClosedPosition() {
+            if (!panel.classList.contains('open')) {
+                panel.style.bottom = `-${panel.offsetHeight}px`;
+            } else {
+                panel.style.bottom = "0px";
+            }
+        }
+        window.addEventListener('resize', setPanelClosedPosition);
+
+        function parseSearchFilters() {
+            includeFilters = includeFilters.filter(f => !f.startsWith("search:"));
+            excludeFilters = excludeFilters.filter(f => !f.startsWith("search:"));
+
+            const input = document.getElementById('tag-search').value.trim().toLowerCase();
+            if (!input) return;
+
+            const parts = input.split(/\s+/);
+            parts.forEach(tag => {
+                if (tag.startsWith("-")) {
+                    excludeFilters.push("search:" + tag.substring(1));
+                } else {
+                    includeFilters.push("search:" + tag);
+                }
+            });
+        }
+
+        function updateFilters() {
+            includeFilters = [];
+            excludeFilters = [];
+
+            document.querySelectorAll('.filter-btn.include[data-tag]').forEach(btn =>
+                includeFilters.push(btn.dataset.tag.toLowerCase())
+            );
+            document.querySelectorAll('.filter-btn.exclude[data-tag]').forEach(btn =>
+                excludeFilters.push(btn.dataset.tag.toLowerCase())
+            );
+
+            parseSearchFilters();
+            filterGallery();
+        }
+
+        function filterGallery() {
+            const cards = document.querySelectorAll('.image-card');
+            cards.forEach(card => {
+                const tags = card.dataset.tags.toLowerCase().split(/\s+/);
+                const includeMatch =
+                    includeFilters.length === 0 ||
+                    includeFilters.some(f => tags.includes(f.replace("search:", "")));
+                const excludeMatch =
+                    excludeFilters.some(f => tags.includes(f.replace("search:", "")));
+                card.classList.toggle('show', includeMatch && !excludeMatch);
+            });
+        }
+
+        function resetFilters() {
+            includeFilters = [];
+            excludeFilters = [];
+            document.getElementById('tag-search').value = "";
+            document.querySelectorAll('.filter-btn[data-tag]').forEach(btn =>
+                btn.classList.remove('include', 'exclude')
+            );
+            filterGallery();
+        }
+
+        function resetGeneration() {
+            document.querySelectorAll('#generation-section .filter-btn[data-tag]').forEach(btn =>
+                btn.classList.remove('include', 'exclude')
+            );
+            updateFilters();
+        }
+
+        function resetStage() {
+            document.querySelectorAll('#stage-section .filter-btn[data-tag]').forEach(btn =>
+                btn.classList.remove('include', 'exclude')
+            );
+            updateFilters();
+        }
+
+        function cycleButtonState(btn) {
+            if (!btn.dataset.tag) return;
+            if (!btn.classList.contains("include") && !btn.classList.contains("exclude")) {
+                btn.classList.add("include");
+            } else if (btn.classList.contains("include")) {
+                btn.classList.remove("include");
+                btn.classList.add("exclude");
+            } else {
+                btn.classList.remove("exclude");
+            }
+            updateFilters();
+        }
+
+        document.querySelectorAll('.filter-btn[data-tag]').forEach(btn => {
+            btn.addEventListener('click', () => cycleButtonState(btn));
+        });
+
+        document.getElementById('show-all-generation').addEventListener('click', resetGeneration);
+        document.getElementById('show-all-stage').addEventListener('click', resetStage);
+        document.getElementById('reset-filters-btn').addEventListener('click', resetFilters);
+        document.getElementById('tag-search').addEventListener('input', updateFilters);
+
+        function toggleDrawer() {
+            const isOpen = panel.classList.contains('open');
+            if (isOpen) {
+                panel.classList.remove('open');
+                overlay.classList.remove('visible');
+                setPanelClosedPosition();
+            } else {
+                panel.classList.add('open');
+                overlay.classList.add('visible');
+                panel.style.bottom = "0px";
+            }
+        }
+
+        openBtn.addEventListener('click', () => {
+            if (!openBtn.disabled) toggleDrawer();
+        });
+
+        overlay.addEventListener('click', () => {
+            panel.classList.remove('open');
+            overlay.classList.remove('visible');
+            setPanelClosedPosition();
+        });
+
+        const imageOverlay = document.getElementById('image-overlay');
+        const overlayImg = document.getElementById('overlay-img');
+        const imageCloseBtn = document.getElementById('image-close-btn');
+
+        function openImageViewer(src) {
+            overlayImg.src = src;
+            imageOverlay.classList.add('visible');
+
+            panel.classList.remove('open');
+            overlay.classList.remove('visible');
+            setPanelClosedPosition();
+
+            openBtn.disabled = true;
+            openBtn.style.opacity = "0.5";
+            openBtn.style.cursor = "not-allowed";
+        }
+
+        function closeImageViewer() {
+            imageOverlay.classList.remove('visible');
+            overlayImg.src = "";
+            openBtn.disabled = false;
+            openBtn.style.opacity = "1";
+            openBtn.style.cursor = "pointer";
+        }
+
+        imageOverlay.addEventListener('click', (e) => {
+            if (e.target === imageOverlay) closeImageViewer();
+        });
+
+        imageCloseBtn.addEventListener('click', closeImageViewer);
+
+        filterGallery();
+        setPanelClosedPosition();
+    </script>
+</body>
+</html>
