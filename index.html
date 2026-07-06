@@ -33,14 +33,13 @@
         }
 
         #open-filters-btn {
-            left: 50%;
-            transform: translateX(-50%);
+            right: 15px;
             z-index: 1000;
         }
 
         #open-pokedex-btn {
             left: 15px;
-            z-index: 1501;
+            z-index: 1000;
         }
 
         #overlay {
@@ -93,6 +92,10 @@
             cursor: pointer;
             border-radius: 5px;
             font-size: 16px;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: manipulation;
         }
         .filter-btn.include { background-color: #007bff; color: white; }
         .filter-btn.exclude { background-color: #ff4d4d; color: white; }
@@ -180,23 +183,92 @@
             cursor: pointer;
         }
 
-        /* Pokédex Panel */
+        /* Pokédex Panel — three layered panels */
         #pokedex-panel {
             position: fixed;
+            inset: 0;
+            z-index: 1500;
+            pointer-events: none;
+        }
+
+        #pokedex-panel-1,
+        #pokedex-panel-2,
+        #pokedex-panel-3 {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+            pointer-events: auto;
+        }
+
+        /* Panel 1: back layer — full-screen blurred hex background + logo/credit, fades out on close */
+        #pokedex-panel-1 {
+            z-index: 1;
+            transition: opacity 0.4s ease;
+            opacity: 1;
+        }
+
+        #pokedex-panel.closed #pokedex-panel-1 {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Panel 2: top band, retracts up off the top of the screen on close */
+        #pokedex-panel-2 {
             top: 0;
             left: 0;
             width: 100%;
-            height: 100vh;
-            background-image: url("https://img.magnific.com/free-photo/blue-hex-backgrounds-networking_23-2149755770.jpg");
-            background-size: cover;
-            background-position: center;
-            z-index: 1500;
+            height: clamp(25vh, 25vw, 45vh);
+            z-index: 2;
             transition: transform 0.4s ease;
             transform: translateY(0);
         }
 
-        #pokedex-panel.closed {
+        #pokedex-panel.closed #pokedex-panel-2 {
             transform: translateY(-100%);
+        }
+
+        /* Panel 3: bottom band, retracts down off the bottom of the screen on close */
+        #pokedex-panel-3 {
+            top: auto;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: clamp(25vh, 25vw, 45vh);
+            z-index: 2;
+            transition: transform 0.4s ease;
+            transform: translateY(0);
+        }
+
+        #pokedex-panel.closed #pokedex-panel-3 {
+            transform: translateY(100%);
+        }
+
+        /* Shared background layer. Panel 1's is sized slightly larger than its
+           panel so the blur doesn't reveal transparent edges; panels 2 & 3
+           fill their own (smaller) band exactly. */
+        .pokedex-bg {
+            position: absolute;
+            inset: 0;
+            background-size: cover;
+            background-position: center;
+        }
+
+        #pokedex-panel-1 .pokedex-bg {
+            inset: -10%;
+            background-image: url("https://img.magnific.com/free-photo/blue-hex-backgrounds-networking_23-2149755770.jpg");
+            filter: blur(10px);
+        }
+
+        #pokedex-panel-2 .pokedex-bg,
+        #pokedex-panel-3 .pokedex-bg {
+            background-image: url("https://i.imgur.com/pUtYFVk.png");
+            background-size: 100% auto;
+            background-repeat: no-repeat;
+            background-position: center bottom;
+        }
+
+        #pokedex-panel-3 .pokedex-bg {
+            transform: rotate(180deg);
         }
 
         #pokedex-content {
@@ -205,12 +277,14 @@
             left: 50%;
             transform: translate(-50%, -50%);
             text-align: center;
+            z-index: 1;
         }
 
         #pokedex-logo {
             width: 250px;
             height: 250px;
             object-fit: contain;
+            cursor: pointer;
         }
 
         #pokedex-credit {
@@ -230,11 +304,20 @@
     <div id="overlay"></div>
 
     <div id="pokedex-panel">
-        <div id="pokedex-content">
-            <img id="pokedex-logo"
-                 src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Pok%C3%A9_Ball_icon.svg/960px-Pok%C3%A9_Ball_icon.svg.png?_=20161023215848"
-                 alt="Poké Ball">
-            <div id="pokedex-credit">Made by Darkprince909</div>
+        <div id="pokedex-panel-3">
+            <div class="pokedex-bg"></div>
+        </div>
+        <div id="pokedex-panel-2">
+            <div class="pokedex-bg"></div>
+        </div>
+        <div id="pokedex-panel-1">
+            <div class="pokedex-bg"></div>
+            <div id="pokedex-content">
+                <img id="pokedex-logo"
+                     src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Pok%C3%A9_Ball_icon.svg/960px-Pok%C3%A9_Ball_icon.svg.png?_=20161023215848"
+                     alt="Poké Ball">
+                <div id="pokedex-credit">Click the Poké Ball to get started!</div>
+            </div>
         </div>
     </div>
 
@@ -298,6 +381,14 @@
         const pokedexPanel = document.getElementById("pokedex-panel");
         const pokedexBtn = document.getElementById("open-pokedex-btn");
 
+        function openPokedexPanels() {
+            pokedexPanel.classList.remove("closed");
+        }
+
+        function closePokedexPanels() {
+            pokedexPanel.classList.add("closed");
+        }
+
         pokedexBtn.addEventListener("click", () => {
             const isClosed = pokedexPanel.classList.contains("closed");
 
@@ -308,13 +399,13 @@
             }
 
             if (isClosed) {
-                pokedexPanel.classList.remove("closed");
-                pokedexBtn.textContent = "Close Pokédex";
+                openPokedexPanels();
             } else {
-                pokedexPanel.classList.add("closed");
-                pokedexBtn.textContent = "Open Pokédex";
+                closePokedexPanels();
             }
         });
+
+        document.getElementById("pokedex-logo").addEventListener("click", closePokedexPanels);
 
         fetch("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/pokemon-data.json")
             .then(response => response.json())
@@ -420,21 +511,54 @@
             updateFilters();
         }
 
-        function cycleButtonState(btn) {
+        function toggleIncludeState(btn) {
             if (!btn.dataset.tag) return;
-            if (!btn.classList.contains("include") && !btn.classList.contains("exclude")) {
-                btn.classList.add("include");
-            } else if (btn.classList.contains("include")) {
+            if (btn.classList.contains("include")) {
                 btn.classList.remove("include");
-                btn.classList.add("exclude");
             } else {
                 btn.classList.remove("exclude");
+                btn.classList.add("include");
             }
             updateFilters();
         }
 
+        function setExcludeState(btn) {
+            if (!btn.dataset.tag) return;
+            btn.classList.remove("include");
+            btn.classList.add("exclude");
+            updateFilters();
+        }
+
+        const LONG_PRESS_MS = 1000;
+
         document.querySelectorAll('.filter-btn[data-tag]').forEach(btn => {
-            btn.addEventListener('click', () => cycleButtonState(btn));
+            let pressTimer = null;
+            let longPressFired = false;
+
+            const startPress = () => {
+                longPressFired = false;
+                pressTimer = setTimeout(() => {
+                    longPressFired = true;
+                    setExcludeState(btn);
+                }, LONG_PRESS_MS);
+            };
+
+            const cancelPress = () => {
+                clearTimeout(pressTimer);
+            };
+
+            const endPress = () => {
+                clearTimeout(pressTimer);
+                if (!longPressFired) {
+                    toggleIncludeState(btn);
+                }
+            };
+
+            btn.addEventListener('pointerdown', startPress);
+            btn.addEventListener('pointerup', endPress);
+            btn.addEventListener('pointerleave', cancelPress);
+            btn.addEventListener('pointercancel', cancelPress);
+            btn.addEventListener('contextmenu', (e) => e.preventDefault());
         });
 
         document.getElementById('show-all-generation').addEventListener('click', resetGeneration);
@@ -490,8 +614,10 @@
             openBtn.style.cursor = "pointer";
         }
 
+        const imageWrapper = document.getElementById('image-wrapper');
+
         imageOverlay.addEventListener('click', (e) => {
-            if (e.target === imageOverlay) closeImageViewer();
+            if (!imageWrapper.contains(e.target)) closeImageViewer();
         });
 
         imageCloseBtn.addEventListener('click', closeImageViewer);
