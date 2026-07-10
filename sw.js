@@ -5,7 +5,7 @@
 // IMPORTANT: if you ever replace/update an image at the same URL, bump the
 // CACHE_NAME version below (e.g. 'pokedex-image-cache-v2') so browsers stop
 // serving the old cached copy and fetch the new one instead.
-const CACHE_NAME = 'pokedex-image-cache-v1';
+const CACHE_NAME = 'pokedex-image-cache-v2';
 
 self.addEventListener('install', (event) => {
     // Activate this service worker as soon as it finishes installing,
@@ -14,8 +14,18 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-    // Take control of any already-open page immediately.
-    event.waitUntil(self.clients.claim());
+    // Delete any old-versioned caches (e.g. v1, which may contain Dropbox
+    // rate-limit error pages that got mistakenly cached as images) and take
+    // control of any already-open page immediately.
+    event.waitUntil(
+        caches.keys()
+            .then((names) => Promise.all(
+                names
+                    .filter((name) => name.startsWith('pokedex-image-cache-') && name !== CACHE_NAME)
+                    .map((name) => caches.delete(name))
+            ))
+            .then(() => self.clients.claim())
+    );
 });
 
 self.addEventListener('fetch', (event) => {
