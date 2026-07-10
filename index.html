@@ -394,6 +394,80 @@
             pointer-events: none;
         }
 
+        /* Frame bars: mask the outer edges of panels 2/3, which are
+           height-locked so their rendered width is a fixed number of vh
+           units — meaning a wider window (same height) leaves more of the
+           edges uncovered. Width formula: 50% - (0.5 * R) * 100vh, solved
+           against R ≈ 0.56 to hit ~22% at 1:1 and ~37-38% at 21:9, growing
+           smoothly beyond that as the screen gets wider. Landscape =
+           vertical bars on the left/right; once we cross into portrait,
+           the left bar becomes the top bar and the right bar becomes the
+           bottom bar, both switching to a fixed 22%-height horizontal band
+           (matching the formula's exact value at the 1:1 boundary, so
+           there's no jump at the crossover). Sit above panels 2/3 (masking
+           their edges) but below panel 4 (keeping the Start graphic on top). */
+        #pokedex-bar-left,
+        #pokedex-bar-right {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: calc(50% - 28vh);
+            height: 100%;
+            z-index: 3;
+            background-color: #000;
+            transition: transform 0.7s ease 1.3s;
+            transform: translateX(0);
+        }
+
+        #pokedex-bar-right {
+            left: auto;
+            right: 0;
+        }
+
+        #pokedex-panel.closed #pokedex-bar-left {
+            transform: translateX(-100%);
+            transition: transform 0.7s ease 1.0s;
+        }
+
+        #pokedex-panel.closed #pokedex-bar-right {
+            transform: translateX(100%);
+            transition: transform 0.7s ease 1.0s;
+        }
+
+        @media (max-aspect-ratio: 1/1) {
+            #pokedex-bar-left,
+            #pokedex-bar-right {
+                width: 100%;
+                height: 22%;
+                left: 0;
+                right: auto;
+                transform: translateY(0);
+            }
+
+            #pokedex-bar-left {
+                top: 0;
+                bottom: auto;
+            }
+
+            #pokedex-bar-right {
+                top: auto;
+                bottom: 0;
+            }
+
+            #pokedex-panel.closed #pokedex-bar-left {
+                transform: translateY(-100%);
+            }
+
+            #pokedex-panel.closed #pokedex-bar-right {
+                transform: translateY(100%);
+            }
+        }
+
+        #pokedex-panel.closed #pokedex-bar-left,
+        #pokedex-panel.closed #pokedex-bar-right {
+            pointer-events: none;
+        }
+
         #pokedex-panel-1,
         #pokedex-panel-2,
         #pokedex-panel-3,
@@ -404,41 +478,51 @@
             pointer-events: auto;
         }
 
-        /* Panel 1 and 4: back layer — full-screen background + Pokedex logo, fades out on close */
-        #pokedex-panel-1,
-	#pokedex-panel-4 {
+        /* Panel 1: back layer — full-screen background. Last to fade out on
+           close (after panels 2/3 and the bars finish), first to return on
+           open. */
+        #pokedex-panel-1 {
             z-index: 1;
-            transition: opacity 0.5s ease;
+            transition: opacity 1s ease 0s;
             opacity: 1;
         }
-
-	#pokedex-panel-4 {
-	    z-index: 2000;
-	}
 
         #pokedex-panel.closed #pokedex-panel-1 {
             opacity: 0;
             pointer-events: none;
+            transition: opacity 1s ease 2.0s;
         }
+
+        /* Panel 4: fades out on close too — this rule was accidentally
+           dropped in an earlier restructure, which is why it was staying
+           on screen (and clickable) even after "closing". */
+	#pokedex-panel-4 {
+	    z-index: 4;
+            transition: opacity 0.5s ease;
+            opacity: 1;
+	}
 
         #pokedex-panel.closed #pokedex-panel-4 {
             opacity: 0;
             pointer-events: none;
         }
 
-        /* Panel 2: top band, retracts up off the top of the screen on close */
+        /* Panel 2: top band, retracts up off the top of the screen on close.
+           Delay is 0 when closing (retracts immediately) but delayed when
+           opening to wait for panel 1 then the bars to finish first. */
         #pokedex-panel-2 {
             top: 0;
             left: 0;
             width: 100%;
             height: clamp(50vh, 50vh, 100vh);
             z-index: 2;
-            transition: transform 0.7s ease;
+            transition: transform 0.7s ease 2.3s;
             transform: translateY(0);
         }
 
         #pokedex-panel.closed #pokedex-panel-2 {
             transform: translateY(-125%);
+            transition: transform 0.7s ease 0s;
         }
 
         /* Panel 3: bottom band, retracts down off the bottom of the screen on close */
@@ -449,18 +533,14 @@
             width: 100%;
             height: clamp(50vh, 50vh, 100vh);
             z-index: 2;
-            transition: transform 0.7s ease;
+            transition: transform 0.7s ease 2.3s;
             transform: translateY(0);
         }
 
         #pokedex-panel.closed #pokedex-panel-3 {
             transform: translateY(125%);
+            transition: transform 0.7s ease 0s;
         }
-
-        /* Panel 4 uses the shared full-screen inset:0 from panel 1/2/3's
-           base rule above — giving its background room to scale at the
-           same rate as panels 2/3 without clipping the circle graphic
-           (see reasoning on the .pokedex-bg rule below). */
 
         /* Shared background layer. Panel 1's is sized slightly larger than its
            panel so the blur doesn't reveal transparent edges; panels 2 & 3
@@ -477,56 +557,45 @@
             background-size: 100% 100%;
         }
 
+        /* All panels below are now permanently height-locked — bound to
+           their own box height at every aspect ratio, cropping left/right
+           only as needed. Since the box heights (50vh / 100vh) never
+           change, this guarantees zero vertical overflow forever, at any
+           aspect ratio, with no orientation-based toggling required. */
         #pokedex-panel-2 .pokedex-bg {
             background-image: url("https://www.dropbox.com/scl/fi/72338i1u2iw7el4y5i9f4/Pokedex-Top-Half.png?rlkey=z9uvisa8h31ish6xbkfyr2iim&st=kdi9ecrc&dl=1");
-            background-size: 100% auto;
+            background-size: auto 100%;
             background-repeat: no-repeat;
             background-position: center bottom;
         }
 
         #pokedex-panel-3 .pokedex-bg {
             background-image: url("https://www.dropbox.com/scl/fi/h91i45hi20fbj7crg9cbb/Pokedex-Bottom-Half.png?rlkey=cgklqu52tqihpwr448p1raf9z&st=wf89ried&dl=1");
-            background-size: 100% auto;
+            background-size: auto 100%;
             background-repeat: no-repeat;
             background-position: center top;
         }
 
-        /* Panel 4 is now full-screen (see note above), giving the graphic
-           enough room to use the same width-locked scaling rate as panels
-           2/3 without the circle clipping until well past 4:1 aspect ratio
-           — the canvas is transparent outside the circle, so the extra
-           room doesn't cause any visible side effects. */
         #pokedex-panel-4 .pokedex-bg {
             background-image: url("https://www.dropbox.com/scl/fi/3p3p57wepjvvr5khlq47o/Pokedex-Start-lg.png?rlkey=92nsk6e706gwdlst2puelao8o&st=j03yxkhe&dl=1");
-            background-size: 100% auto;
+            background-size: auto 50%;
             background-repeat: no-repeat;
             background-position: center;
         }
 
         /* Invisible circular click zone matching the 950px graphic centered
-           in the 3840x1920 lg image. Uses the same width-based percentage
-           as the background above, so it tracks the visible graphic exactly. */
+           in the 3840x1920 lg image. Height-based, matching panel 4's
+           permanently height-locked (and now halved) background above. */
         #pokedex-click-zone {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            width: calc(950 / 3840 * 100%);
+            height: calc(950 / 1920 * 50%);
             aspect-ratio: 1 / 1;
             border-radius: 50%;
             cursor: pointer;
             z-index: 2;
-        }
-
-        /* Switch to height-locked (crop left/right) sizing a bit before the
-           strict 1:1 orientation boundary, since the width-locked sizing
-           above stops fully covering the panel's height slightly before
-           that point on wider-than-tall screens */
-        @media (max-aspect-ratio: 1/1) {
-            #pokedex-panel-2 .pokedex-bg,
-            #pokedex-panel-3 .pokedex-bg {
-                background-size: auto 100%;
-            }
         }
 
     </style>
@@ -539,18 +608,20 @@
     <div id="overlay"></div>
 
     <div id="pokedex-panel">
-	<div id="pokedex-panel-4">
-	    <div class="pokedex-bg"></div>
-	    <div id="pokedex-click-zone" role="button" aria-label="Close Pokédex"></div>
+        <div id="pokedex-panel-1">
+            <div class="pokedex-bg"></div>
         </div>
+        <div id="pokedex-bar-left"></div>
+        <div id="pokedex-bar-right"></div>
         <div id="pokedex-panel-3">
             <div class="pokedex-bg"></div>
         </div>
         <div id="pokedex-panel-2">
             <div class="pokedex-bg"></div>
         </div>
-        <div id="pokedex-panel-1">
-            <div class="pokedex-bg"></div>
+	<div id="pokedex-panel-4">
+	    <div class="pokedex-bg"></div>
+	    <div id="pokedex-click-zone" role="button" aria-label="Close Pokédex"></div>
         </div>
     </div>
 
