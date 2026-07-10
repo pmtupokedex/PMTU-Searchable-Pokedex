@@ -52,13 +52,49 @@
         }
         #overlay.visible { display: block; }
 
+        /* Loading splash: covers the whole page from the moment the HTML
+           parses, so nothing underneath (background images, panels, etc.)
+           is visible mid-load. The image fades in once it's actually
+           loaded, holds for 5s, then the whole thing fades out to reveal
+           the Pokédex panel. Sits above everything (including the
+           Pokédex panel's click-zone) so it also blocks interaction while
+           it's up — no extra JS needed for that, it's just on top. */
+        #loading-splash {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 1;
+            transition: opacity 0.6s ease;
+        }
+
+        #loading-splash.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #loading-splash-img {
+            width: 40vw;
+            max-width: 300px;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+
+        #loading-splash-img.loaded {
+            opacity: 1;
+        }
+
 	/* Filter Panel */
         #filter-panel {
             position: fixed;
             left: 0;
             bottom: 0;
             width: 100%;
-            height: min(70vh, 90vh);
+            height: min(70vh, 90vh); /* fallback for browsers without svh support */
+            height: min(70svh, 90svh);
             min-height: 300px;
             background: #ffffff;
             box-shadow: 0 -4px 10px rgba(0,0,0,0.25);
@@ -352,7 +388,8 @@
 
         #viewer-frame {
             width: 100vw;
-            height: 100vh;
+            height: 100vh; /* fallback for browsers without svh support */
+            height: 100svh;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -365,7 +402,8 @@
 
         #overlay-img {
             max-width: 90vw;
-            max-height: 90vh;
+            max-height: 90vh; /* fallback for browsers without svh support */
+            max-height: 90svh;
             width: auto;
             height: auto;
             object-fit: contain;
@@ -394,26 +432,22 @@
             pointer-events: none;
         }
 
-        /* Frame bars: mask the outer edges of panels 2/3, which are
-           height-locked so their rendered width is a fixed number of vh
-           units — meaning a wider window (same height) leaves more of the
-           edges uncovered. Width formula: 50% - (0.5 * R) * 100vh, solved
-           against R ≈ 0.56 to hit ~22% at 1:1 and ~37-38% at 21:9, growing
-           smoothly beyond that as the screen gets wider. Landscape =
-           vertical bars on the left/right; once we cross into portrait,
-           the left bar becomes the top bar and the right bar becomes the
-           bottom bar, both switching to a fixed 22%-height horizontal band
-           (matching the formula's exact value at the 1:1 boundary, so
-           there's no jump at the crossover). Sit above panels 2/3 (masking
-           their edges) but below panel 4 (keeping the Start graphic on top). */
+        /* Frame bars: mask the outer edges of panels 2/3. Width is set by
+           JS (see anchorFrameBars below) so the bars' inner edge always
+           lands 955 native pixels in from the background image's actual
+           edge, regardless of window size/aspect — not a percentage
+           approximation. The calc() fallback (old formula) only applies
+           before that JS runs once on load. These stay as vertical bars
+           on the left/right at every aspect ratio, including portrait.
+           Sit above panel 1 but below panels 2/3 and panel 4. */
         #pokedex-bar-left,
         #pokedex-bar-right {
             position: absolute;
             top: 0;
             left: 0;
-            width: calc(50% - 28vh);
+            width: var(--bar-anchor-width, max(1%, calc(50% - 28svh)));
             height: 100%;
-            z-index: 3;
+            z-index: 2;
             background-color: #000;
             transition: transform 0.7s ease 1.3s;
             transform: translateX(0);
@@ -432,35 +466,6 @@
         #pokedex-panel.closed #pokedex-bar-right {
             transform: translateX(100%);
             transition: transform 0.7s ease 1.0s;
-        }
-
-        @media (max-aspect-ratio: 1/1) {
-            #pokedex-bar-left,
-            #pokedex-bar-right {
-                width: 100%;
-                height: 22%;
-                left: 0;
-                right: auto;
-                transform: translateY(0);
-            }
-
-            #pokedex-bar-left {
-                top: 0;
-                bottom: auto;
-            }
-
-            #pokedex-bar-right {
-                top: auto;
-                bottom: 0;
-            }
-
-            #pokedex-panel.closed #pokedex-bar-left {
-                transform: translateY(-100%);
-            }
-
-            #pokedex-panel.closed #pokedex-bar-right {
-                transform: translateY(100%);
-            }
         }
 
         #pokedex-panel.closed #pokedex-bar-left,
@@ -495,16 +500,21 @@
 
         /* Panel 4: fades out on close too — this rule was accidentally
            dropped in an earlier restructure, which is why it was staying
-           on screen (and clickable) even after "closing". */
+           on screen (and clickable) even after "closing". Fades out
+           immediately in sync with panels 2/3 retracting off-screen, but
+           on open waits and fades in sync with panels 2/3 sliding back
+           into frame (matching their 2.3s delay) rather than fading in
+           right away. */
 	#pokedex-panel-4 {
 	    z-index: 4;
-            transition: opacity 0.5s ease;
+            transition: opacity 0.7s ease 2.3s;
             opacity: 1;
 	}
 
         #pokedex-panel.closed #pokedex-panel-4 {
             opacity: 0;
             pointer-events: none;
+            transition: opacity 0.5s ease 0s;
         }
 
         /* Panel 2: top band, retracts up off the top of the screen on close.
@@ -514,8 +524,9 @@
             top: 0;
             left: 0;
             width: 100%;
-            height: clamp(50vh, 50vh, 100vh);
-            z-index: 2;
+            height: clamp(50vh, 50vh, 100vh); /* fallback for browsers without svh support */
+            height: clamp(50svh, 50svh, 100svh);
+            z-index: 3;
             transition: transform 0.7s ease 2.3s;
             transform: translateY(0);
         }
@@ -531,8 +542,9 @@
             bottom: 0;
             left: 0;
             width: 100%;
-            height: clamp(50vh, 50vh, 100vh);
-            z-index: 2;
+            height: clamp(50vh, 50vh, 100vh); /* fallback for browsers without svh support */
+            height: clamp(50svh, 50svh, 100svh);
+            z-index: 3;
             transition: transform 0.7s ease 2.3s;
             transform: translateY(0);
         }
@@ -559,7 +571,7 @@
 
         /* All panels below are now permanently height-locked — bound to
            their own box height at every aspect ratio, cropping left/right
-           only as needed. Since the box heights (50vh / 100vh) never
+           only as needed. Since the box heights (50svh / 100svh) never
            change, this guarantees zero vertical overflow forever, at any
            aspect ratio, with no orientation-based toggling required. */
         #pokedex-panel-2 .pokedex-bg {
@@ -601,6 +613,12 @@
     </style>
 </head>
 <body>
+
+    <div id="loading-splash">
+        <img id="loading-splash-img"
+             src="https://static.wikia.nocookie.net/pokemon-fano/images/6/6f/Poke_Ball.png/revision/latest/scale-to-width-down/767?cb=20140520015336"
+             alt="Loading">
+    </div>
 
     <button id="open-pokedex-btn">Close Pokédex</button>
     <button id="open-filters-btn">Filters</button>
@@ -819,6 +837,55 @@
     </div>
 
     <script>
+        // Loading splash sequencing. Attached immediately (not on
+        // window load) since the image may finish loading — especially
+        // from cache — before the rest of the page/scripts do.
+        (() => {
+            const MIN_DELAY_BEFORE_FADE_IN = 1000; // at least 1s from page load before the image starts fading in
+            const HOLD_DURATION = 4000;            // how long it stays up once fully faded in
+            const BG_EXTRA_DELAY = 1000;            // background lingers this long after the image starts fading out
+
+            const pageStart = Date.now(); // approximate page-load reference point; this script runs immediately after <body> opens
+            const splash = document.getElementById('loading-splash');
+            const splashImg = document.getElementById('loading-splash-img');
+
+            function fadeInImage() {
+                splashImg.classList.add('loaded');
+                splashImg.addEventListener('transitionend', hold, { once: true });
+            }
+
+            function scheduleFadeIn() {
+                const elapsed = Date.now() - pageStart;
+                const remaining = Math.max(0, MIN_DELAY_BEFORE_FADE_IN - elapsed);
+                setTimeout(fadeInImage, remaining);
+            }
+
+            function hold() {
+                setTimeout(fadeOut, HOLD_DURATION);
+            }
+
+            function fadeOut() {
+                // Image fades out first...
+                splashImg.classList.remove('loaded');
+                // ...and the black background follows about a second later.
+                setTimeout(() => {
+                    splash.classList.add('hidden');
+                    splash.addEventListener('transitionend', () => splash.remove(), { once: true });
+                }, BG_EXTRA_DELAY);
+            }
+
+            if (splashImg.complete && splashImg.naturalWidth > 0) {
+                // Already loaded (e.g. from browser cache) by the time this runs.
+                scheduleFadeIn();
+            } else {
+                splashImg.addEventListener('load', scheduleFadeIn);
+                // Fail-safe: don't leave the splash stuck up forever if the image fails to load.
+                splashImg.addEventListener('error', fadeOut);
+            }
+        })();
+    </script>
+
+    <script>
         // Register the service worker that caches Pokémon images locally.
         // Requires HTTPS (or localhost) — silently no-ops otherwise, e.g. if
         // this file is opened directly from disk as a file:// URL.
@@ -842,6 +909,67 @@
 
         const pokedexPanel = document.getElementById("pokedex-panel");
         const pokedexBtn = document.getElementById("open-pokedex-btn");
+
+        // Anchor the frame bars to a fixed point in the background artwork
+        // itself (500px in from its native-resolution edge) rather than a
+        // percentage of the window. Panels 2/3 use `background-size: auto 100%`
+        // (height-locked, width auto-scaled, centered) — so the same math the
+        // browser uses to render that background is reproduced here in JS to
+        // find where the image's edge actually lands, then add 500 scaled px.
+        (() => {
+            const ANCHOR_NATIVE_PX = 955;
+            const MIN_BAR_FRACTION = 0.01; // keep the old 1% sliver as a floor
+
+            const panel2 = document.getElementById('pokedex-panel-2');
+            const panel3 = document.getElementById('pokedex-panel-3');
+
+            function loadImage(url) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.onerror = reject;
+                    img.src = url;
+                });
+            }
+
+            function bgUrlFor(el) {
+                const bg = el.querySelector('.pokedex-bg');
+                const cssUrl = getComputedStyle(bg).backgroundImage;
+                const match = cssUrl.match(/url\(["']?(.*?)["']?\)/);
+                return match ? match[1] : null;
+            }
+
+            function requiredWidthFor(panelEl, img) {
+                const rect = panelEl.getBoundingClientRect();
+                if (!rect.height || !img.naturalHeight) return 0;
+                const scale = rect.height / img.naturalHeight;
+                const renderedImgWidth = img.naturalWidth * scale;
+                const imageLeftEdge = (rect.width - renderedImgWidth) / 2; // background-position: center (horizontally)
+                return imageLeftEdge + (ANCHOR_NATIVE_PX * scale);
+            }
+
+            Promise.all([
+                loadImage(bgUrlFor(panel2)),
+                loadImage(bgUrlFor(panel3))
+            ]).then(([topImg, bottomImg]) => {
+                function recalc() {
+                    const rect = panel2.getBoundingClientRect();
+                    const floorPx = rect.width * MIN_BAR_FRACTION;
+                    const needed = Math.max(
+                        requiredWidthFor(panel2, topImg),
+                        requiredWidthFor(panel3, bottomImg)
+                    );
+                    const width = Math.max(floorPx, needed);
+                    document.documentElement.style.setProperty('--bar-anchor-width', `${width}px`);
+                }
+
+                recalc();
+                new ResizeObserver(recalc).observe(panel2);
+                window.addEventListener('resize', recalc);
+            }).catch(err => {
+                console.warn('Could not anchor frame bars to background image; falling back to CSS formula.', err);
+            });
+        })();
 
         function openPokedexPanels() {
             pokedexPanel.classList.remove("closed");
