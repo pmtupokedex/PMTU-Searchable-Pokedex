@@ -934,6 +934,50 @@
     </script>
 
     <script>
+        // Reusable, reference-counted page-scroll lock. Multiple overlays
+        // (splash, Pokédex panel, filter panel, image viewer) can each
+        // request a lock independently — e.g. the splash and the Pokédex
+        // panel are both "open" simultaneously during the initial auto-open
+        // sequence — and the page only actually unlocks once every
+        // requester has released it, so one closing early can't
+        // accidentally re-enable scrolling while another is still up.
+        //
+        // Uses position:fixed + a saved scroll offset rather than plain
+        // `overflow: hidden` on body, since overflow:hidden alone doesn't
+        // reliably block touch-drag scrolling on iOS Safari and some
+        // Android browsers — this project has been mobile-driven enough
+        // that it's worth doing the more robust version up front.
+        window.pageScrollLock = (() => {
+            let lockCount = 0;
+            let savedScrollY = 0;
+
+            function lock() {
+                if (lockCount === 0) {
+                    savedScrollY = window.scrollY;
+                    document.body.style.position = 'fixed';
+                    document.body.style.top = `-${savedScrollY}px`;
+                    document.body.style.left = '0';
+                    document.body.style.right = '0';
+                }
+                lockCount++;
+            }
+
+            function unlock() {
+                lockCount = Math.max(0, lockCount - 1);
+                if (lockCount === 0) {
+                    document.body.style.position = '';
+                    document.body.style.top = '';
+                    document.body.style.left = '';
+                    document.body.style.right = '';
+                    window.scrollTo(0, savedScrollY);
+                }
+            }
+
+            return { lock, unlock };
+        })();
+    </script>
+
+    <script>
         // Loading splash sequencing. Attached immediately (not on
         // window load) since the image may finish loading — especially
         // from cache — before the rest of the page/scripts do.
@@ -945,6 +989,8 @@
             const pageStart = Date.now(); // approximate page-load reference point; this script runs immediately after <body> opens
             const splash = document.getElementById('loading-splash');
             const splashImg = document.getElementById('loading-splash-img');
+
+            window.pageScrollLock.lock(); // locked for the splash's entire lifetime
 
             function fadeInImage() {
                 splashImg.classList.add('loaded');
@@ -967,7 +1013,10 @@
                 // ...and the black background follows about a second later.
                 setTimeout(() => {
                     splash.classList.add('hidden');
-                    splash.addEventListener('transitionend', () => splash.remove(), { once: true });
+                    splash.addEventListener('transitionend', () => {
+                        splash.remove();
+                        window.pageScrollLock.unlock();
+                    }, { once: true });
                 }, BG_EXTRA_DELAY);
             }
 
@@ -1069,11 +1118,17 @@
         })();
 
         function openPokedexPanels() {
-            pokedexPanel.classList.remove("closed");
+            if (pokedexPanel.classList.contains("closed")) {
+                pokedexPanel.classList.remove("closed");
+                window.pageScrollLock.lock();
+            }
         }
 
         function closePokedexPanels() {
-            pokedexPanel.classList.add("closed");
+            if (!pokedexPanel.classList.contains("closed")) {
+                pokedexPanel.classList.add("closed");
+                window.pageScrollLock.unlock();
+            }
         }
 
         // The panel starts in the "closed" markup state on purpose (see the
@@ -1091,10 +1146,7 @@
         pokedexBtn.addEventListener("click", () => {
             const isClosed = pokedexPanel.classList.contains("closed");
 
-            if (panel.classList.contains("open")) {
-                panel.classList.remove("open");
-                overlay.classList.remove("visible");
-            }
+            closeFilterPanel();
 
             if (isClosed) {
                 openPokedexPanels();
@@ -1333,14 +1385,27 @@
         document.getElementById('reset-filters-btn').addEventListener('click', resetFilters);
         document.getElementById('tag-search').addEventListener('input', updateFilters);
 
-        function toggleDrawer() {
-            const isOpen = panel.classList.contains('open');
-            if (isOpen) {
-                panel.classList.remove('open');
-                overlay.classList.remove('visible');
-            } else {
+        function openFilterPanel() {
+            if (!panel.classList.contains('open')) {
                 panel.classList.add('open');
                 overlay.classList.add('visible');
+                window.pageScrollLock.lock();
+            }
+        }
+
+        function closeFilterPanel() {
+            if (panel.classList.contains('open')) {
+                panel.classList.remove('open');
+                overlay.classList.remove('visible');
+                window.pageScrollLock.unlock();
+            }
+        }
+
+        function toggleDrawer() {
+            if (panel.classList.contains('open')) {
+                closeFilterPanel();
+            } else {
+                openFilterPanel();
             }
         }
 
@@ -1349,8 +1414,7 @@
         });
 
         overlay.addEventListener('click', () => {
-            panel.classList.remove('open');
-            overlay.classList.remove('visible');
+            closeFilterPanel();
         });
 
         const imageOverlay = document.getElementById('image-overlay');
@@ -1360,9 +1424,9 @@
         function openImageViewer(src) {
             overlayImg.src = src;
             imageOverlay.classList.add('visible');
+            window.pageScrollLock.lock();
 
-            panel.classList.remove('open');
-            overlay.classList.remove('visible');
+            closeFilterPanel();
 
             openBtn.disabled = true;
             openBtn.style.opacity = "0.5";
@@ -1372,6 +1436,7 @@
         function closeImageViewer() {
             imageOverlay.classList.remove('visible');
             overlayImg.src = "";
+            window.pageScrollLock.unlock();
             openBtn.disabled = false;
             openBtn.style.opacity = "1";
             openBtn.style.cursor = "pointer";
