@@ -874,24 +874,51 @@
         // address-bar show/hide animation finishes, then applies it in one
         // jump — which is what caused the lag no CSS unit (vh/dvh/svh/%)
         // could get around, since they're all downstream of that same
-        // deferred layout recalculation. visualViewport reports the real
-        // size continuously as the browser animates the bar, sidestepping
-        // that deferral entirely.
+        // deferred layout recalculation.
+        //
+        // visualViewport's own 'resize'/'scroll' events are a big
+        // improvement, but don't necessarily fire on every single frame of
+        // the browser's own address-bar animation — just at some coarser
+        // interval — so there can still be a brief stale beat mid-animation.
+        // To close that gap further, once a resize/scroll starts we also
+        // poll visualViewport.height on every animation frame for a short
+        // window, which tracks as close to the live animation as JS can get.
         (() => {
             const root = document.documentElement;
+            const POLL_WINDOW_MS = 600; // keep sampling this long after the last resize/scroll event
 
-            function setRealVh() {
+            let pollUntil = 0;
+            let polling = false;
+
+            function applyHeight() {
                 const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
                 root.style.setProperty('--real-vh', `${height}px`);
             }
 
-            setRealVh();
+            function pollFrame() {
+                applyHeight();
+                if (performance.now() < pollUntil) {
+                    requestAnimationFrame(pollFrame);
+                } else {
+                    polling = false;
+                }
+            }
+
+            function startPolling() {
+                pollUntil = performance.now() + POLL_WINDOW_MS;
+                if (!polling) {
+                    polling = true;
+                    requestAnimationFrame(pollFrame);
+                }
+            }
+
+            applyHeight();
 
             if (window.visualViewport) {
-                window.visualViewport.addEventListener('resize', setRealVh);
-                window.visualViewport.addEventListener('scroll', setRealVh);
+                window.visualViewport.addEventListener('resize', startPolling);
+                window.visualViewport.addEventListener('scroll', startPolling);
             } else {
-                window.addEventListener('resize', setRealVh);
+                window.addEventListener('resize', applyHeight);
             }
         })();
     </script>
