@@ -525,7 +525,8 @@
             left: 0;
             width: 100%;
             height: clamp(50vh, 50vh, 100vh); /* fallback for browsers without dvh support */
-            height: clamp(50dvh, 50dvh, 100dvh);
+            height: clamp(50dvh, 50dvh, 100dvh); /* fallback until the JS below sets --real-vh */
+            height: calc(var(--real-vh, 100dvh) * 0.5);
             z-index: 3;
             transition: transform 0.7s ease 2.3s;
             transform: translateY(0);
@@ -543,7 +544,8 @@
             left: 0;
             width: 100%;
             height: clamp(50vh, 50vh, 100vh); /* fallback for browsers without dvh support */
-            height: clamp(50dvh, 50dvh, 100dvh);
+            height: clamp(50dvh, 50dvh, 100dvh); /* fallback until the JS below sets --real-vh */
+            height: calc(var(--real-vh, 100dvh) * 0.5);
             z-index: 3;
             transition: transform 0.7s ease 2.3s;
             transform: translateY(0);
@@ -864,6 +866,35 @@
             </div>
         </div>
     </div>
+
+    <script>
+        // Keeps panels 2/3's height synced to the TRUE current viewport via
+        // the visualViewport API, rather than any CSS viewport unit. Chrome/
+        // Edge on Android defers the layout viewport's resize until its own
+        // address-bar show/hide animation finishes, then applies it in one
+        // jump — which is what caused the lag no CSS unit (vh/dvh/svh/%)
+        // could get around, since they're all downstream of that same
+        // deferred layout recalculation. visualViewport reports the real
+        // size continuously as the browser animates the bar, sidestepping
+        // that deferral entirely.
+        (() => {
+            const root = document.documentElement;
+
+            function setRealVh() {
+                const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+                root.style.setProperty('--real-vh', `${height}px`);
+            }
+
+            setRealVh();
+
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', setRealVh);
+                window.visualViewport.addEventListener('scroll', setRealVh);
+            } else {
+                window.addEventListener('resize', setRealVh);
+            }
+        })();
+    </script>
 
     <script>
         // Loading splash sequencing. Attached immediately (not on
