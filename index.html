@@ -18,6 +18,30 @@
             background-attachment: fixed;
         }
 
+        /* The padding transition only applies during this short window,
+           added right when a panel actually opens/closes and removed a
+           beat later (see beginPanelAnim() in the script). Keeping it off
+           the rest of the time matters: body's padding is also driven by
+           a clamp()/vw-based formula while a panel is open, which
+           recalculates continuously as the window is resized — an
+           unconditional transition would smooth those resize-driven
+           changes too, creating a lag between the gallery's actual
+           available width and the true current window width. That lag is
+           what caused the grid's column count to visibly snap to the next
+           threshold and back while dragging the resize handle. */
+        body.panel-animating {
+            transition: padding 0.35s ease;
+        }
+
+        /* Mobile/portrait: magnified view docks to the top, so the gallery
+           reserves space up there instead of being covered. Desktop swaps
+           this for padding-left (see the min-width:900px override below),
+           since the panel docks to the left there instead. */
+        body.viewer-open {
+            padding-top: calc(20px + 60vh); /* fallback for browsers without dvh support */
+            padding-top: calc(20px + 60dvh);
+        }
+
         /* Buttons */
         #open-filters-btn, #open-pokedex-btn {
             position: fixed;
@@ -145,12 +169,19 @@
                is needed and the gallery stays fully interactive while the
                panel is open. #overlay is force-hidden here since it no
                longer serves a purpose at this breakpoint. */
-            body {
-                transition: padding-right 0.35s ease;
-            }
-
             body.filters-open {
                 padding-right: calc(20px + min(480px, 90vw));
+            }
+
+            /* Magnify panel docks left on desktop instead of top, so swap
+               which side reserves space (and reset the mobile top rule).
+               Must match the panel's own width formula exactly (see
+               #image-overlay above) or the reserved space and the panel's
+               actual width drift apart as the window is resized. */
+            body.viewer-open {
+                padding-top: 20px;
+                padding-left: calc(20px + min(clamp(480px, 53vw, 100vh), 90vw)); /* fallback for browsers without dvh support */
+                padding-left: calc(20px + min(clamp(480px, 53vw, 100dvh), 90vw));
             }
 
             #overlay {
@@ -401,46 +432,68 @@
             transform: translateZ(0);
         }
 
-        /* Fullscreen viewer */
+        /* Magnified view panel — docks to the top on mobile/portrait, and
+           to the left on desktop/landscape (the gallery's own reserved
+           space, mirroring the filter panel's reserved space on the right).
+           Always shares space with the gallery rather than covering it, so
+           unlike the filter panel there's no dimming or scroll-lock at any
+           breakpoint.
+
+           #viewer-frame's padding (not a percentage on the image itself)
+           is what creates the border around the image — matching amounts
+           on all four sides. The image's max-width/max-height:100% resolve
+           against viewer-frame's own definite, padded content box, which
+           avoids a subtlety that caused the old version to bleed off
+           screen: percentage sizing on an image nested inside an
+           auto-sized wrapper (sized to fit the image itself) is circular,
+           and browsers largely ignore percentage heights in that case. */
         #image-overlay {
             position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.85);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 2000;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 60vh; /* fallback for browsers without dvh support */
+            height: 60dvh;
+            background: #111;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.35);
+            transform: translateY(-100%);
+            transition: transform 0.35s ease;
+            z-index: 999;
+            overflow: hidden;
         }
-        #image-overlay.visible { display: flex; }
+
+        #image-overlay.visible {
+            transform: translateY(0);
+        }
 
         #viewer-frame {
-            width: 100vw;
-            height: 100vh; /* fallback for browsers without dvh support */
-            height: 100dvh;
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+            padding: 20px;
             display: flex;
             justify-content: center;
-            align-items: center;
-        }
-
-        #image-wrapper {
-            position: relative;
-            display: inline-block;
+            align-items: flex-start; /* mobile/portrait: anchor to the top */
         }
 
         #overlay-img {
-            max-width: 90vw;
-            max-height: 90vh; /* fallback for browsers without dvh support */
-            max-height: 90dvh;
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
             width: auto;
             height: auto;
             object-fit: contain;
             filter: none;
         }
 
+        /* Anchored to the panel's own fixed corner (not the image's), so
+           it's always in a predictable, reachable spot regardless of the
+           image's size or alignment. */
         #image-close-btn {
             position: absolute;
             top: 10px;
             left: 10px;
+            z-index: 1;
             background: rgba(0,0,0,0.6);
             color: white;
             border: none;
@@ -449,6 +502,33 @@
             padding: 4px 10px;
             border-radius: 6px;
             cursor: pointer;
+        }
+
+        @media (min-width: 900px) {
+            #image-overlay {
+                top: 0;
+                bottom: 0;
+                left: 0;
+                /* Holds at 480px near the breakpoint (clamp's floor), then
+                   grows proportionally with viewport width past that, up
+                   to a ceiling of the full viewport height — beyond which
+                   a square image can't get any larger anyway. */
+                width: clamp(480px, 53vw, 100vh); /* fallback for browsers without dvh support */
+                width: clamp(480px, 53vw, 100dvh);
+                max-width: 90vw;
+                height: 100vh; /* fallback for browsers without dvh support */
+                height: 100dvh;
+                transform: translateX(-100%);
+                box-shadow: 4px 0 10px rgba(0,0,0,0.35);
+            }
+
+            #image-overlay.visible {
+                transform: translateX(0);
+            }
+
+            #viewer-frame {
+                align-items: center; /* desktop/landscape: vertically centered */
+            }
         }
 
         /* Pokédex Panel — three layered panels */
@@ -886,11 +966,9 @@
     <div class="gallery-container" id="gallery"></div>
 
     <div id="image-overlay">
+        <button id="image-close-btn">✕</button>
         <div id="viewer-frame">
-            <div id="image-wrapper">
-                <img id="overlay-img" src="" alt="">
-                <button id="image-close-btn">✕</button>
-            </div>
+            <img id="overlay-img" src="" alt="">
         </div>
     </div>
 
@@ -1164,6 +1242,7 @@
             const isClosed = pokedexPanel.classList.contains("closed");
 
             closeFilterPanel();
+            closeImageViewer();
 
             if (isClosed) {
                 openPokedexPanels();
@@ -1407,9 +1486,24 @@
         // with the gallery instead of covering it.
         const desktopFilterQuery = window.matchMedia('(min-width: 900px)');
 
+        // Turns on body's padding transition for a short window right when
+        // a panel actually opens/closes, then turns it back off — see the
+        // CSS comment on body.panel-animating for why it can't just stay on.
+        let panelAnimTimeout = null;
+        function beginPanelAnim() {
+            document.body.classList.add('panel-animating');
+            if (panelAnimTimeout) clearTimeout(panelAnimTimeout);
+            panelAnimTimeout = setTimeout(() => {
+                document.body.classList.remove('panel-animating');
+                panelAnimTimeout = null;
+            }, 400);
+        }
+
         function openFilterPanel() {
             if (!panel.classList.contains('open')) {
                 panel.classList.add('open');
+                closeImageViewer();
+                beginPanelAnim();
                 if (desktopFilterQuery.matches) {
                     // Desktop: gallery reserves space and stays interactive —
                     // no dimming, no scroll lock needed.
@@ -1426,6 +1520,7 @@
         function closeFilterPanel() {
             if (panel.classList.contains('open')) {
                 panel.classList.remove('open');
+                beginPanelAnim();
                 if (desktopFilterQuery.matches) {
                     document.body.classList.remove('filters-open');
                 } else {
@@ -1475,28 +1570,21 @@
         function openImageViewer(src) {
             overlayImg.src = src;
             imageOverlay.classList.add('visible');
-            window.pageScrollLock.lock();
+            beginPanelAnim();
+            document.body.classList.add('viewer-open');
 
             closeFilterPanel();
-
-            openBtn.disabled = true;
-            openBtn.style.opacity = "0.5";
-            openBtn.style.cursor = "not-allowed";
         }
 
         function closeImageViewer() {
             imageOverlay.classList.remove('visible');
             overlayImg.src = "";
-            window.pageScrollLock.unlock();
-            openBtn.disabled = false;
-            openBtn.style.opacity = "1";
-            openBtn.style.cursor = "pointer";
+            beginPanelAnim();
+            document.body.classList.remove('viewer-open');
         }
 
-        const imageWrapper = document.getElementById('image-wrapper');
-
         imageOverlay.addEventListener('click', (e) => {
-            if (!imageWrapper.contains(e.target)) closeImageViewer();
+            if (e.target !== overlayImg && e.target !== imageCloseBtn) closeImageViewer();
         });
 
         imageCloseBtn.addEventListener('click', closeImageViewer);
