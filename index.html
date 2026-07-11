@@ -93,12 +93,10 @@
             left: 0;
             bottom: 0;
             width: 100%;
-            height: min(70vh, 90vh); /* fallback for browsers without dvh support */
-            height: min(70dvh, 90dvh);
-            min-height: 300px;
+            height: 100vh; /* fallback for browsers without dvh support */
+            height: 100dvh;
             background: #ffffff;
             box-shadow: 0 -4px 10px rgba(0,0,0,0.25);
-            border-radius: 15px 15px 0 0;
             transform: translateY(100%);
             transition: transform 0.35s ease;
             z-index: 999;
@@ -138,6 +136,25 @@
 
             #filter-panel.open {
                 transform: translateX(0);
+            }
+
+            /* Desktop/landscape: instead of the panel overlaying the gallery
+               (which is what #overlay's dimming was for), the gallery
+               reserves space on the right equal to the panel's width and
+               reflows into what's left — nothing gets covered, so no dimming
+               is needed and the gallery stays fully interactive while the
+               panel is open. #overlay is force-hidden here since it no
+               longer serves a purpose at this breakpoint. */
+            body {
+                transition: padding-right 0.35s ease;
+            }
+
+            body.filters-open {
+                padding-right: calc(20px + min(480px, 90vw));
+            }
+
+            #overlay {
+                display: none !important;
             }
         }
 
@@ -1385,21 +1402,55 @@
         document.getElementById('reset-filters-btn').addEventListener('click', resetFilters);
         document.getElementById('tag-search').addEventListener('input', updateFilters);
 
+        // Matches the CSS breakpoint where the filter panel switches from a
+        // full-screen mobile sheet to a desktop sidebar that shares space
+        // with the gallery instead of covering it.
+        const desktopFilterQuery = window.matchMedia('(min-width: 900px)');
+
         function openFilterPanel() {
             if (!panel.classList.contains('open')) {
                 panel.classList.add('open');
-                overlay.classList.add('visible');
-                window.pageScrollLock.lock();
+                if (desktopFilterQuery.matches) {
+                    // Desktop: gallery reserves space and stays interactive —
+                    // no dimming, no scroll lock needed.
+                    document.body.classList.add('filters-open');
+                } else {
+                    // Mobile: panel is full-screen, so the gallery underneath
+                    // is genuinely hidden — dim it and lock scrolling.
+                    overlay.classList.add('visible');
+                    window.pageScrollLock.lock();
+                }
             }
         }
 
         function closeFilterPanel() {
             if (panel.classList.contains('open')) {
                 panel.classList.remove('open');
-                overlay.classList.remove('visible');
-                window.pageScrollLock.unlock();
+                if (desktopFilterQuery.matches) {
+                    document.body.classList.remove('filters-open');
+                } else {
+                    overlay.classList.remove('visible');
+                    window.pageScrollLock.unlock();
+                }
             }
         }
+
+        // If the breakpoint is crossed while the panel happens to be open
+        // (e.g. rotating a tablet), reconcile which mode's side-effects
+        // (dimming/lock vs. reserved space) are currently in play, rather
+        // than leaving stale ones behind.
+        desktopFilterQuery.addEventListener('change', (e) => {
+            if (!panel.classList.contains('open')) return;
+            if (e.matches) {
+                overlay.classList.remove('visible');
+                window.pageScrollLock.unlock();
+                document.body.classList.add('filters-open');
+            } else {
+                document.body.classList.remove('filters-open');
+                overlay.classList.add('visible');
+                window.pageScrollLock.lock();
+            }
+        });
 
         function toggleDrawer() {
             if (panel.classList.contains('open')) {
