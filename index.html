@@ -389,11 +389,7 @@
             grid-column: 1 / -1;
         }
 
-        /* Sub-grid for the Mega Evolution / Gigantamax related buttons */
-        .evo-mega-gmax-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-        }
+
 
         #reset-filters-btn {
             display: block;
@@ -524,7 +520,7 @@
             position: absolute;
             top: 10px;
             left: 10px;
-            z-index: 1;
+            z-index: 2;
             background: rgba(0,0,0,0.6);
             color: white;
             border: none;
@@ -533,6 +529,46 @@
             padding: 4px 10px;
             border-radius: 6px;
             cursor: pointer;
+        }
+
+        /* Prev/next hit zones span the panel's full height and a third of
+           its width each, but stay fully transparent until hovered — the
+           arrow (and a faint scrim, so it's readable against any image) is
+           the only feedback that they're there. Sits above #overlay-img but
+           below #image-close-btn, so the close button stays reachable where
+           its area overlaps the left-side prev zone. */
+        .image-nav-btn {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 33%;
+            z-index: 1;
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 28px;
+            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .image-nav-btn:hover {
+            opacity: 1;
+        }
+
+        .image-nav-prev {
+            left: 0;
+            padding-left: 14px;
+            text-align: left;
+            background: linear-gradient(to right, rgba(0,0,0,0.45), transparent);
+        }
+
+        .image-nav-next {
+            right: 0;
+            padding-right: 14px;
+            text-align: right;
+            background: linear-gradient(to left, rgba(0,0,0,0.45), transparent);
         }
 
         @media (min-width: 900px) {
@@ -941,15 +977,15 @@
                 <button class="filter-btn" data-tag="stage2">Stage 2</button>
                 <button class="filter-btn" data-tag="stage3">Stage 3</button>
                 <button class="filter-btn" data-tag="canevolve">Can Evolve</button>
-                <button class="filter-btn" data-tag="hasevolved">Has Evolved</button>
                 <button class="filter-btn" data-tag="splitevo">Split Evolution</button>
-                <div class="own-row evo-mega-gmax-grid">
-                    <button class="filter-btn" data-tag="canmega">Can Mega Evolve</button>
-                    <button class="filter-btn" data-tag="evocanmega">Evolution Can Mega Evolve</button>
-                    <button class="filter-btn" data-tag="cangmax">Can Gigantamax</button>
-                    <button class="filter-btn" data-tag="evocangmax">Evolution Can Gigantamax</button>
-                </div>
-                <button class="filter-btn own-row" data-tag="noevo">Does Not Evolve</button>
+                <button class="filter-btn" data-tag="noevo">Does Not Evolve</button>
+                <button class="filter-btn" data-tag="mega">Mega Evolution</button>
+                <button class="filter-btn" data-tag="canmega">Can Mega Evolve</button>
+                <button class="filter-btn" data-tag="evocanmega">Evolution Can Mega Evolve</button>
+                <button class="filter-btn" data-tag="gmax">Gigantamax</button>
+                <button class="filter-btn" data-tag="cangmax">Can Gigantamax</button>
+                <button class="filter-btn" data-tag="evocangmax">Evolution Can Gigantamax</button>
+                <button id="evolution-match-toggle" class="filter-btn own-row">Match: All</button>
                 <button class="filter-btn own-row" id="show-all-stage">Show All</button>
             </div>
 
@@ -988,7 +1024,8 @@
 		<button class="filter-btn" data-tag="rock">Rock</button>
 		<button class="filter-btn" data-tag="steel">Steel</button>
 		<button class="filter-btn" data-tag="water">Water</button>
-		<button id="types-match-toggle" class="filter-btn own-row">Match: Any</button>
+		<button class="filter-btn own-row" data-tag="monotype">No Secondary Type</button>
+		<button id="types-match-toggle" class="filter-btn own-row">Match: All</button>
 		<button class="filter-btn own-row" id="show-all-types">Show All</button>
 	    </div>
 
@@ -998,6 +1035,7 @@
 		<button class="filter-btn" data-tag="fly">Fly</button>
 		<button class="filter-btn" data-tag="surf">Surf</button>
 		<button class="filter-btn" data-tag="teleport">Teleport</button>
+		<button id="abilities-match-toggle" class="filter-btn own-row">Match: All</button>
 		<button class="filter-btn own-row" id="show-all-abilities">Show All</button>
 	    </div>
 
@@ -1012,6 +1050,7 @@
 		<button class="filter-btn" data-tag="special">Special</button>
 		<button class="filter-btn" data-tag="tvinterviewer">TV Interviewer</button>
 		<button class="filter-btn" data-tag="pokestar">Pokéstar Studios</button>
+		<button id="other-match-toggle" class="filter-btn own-row">Match: All</button>
 		<button class="filter-btn own-row" id="show-all-other">Show All</button>
 	    </div>
 
@@ -1022,6 +1061,8 @@
 
     <div id="image-overlay">
         <button id="image-close-btn">✕</button>
+        <button id="image-prev-btn" class="image-nav-btn image-nav-prev" aria-label="Previous image">&#10094;</button>
+        <button id="image-next-btn" class="image-nav-btn image-nav-next" aria-label="Next image">&#10095;</button>
         <div id="viewer-frame">
             <img id="overlay-img" src="" alt="">
         </div>
@@ -1195,8 +1236,26 @@
 
         let includeFilters = [];
         let excludeFilters = [];
-        let typeIncludeFilters = [];
-        let typesMatchAll = false;
+
+        // Sections whose match mode can be toggled between AND ("Match:
+        // All") and OR ("Match: Any"), each independently, defaulting to
+        // AND on page load. Generation, Regional Pokédex, and Token Color
+        // aren't included here — they stay permanently OR, same as every
+        // section behaved before this change.
+        const TOGGLEABLE_SECTIONS = {
+            types: 'types-section',
+            evolution: 'evolution-section',
+            abilities: 'abilities-section',
+            other: 'other-section',
+        };
+        let sectionMatchAll = { types: true, evolution: true, abilities: true, other: true };
+
+        // Holds each toggleable section's selected tags separately, but
+        // only while that section is actually in AND mode — see
+        // updateFilters(), which routes a section's tags in here instead of
+        // the shared includeFilters OR-pool only when its matchAll flag is
+        // on.
+        let sectionAndFilters = { types: [], evolution: [], abilities: [], other: [] };
 
         const gallery = document.getElementById("gallery");
         const panel = document.getElementById('filter-panel');
@@ -1267,17 +1326,53 @@
             });
         })();
 
+        // pageScrollLock is reference-counted, and both directions are now
+        // delayed rather than instant — so a rapid open/close/open toggle
+        // could otherwise fire an extra lock() or unlock() with no matching
+        // partner (e.g. reopening before a scheduled unlock fires would
+        // cancel that unlock AND call lock() again, leaking an increment
+        // that's never balanced). Tracking whether the lock is actually
+        // currently engaged, and only ever scheduling the action that
+        // would flip it, keeps every lock() paired with exactly one
+        // unlock() regardless of how fast the panel gets toggled.
+        let pokedexScrollLockTimeout = null;
+        let pokedexScrollLockEngaged = false;
+
         function openPokedexPanels() {
             if (pokedexPanel.classList.contains("closed")) {
                 pokedexPanel.classList.remove("closed");
-                window.pageScrollLock.lock();
+                if (pokedexScrollLockTimeout) {
+                    clearTimeout(pokedexScrollLockTimeout);
+                    pokedexScrollLockTimeout = null;
+                }
+                if (!pokedexScrollLockEngaged) {
+                    // Land between panel 1 finishing its fade-in (1.0s) and
+                    // the side bars starting to slide in (1.3s).
+                    pokedexScrollLockTimeout = setTimeout(() => {
+                        window.pageScrollLock.lock();
+                        pokedexScrollLockEngaged = true;
+                        pokedexScrollLockTimeout = null;
+                    }, 1150);
+                }
             }
         }
 
         function closePokedexPanels() {
             if (!pokedexPanel.classList.contains("closed")) {
                 pokedexPanel.classList.add("closed");
-                window.pageScrollLock.unlock();
+                if (pokedexScrollLockTimeout) {
+                    clearTimeout(pokedexScrollLockTimeout);
+                    pokedexScrollLockTimeout = null;
+                }
+                if (pokedexScrollLockEngaged) {
+                    // Land after the side bars finish retracting (1.7s) but
+                    // before panel 1 begins fading out (2.0s).
+                    pokedexScrollLockTimeout = setTimeout(() => {
+                        window.pageScrollLock.unlock();
+                        pokedexScrollLockEngaged = false;
+                        pokedexScrollLockTimeout = null;
+                    }, 1850);
+                }
             }
         }
 
@@ -1362,13 +1457,15 @@
         function updateFilters() {
             includeFilters = [];
             excludeFilters = [];
-            typeIncludeFilters = [];
+            sectionAndFilters = { types: [], evolution: [], abilities: [], other: [] };
 
             document.querySelectorAll('.filter-btn.include[data-tag]').forEach(btn => {
                 const tag = btn.dataset.tag.toLowerCase();
-                const inTypesSection = btn.closest('#types-section') !== null;
-                if (inTypesSection && typesMatchAll) {
-                    typeIncludeFilters.push(tag);
+                const sectionKey = Object.keys(TOGGLEABLE_SECTIONS).find(
+                    key => btn.closest('#' + TOGGLEABLE_SECTIONS[key]) !== null
+                );
+                if (sectionKey && sectionMatchAll[sectionKey]) {
+                    sectionAndFilters[sectionKey].push(tag);
                 } else {
                     includeFilters.push(tag);
                 }
@@ -1388,19 +1485,26 @@
                 const includeMatch =
                     includeFilters.length === 0 ||
                     includeFilters.some(f => tags.includes(f.replace("search:", "")));
-                const typeMatch =
-                    typeIncludeFilters.length === 0 ||
-                    typeIncludeFilters.every(f => tags.includes(f));
+                const sectionAndMatch = Object.values(sectionAndFilters).every(
+                    list => list.length === 0 || list.every(f => tags.includes(f))
+                );
                 const excludeMatch =
                     excludeFilters.some(f => tags.includes(f.replace("search:", "")));
-                card.classList.toggle('show', includeMatch && typeMatch && !excludeMatch);
+                card.classList.toggle('show', includeMatch && sectionAndMatch && !excludeMatch);
             });
         }
 
-        document.getElementById('types-match-toggle').addEventListener('click', function () {
-            typesMatchAll = !typesMatchAll;
-            this.textContent = typesMatchAll ? "Match: All" : "Match: Any";
-            updateFilters();
+        // One toggle button per AND/OR-switchable section — mirrors the
+        // original types-only toggle, just wired up for all four sections
+        // that support it now.
+        Object.entries(TOGGLEABLE_SECTIONS).forEach(([key, sectionId]) => {
+            const toggleBtn = document.getElementById(`${key}-match-toggle`);
+            if (!toggleBtn) return;
+            toggleBtn.addEventListener('click', () => {
+                sectionMatchAll[key] = !sectionMatchAll[key];
+                toggleBtn.textContent = sectionMatchAll[key] ? "Match: All" : "Match: Any";
+                updateFilters();
+            });
         });
 
         function resetFilters() {
@@ -1627,6 +1731,8 @@
         const imageOverlay = document.getElementById('image-overlay');
         const overlayImg = document.getElementById('overlay-img');
         const imageCloseBtn = document.getElementById('image-close-btn');
+        const imagePrevBtn = document.getElementById('image-prev-btn');
+        const imageNextBtn = document.getElementById('image-next-btn');
 
         let activeGalleryImg = null;
 
@@ -1646,47 +1752,96 @@
             }, { once: true });
         }
 
+        // Where an image should land: centered in whatever vertical space
+        // is left below the panel, rather than centered in the full
+        // viewport. On mobile this means the reserved padding-top (the
+        // panel's own height) is excluded from the centering math; on
+        // desktop the panel docks left instead, so it never contributes to
+        // padding-top and this collapses back to ordinary full-height
+        // centering automatically. It also naturally converges to
+        // full-viewport centering once a close animation finishes and
+        // padding-top has shrunk back to its base value — so this same
+        // calculation covers opening, closing, and switching between
+        // images without needing separate cases for each.
+        const BASE_PADDING_TOP = 20; // body's un-panelled padding-top
+
+        function neededScrollDelta(img) {
+            const rect = img.getBoundingClientRect();
+            const vh = window.innerHeight;
+            const vw = window.innerWidth;
+
+            const currentPaddingTop = parseFloat(getComputedStyle(document.body).paddingTop) || 0;
+            const panelHeight = Math.max(0, currentPaddingTop - BASE_PADDING_TOP);
+            const targetCenterY = (vh + panelHeight) / 2;
+            const dy = (rect.top + rect.height / 2) - targetCenterY;
+
+            let dx = 0;
+            if (rect.left < 0) dx = rect.left;
+            else if (rect.right > vw) dx = rect.right - vw;
+
+            return { dx, dy };
+        }
+
+        // Native `scrollBy({behavior:'smooth'})` doesn't expose a duration —
+        // the browser just picks its own timing based on distance — so
+        // there's no way to explicitly slow it down. This does the easing
+        // manually instead, over a fixed, tunable duration.
+        function animatedScrollBy(dx, dy, duration) {
+            if (dx === 0 && dy === 0) return;
+            const startX = window.scrollX;
+            const startY = window.scrollY;
+            const start = performance.now();
+
+            function easeInOutQuad(t) {
+                return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+            }
+
+            function step(now) {
+                const t = Math.min(1, (now - start) / duration);
+                const eased = easeInOutQuad(t);
+                window.scrollTo(startX + dx * eased, startY + dy * eased);
+                if (t < 1) requestAnimationFrame(step);
+            }
+            requestAnimationFrame(step);
+        }
+
+        const SWITCH_SCROLL_MS = 500; // ~400ms native-smooth-scroll feel, slowed 25%
+
+        // Smoothly scrolls an image to that same centered-below-panel point
+        // — used when switching between images while the panel's already
+        // open on mobile, where nothing is reflowing so there's no moving
+        // target to chase frame-by-frame; a single eased scroll to the
+        // computed target is enough.
+        function scrollToPanelCenter(img) {
+            const { dx, dy } = neededScrollDelta(img);
+            animatedScrollBy(dx, dy, SWITCH_SCROLL_MS);
+        }
+
         // While the panel is actually opening/closing, the gallery's layout
         // keeps reflowing continuously for the whole transition (body's
         // padding is animating), so a single delayed scroll would target a
         // position that's already stale by the time it fires. Instead this
         // nudges the scroll a fraction of the way toward "in view" every
         // frame for the transition's duration — a full instant correction
-        // each frame (via scrollIntoView) is what made it feel snappy, since
-        // it jumps the whole distance in one go the moment the image goes
-        // out of view rather than moving gradually the whole time. A
-        // guaranteed hard snap at the very end cleans up whatever small
+        // each frame is what made it feel snappy, since it jumps the whole
+        // distance in one go the moment the image goes out of view rather
+        // than moving gradually the whole time. A guaranteed hard snap at
+        // the very end (using the same shared delta calculation, rather
+        // than the browser's own native centering) cleans up whatever small
         // residual is left from chasing a moving target with partial steps.
         function trackImageIntoView(img, duration) {
             const start = performance.now();
             const SMOOTHING = 0.25; // fraction of the remaining distance corrected per frame
 
-            function neededScrollDelta() {
-                const rect = img.getBoundingClientRect();
-                const vh = window.innerHeight;
-                const vw = window.innerWidth;
-
-                // Vertically, always aim for centered rather than just
-                // nudging back into view — this is what makes the final
-                // resting position centered rather than flush to an edge.
-                const dy = (rect.top + rect.height / 2) - (vh / 2);
-
-                let dx = 0;
-                if (rect.left < 0) dx = rect.left;
-                else if (rect.right > vw) dx = rect.right - vw;
-
-                return { dx, dy };
-            }
-
             function step(now) {
-                const { dx, dy } = neededScrollDelta();
-                if (dx !== 0 || dy !== 0) {
-                    window.scrollBy(dx * SMOOTHING, dy * SMOOTHING);
-                }
+                const { dx, dy } = neededScrollDelta(img);
                 if (now - start < duration) {
+                    if (dx !== 0 || dy !== 0) {
+                        window.scrollBy(dx * SMOOTHING, dy * SMOOTHING);
+                    }
                     requestAnimationFrame(step);
                 } else {
-                    img.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+                    if (dx !== 0 || dy !== 0) window.scrollBy(dx, dy);
                     pulseAttention(img);
                 }
             }
@@ -1711,14 +1866,22 @@
 
             if (alreadyOpen) {
                 // Panel's already open, just switching images — nothing is
-                // reflowing, so a single ordinary smooth scroll is enough.
-                galleryImg.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-                if ('onscrollend' in window) {
-                    // 'scrollend' isn't available in every browser yet, so
-                    // this only pulses where it's supported rather than
-                    // guessing at a smooth-scroll's duration with a timer.
-                    document.addEventListener('scrollend', () => pulseAttention(galleryImg), { once: true });
+                // reflowing, so there's no moving target to chase.
+                if (desktopFilterQuery.matches) {
+                    // Desktop: panel docks left and never covers vertical
+                    // space, so an ordinary smooth scroll is enough.
+                    galleryImg.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+                } else {
+                    // Mobile: smoothly scroll to the same centered-below-panel
+                    // point used when first opening, instead of the
+                    // browser's native "nearest edge" behavior.
+                    scrollToPanelCenter(galleryImg);
                 }
+                // Pulse right away regardless of whether anything actually
+                // needed to scroll — tapping a different thumbnail should
+                // always give a bit of tactile feedback that the magnified
+                // view updated.
+                pulseAttention(galleryImg);
             } else {
                 trackImageIntoView(galleryImg, PANEL_TRANSITION_MS);
             }
@@ -1746,11 +1909,43 @@
             }
         }
 
+        // Currently-filtered images in gallery order — prev/next only ever
+        // steps through what's actually visible under the active filters,
+        // not the full unfiltered set.
+        function getVisibleGalleryImages() {
+            return Array.from(document.querySelectorAll('.image-card.show img'));
+        }
+
+        // Wraps around at either end rather than stopping dead, since these
+        // buttons give no visual indication of "first"/"last" to justify a
+        // dead click.
+        function navigateImage(direction) {
+            const visible = getVisibleGalleryImages();
+            if (visible.length < 2) return;
+            const currentIndex = visible.indexOf(activeGalleryImg);
+            if (currentIndex === -1) return;
+            const nextIndex = (currentIndex + direction + visible.length) % visible.length;
+            openImageViewer(visible[nextIndex]);
+        }
+
         imageOverlay.addEventListener('click', (e) => {
-            if (e.target !== overlayImg && e.target !== imageCloseBtn) closeImageViewer();
+            if (e.target !== overlayImg && e.target !== imageCloseBtn
+                && e.target !== imagePrevBtn && e.target !== imageNextBtn) {
+                closeImageViewer();
+            }
         });
 
         imageCloseBtn.addEventListener('click', closeImageViewer);
+
+        imagePrevBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigateImage(-1);
+        });
+
+        imageNextBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigateImage(1);
+        });
 
         // Clicking empty space in the gallery (not on a card/image) closes
         // the magnify panel if it's open.
