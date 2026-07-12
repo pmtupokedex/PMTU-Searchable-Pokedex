@@ -38,8 +38,8 @@
            this for padding-left (see the min-width:900px override below),
            since the panel docks to the left there instead. */
         body.viewer-open {
-            padding-top: calc(20px + 60vh); /* fallback for browsers without dvh support */
-            padding-top: calc(20px + 60dvh);
+            padding-top: calc(20px + min(60vh, 100vw)); /* fallback for browsers without dvh support */
+            padding-top: calc(20px + min(60dvh, 100vw));
         }
 
         /* Buttons */
@@ -432,6 +432,15 @@
             transform: translateZ(0);
         }
 
+        /* Marks whichever gallery image is currently shown in the magnify
+           panel. Uses the #gallery-halo SVG filter (defined near the top of
+           <body>) instead of stacked drop-shadow()s — see that filter's
+           comment for why. The 2.5% size lives in that filter's
+           feMorphology radius attribute, not here. */
+        .image-card img.active-in-viewer {
+            filter: url(#gallery-halo);
+        }
+
         /* Magnified view panel — docks to the top on mobile/portrait, and
            to the left on desktop/landscape (the gallery's own reserved
            space, mirroring the filter panel's reserved space on the right).
@@ -452,8 +461,14 @@
             top: 0;
             left: 0;
             width: 100%;
-            height: 60vh; /* fallback for browsers without dvh support */
-            height: 60dvh;
+            /* Capped at whichever is smaller: normally 60dvh, but once the
+               window gets narrow enough that the image becomes width-
+               constrained rather than height-constrained, the panel
+               shrinks to match it (padding cancels out the same way the
+               landscape width formula does) instead of leaving empty
+               space below the image. */
+            height: min(60vh, 100vw); /* fallback for browsers without dvh support */
+            height: min(60dvh, 100vw);
             background: #111;
             box-shadow: 0 4px 10px rgba(0,0,0,0.35);
             transform: translateY(-100%);
@@ -473,7 +488,7 @@
             padding: 20px;
             display: flex;
             justify-content: center;
-            align-items: flex-start; /* mobile/portrait: anchor to the top */
+            align-items: center; /* images are all exactly square, so centering keeps any sub-pixel vw/dvh rounding split evenly rather than collecting at one edge */
         }
 
         #overlay-img {
@@ -524,10 +539,6 @@
 
             #image-overlay.visible {
                 transform: translateX(0);
-            }
-
-            #viewer-frame {
-                align-items: center; /* desktop/landscape: vertically centered */
             }
         }
 
@@ -750,6 +761,34 @@
     </style>
 </head>
 <body>
+
+    <!-- Hidden SVG filter used by the gallery's "active in magnify view" halo.
+         feGaussianBlur spreads the sprite's alpha shape outward — this is
+         isotropic (equally smooth in every direction), unlike feMorphology's
+         dilate operator, which per spec uses a rectangular structuring
+         element and produces flat, axis-aligned facets on anything but a
+         rectangular source shape. The blurred alpha is then thresholded
+         back to a hard edge (feComponentTransfer's steep linear ramp,
+         clamped to 0/1) at a chosen cutoff, flooded solid blue, and merged
+         underneath the original image. Both stdDeviation (blur amount) and
+         the threshold cutoff affect the resulting halo's thickness — they
+         don't map to a simple "% of size" the way feMorphology's radius did,
+         so treat them as a pair to tune together if the thickness needs
+         adjusting. -->
+    <svg width="0" height="0" style="position: absolute;">
+        <filter id="gallery-halo" x="-50%" y="-50%" width="200%" height="200%" primitiveUnits="objectBoundingBox">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="0.03" result="blurred"/>
+            <feComponentTransfer in="blurred" result="thresholded">
+                <feFuncA type="linear" slope="50" intercept="-4.5"/>
+            </feComponentTransfer>
+            <feFlood flood-color="#1e90ff" result="blueFlood"/>
+            <feComposite in="blueFlood" in2="thresholded" operator="in" result="halo"/>
+            <feMerge>
+                <feMergeNode in="halo"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+    </svg>
 
     <div id="loading-splash">
         <img id="loading-splash-img"
@@ -1276,7 +1315,13 @@
 
         function attachImageEvents() {
             document.querySelectorAll('.image-card img').forEach(img => {
-                img.addEventListener('click', () => openImageViewer(img.src));
+                img.addEventListener('click', () => {
+                    if (img.classList.contains('active-in-viewer')) {
+                        closeImageViewer();
+                    } else {
+                        openImageViewer(img);
+                    }
+                });
             });
         }
 
@@ -1567,20 +1612,70 @@
         const overlayImg = document.getElementById('overlay-img');
         const imageCloseBtn = document.getElementById('image-close-btn');
 
-        function openImageViewer(src) {
-            overlayImg.src = src;
+        let activeGalleryImg = null;
+
+        const PANEL_TRANSITION_MS = 400; // matches beginPanelAnim's own duration
+
+        // While the panel is actually opening/closing, the gallery's layout
+        // keeps reflowing continuously for the whole transition (body's
+        // padding is animating), so a single delayed scroll would target a
+        // position that's already stale by the time it fires. Instead this
+        // re-targets scrollIntoView every frame for the transition's
+        // duration, so the page scroll rides along with the reflow in real
+        // time rather than playing as a separate step afterward.
+        function trackImageIntoView(img, duration) {
+            const start = performance.now();
+            function step(now) {
+                img.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
+                if (now - start < duration) {
+                    requestAnimationFrame(step);
+                }
+            }
+            requestAnimationFrame(step);
+        }
+
+        function openImageViewer(galleryImg) {
+            const alreadyOpen = document.body.classList.contains('viewer-open');
+
+            if (activeGalleryImg) {
+                activeGalleryImg.classList.remove('active-in-viewer');
+            }
+            activeGalleryImg = galleryImg;
+            galleryImg.classList.add('active-in-viewer');
+
+            overlayImg.src = galleryImg.src;
             imageOverlay.classList.add('visible');
             beginPanelAnim();
             document.body.classList.add('viewer-open');
 
             closeFilterPanel();
+
+            if (alreadyOpen) {
+                // Panel's already open, just switching images — nothing is
+                // reflowing, so a single ordinary smooth scroll is enough.
+                galleryImg.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+            } else {
+                trackImageIntoView(galleryImg, PANEL_TRANSITION_MS);
+            }
         }
 
         function closeImageViewer() {
+            const wasOpen = document.body.classList.contains('viewer-open');
+            const previouslyActive = activeGalleryImg;
+
+            if (activeGalleryImg) {
+                activeGalleryImg.classList.remove('active-in-viewer');
+                activeGalleryImg = null;
+            }
+
             imageOverlay.classList.remove('visible');
             overlayImg.src = "";
             beginPanelAnim();
             document.body.classList.remove('viewer-open');
+
+            if (previouslyActive && wasOpen) {
+                trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS);
+            }
         }
 
         imageOverlay.addEventListener('click', (e) => {
@@ -1588,6 +1683,12 @@
         });
 
         imageCloseBtn.addEventListener('click', closeImageViewer);
+
+        // Clicking empty space in the gallery (not on a card/image) closes
+        // the magnify panel if it's open.
+        gallery.addEventListener('click', (e) => {
+            if (e.target === gallery) closeImageViewer();
+        });
 
         document.querySelectorAll('.filter-section-header').forEach(header => {
             header.classList.add('collapsed');
