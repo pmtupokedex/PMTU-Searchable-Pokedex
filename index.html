@@ -30,7 +30,23 @@
            what caused the grid's column count to visibly snap to the next
            threshold and back while dragging the resize handle. */
         body.panel-animating {
-            transition: padding 0.35s ease;
+            transition: padding 0.4375s ease; /* 0.35s base, slowed 25% */
+        }
+
+        /* Brief attention pulse, triggered once the scroll that follows an
+           open/close settles, to draw the eye to the image's new position.
+           Keeps the translateZ(0) layer-promotion trick from the base
+           .image-card img rule alive throughout so the drop-shadow filter
+           doesn't flicker mid-pulse. */
+        @keyframes gallery-pulse {
+            0%   { transform: translateZ(0) scale(1); }
+            35%  { transform: translateZ(0) scale(1.15); }
+            65%  { transform: translateZ(0) scale(0.97); }
+            100% { transform: translateZ(0) scale(1); }
+        }
+
+        .image-card img.gallery-pulse {
+            animation: gallery-pulse 600ms ease-out;
         }
 
         /* Mobile/portrait: magnified view docks to the top, so the gallery
@@ -1541,7 +1557,7 @@
             panelAnimTimeout = setTimeout(() => {
                 document.body.classList.remove('panel-animating');
                 panelAnimTimeout = null;
-            }, 400);
+            }, 500); // 400ms base * 1.25, slowed 25% to match body.panel-animating's transition duration
         }
 
         function openFilterPanel() {
@@ -1614,21 +1630,64 @@
 
         let activeGalleryImg = null;
 
-        const PANEL_TRANSITION_MS = 400; // matches beginPanelAnim's own duration
+        const PANEL_TRANSITION_MS = 500; // matches beginPanelAnim's own duration (0.35s base * 1.25, slowed 25%)
+
+        // Briefly pulses an image to draw the eye to its new position after
+        // a scroll settles. Removing the class first and forcing a reflow
+        // (offsetWidth read) lets the animation restart cleanly if it's
+        // re-triggered before the previous pulse finished, rather than
+        // being ignored because the class was already present.
+        function pulseAttention(img) {
+            img.classList.remove('gallery-pulse');
+            void img.offsetWidth;
+            img.classList.add('gallery-pulse');
+            img.addEventListener('animationend', () => {
+                img.classList.remove('gallery-pulse');
+            }, { once: true });
+        }
 
         // While the panel is actually opening/closing, the gallery's layout
         // keeps reflowing continuously for the whole transition (body's
         // padding is animating), so a single delayed scroll would target a
         // position that's already stale by the time it fires. Instead this
-        // re-targets scrollIntoView every frame for the transition's
-        // duration, so the page scroll rides along with the reflow in real
-        // time rather than playing as a separate step afterward.
+        // nudges the scroll a fraction of the way toward "in view" every
+        // frame for the transition's duration — a full instant correction
+        // each frame (via scrollIntoView) is what made it feel snappy, since
+        // it jumps the whole distance in one go the moment the image goes
+        // out of view rather than moving gradually the whole time. A
+        // guaranteed hard snap at the very end cleans up whatever small
+        // residual is left from chasing a moving target with partial steps.
         function trackImageIntoView(img, duration) {
             const start = performance.now();
+            const SMOOTHING = 0.25; // fraction of the remaining distance corrected per frame
+
+            function neededScrollDelta() {
+                const rect = img.getBoundingClientRect();
+                const vh = window.innerHeight;
+                const vw = window.innerWidth;
+
+                // Vertically, always aim for centered rather than just
+                // nudging back into view — this is what makes the final
+                // resting position centered rather than flush to an edge.
+                const dy = (rect.top + rect.height / 2) - (vh / 2);
+
+                let dx = 0;
+                if (rect.left < 0) dx = rect.left;
+                else if (rect.right > vw) dx = rect.right - vw;
+
+                return { dx, dy };
+            }
+
             function step(now) {
-                img.scrollIntoView({ behavior: 'auto', block: 'nearest', inline: 'nearest' });
+                const { dx, dy } = neededScrollDelta();
+                if (dx !== 0 || dy !== 0) {
+                    window.scrollBy(dx * SMOOTHING, dy * SMOOTHING);
+                }
                 if (now - start < duration) {
                     requestAnimationFrame(step);
+                } else {
+                    img.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+                    pulseAttention(img);
                 }
             }
             requestAnimationFrame(step);
@@ -1654,6 +1713,12 @@
                 // Panel's already open, just switching images — nothing is
                 // reflowing, so a single ordinary smooth scroll is enough.
                 galleryImg.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+                if ('onscrollend' in window) {
+                    // 'scrollend' isn't available in every browser yet, so
+                    // this only pulses where it's supported rather than
+                    // guessing at a smooth-scroll's duration with a timer.
+                    document.addEventListener('scrollend', () => pulseAttention(galleryImg), { once: true });
+                }
             } else {
                 trackImageIntoView(galleryImg, PANEL_TRANSITION_MS);
             }
@@ -1673,6 +1738,9 @@
             beginPanelAnim();
             document.body.classList.remove('viewer-open');
 
+            // Always re-center on close, on both mobile and desktop — this
+            // is also what makes the pulse afterward land in a consistent,
+            // predictable spot rather than only sometimes appearing.
             if (previouslyActive && wasOpen) {
                 trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS);
             }
