@@ -58,6 +58,16 @@
             padding-top: calc(20px + min(60dvh, 100vw));
         }
 
+        /* Mirrors #image-overlay.related-expanded's own height growth to
+           fullscreen — keeps the gallery's reserved space in sync with the
+           panel's actual rendered height so the existing panel-aware
+           centering math (see neededScrollDelta in the script) still lines
+           up correctly while the related section is open. */
+        body.viewer-open.related-expanded {
+            padding-top: calc(20px + 100vh); /* fallback for browsers without dvh support */
+            padding-top: calc(20px + 100dvh);
+        }
+
         /* Buttons */
         #open-filters-btn, #open-pokedex-btn {
             position: fixed;
@@ -198,6 +208,14 @@
                 padding-top: 20px;
                 padding-left: calc(20px + min(clamp(480px, 53vw, 100vh), 90vw)); /* fallback for browsers without dvh support */
                 padding-left: calc(20px + min(clamp(480px, 53vw, 100dvh), 90vw));
+            }
+
+            /* Desktop's panel is already full-height regardless of the
+               related section's state — it just shares that existing
+               space internally — so the mobile-only fullscreen-growth rule
+               above needs to be cancelled back to the normal 20px here. */
+            body.viewer-open.related-expanded {
+                padding-top: 20px;
             }
 
             #overlay {
@@ -484,23 +502,47 @@
             background: #111;
             box-shadow: 0 4px 10px rgba(0,0,0,0.35);
             transform: translateY(-100%);
-            transition: transform 0.35s ease;
+            transition: transform 0.35s ease, height 0.4s ease;
             z-index: 999;
             overflow: hidden;
+            display: flex;
+            flex-direction: column;
         }
 
         #image-overlay.visible {
             transform: translateY(0);
         }
 
+        /* Expanding the related-images section needs room that the normal
+           60dvh-capped panel doesn't have on mobile, so the whole panel
+           grows to fill the screen instead — collapsing back to the usual
+           top-docked height when the section closes again. Desktop doesn't
+           need this: its panel is already full-height, so the related
+           section just shares that existing vertical space (see
+           #viewer-frame's related-expanded rule below). */
+        #image-overlay.related-expanded {
+            height: 100vh; /* fallback for browsers without dvh support */
+            height: 100dvh;
+        }
+
         #viewer-frame {
+            flex: 1 1 auto;
+            min-height: 0;
             width: 100%;
-            height: 100%;
             box-sizing: border-box;
             padding: 20px;
             display: flex;
             justify-content: center;
             align-items: center; /* images are all exactly square, so centering keeps any sub-pixel vw/dvh rounding split evenly rather than collecting at one edge */
+            position: relative; /* anchors the prev/next nav buttons to just the image area, not the whole panel including the related section below */
+        }
+
+        /* With the related section open, centering vertically would push
+           the image down into space that's needed below it — top-aligning
+           instead keeps the image anchored where it was and lets the
+           related section claim the newly-available room underneath. */
+        #image-overlay.related-expanded #viewer-frame {
+            align-items: flex-start;
         }
 
         #overlay-img {
@@ -569,6 +611,78 @@
             padding-right: 14px;
             text-align: right;
             background: linear-gradient(to left, rgba(0,0,0,0.45), transparent);
+        }
+
+        #viewer-related-toggle {
+            flex: 0 0 auto;
+            width: 100%;
+            background: rgba(255,255,255,0.08);
+            color: white;
+            border: none;
+            border-top: 1px solid rgba(255,255,255,0.15);
+            padding: 8px 12px;
+            font-size: 14px;
+            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        #viewer-related-toggle:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        /* Lets the section's height be driven by its own content (so it
+           doesn't need a hardcoded target height) while still animating
+           smoothly from/to zero — grid-template-rows can transition
+           between an explicit fraction and the content's intrinsic size in
+           a way max-height's binary "guess a big number" approach can't. */
+        #viewer-related-wrapper {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 0.4s ease;
+            flex: 0 0 auto;
+            width: 100%;
+        }
+
+        #image-overlay.related-expanded #viewer-related-wrapper {
+            grid-template-rows: 1fr;
+        }
+
+        #viewer-related-inner {
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        #viewer-related-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 12px;
+            max-height: 30vh; /* internal scroll once there are enough matches to need it, rather than growing the panel further */
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+
+        #viewer-related-grid img {
+            width: 70px;
+            height: 70px;
+            object-fit: contain;
+            cursor: pointer;
+            background: rgba(255,255,255,0.05);
+            border-radius: 6px;
+            padding: 4px;
+            box-sizing: border-box;
+            transition: transform 0.15s ease;
+        }
+
+        #viewer-related-grid img:hover {
+            transform: scale(1.08);
+        }
+
+        #viewer-related-empty {
+            color: rgba(255,255,255,0.5);
+            font-size: 14px;
+            padding: 12px;
         }
 
         @media (min-width: 900px) {
@@ -1061,10 +1175,16 @@
 
     <div id="image-overlay">
         <button id="image-close-btn">✕</button>
-        <button id="image-prev-btn" class="image-nav-btn image-nav-prev" aria-label="Previous image">&#10094;</button>
-        <button id="image-next-btn" class="image-nav-btn image-nav-next" aria-label="Next image">&#10095;</button>
         <div id="viewer-frame">
+            <button id="image-prev-btn" class="image-nav-btn image-nav-prev" aria-label="Previous image">&#10094;</button>
+            <button id="image-next-btn" class="image-nav-btn image-nav-next" aria-label="Next image">&#10095;</button>
             <img id="overlay-img" src="" alt="">
+        </div>
+        <button id="viewer-related-toggle" aria-expanded="false">▸ Related Images</button>
+        <div id="viewer-related-wrapper">
+            <div id="viewer-related-inner">
+                <div id="viewer-related-grid"></div>
+            </div>
         </div>
     </div>
 
@@ -1733,6 +1853,8 @@
         const imageCloseBtn = document.getElementById('image-close-btn');
         const imagePrevBtn = document.getElementById('image-prev-btn');
         const imageNextBtn = document.getElementById('image-next-btn');
+        const viewerRelatedToggle = document.getElementById('viewer-related-toggle');
+        const viewerRelatedGrid = document.getElementById('viewer-related-grid');
 
         let activeGalleryImg = null;
 
@@ -1848,6 +1970,86 @@
             requestAnimationFrame(step);
         }
 
+        // Pulls the name-tag straight out of an image's own tags by
+        // position (the 2nd tag, index 1) rather than deriving it from the
+        // display name — the JSON's tag ordering convention is reliable
+        // enough to use directly, and sidesteps needing to strip
+        // parenthetical qualifiers, regional-variant prefixes, "Mega ",
+        // "G-Max ", etc. out of free-text names to reconstruct the same
+        // value.
+        function getNameTag(img) {
+            const card = img.closest('.image-card');
+            const tags = (card?.dataset.tags || '').trim().split(/\s+/);
+            return (tags[1] || '').toLowerCase();
+        }
+
+        // Every other gallery image (regardless of current filters) that
+        // carries this image's own name-tag — any entry whose tags don't
+        // follow the expected ordering will simply turn up no related
+        // images rather than erroring.
+        function getRelatedImages(img) {
+            const nameTag = getNameTag(img);
+            if (!nameTag) return [];
+            return Array.from(document.querySelectorAll('.image-card img')).filter(other => {
+                if (other === img) return false;
+                const tags = (other.closest('.image-card').dataset.tags || '').toLowerCase().split(/\s+/);
+                return tags.includes(nameTag);
+            });
+        }
+
+        function renderRelatedImages(img) {
+            const related = getRelatedImages(img);
+            viewerRelatedGrid.innerHTML = '';
+            if (related.length === 0) {
+                const empty = document.createElement('div');
+                empty.id = 'viewer-related-empty';
+                empty.textContent = 'No related images found.';
+                viewerRelatedGrid.appendChild(empty);
+                return;
+            }
+            related.forEach(relImg => {
+                const thumb = document.createElement('img');
+                thumb.src = relImg.src;
+                thumb.alt = relImg.alt;
+                thumb.addEventListener('click', (e) => {
+                    // Stops here rather than relying on a closest() check
+                    // in the overlay's click-outside-closes listener: this
+                    // click also rebuilds the related grid's contents
+                    // (renderRelatedImages, called from openImageViewer),
+                    // which detaches this very element from the DOM before
+                    // the event finishes bubbling — a detached node has no
+                    // ancestors left to match against.
+                    e.stopPropagation();
+                    openImageViewer(relImg);
+                });
+                viewerRelatedGrid.appendChild(thumb);
+            });
+        }
+
+        let relatedExpanded = false;
+
+        function setRelatedExpanded(expanded) {
+            relatedExpanded = expanded;
+            imageOverlay.classList.toggle('related-expanded', expanded);
+            document.body.classList.toggle('related-expanded', expanded);
+            viewerRelatedToggle.setAttribute('aria-expanded', String(expanded));
+            viewerRelatedToggle.textContent = expanded ? '▾ Related Images' : '▸ Related Images';
+
+            // Reuses the same brief transition-enabling window as open/close
+            // so the gallery's reserved space grows/shrinks smoothly instead
+            // of snapping, and re-tracks the active image into its new
+            // centered position now that the available space has changed.
+            beginPanelAnim();
+            if (activeGalleryImg) {
+                trackImageIntoView(activeGalleryImg, PANEL_TRANSITION_MS);
+            }
+        }
+
+        viewerRelatedToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setRelatedExpanded(!relatedExpanded);
+        });
+
         function openImageViewer(galleryImg) {
             const alreadyOpen = document.body.classList.contains('viewer-open');
 
@@ -1858,11 +2060,13 @@
             galleryImg.classList.add('active-in-viewer');
 
             overlayImg.src = galleryImg.src;
+            overlayImg.alt = galleryImg.alt;
             imageOverlay.classList.add('visible');
             beginPanelAnim();
             document.body.classList.add('viewer-open');
 
             closeFilterPanel();
+            renderRelatedImages(galleryImg);
 
             if (alreadyOpen) {
                 // Panel's already open, just switching images — nothing is
@@ -1900,6 +2104,12 @@
             overlayImg.src = "";
             beginPanelAnim();
             document.body.classList.remove('viewer-open');
+
+            relatedExpanded = false;
+            imageOverlay.classList.remove('related-expanded');
+            document.body.classList.remove('related-expanded');
+            viewerRelatedToggle.setAttribute('aria-expanded', 'false');
+            viewerRelatedToggle.textContent = '▸ Related Images';
 
             // Always re-center on close, on both mobile and desktop — this
             // is also what makes the pulse afterward land in a consistent,
