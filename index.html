@@ -58,12 +58,13 @@
             padding-top: calc(20px + min(60dvh, 100vw));
         }
 
-        /* Mirrors #image-overlay.related-expanded's own height growth to
-           fullscreen — keeps the gallery's reserved space in sync with the
-           panel's actual rendered height so the existing panel-aware
-           centering math (see neededScrollDelta in the script) still lines
-           up correctly while the related section is open. */
-        body.viewer-open.related-expanded {
+        /* Mirrors #image-overlay's own height growth to fullscreen when
+           either collapsible section is open — keeps the gallery's
+           reserved space in sync with the panel's actual rendered height
+           so the existing panel-aware centering math (see
+           neededScrollDelta in the script) still lines up correctly. */
+        body.viewer-open.related-expanded,
+        body.viewer-open.info-expanded {
             padding-top: calc(20px + 100vh); /* fallback for browsers without dvh support */
             padding-top: calc(20px + 100dvh);
         }
@@ -210,11 +211,13 @@
                 padding-left: calc(20px + min(clamp(480px, 53vw, 100dvh), 90vw));
             }
 
-            /* Desktop's panel is already full-height regardless of the
-               related section's state — it just shares that existing
-               space internally — so the mobile-only fullscreen-growth rule
-               above needs to be cancelled back to the normal 20px here. */
-            body.viewer-open.related-expanded {
+            /* Desktop's panel is already full-height regardless of which
+               (if either) collapsible section is open — it just shares
+               that existing space internally — so the mobile-only
+               fullscreen-growth rule above needs to be cancelled back to
+               the normal 20px here. */
+            body.viewer-open.related-expanded,
+            body.viewer-open.info-expanded {
                 padding-top: 20px;
             }
 
@@ -518,14 +521,14 @@
             transform: translateY(0);
         }
 
-        /* Expanding the related-images section needs room that the normal
+        /* Expanding either collapsible section needs room that the normal
            60dvh-capped panel doesn't have on mobile, so the whole panel
            grows to fill the screen instead — collapsing back to the usual
-           top-docked height when the section closes again. Desktop doesn't
-           need this: its panel is already full-height, so the related
-           section just shares that existing vertical space (see
-           #viewer-frame's related-expanded rule below). */
-        #image-overlay.related-expanded {
+           top-docked height when both sections are closed again. Desktop
+           doesn't need this: its panel is already full-height, so either
+           section just shares that existing vertical space. */
+        #image-overlay.related-expanded,
+        #image-overlay.info-expanded {
             height: 100vh; /* fallback for browsers without dvh support */
             height: 100dvh;
         }
@@ -610,9 +613,18 @@
             background: linear-gradient(to left, rgba(0,0,0,0.45), transparent);
         }
 
-        #viewer-related-toggle {
+        /* Row itself is the flex item that reserves its natural (button)
+           height within #image-overlay's column layout — the two buttons
+           inside just split that row's width evenly. */
+        #viewer-toggle-row {
             flex: 0 0 auto;
             width: 100%;
+            display: flex;
+        }
+
+        #viewer-info-toggle,
+        #viewer-related-toggle {
+            flex: 1 1 50%;
             background: rgba(255,255,255,0.08);
             color: white;
             border: none;
@@ -624,6 +636,14 @@
             text-align: center;
         }
 
+        /* Divider between the two buttons — only the right-hand one needs
+           it, since the row's own edges already have nothing to divide
+           against. */
+        #viewer-related-toggle {
+            border-left: 1px solid rgba(255,255,255,0.15);
+        }
+
+        #viewer-info-toggle:hover,
         #viewer-related-toggle:hover {
             background: rgba(255,255,255,0.15);
         }
@@ -633,6 +653,41 @@
            smoothly from/to zero — grid-template-rows can transition
            between an explicit fraction and the content's intrinsic size in
            a way max-height's binary "guess a big number" approach can't. */
+        /* Lets the section's height be driven by its own content (so it
+           doesn't need a hardcoded target height) while still animating
+           smoothly from/to zero — grid-template-rows can transition
+           between an explicit fraction and the content's intrinsic size in
+           a way max-height's binary "guess a big number" approach can't.
+           Shared technique/pattern with #viewer-related-wrapper below;
+           kept as separate rules since each animates its own independent
+           wrapper. */
+        #viewer-info-wrapper {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 0.4s ease;
+            flex: 0 0 auto;
+            width: 100%;
+        }
+
+        #image-overlay.info-expanded #viewer-info-wrapper {
+            grid-template-rows: 1fr;
+        }
+
+        #viewer-info-inner {
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        #viewer-info-content {
+            padding: 16px;
+            height: 40dvh;
+            box-sizing: border-box;
+            color: rgba(255,255,255,0.85);
+            font-size: 14px;
+            text-align: left;
+            overflow-y: auto;
+        }
+
         #viewer-related-wrapper {
             display: grid;
             grid-template-rows: 0fr;
@@ -652,15 +707,33 @@
 
         #viewer-related-grid {
             display: flex;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
             gap: 10px;
             padding: 12px;
 		padding-bottom: 8vh;
             height: 40dvh;
 		align-items: center;
-		justify-content: center;
-            overflow-y: auto;
+            /* "safe" falls back to flex-start once the row is wider than
+               the section, so the left edge of an overflowing row stays
+               reachable by scrolling — plain "center" can leave that
+               overflow permanently stuck off-screen with no way to scroll
+               to it, since scrollLeft can't go negative. */
+            justify-content: safe center;
+            overflow-x: auto;
+            overflow-y: hidden;
             box-sizing: border-box;
+            cursor: grab;
+            touch-action: pan-x; /* keeps native touch panning limited to this axis, matching the mouse/pointer drag behavior */
+        }
+
+        /* Applied via JS for the duration of an active click-and-drag pan.
+           Disables selection/tap-highlight so dragging across thumbnails
+           doesn't select their alt text or show a mobile-style highlight
+           flash along the way. */
+        #viewer-related-grid.dragging {
+            cursor: grabbing;
+            user-select: none;
+            -webkit-user-select: none;
         }
 
         #viewer-related-grid img {
@@ -673,10 +746,31 @@
             padding: 4px;
             box-sizing: border-box;
             transition: transform 0.15s ease;
+            /* Without this, images shrink to squeeze into the row instead
+               of overflowing it — which would silently defeat the
+               horizontal-scroll behavior above. */
+            flex: 0 0 auto;
         }
 
         #viewer-related-grid img:hover {
             transform: scale(1.1);
+        }
+
+        /* Marks whichever thumbnail corresponds to the image currently
+           shown in the magnify panel, now that it's included in its own
+           related set — reuses the same halo filter as the gallery's
+           active-image marker (defined near the top of <body>) for a
+           consistent visual language. */
+        #viewer-related-grid img.related-active {
+            filter: url(#gallery-halo);
+        }
+
+        /* Reuses the same gallery-pulse keyframes (defined near the top of
+           the stylesheet) that mark a newly-selected gallery image — the
+           .image-card-scoped rule for it doesn't reach these thumbnails,
+           so it needs its own trigger here. */
+        #viewer-related-grid img.gallery-pulse {
+            animation: gallery-pulse 600ms ease-out;
         }
 
         #viewer-related-empty {
@@ -1180,7 +1274,15 @@
             <button id="image-next-btn" class="image-nav-btn image-nav-next" aria-label="Next image">&#10095;</button>
             <img id="overlay-img" src="" alt="">
         </div>
-        <button id="viewer-related-toggle" aria-expanded="false">▸ Evolution Chain</button>
+        <div id="viewer-toggle-row">
+            <button id="viewer-info-toggle" aria-expanded="false">▸ General Information</button>
+            <button id="viewer-related-toggle" aria-expanded="false">▸ Evolution Chain</button>
+        </div>
+        <div id="viewer-info-wrapper">
+            <div id="viewer-info-inner">
+                <div id="viewer-info-content">Placeholder text — general information about this Pokémon will go here.</div>
+            </div>
+        </div>
         <div id="viewer-related-wrapper">
             <div id="viewer-related-inner">
                 <div id="viewer-related-grid"></div>
@@ -1853,6 +1955,7 @@
         const imageCloseBtn = document.getElementById('image-close-btn');
         const imagePrevBtn = document.getElementById('image-prev-btn');
         const imageNextBtn = document.getElementById('image-next-btn');
+        const viewerInfoToggle = document.getElementById('viewer-info-toggle');
         const viewerRelatedToggle = document.getElementById('viewer-related-toggle');
         const viewerRelatedGrid = document.getElementById('viewer-related-grid');
 
@@ -1983,18 +2086,37 @@
             return (tags[1] || '').toLowerCase();
         }
 
-        // Every other gallery image (regardless of current filters) that
-        // carries this image's own name-tag — any entry whose tags don't
-        // follow the expected ordering will simply turn up no related
-        // images rather than erroring.
+        // Pulls the numeric stage out of an image's "stageX" tag, if it has
+        // one — used purely for sorting the related set below. Entries
+        // without a recognizable stage tag sort to the end rather than
+        // being dropped or throwing.
+        function getStageRank(img) {
+            const card = img.closest('.image-card');
+            const tags = (card?.dataset.tags || '').toLowerCase().split(/\s+/);
+            const stageTag = tags.find(t => /^stage\d+$/.test(t));
+            return stageTag ? parseInt(stageTag.slice(5), 10) : Infinity;
+        }
+
+        // Every gallery image (regardless of current filters) that carries
+        // this image's own name-tag — including the image itself, since its
+        // own tags trivially include its own name-tag — sorted left-to-right
+        // by stage (stage1, stage2, ...). Any entry whose tags don't follow
+        // the expected ordering will simply turn up no related images rather
+        // than erroring.
         function getRelatedImages(img) {
             const nameTag = getNameTag(img);
             if (!nameTag) return [];
-            return Array.from(document.querySelectorAll('.image-card img')).filter(other => {
-                if (other === img) return false;
+            const matches = Array.from(document.querySelectorAll('.image-card img')).filter(other => {
                 const tags = (other.closest('.image-card').dataset.tags || '').toLowerCase().split(/\s+/);
                 return tags.includes(nameTag);
             });
+            // Explicit index tie-break keeps entries sharing a stage (or
+            // both lacking one) in their original gallery order, rather
+            // than relying on sort() being stable.
+            return matches
+                .map((el, index) => ({ el, index, rank: getStageRank(el) }))
+                .sort((a, b) => a.rank - b.rank || a.index - b.index)
+                .map(x => x.el);
         }
 
         function renderRelatedImages(img) {
@@ -2007,10 +2129,16 @@
                 viewerRelatedGrid.appendChild(empty);
                 return;
             }
+            let activeThumb = null;
             related.forEach(relImg => {
                 const thumb = document.createElement('img');
                 thumb.src = relImg.src;
                 thumb.alt = relImg.alt;
+                thumb.draggable = false; // avoid native drag-ghost fighting with the click-and-drag panning below
+                if (relImg === img) {
+                    thumb.classList.add('related-active', 'gallery-pulse');
+                    activeThumb = thumb;
+                }
                 thumb.addEventListener('click', (e) => {
                     // Stops here rather than relying on a closest() check
                     // in the overlay's click-outside-closes listener: this
@@ -2024,16 +2152,125 @@
                 });
                 viewerRelatedGrid.appendChild(thumb);
             });
+
+            // Keeps the active thumbnail in view within the row's own
+            // horizontal scroll whenever selection changes — including via
+            // the prev/next buttons, since those funnel through
+            // openImageViewer -> renderRelatedImages same as everything
+            // else. 'nearest' on the block axis avoids nudging the page's
+            // own vertical scroll, which is handled separately.
+            if (activeThumb) {
+                activeThumb.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            }
         }
 
-        let relatedExpanded = false;
+        // Mouse wheels only scroll vertically by default, which does
+        // nothing useful on a row that only overflows horizontally — this
+        // redirects that same vertical input (or a trackpad's horizontal
+        // delta, whichever is nonzero) into scrollLeft instead. Only
+        // hijacks the wheel when there's actually overflow to scroll
+        // through, so it doesn't swallow page scrolling once the row fits
+        // entirely within the section.
+        viewerRelatedGrid.addEventListener('wheel', (e) => {
+            if (viewerRelatedGrid.scrollWidth <= viewerRelatedGrid.clientWidth) return;
+            e.preventDefault();
+            viewerRelatedGrid.scrollLeft += (e.deltaY !== 0 ? e.deltaY : e.deltaX);
+        }, { passive: false });
 
-        function setRelatedExpanded(expanded) {
-            relatedExpanded = expanded;
-            imageOverlay.classList.toggle('related-expanded', expanded);
-            document.body.classList.toggle('related-expanded', expanded);
-            viewerRelatedToggle.setAttribute('aria-expanded', String(expanded));
-            viewerRelatedToggle.textContent = expanded ? '▾ Evolution Chain' : '▸ Evolution Chain';
+        // Click-and-drag panning, mouse/pen only — touch is skipped
+        // entirely so the browser's own native touch-scroll (already
+        // enabled by overflow-x: auto) handles that case instead; running
+        // both at once would have them fighting over the same gesture.
+        let relatedDragActive = false;
+        let relatedDragMoved = false;
+        let relatedDragStartX = 0;
+        let relatedDragStartScrollLeft = 0;
+        let relatedDragPointerId = null;
+
+        viewerRelatedGrid.addEventListener('pointerdown', (e) => {
+            if (e.pointerType === 'touch') return;
+            relatedDragActive = true;
+            relatedDragMoved = false;
+            relatedDragStartX = e.clientX;
+            relatedDragStartScrollLeft = viewerRelatedGrid.scrollLeft;
+            relatedDragPointerId = e.pointerId;
+            // Capture is NOT taken here — see pointermove below for why.
+        });
+
+        viewerRelatedGrid.addEventListener('pointermove', (e) => {
+            if (!relatedDragActive) return;
+            const dx = e.clientX - relatedDragStartX;
+            // Small threshold before counting this as a real drag, so an
+            // ordinary click (which always jitters the pointer a pixel or
+            // two) doesn't get mistaken for one and lose its click below.
+            if (!relatedDragMoved && Math.abs(dx) > 3) {
+                relatedDragMoved = true;
+                viewerRelatedGrid.classList.add('dragging');
+                // Only capture once we know this is a genuine drag, not on
+                // every pointerdown. In Chromium (Edge included),
+                // setPointerCapture also redirects the eventual synthesized
+                // click event's target to the capturing element — capturing
+                // on every press meant even a plain click on a thumbnail
+                // was retargeted to this container instead of the <img>,
+                // so the thumbnail's own click listener never ran and the
+                // click bubbled untouched to the overlay's
+                // click-outside-closes handler, closing the whole panel.
+                viewerRelatedGrid.setPointerCapture(relatedDragPointerId);
+            }
+            if (relatedDragMoved) {
+                viewerRelatedGrid.scrollLeft = relatedDragStartScrollLeft - dx;
+            }
+        });
+
+        function endRelatedDrag(e) {
+            relatedDragActive = false;
+            viewerRelatedGrid.classList.remove('dragging');
+            if (relatedDragMoved && viewerRelatedGrid.hasPointerCapture?.(relatedDragPointerId)) {
+                viewerRelatedGrid.releasePointerCapture(relatedDragPointerId);
+            }
+        }
+        viewerRelatedGrid.addEventListener('pointerup', endRelatedDrag);
+        viewerRelatedGrid.addEventListener('pointercancel', endRelatedDrag);
+        viewerRelatedGrid.addEventListener('pointerleave', endRelatedDrag);
+
+        // A drag release still fires a click on whatever thumbnail is
+        // under the pointer — without this, dragging the row would also
+        // randomly open whatever image you happened to let go over.
+        // Capture phase so this runs before each thumbnail's own click
+        // listener (added in renderRelatedImages above).
+        viewerRelatedGrid.addEventListener('click', (e) => {
+            if (relatedDragMoved) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+                relatedDragMoved = false;
+            }
+        }, true);
+
+        // Tracks which of the two collapsible sections (if either) is open
+        // — null, 'info', or 'related'. Only one is ever expanded at once,
+        // on both mobile and desktop, since they share the same panel-
+        // growth CSS (#image-overlay.info-expanded / .related-expanded)
+        // and there isn't room to show both meaningfully at the same time.
+        let expandedPanel = null;
+
+        function setExpandedPanel(panel) {
+            // Clicking the toggle for whichever section is already open
+            // closes it; clicking the other one's toggle switches straight
+            // to it (no need to close-then-reopen as two separate clicks).
+            expandedPanel = (expandedPanel === panel) ? null : panel;
+
+            const infoOpen = expandedPanel === 'info';
+            const relatedOpen = expandedPanel === 'related';
+
+            imageOverlay.classList.toggle('info-expanded', infoOpen);
+            imageOverlay.classList.toggle('related-expanded', relatedOpen);
+            document.body.classList.toggle('info-expanded', infoOpen);
+            document.body.classList.toggle('related-expanded', relatedOpen);
+
+            viewerInfoToggle.setAttribute('aria-expanded', String(infoOpen));
+            viewerInfoToggle.textContent = infoOpen ? '▾ General Information' : '▸ General Information';
+            viewerRelatedToggle.setAttribute('aria-expanded', String(relatedOpen));
+            viewerRelatedToggle.textContent = relatedOpen ? '▾ Evolution Chain' : '▸ Evolution Chain';
 
             // Reuses the same brief transition-enabling window as open/close
             // so the gallery's reserved space grows/shrinks smoothly instead
@@ -2045,9 +2282,14 @@
             }
         }
 
+        viewerInfoToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setExpandedPanel('info');
+        });
+
         viewerRelatedToggle.addEventListener('click', (e) => {
             e.stopPropagation();
-            setRelatedExpanded(!relatedExpanded);
+            setExpandedPanel('related');
         });
 
         function openImageViewer(galleryImg) {
@@ -2105,9 +2347,11 @@
             beginPanelAnim();
             document.body.classList.remove('viewer-open');
 
-            relatedExpanded = false;
-            imageOverlay.classList.remove('related-expanded');
-            document.body.classList.remove('related-expanded');
+            expandedPanel = null;
+            imageOverlay.classList.remove('related-expanded', 'info-expanded');
+            document.body.classList.remove('related-expanded', 'info-expanded');
+            viewerInfoToggle.setAttribute('aria-expanded', 'false');
+            viewerInfoToggle.textContent = '▸ General Information';
             viewerRelatedToggle.setAttribute('aria-expanded', 'false');
             viewerRelatedToggle.textContent = '▸ Evolution Chain';
 
@@ -2138,12 +2382,17 @@
             openImageViewer(visible[nextIndex]);
         }
 
-        imageOverlay.addEventListener('click', (e) => {
-            if (e.target !== overlayImg && e.target !== imageCloseBtn
-                && e.target !== imagePrevBtn && e.target !== imageNextBtn) {
-                closeImageViewer();
-            }
-        });
+        // Closing on an "outside" click is handled entirely by the
+        // gallery's own listener below (empty gallery background = click
+        // outside the panel). There used to also be a listener here on
+        // #image-overlay itself, closing on any click that wasn't
+        // specifically the image or nav/close buttons — but since the
+        // panel now has real interactive sections of its own (toggle row,
+        // General Information, Evolution Chain), that caught clicks on
+        // their empty background too, closing the whole viewer when
+        // clicking blank space *inside* the panel rather than outside it.
+        // Removed rather than special-cased further, since closing on
+        // outside-click was never meant to reach inside the panel at all.
 
         imageCloseBtn.addEventListener('click', closeImageViewer);
 
