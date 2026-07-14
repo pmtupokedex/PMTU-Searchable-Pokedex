@@ -440,6 +440,7 @@
         }
 
         .image-card {
+            position: relative; /* positioning context for .hit-zone below */
             width: 100%;
             background: transparent;
             display: none;
@@ -447,11 +448,37 @@
         }
         .image-card.show { display: block; }
 
+        /* Defines the actual clickable area as a circle matching the
+           visible artwork, rather than the <img>'s full square box (whose
+           corners are transparent PNG, not empty space the browser
+           otherwise knows to ignore for clicks). Kept as its own element
+           rather than clip-path on the <img> itself, since clip-path
+           applies after filter effects — clipping the image directly would
+           also chop off its drop-shadow's few px of bleed past the circle,
+           flattening it at the clip edge instead of letting it fade
+           naturally. This overlay has no visual content of its own, so
+           clipping it has no such side effect. Sits on top of the image in
+           paint order (later in the DOM); clicks inside the circle land
+           here, clicks in the corners fall through to the image beneath,
+           which no longer has its own click handler (see attachImageEvents).
+           Hover-triggered zoom is unaffected either way, since that's
+           keyed off the whole card's box, not this overlay. */
+        .image-card .hit-zone {
+            position: absolute;
+            inset: 0;
+            clip-path: circle(50%);
+            cursor: pointer;
+        }
+
         .image-card img {
             width: 100%;
             aspect-ratio: 1 / 1;
             object-fit: contain;
-            cursor: pointer;
+            /* No cursor:pointer here — the .hit-zone overlay above owns
+               that now, and only across the circle it's actually clipped
+               to. Setting it here too would show a pointer cursor across
+               the whole square, including the corners that no longer do
+               anything on click. */
             filter:
                 drop-shadow(3px 3px 4px rgba(0,0,0,0.55));
             /* Forces its own stable compositing layer. Without this, a
@@ -466,7 +493,11 @@
             transform: translateZ(0);
         }
 	  
-	  .image-card:hover {
+	  /* :has() lets hovering the hit-zone (the actual circle) drive the
+	     zoom on the whole card, rather than triggering off the card's full
+	     square box like before — keeps hover consistent with the click
+	     area now that both are clipped to the same circle. */
+	  .image-card:has(.hit-zone:hover) {
             transform: scale(1.1);
         }
 
@@ -1638,7 +1669,11 @@
                     img.src = p.src;
                     img.alt = p.name;
 
+                    const hitZone = document.createElement("div");
+                    hitZone.className = "hit-zone";
+
                     card.appendChild(img);
+                    card.appendChild(hitZone);
                     gallery.appendChild(card);
                 });
 
@@ -1647,14 +1682,22 @@
             });
 
         function attachImageEvents() {
-            document.querySelectorAll('.image-card img').forEach(img => {
-                img.addEventListener('click', () => {
+            document.querySelectorAll('.image-card').forEach(card => {
+                const img = card.querySelector('img');
+                const hitZone = card.querySelector('.hit-zone');
+                hitZone.addEventListener('click', () => {
                     if (img.classList.contains('active-in-viewer')) {
                         closeImageViewer();
                     } else {
                         openImageViewer(img);
                     }
                 });
+                // A click landing directly on the image itself (rather than
+                // the hit-zone on top of it) only happens in the square's
+                // transparent corners, since the hit-zone covers the circle
+                // and intercepts anything within it first. Treated the same
+                // as clicking any other empty space in the gallery.
+                img.addEventListener('click', () => closeImageViewer());
             });
         }
 
@@ -2410,6 +2453,22 @@
         // the magnify panel if it's open.
         gallery.addEventListener('click', (e) => {
             if (e.target === gallery) closeImageViewer();
+        });
+
+        // The listener above only ever fires for clicks landing inside
+        // gallery's own box — but the reflow math that reserves space for
+        // the docked panel (body's padding-left on desktop, padding-top on
+        // mobile) is a separate calc() expression from the panel's own
+        // width/height formula. The two are meant to match exactly, but
+        // being resolved independently they can drift by a pixel or two,
+        // leaving a thin seam where neither the panel nor the gallery
+        // actually covers — body's own background shows through there
+        // instead, and a click on it never reaches the gallery listener
+        // since gallery isn't an ancestor of body. Catching a direct click
+        // on body itself closes the panel from that seam too, without
+        // needing to chase down and eliminate every such rounding gap.
+        document.body.addEventListener('click', (e) => {
+            if (e.target === document.body) closeImageViewer();
         });
 
         document.querySelectorAll('.filter-section-header').forEach(header => {
