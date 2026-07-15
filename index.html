@@ -741,6 +741,92 @@
             overflow-y: auto;
         }
 
+        .poke-info-loading,
+        .poke-info-unavailable {
+            color: rgba(255,255,255,0.6);
+            font-style: italic;
+        }
+
+        .poke-info-header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            margin-bottom: 2px;
+        }
+
+        .poke-info-name {
+            font-size: 17px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .poke-info-dex {
+            font-size: 13px;
+            color: rgba(255,255,255,0.5);
+        }
+
+        .poke-info-genus {
+            font-size: 13px;
+            font-style: italic;
+            color: rgba(255,255,255,0.6);
+            margin-bottom: 10px;
+        }
+
+        .poke-info-row {
+            margin: 6px 0;
+            line-height: 1.5;
+        }
+
+        .poke-info-label {
+            display: inline-block;
+            min-width: 70px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.55);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            margin-right: 6px;
+        }
+
+        .poke-type-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 1px 1px rgba(0,0,0,0.3);
+            margin-right: 4px;
+            background: #777;
+        }
+
+        .poke-info-flavor {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid rgba(255,255,255,0.15);
+            line-height: 1.5;
+            color: rgba(255,255,255,0.8);
+        }
+
+        .poke-type-normal   { background: #A8A878; }
+        .poke-type-fire     { background: #F08030; }
+        .poke-type-water    { background: #6890F0; }
+        .poke-type-electric { background: #F8D030; color: #333; text-shadow: none; }
+        .poke-type-grass    { background: #78C850; }
+        .poke-type-ice      { background: #98D8D8; color: #333; text-shadow: none; }
+        .poke-type-fighting { background: #C03028; }
+        .poke-type-poison   { background: #A040A0; }
+        .poke-type-ground   { background: #E0C068; color: #333; text-shadow: none; }
+        .poke-type-flying   { background: #A890F0; }
+        .poke-type-psychic  { background: #F85888; }
+        .poke-type-bug      { background: #A8B820; }
+        .poke-type-rock     { background: #B8A038; }
+        .poke-type-ghost    { background: #705898; }
+        .poke-type-dragon   { background: #7038F8; }
+        .poke-type-dark     { background: #705848; }
+        .poke-type-steel    { background: #B8B8D0; color: #333; text-shadow: none; }
+        .poke-type-fairy    { background: #EE99AC; color: #333; text-shadow: none; }
+
         #viewer-related-wrapper {
             display: grid;
             grid-template-rows: 0fr;
@@ -1333,7 +1419,7 @@
         </div>
         <div id="viewer-info-wrapper">
             <div id="viewer-info-inner">
-                <div id="viewer-info-content">Placeholder text — general information about this Pokémon will go here.</div>
+                <div id="viewer-info-content">Select a Pokémon to view its Pokédex information.</div>
             </div>
         </div>
         <div id="viewer-related-wrapper">
@@ -1532,6 +1618,15 @@
         // on.
         let sectionAndFilters = { types: [], evolution: [], abilities: [], other: [] };
 
+        // Generation gets its own dedicated bucket rather than sharing the
+        // flat includeFilters pool with Regional/Color: several selected
+        // generations should OR together (any one of them is enough), but
+        // that result needs to AND against everything else (types,
+        // evolution stage, etc.) — the shared pool can't express that,
+        // since anything dropped in there ORs against every OTHER thing in
+        // the same pool too, regardless of which section it came from.
+        let generationOrFilters = [];
+
         const gallery = document.getElementById("gallery");
         const panel = document.getElementById('filter-panel');
         const overlay = document.getElementById('overlay');
@@ -1690,6 +1785,10 @@
                     img.loading = "lazy";
                     img.src = p.src;
                     img.alt = p.name;
+                    // First tag is always the National Dex number (e.g. "025"),
+                    // or a non-numeric marker ("???", "PS1"...) for entries with
+                    // no official Pokédex data — used by the info panel below.
+                    img.dataset.dex = p.tags[0] || '';
 
                     const hitZone = document.createElement("div");
                     hitZone.className = "hit-zone";
@@ -1735,9 +1834,45 @@
         }
 
 
+        // Most tags typed into the search box have no corresponding button
+        // anywhere — this only matters for the ones that do. Returns the
+        // section key (a key of TOGGLEABLE_SECTIONS) whose button list
+        // contains a matching tag, or null if there's no button for it (or
+        // its only button lives in a non-toggleable section, e.g.
+        // regional/generation/color — those stay permanently OR regardless,
+        // same as clicking their buttons already does).
+        function findToggleableSectionForTag(tag) {
+            for (const key of Object.keys(TOGGLEABLE_SECTIONS)) {
+                const sectionEl = document.getElementById(TOGGLEABLE_SECTIONS[key]);
+                if (!sectionEl) continue;
+                const hasTag = Array.from(sectionEl.querySelectorAll('.filter-btn[data-tag]'))
+                    .some(btn => btn.dataset.tag.toLowerCase() === tag);
+                if (hasTag) return key;
+            }
+            return null;
+        }
+
+        // Same idea as findToggleableSectionForTag, but for the one
+        // non-toggleable section that still needs special handling here:
+        // Generation isn't in TOGGLEABLE_SECTIONS at all (no Match: All/Any
+        // toggle exists for it), but it does have its own always-on
+        // OR-within/AND-without behavior — see generationOrFilters above —
+        // that a typed generation tag should follow too, same as clicking
+        // the button would.
+        function isGenerationTag(tag) {
+            const sectionEl = document.getElementById('generation-section');
+            if (!sectionEl) return false;
+            return Array.from(sectionEl.querySelectorAll('.filter-btn[data-tag]'))
+                .some(btn => btn.dataset.tag.toLowerCase() === tag);
+        }
+
         function parseSearchFilters() {
             includeFilters = includeFilters.filter(f => !f.startsWith("search:"));
             excludeFilters = excludeFilters.filter(f => !f.startsWith("search:"));
+            generationOrFilters = generationOrFilters.filter(f => !f.startsWith("search:"));
+            Object.keys(sectionAndFilters).forEach(key => {
+                sectionAndFilters[key] = sectionAndFilters[key].filter(f => !f.startsWith("search:"));
+            });
 
             const input = document.getElementById('tag-search').value.trim().toLowerCase();
             if (!input) return;
@@ -1745,9 +1880,25 @@
             const parts = input.split(/\s+/);
             parts.forEach(tag => {
                 if (tag.startsWith("-")) {
+                    // Excludes stay a flat OR-of-exclusions regardless of
+                    // section — there's no AND/OR toggle for excludes
+                    // anywhere in the app, buttons included, so a typed
+                    // exclude shouldn't behave differently from those.
                     excludeFilters.push("search:" + tag.substring(1));
+                } else if (isGenerationTag(tag)) {
+                    generationOrFilters.push("search:" + tag);
                 } else {
-                    includeFilters.push("search:" + tag);
+                    // If this tag has a button in one of the AND/OR-
+                    // toggleable sections and that section is currently set
+                    // to "Match: All", fold it in alongside that section's
+                    // button selections so it's required together with them
+                    // (AND) instead of landing in the general OR pool below.
+                    const sectionKey = findToggleableSectionForTag(tag);
+                    if (sectionKey && sectionMatchAll[sectionKey]) {
+                        sectionAndFilters[sectionKey].push("search:" + tag);
+                    } else {
+                        includeFilters.push("search:" + tag);
+                    }
                 }
             });
         }
@@ -1756,9 +1907,14 @@
             includeFilters = [];
             excludeFilters = [];
             sectionAndFilters = { types: [], evolution: [], abilities: [], other: [] };
+            generationOrFilters = [];
 
             document.querySelectorAll('.filter-btn.include[data-tag]').forEach(btn => {
                 const tag = btn.dataset.tag.toLowerCase();
+                if (btn.closest('#generation-section')) {
+                    generationOrFilters.push(tag);
+                    return;
+                }
                 const sectionKey = Object.keys(TOGGLEABLE_SECTIONS).find(
                     key => btn.closest('#' + TOGGLEABLE_SECTIONS[key]) !== null
                 );
@@ -1784,11 +1940,14 @@
                     includeFilters.length === 0 ||
                     includeFilters.some(f => tags.includes(f.replace("search:", "")));
                 const sectionAndMatch = Object.values(sectionAndFilters).every(
-                    list => list.length === 0 || list.every(f => tags.includes(f))
+                    list => list.length === 0 || list.every(f => tags.includes(f.replace("search:", "")))
                 );
+                const generationMatch =
+                    generationOrFilters.length === 0 ||
+                    generationOrFilters.some(f => tags.includes(f.replace("search:", "")));
                 const excludeMatch =
                     excludeFilters.some(f => tags.includes(f.replace("search:", "")));
-                card.classList.toggle('show', includeMatch && sectionAndMatch && !excludeMatch);
+                card.classList.toggle('show', includeMatch && sectionAndMatch && generationMatch && !excludeMatch);
             });
         }
 
@@ -1806,13 +1965,19 @@
         });
 
         function resetFilters() {
-            includeFilters = [];
-            excludeFilters = [];
+            // Routed through updateFilters (which rebuilds every state
+            // array from scratch off whatever's currently selected) rather
+            // than resetting includeFilters/excludeFilters by hand — hand-
+            // resetting only those two was already missing sectionAndFilters
+            // before generationOrFilters even existed, so a "Clear All
+            // Filters" click could still leave an AND-group's old
+            // selections silently affecting results even with every button
+            // visibly deselected.
             document.getElementById('tag-search').value = "";
             document.querySelectorAll('.filter-btn[data-tag]').forEach(btn =>
                 btn.classList.remove('include', 'exclude')
             );
-            filterGallery();
+            updateFilters();
         }
 
         function resetGeneration() {
@@ -2052,6 +2217,7 @@
         const viewerInfoToggle = document.getElementById('viewer-info-toggle');
         const viewerRelatedToggle = document.getElementById('viewer-related-toggle');
         const viewerRelatedGrid = document.getElementById('viewer-related-grid');
+        const viewerInfoContent = document.getElementById('viewer-info-content');
 
         let activeGalleryImg = null;
 
@@ -2211,6 +2377,236 @@
                 .map((el, index) => ({ el, index, rank: getStageRank(el) }))
                 .sort((a, b) => a.rank - b.rank || a.index - b.index)
                 .map(x => x.el);
+        }
+
+        // ---- PokeAPI-powered "General Information" panel ----------------
+        //
+        // Each gallery image carries its National Dex number in
+        // img.dataset.dex (set at card-creation time above). That number is
+        // enough to reliably pull species-level data (Pokédex flavor text,
+        // genus) straight from PokeAPI. Form-specific data (height, weight,
+        // types, abilities) needs the right *slug* though — e.g. "Mega
+        // Charizard X" is "charizard-mega-x", "Alolan Vulpix" is
+        // "vulpix-alola" — so buildSlugCandidates() guesses a handful of
+        // likely slugs from the display name and they're tried in order,
+        // falling back to the base species entry if none of them exist.
+        //
+        // Results are cached per Pokémon name so flipping back and forth
+        // (prev/next, evolution-chain thumbnails) never re-fetches.
+
+        const pokeInfoCache = new Map(); // name -> rendered HTML string
+        let pokeInfoRequestToken = 0;    // guards against slow fetches finishing out of order
+
+        const POKEAPI_SLUG_OVERRIDES = {
+            "farfetch'd": "farfetchd",
+            "galarian farfetch'd": "farfetchd-galar",
+            "mr. mime": "mr-mime",
+            "galarian mr. mime": "mr-mime-galar",
+            "mime jr.": "mime-jr",
+            "paldean tauros - combat": "tauros-paldea-combat-breed",
+            "paldean tauros - blaze": "tauros-paldea-blaze-breed",
+            "paldean tauros - aqua": "tauros-paldea-aqua-breed",
+        };
+
+        const POKEAPI_REGION_PREFIXES = {
+            'alolan': 'alola',
+            'galarian': 'galar',
+            'hisuian': 'hisui',
+            'paldean': 'paldea',
+        };
+
+        function slugify(str) {
+            return str
+                .toLowerCase()
+                .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // strip accents (Flabébé, etc.)
+                .replace(/['.]/g, '')
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '');
+        }
+
+        // Returns an ordered list of slugs worth trying against
+        // /api/v2/pokemon/{slug}, most-likely-correct first.
+        function buildSlugCandidates(rawName) {
+            const candidates = [];
+            const add = (s) => { if (s && !candidates.includes(s)) candidates.push(s); };
+
+            const lower = rawName.trim().toLowerCase();
+            if (POKEAPI_SLUG_OVERRIDES[lower]) add(POKEAPI_SLUG_OVERRIDES[lower]);
+
+            // Strip a leading parenthetical note like "(Shiny) ".
+            let working = rawName.replace(/^\([^)]*\)\s*/, '').trim();
+
+            // Trailing parenthetical, e.g. "Ogerpon (Wellspring Mask)",
+            // "Giratina (Origin Forme)".
+            let base = working;
+            let parenSuffix = null;
+            const parenMatch = working.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+            if (parenMatch) {
+                base = parenMatch[1].trim();
+                parenSuffix = parenMatch[2].trim();
+            }
+
+            // Dash-separated form, e.g. "Paldean Tauros - Combat".
+            let dashSuffix = null;
+            const dashMatch = base.match(/^(.*?)\s+-\s+(.+)$/);
+            if (dashMatch) {
+                base = dashMatch[1].trim();
+                dashSuffix = dashMatch[2].trim();
+            }
+
+            // Regional-form prefix, e.g. "Alolan Vulpix".
+            let region = null;
+            let core = base;
+            for (const prefix in POKEAPI_REGION_PREFIXES) {
+                const re = new RegExp('^' + prefix + '\\s+', 'i');
+                if (re.test(core)) {
+                    region = POKEAPI_REGION_PREFIXES[prefix];
+                    core = core.replace(re, '').trim();
+                    break;
+                }
+            }
+
+            // Mega / Mega X / Mega Y, e.g. "Mega Charizard X".
+            let megaSuffix = null;
+            if (/^mega\s+/i.test(core)) {
+                let rest = core.replace(/^mega\s+/i, '').trim();
+                const xyMatch = rest.match(/^(.*)\s+([XY])$/);
+                if (xyMatch) {
+                    core = xyMatch[1].trim();
+                    megaSuffix = 'mega-' + xyMatch[2].toLowerCase();
+                } else {
+                    core = rest;
+                    megaSuffix = 'mega';
+                }
+            }
+
+            // Gigantamax, e.g. "G-Max Charizard".
+            let isGmax = false;
+            if (/^g-?max\s+/i.test(core)) {
+                core = core.replace(/^g-?max\s+/i, '').trim();
+                isGmax = true;
+            }
+
+            const coreSlug = slugify(core);
+            if (megaSuffix) add(coreSlug + '-' + megaSuffix);
+            if (isGmax) add(coreSlug + '-gmax');
+            if (region) add(coreSlug + '-' + region);
+            if (parenSuffix) add(coreSlug + '-' + slugify(parenSuffix));
+            if (dashSuffix) add(coreSlug + '-' + slugify(dashSuffix));
+            add(coreSlug);
+            add(slugify(rawName)); // last-resort literal slugify of the whole name
+
+            return candidates;
+        }
+
+        async function tryFetchJson(url) {
+            try {
+                const res = await fetch(url);
+                if (!res.ok) return null;
+                return await res.json();
+            } catch (err) {
+                return null;
+            }
+        }
+
+        function capitalize(str) {
+            return str.charAt(0).toUpperCase() + str.slice(1);
+        }
+
+        function escapeHtml(str) {
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
+        }
+
+        async function buildPokemonInfoHTML(name, dexRaw) {
+            const dex = /^\d+$/.test(dexRaw) ? parseInt(dexRaw, 10) : null;
+
+            // "???" (MissingNo) and "PS#" (Pokéstar Studios) entries aren't
+            // real Pokédex numbers — nothing to look up.
+            if (dex === null) {
+                return `<div class="poke-info-unavailable"><strong>${escapeHtml(name)}</strong><br>`
+                    + `This entry isn't part of the official Pokédex, so live data isn't available.</div>`;
+            }
+
+            const slugCandidates = buildSlugCandidates(name);
+            let pokemonData = null;
+            for (const slug of slugCandidates) {
+                pokemonData = await tryFetchJson(`https://pokeapi.co/api/v2/pokemon/${slug}`);
+                if (pokemonData) break;
+            }
+            // Fall back to the base/default form for that Dex number if none
+            // of the guessed form slugs exist.
+            if (!pokemonData) {
+                pokemonData = await tryFetchJson(`https://pokeapi.co/api/v2/pokemon/${dex}`);
+            }
+
+            const speciesData = await tryFetchJson(`https://pokeapi.co/api/v2/pokemon-species/${dex}`);
+
+            if (!pokemonData && !speciesData) {
+                return `<div class="poke-info-unavailable"><strong>${escapeHtml(name)}</strong><br>`
+                    + `Couldn't load Pokédex data right now — check your connection and try again.</div>`;
+            }
+
+            let genus = '';
+            let flavorText = '';
+            if (speciesData) {
+                const genusEntry = (speciesData.genera || []).find(g => g.language.name === 'en');
+                genus = genusEntry ? genusEntry.genus : '';
+                // Flavor text entries are listed oldest-game-first; take the
+                // most recent English one so obsolete/duplicate wording from
+                // older games doesn't win.
+                const englishEntries = (speciesData.flavor_text_entries || []).filter(f => f.language.name === 'en');
+                const flavorEntry = englishEntries[englishEntries.length - 1];
+                flavorText = flavorEntry ? flavorEntry.flavor_text.replace(/[\n\f\u000c]/g, ' ') : '';
+            }
+
+            let typesHtml = '', heightStr = '', weightStr = '', abilitiesStr = '';
+            if (pokemonData) {
+                typesHtml = pokemonData.types
+                    .map(t => `<span class="poke-type-badge poke-type-${t.type.name}">${capitalize(t.type.name)}</span>`)
+                    .join(' ');
+                heightStr = (pokemonData.height / 10).toFixed(1) + ' m';
+                weightStr = (pokemonData.weight / 10).toFixed(1) + ' kg';
+                abilitiesStr = pokemonData.abilities
+                    .map(a => capitalize(a.ability.name.replace(/-/g, ' ')) + (a.is_hidden ? ' (Hidden)' : ''))
+                    .join(', ');
+            }
+
+            return `
+                <div class="poke-info-header">
+                    <span class="poke-info-name">${escapeHtml(name)}</span>
+                    <span class="poke-info-dex">#${String(dex).padStart(3, '0')}</span>
+                </div>
+                ${genus ? `<div class="poke-info-genus">${escapeHtml(genus)}</div>` : ''}
+                ${typesHtml ? `<div class="poke-info-row"><span class="poke-info-label">Type</span>${typesHtml}</div>` : ''}
+                ${heightStr ? `<div class="poke-info-row"><span class="poke-info-label">Height</span>${heightStr}</div>` : ''}
+                ${weightStr ? `<div class="poke-info-row"><span class="poke-info-label">Weight</span>${weightStr}</div>` : ''}
+                ${abilitiesStr ? `<div class="poke-info-row"><span class="poke-info-label">Abilities</span>${abilitiesStr}</div>` : ''}
+                ${flavorText ? `<div class="poke-info-flavor">${escapeHtml(flavorText)}</div>` : ''}
+            `;
+        }
+
+        async function loadPokemonInfo(galleryImg) {
+            const name = galleryImg.alt;
+            const dexRaw = galleryImg.dataset.dex || '';
+            const token = ++pokeInfoRequestToken;
+
+            if (pokeInfoCache.has(name)) {
+                viewerInfoContent.innerHTML = pokeInfoCache.get(name);
+                return;
+            }
+
+            viewerInfoContent.innerHTML = '<div class="poke-info-loading">Loading Pokédex data…</div>';
+
+            const html = await buildPokemonInfoHTML(name, dexRaw);
+            pokeInfoCache.set(name, html);
+
+            // If the user has since opened a different Pokémon, don't let
+            // this slower/older fetch clobber what's now showing.
+            if (token === pokeInfoRequestToken) {
+                viewerInfoContent.innerHTML = html;
+            }
         }
 
         function renderRelatedImages(img) {
@@ -2403,6 +2799,7 @@
 
             closeFilterPanel();
             renderRelatedImages(galleryImg);
+            loadPokemonInfo(galleryImg);
 
             if (alreadyOpen) {
                 // Panel's already open, just switching images — nothing is
