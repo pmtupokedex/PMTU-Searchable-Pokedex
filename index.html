@@ -128,7 +128,18 @@
         }
 
         #loading-splash-img {
-            width: 40vw;
+            /* 40vw scales the image with viewport width, which is exactly
+               what we want up through a 16:9 aspect ratio — but on an
+               ultrawide monitor, vw keeps growing relative to vh well past
+               that point, over-scaling the image until it starts bleeding
+               off the top/bottom of the screen. calc(40vh * 16 / 9) is
+               "what 40vw would equal at exactly 16:9" expressed in vh
+               instead — since vh doesn't grow with extra width, it acts as
+               a hard ceiling once the viewport gets wider than 16:9,
+               without changing anything for mobile through 16:9 (where
+               40vw is always the smaller of the two already, so min()
+               picks it unchanged). */
+            width: min(40vw, calc(40vh * 16 / 9));
             min-width: 50vh;
             opacity: 0;
             transition: opacity 0.5s ease;
@@ -474,6 +485,17 @@
             width: 100%;
             aspect-ratio: 1 / 1;
             object-fit: contain;
+            /* Without this, an <img> defaults to inline and gets
+               vertical-align: baseline, which reserves a few px of
+               "descender" space below it as if it sat on a line of text —
+               leaving .image-card's own auto height very slightly taller
+               than the image itself. That sliver is .image-card's bare
+               background showing through along the bottom edge: not
+               covered by the image, not covered by .hit-zone (which is
+               sized to match .image-card, not the gap), and .image-card
+               itself has no click handling of its own — a real dead zone,
+               not just a rounding artifact. */
+            display: block;
             /* No cursor:pointer here — the .hit-zone overlay above owns
                that now, and only across the circle it's actually clipped
                to. Setting it here too would show a pointer cursor across
@@ -1697,7 +1719,18 @@
                 // transparent corners, since the hit-zone covers the circle
                 // and intercepts anything within it first. Treated the same
                 // as clicking any other empty space in the gallery.
-                img.addEventListener('click', () => closeImageViewer());
+                img.addEventListener('click', () => closeOpenPanels());
+                // Defensive catch-all: a click landing on .image-card's own
+                // background (neither the image nor the hit-zone) shouldn't
+                // be possible now that display:block above removes the
+                // known baseline-gap cause, but sub-pixel layout rounding
+                // between a parent and child box that are meant to match
+                // exactly can still occasionally leave a stray edge pixel
+                // uncovered in some browsers/zoom levels. Same treatment as
+                // any other empty space either way.
+                card.addEventListener('click', (e) => {
+                    if (e.target === card) closeOpenPanels();
+                });
             });
         }
 
@@ -1915,6 +1948,24 @@
         // full-screen mobile sheet to a desktop sidebar that shares space
         // with the gallery instead of covering it.
         const desktopFilterQuery = window.matchMedia('(min-width: 900px)');
+
+        // On mobile, the filter panel is a full-screen sheet, so once the
+        // on-screen keyboard is up there's no visible gallery left to tap
+        // for the usual "click empty space closes it" behavior — the
+        // keyboard's own Done/Go/checkmark key (whatever a given phone
+        // labels it) is really the only way back. That key always reaches
+        // the page as a standard Enter keydown regardless of its on-screen
+        // label, so listening for Enter here is the portable way to catch
+        // it. Scoped to mobile only — on desktop, Enter in a search box is
+        // just a regular keystroke, and closing the whole sidebar because
+        // of it would be surprising rather than helpful there.
+        const tagSearchInput = document.getElementById('tag-search');
+        tagSearchInput.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' || desktopFilterQuery.matches) return;
+            e.preventDefault();
+            tagSearchInput.blur(); // dismiss the keyboard — closing the panel alone doesn't reliably do this on its own
+            closeFilterPanel();
+        });
 
         // Turns on body's padding transition for a short window right when
         // a panel actually opens/closes, then turns it back off — see the
@@ -2449,10 +2500,21 @@
             navigateImage(1);
         });
 
+        // Clicking genuinely empty space — the gallery's own background,
+        // bare body, or the transparent/edge slivers of a gallery image
+        // (see attachImageEvents) — closes whichever of these happens to
+        // be open. Both close functions already no-op safely if their
+        // panel isn't open, so it's fine to call both unconditionally
+        // rather than tracking which one to target.
+        function closeOpenPanels() {
+            closeImageViewer();
+            closeFilterPanel();
+        }
+
         // Clicking empty space in the gallery (not on a card/image) closes
         // the magnify panel if it's open.
         gallery.addEventListener('click', (e) => {
-            if (e.target === gallery) closeImageViewer();
+            if (e.target === gallery) closeOpenPanels();
         });
 
         // The listener above only ever fires for clicks landing inside
@@ -2468,7 +2530,7 @@
         // on body itself closes the panel from that seam too, without
         // needing to chase down and eliminate every such rounding gap.
         document.body.addEventListener('click', (e) => {
-            if (e.target === document.body) closeImageViewer();
+            if (e.target === document.body) closeOpenPanels();
         });
 
         document.querySelectorAll('.filter-section-header').forEach(header => {
