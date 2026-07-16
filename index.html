@@ -756,10 +756,37 @@
             margin-bottom: 2px;
         }
 
+        .poke-info-name-group {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+        }
+
         .poke-info-name {
             font-size: 17px;
             font-weight: bold;
             color: #fff;
+        }
+
+        .poke-info-cry-btn {
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.85);
+            background: rgba(255,255,255,0.12);
+            border: 1px solid rgba(255,255,255,0.25);
+            border-radius: 12px;
+            padding: 2px 10px;
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }
+
+        .poke-info-cry-btn:hover {
+            background: rgba(255,255,255,0.22);
+        }
+
+        .poke-info-cry-btn:active {
+            background: rgba(255,255,255,0.3);
         }
 
         .poke-info-dex {
@@ -2249,6 +2276,18 @@
         const viewerRelatedGrid = document.getElementById('viewer-related-grid');
         const viewerInfoContent = document.getElementById('viewer-info-content');
 
+        // A single reusable <audio> element for Pokémon cries — reused
+        // rather than created per-click so mashing the button restarts the
+        // sound instead of overlapping multiple copies of it.
+        const cryAudio = new Audio();
+        viewerInfoContent.addEventListener('click', (e) => {
+            const btn = e.target.closest('.poke-info-cry-btn');
+            if (!btn || !btn.dataset.cryUrl) return;
+            cryAudio.src = btn.dataset.cryUrl;
+            cryAudio.currentTime = 0;
+            cryAudio.play().catch(() => { /* ignore playback errors (e.g. file missing) */ });
+        });
+
         let activeGalleryImg = null;
 
         const PANEL_TRANSITION_MS = 500; // matches beginPanelAnim's own duration (0.35s base * 1.25, slowed 25%)
@@ -2647,8 +2686,21 @@
             return d.innerHTML;
         }
 
-        async function buildPokemonInfoHTML(name, dexRaw) {
+        // Tags that represent this board game's special "abilities" —
+        // pulled straight from pokemon-data.json instead of PokeAPI, since
+        // this variant's ability list doesn't match the main series games.
+        const ABILITY_TAGS = ['dig', 'fly', 'surf', 'teleport'];
+
+        async function buildPokemonInfoHTML(name, dexRaw, tagsRaw) {
             const dex = /^\d+$/.test(dexRaw) ? parseInt(dexRaw, 10) : null;
+
+            const presentAbilityTags = (tagsRaw || '')
+                .toLowerCase()
+                .split(/\s+/)
+                .filter(t => ABILITY_TAGS.includes(t));
+            const abilitiesStr = presentAbilityTags.length > 0
+                ? presentAbilityTags.map(capitalize).join(', ')
+                : 'No Ability';
 
             // "???" (MissingNo) and "PS#" (Pokéstar Studios) entries aren't
             // real Pokédex numbers — nothing to look up.
@@ -2738,21 +2790,25 @@
                 }
             }
 
-            let typesHtml = '', heightStr = '', weightStr = '', abilitiesStr = '';
+            let typesHtml = '', heightStr = '', weightStr = '', cryUrl = '';
             if (pokemonData) {
                 typesHtml = pokemonData.types
                     .map(t => `<span class="poke-type-badge poke-type-${t.type.name}">${capitalize(t.type.name)}</span>`)
                     .join(' ');
                 heightStr = (pokemonData.height / 10).toFixed(1) + ' m';
                 weightStr = (pokemonData.weight / 10).toFixed(1) + ' kg';
-                abilitiesStr = pokemonData.abilities
-                    .map(a => capitalize(a.ability.name.replace(/-/g, ' ')) + (a.is_hidden ? ' (Hidden)' : ''))
-                    .join(', ');
+                // "latest" is the modern re-recorded cry; "legacy" is the
+                // older Gen 1-5 style one. Prefer latest, fall back to
+                // legacy for the odd entry that's missing one or the other.
+                cryUrl = (pokemonData.cries && (pokemonData.cries.latest || pokemonData.cries.legacy)) || '';
             }
 
             return `
                 <div class="poke-info-header">
-                    <span class="poke-info-name">${escapeHtml(name)}</span>
+                    <span class="poke-info-name-group">
+                        <span class="poke-info-name">${escapeHtml(name)}</span>
+                        ${cryUrl ? `<button class="poke-info-cry-btn" data-cry-url="${escapeHtml(cryUrl)}" title="Play cry">▶ Cry</button>` : ''}
+                    </span>
                     <span class="poke-info-dex">#${String(dex).padStart(3, '0')}</span>
                 </div>
                 ${genus ? `<div class="poke-info-genus">${escapeHtml(genus)}</div>` : ''}
@@ -2767,6 +2823,7 @@
         async function loadPokemonInfo(galleryImg) {
             const name = galleryImg.alt;
             const dexRaw = galleryImg.dataset.dex || '';
+            const tagsRaw = galleryImg.closest('.image-card')?.dataset.tags || '';
             const token = ++pokeInfoRequestToken;
 
             if (pokeInfoCache.has(name)) {
@@ -2776,7 +2833,7 @@
 
             viewerInfoContent.innerHTML = '<div class="poke-info-loading">Loading Pokédex data…</div>';
 
-            const html = await buildPokemonInfoHTML(name, dexRaw);
+            const html = await buildPokemonInfoHTML(name, dexRaw, tagsRaw);
             pokeInfoCache.set(name, html);
 
             // If the user has since opened a different Pokémon, don't let
