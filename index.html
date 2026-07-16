@@ -37,9 +37,10 @@
 
         /* Brief attention pulse, triggered once the scroll that follows an
            open/close settles, to draw the eye to the image's new position.
-           Keeps the translateZ(0) layer-promotion trick from the base
-           .image-card img rule alive throughout so the drop-shadow filter
-           doesn't flicker mid-pulse. */
+           Uses its own translateZ(0) layer-promotion (same trick as the
+           base .image-card img rule) since this now animates the card
+           itself rather than the img, so the img's own promotion doesn't
+           cover it. */
         @keyframes gallery-pulse {
             0%   { transform: translateZ(0) scale(1); }
             35%  { transform: translateZ(0) scale(1.15); }
@@ -47,7 +48,15 @@
             100% { transform: translateZ(0) scale(1); }
         }
 
-        .image-card img.gallery-pulse {
+        /* Lives on the card itself rather than the img, so the whole
+           frame+art unit pulses together instead of just the artwork
+           inside it — same reasoning as .image-card.active-in-viewer
+           further down. Composes fine with the hover-zoom rule despite
+           both ultimately affecting the card's rendered size, since hover
+           uses the standalone `scale` property while this uses `transform`
+           — see the comment on .image-card for why that separation
+           matters. */
+        .image-card.gallery-pulse {
             animation: gallery-pulse 600ms ease-out;
         }
 
@@ -445,8 +454,8 @@
         /* ⭐ Responsive Gallery Grid */
         .gallery-container {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 15%));
-            gap: 15px;
+            grid-template-columns: repeat(auto-fit, minmax(168px, 15%));
+            gap: 6px;
             max-width: 100%;
             margin: 20px auto;
             padding: 0 10px;
@@ -457,11 +466,38 @@
         .image-card {
             position: relative; /* positioning context for .hit-zone below */
             width: 100%;
+            /* Locks the card to a perfect square regardless of the img's
+               own size — needed now that the img is inset within the frame
+               (95.238% of the card, not the full 100% it used to be), since
+               without this the grid would otherwise size each row off the
+               now-shorter img instead of the full card. */
+            aspect-ratio: 1 / 1;
             background: transparent;
+            /* The frame sits behind everything as the card's own
+               background — always paints before any child content, so it
+               needs no z-index or extra element to stay behind the img. */
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/askidb229lcjkk5urfmby/Token-Border.png?rlkey=vfj3kgu9q9jfdzbq4yxvbp8ty&st=yk6ycn4l&dl=1");
+            background-size: 100% 100%;
+            background-repeat: no-repeat;
+            background-position: center;
             display: none;
-		transition: transform 0.15s ease;
+            /* Hover-zoom below uses the standalone `scale` property rather
+               than `transform`, specifically so it can coexist with
+               .gallery-pulse's transform-based animation once that's also
+               applied here (see that rule further down) — `scale` and
+               `transform` are separate CSS properties that compose instead
+               of overwriting one another, so a pulse firing while the
+               cursor happens to be hovering (the common case right after
+               clicking a card, since the pointer is still sitting on it)
+               doesn't fight the hover-zoom for control of the same
+               property. */
+            transition: scale 0.15s ease;
         }
-        .image-card.show { display: block; }
+        .image-card.show {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
 
         /* Defines the actual clickable area as a circle matching the
            visible artwork, rather than the <img>'s full square box (whose
@@ -474,31 +510,33 @@
            naturally. This overlay has no visual content of its own, so
            clipping it has no such side effect. Sits on top of the image in
            paint order (later in the DOM); clicks inside the circle land
-           here, clicks in the corners fall through to the image beneath,
-           which no longer has its own click handler (see attachImageEvents).
-           Hover-triggered zoom is unaffected either way, since that's
-           keyed off the whole card's box, not this overlay. */
+           here, clicks in the corners (now including the frame border
+           around the art) fall through to the card's own background,
+           handled the same as any other empty gallery space (see
+           attachImageEvents). Hover-triggered zoom is unaffected either
+           way, since that's keyed off the whole card's box, not this
+           overlay. */
         .image-card .hit-zone {
             position: absolute;
             inset: 0;
-            clip-path: circle(50%);
+            /* 47.619% instead of the full 50% — shrunk to match the art's
+               now-smaller circle now that it's inset within the frame
+               (160/168 of the card, same ratio as the img's own sizing
+               below), so the clickable area still hugs the visible artwork
+               instead of also covering part of the frame border. */
+            clip-path: circle(47.619%);
             cursor: pointer;
         }
 
         .image-card img {
-            width: 100%;
+            /* 89.286% (160/168) rather than the full card width — insets
+               the artwork within the frame's border, matching the border
+               art's own 168px-outer/160px-inner proportions. Centered via
+               .image-card.show's flex centering above rather than margin
+               math here. */
+            width: 89.286%;
             aspect-ratio: 1 / 1;
             object-fit: contain;
-            /* Without this, an <img> defaults to inline and gets
-               vertical-align: baseline, which reserves a few px of
-               "descender" space below it as if it sat on a line of text —
-               leaving .image-card's own auto height very slightly taller
-               than the image itself. That sliver is .image-card's bare
-               background showing through along the bottom edge: not
-               covered by the image, not covered by .hit-zone (which is
-               sized to match .image-card, not the gap), and .image-card
-               itself has no click handling of its own — a real dead zone,
-               not just a rounding artifact. */
             display: block;
             /* No cursor:pointer here — the .hit-zone overlay above owns
                that now, and only across the circle it's actually clipped
@@ -520,19 +558,25 @@
         }
 	  
 	  /* :has() lets hovering the hit-zone (the actual circle) drive the
-	     zoom on the whole card, rather than triggering off the card's full
-	     square box like before — keeps hover consistent with the click
-	     area now that both are clipped to the same circle. */
+	     zoom on the whole card — frame included — rather than triggering
+	     off the card's full square box like before, and rather than
+	     zooming just the art and leaving the frame behind. Uses the
+	     standalone `scale` property, not `transform` — see the comment on
+	     .image-card above for why. */
 	  .image-card:has(.hit-zone:hover) {
-            transform: scale(1.1);
+            scale: 1.1;
         }
 
         /* Marks whichever gallery image is currently shown in the magnify
            panel. Uses the #gallery-halo SVG filter (defined near the top of
            <body>) instead of stacked drop-shadow()s — see that filter's
            comment for why. The 2.5% size lives in that filter's
-           feMorphology radius attribute, not here. */
-        .image-card img.active-in-viewer {
+           feMorphology radius attribute, not here. Lives on the card
+           itself rather than the img, so the glow traces the frame's outer
+           edge instead of just the artwork inside it — same reasoning as
+           the related-image thumbnails' identical move (see
+           .related-thumb-wrap.related-active). */
+        .image-card.active-in-viewer {
             filter: url(#gallery-halo);
         }
 
@@ -1943,7 +1987,7 @@
                 const img = card.querySelector('img');
                 const hitZone = card.querySelector('.hit-zone');
                 hitZone.addEventListener('click', () => {
-                    if (img.classList.contains('active-in-viewer')) {
+                    if (card.classList.contains('active-in-viewer')) {
                         closeImageViewer();
                     } else {
                         openImageViewer(img);
@@ -2427,17 +2471,21 @@
 
         const PANEL_TRANSITION_MS = 500; // matches beginPanelAnim's own duration (0.35s base * 1.25, slowed 25%)
 
-        // Briefly pulses an image to draw the eye to its new position after
-        // a scroll settles. Removing the class first and forcing a reflow
-        // (offsetWidth read) lets the animation restart cleanly if it's
-        // re-triggered before the previous pulse finished, rather than
-        // being ignored because the class was already present.
+        // Briefly pulses an image's card to draw the eye to its new
+        // position after a scroll settles. Removing the class first and
+        // forcing a reflow (offsetWidth read) lets the animation restart
+        // cleanly if it's re-triggered before the previous pulse finished,
+        // rather than being ignored because the class was already present.
+        // Takes the img (matching every caller's existing identity
+        // reference) but pulses its enclosing .image-card instead — see the
+        // .image-card.gallery-pulse CSS comment for why it lives there now.
         function pulseAttention(img) {
-            img.classList.remove('gallery-pulse');
-            void img.offsetWidth;
-            img.classList.add('gallery-pulse');
-            img.addEventListener('animationend', () => {
-                img.classList.remove('gallery-pulse');
+            const card = img.closest('.image-card') || img;
+            card.classList.remove('gallery-pulse');
+            void card.offsetWidth;
+            card.classList.add('gallery-pulse');
+            card.addEventListener('animationend', () => {
+                card.classList.remove('gallery-pulse');
             }, { once: true });
         }
 
@@ -3177,10 +3225,10 @@
             const alreadyOpen = document.body.classList.contains('viewer-open');
 
             if (activeGalleryImg) {
-                activeGalleryImg.classList.remove('active-in-viewer');
+                activeGalleryImg.closest('.image-card')?.classList.remove('active-in-viewer');
             }
             activeGalleryImg = galleryImg;
-            galleryImg.classList.add('active-in-viewer');
+            galleryImg.closest('.image-card')?.classList.add('active-in-viewer');
 
             overlayImg.src = galleryImg.src;
             overlayImg.alt = galleryImg.alt;
@@ -3220,7 +3268,7 @@
             const previouslyActive = activeGalleryImg;
 
             if (activeGalleryImg) {
-                activeGalleryImg.classList.remove('active-in-viewer');
+                activeGalleryImg.closest('.image-card')?.classList.remove('active-in-viewer');
                 activeGalleryImg = null;
             }
 
