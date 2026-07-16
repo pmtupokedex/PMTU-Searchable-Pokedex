@@ -12,10 +12,12 @@
             text-align: center;
             margin: 0;
             padding: 20px;
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/gtzz25xtbyr9exna2k7bs/Pokedex-Background.png?rlkey=wh4zk3w1nbnnincyh7uc4zl1x&st=sge4tped&dl=1");
-            background-size: 100% 100%;
-            background-position: center;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/ofvdv0ay6z4wufs1nrspd/Pokedex-Background-3.png?rlkey=kwi0c2v6iypgmvryqebwm2cgx&st=bddxb3ed&dl=1"), url("https://dl.dropboxusercontent.com/scl/fi/69r50xq69bcoqo8tz2t1u/Pokedex-Background-5.png?rlkey=bxkj5vbeac840vu82rkqg61n3&st=xe9cj7yc&dl=1");
+            background-size: 100% 100%, 480px 480px;
+            background-position: center, center;
+		background-repeat: no-repeat, repeat;
             background-attachment: fixed;
+		background-blend-mode: multiply;
         }
 
         /* The padding transition only applies during this short window,
@@ -800,10 +802,38 @@
             background: #777;
         }
 
-        .poke-info-flavor {
+        .poke-info-flavor-section {
             margin-top: 12px;
             padding-top: 10px;
             border-top: 1px solid rgba(255,255,255,0.15);
+        }
+
+        .poke-info-form-note {
+            font-size: 12px;
+            font-style: italic;
+            color: rgba(255,255,255,0.5);
+            margin-bottom: 10px;
+            line-height: 1.4;
+        }
+
+        .poke-info-flavor-entry {
+            margin-bottom: 10px;
+        }
+
+        .poke-info-flavor-entry:last-child {
+            margin-bottom: 0;
+        }
+
+        .poke-info-flavor-version {
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: rgba(255,255,255,0.45);
+            margin-bottom: 2px;
+        }
+
+        .poke-info-flavor-text {
             line-height: 1.5;
             color: rgba(255,255,255,0.8);
         }
@@ -1012,7 +1042,7 @@
         #pokedex-panel.closed #pokedex-panel-1 {
             opacity: 0;
             pointer-events: none;
-            transition: opacity 1s ease 2.0s;
+            transition: opacity 1.5s ease 2.0s;
         }
 
         /* Panel 4: fades out on close too — this rule was accidentally
@@ -2397,6 +2427,42 @@
         const pokeInfoCache = new Map(); // name -> rendered HTML string
         let pokeInfoRequestToken = 0;    // guards against slow fetches finishing out of order
 
+        // Manually-curated Pokédex text for specific forms/varieties.
+        //
+        // PokeAPI's flavor text is stored per species+version only — it has
+        // no field saying which form a given game's entry describes, so
+        // form-specific text (Mega Evolutions, Gigantamax, and some
+        // regional forms) can't be pulled out reliably by code. This map is
+        // the manual fix: when a Pokémon's exact display name (matching
+        // pokemon-data.json's "name" field) appears here, its entries are
+        // shown instead of anything guessed from the API. This entirely
+        // replaces the API-derived flavor section for that name; every
+        // other field (types, height, weight, abilities, genus) still
+        // comes from the API as normal.
+        //
+        // Loaded from flavor-overrides.json, a sibling file in the same
+        // repo — see that file for the expected shape and instructions on
+        // adding entries. Starts empty and fills in once the fetch below
+        // resolves; if it's still empty (or fails to load) by the time
+        // someone opens a Pokémon, that entry just falls back to
+        // API-derived text as normal, so this fetch never blocks anything.
+        let FLAVOR_TEXT_OVERRIDES = {};
+        fetch("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/flavor-overrides.json")
+            .then(response => response.json())
+            .then(data => {
+                FLAVOR_TEXT_OVERRIDES = data;
+                // In case someone opened a Pokémon before this finished
+                // loading (unlikely, but possible on a very fast click),
+                // clear the cache so its info panel picks up the override
+                // next time it's opened instead of staying stuck without it.
+                pokeInfoCache.clear();
+            })
+            .catch(() => {
+                // Overrides are optional — if the file is missing or fails
+                // to load, the info panel just uses API-derived text for
+                // every Pokémon, same as before this file existed.
+            });
+
         const POKEAPI_SLUG_OVERRIDES = {
             "farfetch'd": "farfetchd",
             "galarian farfetch'd": "farfetchd-galar",
@@ -2426,13 +2492,12 @@
 
         // Returns an ordered list of slugs worth trying against
         // /api/v2/pokemon/{slug}, most-likely-correct first.
-        function buildSlugCandidates(rawName) {
-            const candidates = [];
-            const add = (s) => { if (s && !candidates.includes(s)) candidates.push(s); };
-
-            const lower = rawName.trim().toLowerCase();
-            if (POKEAPI_SLUG_OVERRIDES[lower]) add(POKEAPI_SLUG_OVERRIDES[lower]);
-
+        // Parses out the structural pieces of a display name once, so both
+        // buildSlugCandidates (below) and detectFormInfo (further down, used
+        // for flavor-text filtering) work from the same understanding of
+        // "what kind of form is this" instead of two separate regex passes
+        // that could quietly drift out of sync with each other.
+        function parseFormName(rawName) {
             // Strip a leading parenthetical note like "(Shiny) ".
             let working = rawName.replace(/^\([^)]*\)\s*/, '').trim();
 
@@ -2487,6 +2552,18 @@
                 isGmax = true;
             }
 
+            return { core, region, megaSuffix, isGmax, parenSuffix, dashSuffix };
+        }
+
+        function buildSlugCandidates(rawName) {
+            const candidates = [];
+            const add = (s) => { if (s && !candidates.includes(s)) candidates.push(s); };
+
+            const lower = rawName.trim().toLowerCase();
+            if (POKEAPI_SLUG_OVERRIDES[lower]) add(POKEAPI_SLUG_OVERRIDES[lower]);
+
+            const { core, region, megaSuffix, isGmax, parenSuffix, dashSuffix } = parseFormName(rawName);
+
             const coreSlug = slugify(core);
             if (megaSuffix) add(coreSlug + '-' + megaSuffix);
             if (isGmax) add(coreSlug + '-gmax');
@@ -2497,6 +2574,57 @@
             add(slugify(rawName)); // last-resort literal slugify of the whole name
 
             return candidates;
+        }
+
+        // Boils a display name down to "what kind of form is this" —
+        // 'mega', 'gmax', 'region' (with which region), or 'base' — used to
+        // decide how to filter/annotate Pokédex flavor text below. PokéAPI
+        // doesn't tag flavor text by form (see buildPokemonInfoHTML), so
+        // this is the closest we can get without that data existing.
+        function detectFormInfo(rawName) {
+            const { region, megaSuffix, isGmax } = parseFormName(rawName);
+            if (megaSuffix) return { kind: 'mega', region: null };
+            if (isGmax) return { kind: 'gmax', region: null };
+            if (region) return { kind: 'region', region };
+            return { kind: 'base', region: null };
+        }
+
+        // Game versions belonging to each region — used to narrow down
+        // which flavor-text entries are plausible for a regional form. Not
+        // perfect: a handful of these games let you obtain *both* the
+        // original and regional form in the same Pokédex, so an entry for
+        // the wrong one can still slip through (see the form note rendered
+        // alongside filtered results in buildPokemonInfoHTML).
+        const REGION_VERSIONS = {
+            alola:  ['sun', 'moon', 'ultra-sun', 'ultra-moon', 'lets-go-pikachu', 'lets-go-eevee'],
+            galar:  ['sword', 'shield'],
+            hisui:  ['legends-arceus'],
+            paldea: ['scarlet', 'violet'],
+        };
+
+        const VERSION_NAME_OVERRIDES = {
+            'lets-go-pikachu': "Let's Go, Pikachu!",
+            'lets-go-eevee': "Let's Go, Eevee!",
+            'legends-arceus': 'Legends: Arceus',
+        };
+
+        function formatVersionName(v) {
+            if (VERSION_NAME_OVERRIDES[v]) return VERSION_NAME_OVERRIDES[v];
+            return v.split('-').map(w => /^\d+$/.test(w) ? w : capitalize(w)).join(' ');
+        }
+
+        // Collapses flavor-text entries that share identical wording (very
+        // common across paired versions, e.g. Red & Blue) into one row
+        // listing every version it appeared in, instead of repeating the
+        // same paragraph over and over.
+        function groupFlavorEntries(entries) {
+            const map = new Map(); // text -> [version names]
+            entries.forEach(e => {
+                const text = e.flavor_text.replace(/[\n\f\u000c]/g, ' ').trim();
+                if (!map.has(text)) map.set(text, []);
+                map.get(text).push(e.version.name);
+            });
+            return Array.from(map.entries()).map(([text, versions]) => ({ text, versions }));
         }
 
         async function tryFetchJson(url) {
@@ -2549,16 +2677,65 @@
             }
 
             let genus = '';
-            let flavorText = '';
+            let flavorSectionHtml = '';
+
+            const overrideEntries = FLAVOR_TEXT_OVERRIDES[name];
+            if (overrideEntries && overrideEntries.length > 0) {
+                const entriesHtml = overrideEntries.map(e => `
+                    <div class="poke-info-flavor-entry">
+                        <div class="poke-info-flavor-version">${escapeHtml(e.version)}</div>
+                        <div class="poke-info-flavor-text">${escapeHtml(e.text)}</div>
+                    </div>
+                `).join('');
+                flavorSectionHtml = `<div class="poke-info-flavor-section">${entriesHtml}</div>`;
+            }
+
             if (speciesData) {
                 const genusEntry = (speciesData.genera || []).find(g => g.language.name === 'en');
                 genus = genusEntry ? genusEntry.genus : '';
-                // Flavor text entries are listed oldest-game-first; take the
-                // most recent English one so obsolete/duplicate wording from
-                // older games doesn't win.
+            }
+
+            if (!flavorSectionHtml && speciesData) {
                 const englishEntries = (speciesData.flavor_text_entries || []).filter(f => f.language.name === 'en');
-                const flavorEntry = englishEntries[englishEntries.length - 1];
-                flavorText = flavorEntry ? flavorEntry.flavor_text.replace(/[\n\f\u000c]/g, ' ') : '';
+                const grouped = groupFlavorEntries(englishEntries);
+                const formInfo = detectFormInfo(name);
+
+                let relevantGroups = grouped;
+                let formNote = '';
+
+                if (formInfo.kind === 'region' && REGION_VERSIONS[formInfo.region]) {
+                    const allowedVersions = REGION_VERSIONS[formInfo.region];
+                    const filtered = grouped.filter(g => g.versions.some(v => allowedVersions.includes(v)));
+                    // Only apply the filter if it actually left something —
+                    // an empty result means our version list missed this
+                    // Pokémon's games, and showing nothing would be worse
+                    // than showing the unfiltered list.
+                    if (filtered.length > 0) {
+                        relevantGroups = filtered;
+                        formNote = `Showing entries from games featuring the ${capitalize(formInfo.region)}n form. `
+                            + `PokéAPI doesn't label entries by form, so if a game let you catch both forms, `
+                            + `an entry for the original form may still appear below.`;
+                    }
+                } else if (formInfo.kind === 'mega' || formInfo.kind === 'gmax') {
+                    formNote = `PokéAPI doesn't expose separate Pokédex text for `
+                        + `${formInfo.kind === 'mega' ? 'Mega Evolutions' : 'Gigantamax forms'} — `
+                        + `showing ${escapeHtml(genus ? 'the species\u2019' : 'this species\u2019')} standard entries instead.`;
+                }
+
+                if (relevantGroups.length > 0) {
+                    const entriesHtml = relevantGroups.map(g => `
+                        <div class="poke-info-flavor-entry">
+                            <div class="poke-info-flavor-version">${g.versions.map(formatVersionName).join(' / ')}</div>
+                            <div class="poke-info-flavor-text">${escapeHtml(g.text)}</div>
+                        </div>
+                    `).join('');
+                    flavorSectionHtml = `
+                        <div class="poke-info-flavor-section">
+                            ${formNote ? `<div class="poke-info-form-note">${formNote}</div>` : ''}
+                            ${entriesHtml}
+                        </div>
+                    `;
+                }
             }
 
             let typesHtml = '', heightStr = '', weightStr = '', abilitiesStr = '';
@@ -2583,7 +2760,7 @@
                 ${heightStr ? `<div class="poke-info-row"><span class="poke-info-label">Height</span>${heightStr}</div>` : ''}
                 ${weightStr ? `<div class="poke-info-row"><span class="poke-info-label">Weight</span>${weightStr}</div>` : ''}
                 ${abilitiesStr ? `<div class="poke-info-row"><span class="poke-info-label">Abilities</span>${abilitiesStr}</div>` : ''}
-                ${flavorText ? `<div class="poke-info-flavor">${escapeHtml(flavorText)}</div>` : ''}
+                ${flavorSectionHtml}
             `;
         }
 
