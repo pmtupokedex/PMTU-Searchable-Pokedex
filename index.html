@@ -956,21 +956,30 @@
             -webkit-user-select: none;
         }
 
+        /* Sits behind each related-image thumbnail as a decorative frame.
+           Sized 8px larger than the 160px thumbnail on every side (168px
+           total) so the frame art's border shows evenly around it. */
+        .related-thumb-wrap {
+            position: relative;
+            width: 168px;
+            height: 168px;
+            flex: 0 0 auto; /* without this, thumbnails shrink to squeeze into the row instead of overflowing it, defeating the horizontal-scroll behavior above */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/askidb229lcjkk5urfmby/Token-Border.png?rlkey=vfj3kgu9q9jfdzbq4yxvbp8ty&st=yk6ycn4l&dl=1");
+            background-size: 168px 168px;
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
         #viewer-related-grid img {
-            width: 160px;
-            height: 160px;
+            width: 150px;
+            height: 150px;
             object-fit: contain;
             cursor: pointer;
-            background: rgba(0,0,0,0.20);
-		border: 3px solid #ffffff;
-		border-radius: 80px 80px 80px 80px; 
-            padding: 5px;
             box-sizing: border-box;
             transition: transform 0.15s ease;
-            /* Without this, images shrink to squeeze into the row instead
-               of overflowing it — which would silently defeat the
-               horizontal-scroll behavior above. */
-            flex: 0 0 auto;
         }
 
         #viewer-related-grid img:hover {
@@ -981,16 +990,20 @@
            shown in the magnify panel, now that it's included in its own
            related set — reuses the same halo filter as the gallery's
            active-image marker (defined near the top of <body>) for a
-           consistent visual language. */
-        #viewer-related-grid img.related-active {
+           consistent visual language. Lives on the frame wrapper rather
+           than the img itself so the glow traces the frame's outer edge
+           instead of just the plain artwork inside it. */
+        .related-thumb-wrap.related-active {
             filter: url(#gallery-halo);
         }
 
         /* Reuses the same gallery-pulse keyframes (defined near the top of
            the stylesheet) that mark a newly-selected gallery image — the
            .image-card-scoped rule for it doesn't reach these thumbnails,
-           so it needs its own trigger here. */
-        #viewer-related-grid img.gallery-pulse {
+           so it needs its own trigger here. Lives on the frame wrapper
+           (see related-active above) so the whole frame+art unit pulses
+           together instead of just the art inside it. */
+        .related-thumb-wrap.gallery-pulse {
             animation: gallery-pulse 600ms ease-out;
         }
 
@@ -2996,10 +3009,6 @@
                 thumb.src = relImg.src;
                 thumb.alt = relImg.alt;
                 thumb.draggable = false; // avoid native drag-ghost fighting with the click-and-drag panning below
-                if (relImg === img) {
-                    thumb.classList.add('related-active', 'gallery-pulse');
-                    activeThumb = thumb;
-                }
                 thumb.addEventListener('click', (e) => {
                     // Stops here rather than relying on a closest() check
                     // in the overlay's click-outside-closes listener: this
@@ -3011,7 +3020,18 @@
                     e.stopPropagation();
                     openImageViewer(relImg);
                 });
-                viewerRelatedGrid.appendChild(thumb);
+
+                const wrap = document.createElement('div');
+                wrap.className = 'related-thumb-wrap';
+                wrap.appendChild(thumb);
+                if (relImg === img) {
+                    // Lives on the wrapper, not the img — see the CSS
+                    // comments on .related-thumb-wrap.related-active /
+                    // .gallery-pulse for why.
+                    wrap.classList.add('related-active', 'gallery-pulse');
+                    activeThumb = wrap;
+                }
+                viewerRelatedGrid.appendChild(wrap);
             });
 
             // Keeps the active thumbnail in view within the row's own
