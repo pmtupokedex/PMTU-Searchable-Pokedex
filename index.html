@@ -2787,6 +2787,7 @@
         });
 
         let activeGalleryImg = null;
+        let viewerHoldsScrollLock = false;
 
         const PANEL_TRANSITION_MS = 500; // matches beginPanelAnim's own duration (0.35s base * 1.25, slowed 25%)
 
@@ -3599,8 +3600,22 @@
             } else {
                 if (desktopFilterQuery.matches) {
                     trackImageIntoView(galleryImg, PANEL_TRANSITION_MS);
-                }
-                if (!desktopFilterQuery.matches) {
+                } else {
+                    // Mobile: panel is full-screen, so the gallery
+                    // underneath is genuinely hidden -- lock scrolling,
+                    // same as the filter panel does. Without this, the
+                    // gallery was still genuinely scrollable underneath
+                    // the whole time the viewer was open: not just from
+                    // our own trackImageIntoView calls (already removed
+                    // above), but from anything -- leftover momentum
+                    // scrolling from whatever fling gesture was still in
+                    // flight when the image was tapped, or just the
+                    // viewer-open padding-top transition's own reflow.
+                    // pageScrollLock pins body with position:fixed, which
+                    // is what actually blocks all of that on iOS/Android,
+                    // not just the scrolling our own code was doing.
+                    window.pageScrollLock.lock();
+                    viewerHoldsScrollLock = true;
                     // Mobile viewer now opens fullscreen (see #image-overlay's
                     // mobile height rule), so default straight into General
                     // Information instead of requiring an extra tap first —
@@ -3633,6 +3648,15 @@
             viewerInfoToggle.textContent = '▸ GENERAL INFORMATION';
             viewerRelatedToggle.setAttribute('aria-expanded', 'false');
             viewerRelatedToggle.textContent = '▸ EVOLUTION CHAIN / FORMS';
+
+            // Must unlock before the recenter scroll below -- pageScrollLock
+            // pins body with position:fixed, and a fixed body can't be
+            // meaningfully scrolled, so trackImageIntoView needs the lock
+            // released first for its scrollBy() to do anything.
+            if (viewerHoldsScrollLock) {
+                window.pageScrollLock.unlock();
+                viewerHoldsScrollLock = false;
+            }
 
             // Always re-center on close, on both mobile and desktop — this
             // is also what makes the pulse afterward land in a consistent,
