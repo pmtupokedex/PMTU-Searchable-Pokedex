@@ -746,7 +746,14 @@
            it a stacking context) plus this layer's z-index:-1 is what
            keeps it behind overlay-img and the nav buttons; overflow:hidden
            on #viewer-frame clips the oversized, rotated box back down to
-           the frame's actual rectangle. */
+           the frame's actual rectangle.
+
+           Starts invisible and with no animation applied at all -- not
+           just paused -- since even a paused/invisible animation can still
+           cost a repaint on some devices. The animation itself only gets
+           applied once #image-overlay carries .visible (see below), so
+           there's nothing for the browser to paint here at all until the
+           panel is actually open. */
         #viewer-frame::before {
             content: "";
             position: absolute;
@@ -757,7 +764,25 @@
             background-size: 600px 600px;
             background-repeat: repeat;
             pointer-events: none;
-            animation: viewer-frame-tile-scroll 118s linear infinite;
+            opacity: 0;
+        }
+
+        /* Fades the tile in and sets its scroll going only once the panel
+           itself is open, both delayed 1s -- giving the panel's own
+           transform slide-in (0.35s) plenty of room to finish uncontested
+           before this layer starts costing any repaints of its own. The
+           animation-delay holds the tile at its static "from" position
+           (no repaint) for that first second exactly the same way the
+           opacity delay holds it invisible, so the two line up and it
+           fades in already mid-scroll-ready rather than fading in first
+           and only starting to move afterward. Re-applying the animation
+           here (rather than leaving it running permanently and just
+           toggling opacity) also means it fully stops -- rather than
+           merely hiding -- the moment the panel closes. */
+        #image-overlay.visible #viewer-frame::before {
+            opacity: 1;
+            transition: opacity 0.6s ease 1s;
+            animation: viewer-frame-tile-scroll 118s linear 1s infinite;
         }
 
         /* Scrolls the tile along a path of (6600px, 2400px) -- both exact
@@ -773,10 +798,15 @@
             to   { background-position: 6600px 2400px; }
         }
 
-        /* Respect reduced-motion preferences -- freezes the tile in place
-           instead of continuously scrolling it. */
+        /* Respect reduced-motion preferences -- shows the tile immediately
+           at full opacity instead of fading in, and never sets it
+           scrolling at all. Matches the .visible selector's specificity
+           so it actually wins over the rule above rather than being
+           silently outweighed by it. */
         @media (prefers-reduced-motion: reduce) {
-            #viewer-frame::before {
+            #image-overlay.visible #viewer-frame::before {
+                opacity: 1;
+                transition: none;
                 animation: none;
             }
         }
@@ -929,7 +959,7 @@
 		background-repeat: no-repeat, no-repeat, repeat;
 		background-attachment: fixed;
 		background-blend-mode: multiply;
-		}
+        }
 
         #image-overlay.info-expanded #viewer-info-wrapper {
             grid-template-rows: 1fr;
