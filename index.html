@@ -23,11 +23,41 @@
             text-align: center;
             margin: 0;
             padding: 20px;
+            position: relative;
+        }
+
+        /* Was background-attachment:fixed directly on body. That property
+           is a known mobile-scroll performance trap: on many mobile
+           Safari/Chrome versions a fixed background can't be composited
+           independently, so the browser repaints the *entire* background
+           on every scroll-position change instead of just letting it sit
+           still under the page. During the image viewer's open animation
+           that's especially costly, since trackImageIntoView() (see the
+           script near PANEL_TRANSITION_MS) calls window.scrollBy() on
+           every animation frame for ~500ms -- each of those was forcing a
+           full-viewport background repaint on top of everything else
+           already happening that frame.
+
+           Pulling the background out into its own real position:fixed
+           layer instead gets the same "stays put while the page scrolls"
+           visual with none of that cost: a genuinely fixed element is its
+           own compositor layer that the browser can leave alone during
+           scrolling, rather than something it has to keep re-painting to
+           fake the same effect. z-index:-1 plus body's own position:
+           relative (added above) keeps it behind all of body's actual
+           content without needing to touch every other element's
+           stacking. pointer-events:none keeps it from ever intercepting
+           clicks/taps meant for the page above it. */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
             background-image: url("https://dl.dropboxusercontent.com/scl/fi/ofvdv0ay6z4wufs1nrspd/Pokedex-Background-3.png?rlkey=kwi0c2v6iypgmvryqebwm2cgx&st=bddxb3ed&dl=1"), url("https://dl.dropboxusercontent.com/scl/fi/69r50xq69bcoqo8tz2t1u/Pokedex-Background-5.png?rlkey=bxkj5vbeac840vu82rkqg61n3&st=xe9cj7yc&dl=1");
             background-size: 100% 100%, 240px 240px;
             background-position: center, center;
 		background-repeat: no-repeat, repeat;
-            background-attachment: fixed;
 		background-blend-mode: multiply;
         }
 
@@ -261,7 +291,6 @@
             background-size: cover, 240px 240px;
             background-position: center, center;
 		background-repeat: no-repeat, repeat;
-		background-attachment: fixed;
 		background-blend-mode: multiply;
         }
 
@@ -580,6 +609,33 @@
                doesn't fight the hover-zoom for control of the same
                property. */
             transition: scale 0.15s ease;
+            /* Every card's img is permanently promoted to its own
+               compositor layer (see .image-card img's translateZ(0)
+               below), and native loading="lazy" only defers the initial
+               fetch -- once a card has scrolled near the viewport and
+               decoded, it stays fully painted and composited forever,
+               with nothing that ever un-loads it. On a long gallery that
+               means the number of "hot" layers the browser has to
+               recomposite keeps growing the deeper you've scrolled, which
+               is exactly what made the viewer-open flicker worse further
+               down the page.
+
+               content-visibility:auto skips layout/paint/compositing
+               entirely for cards that are well outside the viewport (it
+               only affects .show cards -- .image-card is display:none by
+               default, which is already zero-cost), and lets the browser
+               pick that work back up automatically the moment a card
+               nears the viewport again. This is what actually caps the
+               standing cost instead of letting it grow unbounded with
+               scroll depth. contain-intrinsic-size gives it a placeholder
+               box to reserve so the grid's scroll height doesn't jump
+               around as cards skip in and out of rendering; the `auto`
+               keyword on each axis tells it to remember each card's real
+               measured size after the first render rather than reusing
+               the 168px fallback (the grid's own minmum column size)
+               forever. */
+            content-visibility: auto;
+            contain-intrinsic-size: auto 168px auto 168px;
         }
         .image-card.show {
             display: flex;
@@ -724,8 +780,20 @@
             background-size: cover, 240px 240px;
             background-position: center, center;
 		background-repeat: no-repeat, repeat;
-		background-attachment: fixed;
 		background-blend-mode: multiply;
+            /* No background-attachment:fixed here (or on #viewer-info-wrapper
+               and #viewer-related-wrapper below, or .filter-panel-bg above) --
+               it was always redundant, since every one of these lives inside
+               a position:fixed ancestor (#image-overlay / #filter-panel) that
+               never moves relative to the viewport on page scroll, so 'fixed'
+               and the default 'scroll' render identically here. Removing it
+               matters on mobile specifically because 'fixed' backgrounds
+               force a full repaint on every scroll-position change even when
+               the element itself never actually needs to move -- and
+               trackImageIntoView() (see PANEL_TRANSITION_MS below) drives
+               window.scrollBy() on every animation frame while this panel is
+               opening, so this was costing a repaint per frame for no
+               visual benefit. */
         }
 
         /* The scrolling tile (Background-8) used to live as a third layer
@@ -957,7 +1025,6 @@
             background-size: cover, contain, 240px 240px;
             background-position: center, center, center;
 		background-repeat: no-repeat, no-repeat, repeat;
-		background-attachment: fixed;
 		background-blend-mode: multiply;
         }
 
@@ -1144,7 +1211,6 @@
             background-size: cover, 240px 240px;
             background-position: center, center;
 		background-repeat: no-repeat, repeat;
-		background-attachment: fixed;
 		background-blend-mode: multiply;
         }
 
