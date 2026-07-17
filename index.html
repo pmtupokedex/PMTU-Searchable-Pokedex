@@ -756,15 +756,20 @@
            that: it's now a fully independent paint layer with no blend
            mode of its own, sitting between #viewer-frame's own
            (multiplied) background and the artwork/buttons on top.
-           inset:0 makes it exactly match #viewer-frame's padded box, and
-           position:absolute lifts it out of the flex layout so it doesn't
-           get flexed alongside overlay-img and the nav buttons.
-           pointer-events:none keeps it from ever intercepting clicks
-           meant for what's rendered above it, regardless of paint order. */
+           inset:-25% oversizes the box so its corners still cover the
+           frame once rotated, and position:absolute lifts it out of the
+           flex layout so it doesn't get flexed alongside overlay-img and
+           the nav buttons. pointer-events:none keeps it from ever
+           intercepting clicks meant for what's rendered above it,
+           regardless of paint order. #viewer-frame's own z-index:0 (making
+           it a stacking context) plus this layer's z-index:-1 is what
+           keeps it behind overlay-img and the nav buttons; overflow:hidden
+           on #viewer-frame clips the oversized, rotated box back down to
+           the frame's actual rectangle. */
         #viewer-frame::before {
             content: "";
             position: absolute;
-            inset: -25%; /* was: 0 — oversized so rotated corners still cover the frame */
+            inset: -25%; /* oversized so rotated corners still cover the frame */
 		transform: rotate(-10deg);
 		z-index: -1;
             background-image: url("https://dl.dropboxusercontent.com/scl/fi/z0jiby2gqwo2s4t84lj2b/Pokedex-Background-8.png?rlkey=gt1o6z6omzhlkav876b1ra92v&st=afglo6te&dl=1");
@@ -774,11 +779,14 @@
             animation: viewer-frame-tile-scroll 118s linear infinite;
         }
 
-        /* Scrolls the tile left-to-right by exactly one tile-width, so the
-           loop seams invisibly instead of jumping -- has to stay in
-           lockstep with the 240px background-size set above. Tweak the 8s
-           duration to speed up/slow down the scroll, and swap 240px in
-           both places if you resize the tile itself. */
+        /* Scrolls the tile along a path of (6600px, 2400px) -- both exact
+           multiples of the 600px background-size above, which is what
+           keeps the loop seamless despite the odd-looking numbers. That
+           path works out to roughly a 110° local scroll direction, which
+           after the box's own -10° rotation reads as ~100° on-screen
+           (measuring clockwise from north, compass-style). Swap the 600px
+           in background-size above and both of these multiples-of-600px
+           numbers together if you resize the tile again. */
         @keyframes viewer-frame-tile-scroll {
             from { background-position: 0 0; }
             to   { background-position: 6600px 2400px; }
@@ -839,12 +847,32 @@
             background: transparent;
             border: none;
             color: white;
-            font-size: 28px;
             font-family: 'Calibri', 'Trebuchet MS', sans-serif;
             cursor: pointer;
             display: flex;
             align-items: flex-end; /* pins the arrow to the bottom of its zone */
             padding-bottom: 14px;
+        }
+
+        /* The glyph lives in its own span, sized up independently of the
+           button's own hit zone (which stays exactly as wide/tall as
+           before — see .image-nav-btn above). Keeping it as a separate
+           element also gives the click-pulse below something to animate
+           that's anchored right at the glyph's own position, rather than
+           scaling the entire 33%-wide button and having the corner-pinned
+           arrow visibly drift as a side effect. display:inline-block is
+           what makes the transform-based pulse behave predictably here. */
+        .nav-arrow {
+            display: inline-block;
+            font-size: 56px; /* 2x the original 28px */
+        }
+
+        /* Reuses the same gallery-pulse keyframes the gallery cards and
+           related-image thumbnails already pulse with (defined near the
+           top of the stylesheet) — same class-toggle-on-click pattern too,
+           see pulseNavArrow() in the script. */
+        .nav-arrow.gallery-pulse {
+            animation: gallery-pulse 600ms ease-out;
         }
 
         .image-nav-prev {
@@ -1728,8 +1756,8 @@
     <div id="image-overlay">
         <button id="image-close-btn">✕</button>
         <div id="viewer-frame">
-            <button id="image-prev-btn" class="image-nav-btn image-nav-prev" aria-label="Previous image">&#10094;</button>
-            <button id="image-next-btn" class="image-nav-btn image-nav-next" aria-label="Next image">&#10095;</button>
+            <button id="image-prev-btn" class="image-nav-btn image-nav-prev" aria-label="Previous image"><span class="nav-arrow">&#10094;</span></button>
+            <button id="image-next-btn" class="image-nav-btn image-nav-next" aria-label="Next image"><span class="nav-arrow">&#10095;</span></button>
             <img id="overlay-img" src="" alt="">
         </div>
         <div id="viewer-toggle-row">
@@ -2629,6 +2657,8 @@
         const imageCloseBtn = document.getElementById('image-close-btn');
         const imagePrevBtn = document.getElementById('image-prev-btn');
         const imageNextBtn = document.getElementById('image-next-btn');
+        const imagePrevArrow = imagePrevBtn.querySelector('.nav-arrow');
+        const imageNextArrow = imageNextBtn.querySelector('.nav-arrow');
         const viewerInfoToggle = document.getElementById('viewer-info-toggle');
         const viewerRelatedToggle = document.getElementById('viewer-related-toggle');
         const viewerRelatedGrid = document.getElementById('viewer-related-grid');
@@ -2665,6 +2695,18 @@
             card.classList.add('gallery-pulse');
             card.addEventListener('animationend', () => {
                 card.classList.remove('gallery-pulse');
+            }, { once: true });
+        }
+
+        // Same restart-safe class-toggle pattern as pulseAttention above,
+        // applied directly to a prev/next arrow span on click instead of a
+        // gallery card.
+        function pulseNavArrow(arrow) {
+            arrow.classList.remove('gallery-pulse');
+            void arrow.offsetWidth;
+            arrow.classList.add('gallery-pulse');
+            arrow.addEventListener('animationend', () => {
+                arrow.classList.remove('gallery-pulse');
             }, { once: true });
         }
 
@@ -3516,11 +3558,13 @@
 
         imagePrevBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            pulseNavArrow(imagePrevArrow);
             navigateImage(-1);
         });
 
         imageNextBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            pulseNavArrow(imageNextArrow);
             navigateImage(1);
         });
 
