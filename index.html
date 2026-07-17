@@ -20,6 +20,74 @@
 		background-blend-mode: multiply;
         }
 
+        /* Custom scrollbars — a thin, semi-transparent dark pill rather
+           than each browser's chunky default, so they read as part of the
+           page's own design instead of an OS-level UI element sitting on
+           top of it. Covers the filter panel's own scroll, the
+           related-images row's horizontal scroll, and the general-info
+           panel's scroll. html (the page's own root scrollbar) is kept
+           thin to match but deliberately left uncolored below — its
+           "transparent" track doesn't actually reveal <body>'s decorative
+           background the way it does for these other three (this
+           scrollbar sits on <html>'s own plain canvas instead), so
+           coloring it ended up looking like a flat tinted box rather than
+           blending with the page; thin-but-native reads better here than
+           that did. Split into two syntaxes since there's no single
+           standard yet: Firefox uses the scrollbar-width/-color
+           properties, while Chromium and Safari use the older
+           ::-webkit-scrollbar pseudo-elements — browsers ignore whichever
+           one they don't implement, so both are safe to include
+           unconditionally. Mobile browsers' overlay scrollbars ignore both
+           entirely (they're not a box with a track/thumb to style), so
+           this needs no mobile/desktop media guard of its own. */
+        html {
+            scrollbar-width: thin;
+        }
+
+        html::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        #filter-scroll,
+        #viewer-related-grid,
+        #viewer-info-content {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(0,0,0,0.35) transparent;
+        }
+
+        #filter-scroll::-webkit-scrollbar,
+        #viewer-related-grid::-webkit-scrollbar,
+        #viewer-info-content::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        #filter-scroll::-webkit-scrollbar-track,
+        #viewer-related-grid::-webkit-scrollbar-track,
+        #viewer-info-content::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #filter-scroll::-webkit-scrollbar-thumb,
+        #viewer-related-grid::-webkit-scrollbar-thumb,
+        #viewer-info-content::-webkit-scrollbar-thumb {
+            background-color: rgba(0,0,0,0.35);
+            border-radius: 10px;
+            /* A transparent border with background-clip: padding-box makes
+               the thumb paint inset from the scrollbar's own edges, so it
+               reads as a slim rounded pill floating in its track instead of
+               a flat bar spanning edge-to-edge. */
+            border: 2px solid transparent;
+            background-clip: padding-box;
+        }
+
+        #filter-scroll::-webkit-scrollbar-thumb:hover,
+        #viewer-related-grid::-webkit-scrollbar-thumb:hover,
+        #viewer-info-content::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(0,0,0,0.55);
+        }
+
         /* The padding transition only applies during this short window,
            added right when a panel actually opens/closes and removed a
            beat later (see beginPanelAnim() in the script). Keeping it off
@@ -248,10 +316,24 @@
             #overlay {
                 display: none !important;
             }
+
+            /* Extra right padding versus the mobile default (20px 20px 15px)
+               — desktop browsers reserve real layout width for the filter
+               panel's own vertical scrollbar (#filter-scroll below), while
+               mobile browsers almost universally use an overlay scrollbar
+               that takes no space at all. Without this, the search input
+               and its content visually crowd right up against the
+               scrollbar on desktop. Applies to #filter-top specifically
+               (not #filter-scroll, which already reserves its own space via
+               scrollbar-gutter: stable on both) since #filter-top has no
+               scrollbar of its own to naturally push its content over. */
+            #filter-top {
+                padding: 20px 35px 15px 20px;
+            }
         }
 
         #filter-top {
-            padding: 20px 35px 15px 20px;
+            padding: 20px 20px 15px;
             border-bottom: 1px solid #ddd;
             width: 100%;
             max-width: 480px;
@@ -367,8 +449,8 @@
             border: none;
             padding: 10px 10px;
             margin: 5px;
-		border: 3px solid rgba(0,0,0,0.25);
             cursor: pointer;
+		border: 3px solid rgba(0,0,0,0.25);
 		text-transform: uppercase;
 		text-shadow:
                 -1px -1px 0 black,
@@ -378,11 +460,11 @@
             border-radius: 20px;
             font-size: 15px;
             font-family: 'Calibri', 'Trebuchet MS', sans-serif;
-		box-shadow: 0 4px 10px rgba(0,0,0,0.25);
             user-select: none;
             -webkit-user-select: none;
             -webkit-touch-callout: none;
             touch-action: manipulation;
+		box-shadow: 0 4px 10px rgba(0,0,0,0.25);
         }
         .filter-btn.include { background-color: rgba(0, 153, 255, 0.70); color: white; }
         .filter-btn.exclude { background-color: rgba(255, 77, 77, 0.70); color: white; }
@@ -477,7 +559,7 @@
             width: 100%;
             /* Locks the card to a perfect square regardless of the img's
                own size — needed now that the img is inset within the frame
-               (95.238% of the card, not the full 100% it used to be), since
+               (89.286% of the card, not the full 100% it used to be), since
                without this the grid would otherwise size each row off the
                now-shorter img instead of the full card. */
             aspect-ratio: 1 / 1;
@@ -528,19 +610,21 @@
         .image-card .hit-zone {
             position: absolute;
             inset: 0;
-            /* 47.619% instead of the full 50% — shrunk to match the art's
+            /* 44.643% instead of the full 50% — shrunk to match the art's
                now-smaller circle now that it's inset within the frame
-               (160/168 of the card, same ratio as the img's own sizing
+               (150/168 of the card, same ratio as the img's own sizing
                below), so the clickable area still hugs the visible artwork
                instead of also covering part of the frame border. */
-            clip-path: circle(47.619%);
+            clip-path: circle(44.643%);
             cursor: pointer;
         }
 
         .image-card img {
-            /* 89.286% (160/168) rather than the full card width — insets
-               the artwork within the frame's border, matching the border
-               art's own 168px-outer/160px-inner proportions. Centered via
+            /* 89.286% (150/168) rather than the full card width — insets
+               the artwork within the frame's border, giving the frame a bit
+               more visual presence than a strict 160/168 native-art inset
+               would (its own comment history has that original math, if
+               this ratio ever needs revisiting). Centered via
                .image-card.show's flex centering above rather than margin
                math here. */
             width: 89.286%;
@@ -652,13 +736,60 @@
             display: flex;
             justify-content: center;
             align-items: center; /* images are all exactly square, so centering keeps any sub-pixel vw/dvh rounding split evenly rather than collecting at one edge */
-            position: relative; /* anchors the prev/next nav buttons to just the image area, not the whole panel including the related section below */
+            position: relative; /* anchors the prev/next nav buttons AND the ::before tile layer below to just the image area, not the whole panel including the related section below */
+		z-index: 0;
+		overflow: hidden;
 		background-image: url("https://dl.dropboxusercontent.com/scl/fi/1ipdyj5eh0erex4zvyjxq/Pokedex-Background-7.png?rlkey=aolpeh35zfq6ffpu4na5b6vr2&st=tfrnozrb&dl=1"), url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
             background-size: cover, 240px 240px;
             background-position: center, center;
 		background-repeat: no-repeat, repeat;
 		background-attachment: fixed;
 		background-blend-mode: multiply;
+        }
+
+        /* The scrolling tile (Background-8) used to live as a third layer
+           in #viewer-frame's own background-image stack, but
+           background-blend-mode applies to every layer in a stack
+           uniformly -- there's no way to blend two layers with multiply
+           while leaving a third layer un-blended within a single
+           background. Pulling it out into its own ::before box sidesteps
+           that: it's now a fully independent paint layer with no blend
+           mode of its own, sitting between #viewer-frame's own
+           (multiplied) background and the artwork/buttons on top.
+           inset:0 makes it exactly match #viewer-frame's padded box, and
+           position:absolute lifts it out of the flex layout so it doesn't
+           get flexed alongside overlay-img and the nav buttons.
+           pointer-events:none keeps it from ever intercepting clicks
+           meant for what's rendered above it, regardless of paint order. */
+        #viewer-frame::before {
+            content: "";
+            position: absolute;
+            inset: -25%; /* was: 0 — oversized so rotated corners still cover the frame */
+		transform: rotate(-10deg);
+		z-index: -1;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/z0jiby2gqwo2s4t84lj2b/Pokedex-Background-8.png?rlkey=gt1o6z6omzhlkav876b1ra92v&st=afglo6te&dl=1");
+            background-size: 600px 600px;
+            background-repeat: repeat;
+            pointer-events: none;
+            animation: viewer-frame-tile-scroll 118s linear infinite;
+        }
+
+        /* Scrolls the tile left-to-right by exactly one tile-width, so the
+           loop seams invisibly instead of jumping -- has to stay in
+           lockstep with the 240px background-size set above. Tweak the 8s
+           duration to speed up/slow down the scroll, and swap 240px in
+           both places if you resize the tile itself. */
+        @keyframes viewer-frame-tile-scroll {
+            from { background-position: 0 0; }
+            to   { background-position: 6600px 2400px; }
+        }
+
+        /* Respect reduced-motion preferences -- freezes the tile in place
+           instead of continuously scrolling it. */
+        @media (prefers-reduced-motion: reduce) {
+            #viewer-frame::before {
+                animation: none;
+            }
         }
 
         #overlay-img {
@@ -713,6 +844,22 @@
 
         .image-nav-btn:hover {
             opacity: 1;
+        }
+
+        /* Below the 900px desktop breakpoint, touch "hover" is simulated
+           by the browser and only clears on a tap elsewhere — which is
+           the clunky, won't-go-away behavior this overrides. Cancels the
+           :hover rule above so visibility here is driven purely by the
+           .nav-btn-flash class instead, which JS adds on tap and removes
+           on a timer (see flashNavButton in the script). */
+        @media (max-width: 899.98px) {
+            .image-nav-btn:hover {
+                opacity: 0;
+            }
+
+            .image-nav-btn.nav-btn-flash {
+                opacity: 1;
+            }
         }
 
         .image-nav-prev {
@@ -1019,9 +1166,12 @@
             -webkit-user-select: none;
         }
 
-        /* Sits behind each related-image thumbnail as a decorative frame.
-           Sized 8px larger than the 160px thumbnail on every side (168px
-           total) so the frame art's border shows evenly around it. */
+        /* Sits behind each related-image thumbnail as a decorative frame —
+           mirrors .image-card's treatment in the main gallery exactly (same
+           frame art, same 150/168 inset ratio, same hit-zone/hover/halo/
+           pulse mechanics below), just at a fixed pixel size rather than
+           the gallery's responsive one, since this row doesn't grow with
+           the viewport. */
         .related-thumb-wrap {
             position: relative;
             width: 168px;
@@ -1034,19 +1184,46 @@
             background-size: 168px 168px;
             background-repeat: no-repeat;
             background-position: center;
+            /* Hover-zoom below uses the standalone `scale` property rather
+               than `transform`, same reasoning as .image-card in the main
+               gallery: .gallery-pulse (further down) is transform-based, so
+               keeping hover on a separate property lets a pulse and a hover
+               coexist on this same element without fighting for control of
+               transform. */
+            transition: scale 0.15s ease;
         }
 
         #viewer-related-grid img {
             width: 150px;
             height: 150px;
             object-fit: contain;
-            cursor: pointer;
             box-sizing: border-box;
-            transition: transform 0.15s ease;
+            /* No cursor:pointer here — .related-hit-zone below owns that
+               now, same split as .image-card/.hit-zone in the main gallery. */
         }
 
-        #viewer-related-grid img:hover {
-            transform: scale(1.1);
+        /* Same role as .image-card .hit-zone in the main gallery: defines
+           the actual clickable/hoverable area as a circle matching the
+           visible artwork (150/168 of the wrapper, same ratio as the img's
+           own sizing above) rather than the img's full square box, whose
+           corners are transparent PNG. Unlike the gallery's version, a
+           corner click here has nothing in particular to fall through to
+           (there's no "close panel" affordance for this row) — it simply
+           does nothing, which is the more correct behavior anyway now that
+           part of that square is genuinely frame border, not just empty
+           transparent pixels. */
+        .related-hit-zone {
+            position: absolute;
+            inset: 0;
+            clip-path: circle(44.643%);
+            cursor: pointer;
+        }
+
+        /* Mirrors .image-card:has(.hit-zone:hover) exactly: hovering the
+           circular hit-zone scales the whole frame+art unit together,
+           rather than just the art inside it. */
+        .related-thumb-wrap:has(.related-hit-zone:hover) {
+            scale: 1.1;
         }
 
         /* Marks whichever thumbnail corresponds to the image currently
@@ -1472,8 +1649,7 @@
 		<div class="specific-region-header">Orange Islands</div>
                     <button class="filter-btn" data-tag="orangeislands">Orange Islands Pokédex</button>
                     <button class="filter-btn" data-tag="animepreview">Anime Preview Expansion</button>
-		</div >
-		
+		</div>
                 <button class="filter-btn own-row" id="show-all-regional">Show All</button>
             </div>
 
@@ -3077,7 +3253,15 @@
                 thumb.src = relImg.src;
                 thumb.alt = relImg.alt;
                 thumb.draggable = false; // avoid native drag-ghost fighting with the click-and-drag panning below
-                thumb.addEventListener('click', (e) => {
+
+                // Mirrors .image-card .hit-zone in the main gallery: owns
+                // both the click and the hover state (via CSS :has, see
+                // .related-thumb-wrap:has(.related-hit-zone:hover)), clipped
+                // to a circle matching the visible artwork rather than the
+                // img's full square box.
+                const hitZone = document.createElement('div');
+                hitZone.className = 'related-hit-zone';
+                hitZone.addEventListener('click', (e) => {
                     // Stops here rather than relying on a closest() check
                     // in the overlay's click-outside-closes listener: this
                     // click also rebuilds the related grid's contents
@@ -3092,6 +3276,7 @@
                 const wrap = document.createElement('div');
                 wrap.className = 'related-thumb-wrap';
                 wrap.appendChild(thumb);
+                wrap.appendChild(hitZone);
                 if (relImg === img) {
                     // Lives on the wrapper, not the img — see the CSS
                     // comments on .related-thumb-wrap.related-active /
@@ -3346,13 +3531,32 @@
 
         imageCloseBtn.addEventListener('click', closeImageViewer);
 
+        // Below 900px, :hover is neutralized in CSS (see .image-nav-btn
+        // media query) since touch "hover" sticks until a tap elsewhere.
+        // This takes over showing the tapped button instead, via a class
+        // that's removed 3s later — restarting the clock on every tap
+        // rather than letting an earlier timer cut a fresh tap short.
+        let navBtnFadeTimer = null;
+
+        function flashNavButton(btn) {
+            if (desktopFilterQuery.matches) return; // desktop keeps its normal :hover behavior untouched
+
+            clearTimeout(navBtnFadeTimer);
+            btn.classList.add('nav-btn-flash');
+            navBtnFadeTimer = setTimeout(() => {
+                btn.classList.remove('nav-btn-flash');
+            }, 3000);
+        }
+
         imagePrevBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            flashNavButton(imagePrevBtn);
             navigateImage(-1);
         });
 
         imageNextBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            flashNavButton(imageNextBtn);
             navigateImage(1);
         });
 
