@@ -2833,41 +2833,6 @@
             return { dx, dy };
         }
 
-        // Native `scrollBy({behavior:'smooth'})` doesn't expose a duration —
-        // the browser just picks its own timing based on distance — so
-        // there's no way to explicitly slow it down. This does the easing
-        // manually instead, over a fixed, tunable duration.
-        function animatedScrollBy(dx, dy, duration) {
-            if (dx === 0 && dy === 0) return;
-            const startX = window.scrollX;
-            const startY = window.scrollY;
-            const start = performance.now();
-
-            function easeInOutQuad(t) {
-                return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-            }
-
-            function step(now) {
-                const t = Math.min(1, (now - start) / duration);
-                const eased = easeInOutQuad(t);
-                window.scrollTo(startX + dx * eased, startY + dy * eased);
-                if (t < 1) requestAnimationFrame(step);
-            }
-            requestAnimationFrame(step);
-        }
-
-        const SWITCH_SCROLL_MS = 500; // ~400ms native-smooth-scroll feel, slowed 25%
-
-        // Smoothly scrolls an image to that same centered-below-panel point
-        // — used when switching between images while the panel's already
-        // open on mobile, where nothing is reflowing so there's no moving
-        // target to chase frame-by-frame; a single eased scroll to the
-        // computed target is enough.
-        function scrollToPanelCenter(img) {
-            const { dx, dy } = neededScrollDelta(img);
-            animatedScrollBy(dx, dy, SWITCH_SCROLL_MS);
-        }
-
         // Guards against exactly the bug that caused the mobile info-panel
         // flicker: trackImageIntoView() gets called twice back-to-back on
         // mobile open (once from openImageViewer itself, once more from
@@ -3550,11 +3515,18 @@
             viewerRelatedToggle.textContent = relatedOpen ? '▾ EVOLUTION CHAIN / FORMS' : '▸ EVOLUTION CHAIN / FORMS';
 
             // Reuses the same brief transition-enabling window as open/close
-            // so the gallery's reserved space grows/shrinks smoothly instead
-            // of snapping, and re-tracks the active image into its new
-            // centered position now that the available space has changed.
+            // so the gallery's reserved space grows/shrinks smoothly.
+            // Re-tracking the active image's scroll position only matters
+            // on desktop, where the panel docks to the side and the
+            // gallery stays visible next to it. On mobile the panel is
+            // fullscreen the whole time it's open (see #image-overlay's
+            // mobile height rule), so the gallery is never visible behind
+            // it at all -- scrolling it here bought nothing and was one
+            // more thing that could show through as a glimpse of the
+            // gallery if it landed during a gap in the panel's own open
+            // animation.
             beginPanelAnim();
-            if (activeGalleryImg) {
+            if (activeGalleryImg && desktopFilterQuery.matches) {
                 trackImageIntoView(activeGalleryImg, PANEL_TRANSITION_MS);
             }
         }
@@ -3595,19 +3567,22 @@
                     // Desktop: panel docks left and never covers vertical
                     // space, so an ordinary smooth scroll is enough.
                     galleryImg.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-                } else {
-                    // Mobile: smoothly scroll to the same centered-below-panel
-                    // point used when first opening, instead of the
-                    // browser's native "nearest edge" behavior.
-                    scrollToPanelCenter(galleryImg);
                 }
+                // Mobile: the panel is fullscreen the whole time it's open,
+                // so the gallery is never visible behind it -- no need to
+                // scroll it at all here. (It gets recentered once on close,
+                // in closeImageViewer below, which is the only moment on
+                // mobile where the gallery's scroll position is actually
+                // seen.)
                 // Pulse right away regardless of whether anything actually
                 // needed to scroll — tapping a different thumbnail should
                 // always give a bit of tactile feedback that the magnified
                 // view updated.
                 pulseAttention(galleryImg);
             } else {
-                trackImageIntoView(galleryImg, PANEL_TRANSITION_MS);
+                if (desktopFilterQuery.matches) {
+                    trackImageIntoView(galleryImg, PANEL_TRANSITION_MS);
+                }
                 if (!desktopFilterQuery.matches) {
                     // Mobile viewer now opens fullscreen (see #image-overlay's
                     // mobile height rule), so default straight into General
