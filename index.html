@@ -2852,6 +2852,29 @@
             animatedScrollBy(dx, dy, SWITCH_SCROLL_MS);
         }
 
+        // Guards against exactly the bug that caused the mobile info-panel
+        // flicker: trackImageIntoView() gets called twice back-to-back on
+        // mobile open (once from openImageViewer itself, once more from
+        // setExpandedPanel('info') auto-expanding General Information right
+        // after), and neither call had any way of knowing about the other.
+        // With no shared state, that meant two fully independent
+        // requestAnimationFrame loops running at once, each measuring the
+        // image's position and calling window.scrollBy() on every frame --
+        // so the page was being scrolled twice per frame, off two deltas
+        // that went stale the instant the other loop's scrollBy fired. That
+        // produces real jitter (not just dropped frames), timed to land
+        // exactly when the info panel was auto-expanding.
+        //
+        // trackingGeneration turns every call into "the latest call wins":
+        // each invocation stamps its own step() closure with the value at
+        // call time, and increments the shared counter. A step() only
+        // schedules its own next frame if its stamp still matches the
+        // current counter -- so the moment a newer call comes in, every
+        // older in-flight loop notices on its very next frame and quietly
+        // stops instead of continuing to fight for control of the scroll
+        // position.
+        let trackingGeneration = 0;
+
         // While the panel is actually opening/closing, the gallery's layout
         // keeps reflowing continuously for the whole transition (body's
         // padding is animating), so a single delayed scroll would target a
@@ -2865,10 +2888,12 @@
         // than the browser's own native centering) cleans up whatever small
         // residual is left from chasing a moving target with partial steps.
         function trackImageIntoView(img, duration) {
+            const myGeneration = ++trackingGeneration;
             const start = performance.now();
             const SMOOTHING = 0.25; // fraction of the remaining distance corrected per frame
 
             function step(now) {
+                if (myGeneration !== trackingGeneration) return; // superseded by a newer call
                 const { dx, dy } = neededScrollDelta(img);
                 if (now - start < duration) {
                     if (dx !== 0 || dy !== 0) {
