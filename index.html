@@ -83,16 +83,6 @@
            this needs no mobile/desktop media guard of its own. */
         html {
             scrollbar-width: thin;
-            /* Stops a drag from the very top/bottom of the page from
-               chaining into the browser's own pull-to-refresh (mobile
-               Chrome) or rubber-band overscroll (mobile Safari) gesture —
-               both of which would otherwise compete with the nav panels'
-               own edge-drag trigger below. */
-            overscroll-behavior-y: none;
-        }
-
-        body {
-            overscroll-behavior-y: none;
         }
 
         html::-webkit-scrollbar {
@@ -217,6 +207,30 @@
         }
 
         /* Buttons */
+        #open-filters-btn, #open-pokedex-btn {
+            position: fixed;
+            bottom: 15px;
+            background-color: #444;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            cursor: pointer;
+            border-radius: 30px;
+            font-size: 18px;
+            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+        }
+
+        #open-filters-btn {
+            right: 15px;
+            z-index: 1000;
+        }
+
+        #open-pokedex-btn {
+            left: 15px;
+            z-index: 1000;
+        }
+
         #overlay {
             position: fixed;
             inset: 0;
@@ -733,7 +747,8 @@
            the related-image thumbnails' identical move (see
            .related-thumb-wrap.related-active). */
         .image-card.active-in-viewer {
-            filter: url(#gallery-halo);
+            /* filter: url(#gallery-halo); */ /* TEMPORARY DIAGNOSTIC CHANGE -- disabled to test the halo-filter freeze theory */
+            outline: 3px solid #4a90d9; /* TEMPORARY DIAGNOSTIC CHANGE -- crude stand-in so the active card is still visibly marked during this test */
         }
 
         /* Magnified view panel — docks to the top on mobile/portrait and
@@ -1349,7 +1364,8 @@
            than the img itself so the glow traces the frame's outer edge
            instead of just the plain artwork inside it. */
         .related-thumb-wrap.related-active {
-            filter: url(#gallery-halo);
+            /* filter: url(#gallery-halo); */ /* TEMPORARY DIAGNOSTIC CHANGE -- disabled to test the halo-filter freeze theory */
+            outline: 3px solid #4a90d9; /* TEMPORARY DIAGNOSTIC CHANGE */
         }
 
         /* Reuses the same gallery-pulse keyframes (defined near the top of
@@ -1607,279 +1623,6 @@
             z-index: 2;
         }
 
-        /* Nav Panels — top and bottom navigation button bars.
-           Height is 12% of the viewport (dvh, so it tracks the live
-           viewport the same way panels 2/3 do — including the mobile
-           address bar showing/hiding). background-size uses auto 100%
-           (scaled to the panel's own height, native 1920x320 aspect
-           preserved), so the art grows/shrinks with the panel itself.
-           Centered and left uncropped by CSS — on any viewport narrower
-           than the resulting scaled width this still naturally bleeds the
-           art off the left/right edges (same visual result as panels
-           2/3's own auto-100%-height approach). Fixed to the viewport
-           (not part of #pokedex-panel) so they stay put regardless of
-           that panel's own open/close animation. z-index sits above the
-           gallery/image-viewer/filter panel (all ≤999) but below
-           #pokedex-panel (1500), per spec.
-
-           Hidden by default, off-screen via translateY — shown by JS
-           (see the "Nav panel show/hide" script block) adding
-           .nav-visible in response to an edge hover (desktop) or edge
-           drag (mobile), and removed again on outside click or a
-           3-second hover-away timeout. */
-        #nav-panel-top,
-        #nav-panel-bottom {
-            position: fixed;
-            left: 0;
-            width: 100%;
-            height: 12vh; /* fallback for browsers without dvh support */
-            height: 12dvh; /* fallback until the JS below sets --real-vh */
-            height: calc(var(--real-vh, 100dvh) * 0.12); /* see the visualViewport comment further down for why */
-            /* Same 0.12 factor as the height above, exposed as a custom
-               property so the placeholder buttons below (and their
-               eventual real artwork) can size/position themselves as a
-               fraction of the panel's own height rather than in raw px or
-               width-relative %. Since the background art is also
-               height-locked (background-size: auto 100% — width scales
-               to match height, aspect preserved), anything sized or
-               offset in --panel-h units scales at exactly the same rate
-               as the art itself, so a button lined up with e.g. a button
-               depicted in the artwork stays lined up with it as the
-               viewport (and therefore the art's rendered size) changes —
-               a plain % or px offset would not track that. Custom
-               properties inherit by default, so children just reference
-               var(--panel-h) with no extra wiring needed. */
-            --panel-h: calc(var(--real-vh, 100dvh) * 0.12);
-            z-index: 1200;
-            pointer-events: auto;
-            background-repeat: no-repeat;
-            background-position: center;
-            background-size: auto 100%;
-            transition: transform 0.3s ease;
-            /* Same reasoning as #image-overlay's will-change further up --
-               browsers promote a transform-animating element to its own
-               GPU layer reactively (right as the transition starts) and,
-               just as importantly, demote it again once the transition
-               ends, since permanently promoting every transformed element
-               would be wasteful. That demotion drops the element back
-               into normal paint order, and if the resulting repaint isn't
-               perfectly synced with the compositor tearing the layer
-               down, the gallery underneath can flash through right at (or
-               just after) the transition's last frame -- matching the
-               flicker seen here. will-change keeps the layer promoted
-               permanently instead of reactively, so there's no
-               promote/demote boundary for anything to flash through. */
-            will-change: transform;
-            /* Fuzzy black glow around the visible artwork -- filter:
-               drop-shadow() (unlike box-shadow, which would just outline
-               the element's rectangular box) is alpha-aware: it hugs the
-               actual opaque pixels of the background image and casts
-               nothing around the transparent parts. Two stacked
-               drop-shadows at different blur radii for a softer,
-               multi-layered "fuzzy" falloff rather than one hard-edged
-               blur ring. Since filter also applies to descendants
-               painted with the element, the nav buttons (visually part
-               of the same artwork) get folded into the same glow
-               silhouette rather than getting a separate outline of
-               their own. */
-            filter: drop-shadow(0 0 6px rgba(0, 0, 0, 0.85)) drop-shadow(0 0 16px rgba(0, 0, 0, 0.6));
-        }
-
-        /* Mobile-first: these are the default (no media query) background
-           images, overridden for desktop further down at the same
-           min-width: 900px breakpoint already used elsewhere in the file
-           (see desktopFilterQuery in the script). Native resolution,
-           button placement, sizing, etc. are all identical between the
-           two -- this is a straight image swap and nothing else. */
-        #nav-panel-top {
-            top: 0;
-            transform: translateY(-100%);
-            background-image: url("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/page_visuals/Pokedex%20Buttons%20Top%20Mobile.png");
-        }
-
-        #nav-panel-bottom {
-            bottom: 0;
-            transform: translateY(100%);
-            background-image: url("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/page_visuals/Pokedex%20Buttons%20Bottom%20Mobile.png");
-        }
-
-        @media (min-width: 900px) {
-            #nav-panel-top {
-                background-image: url("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/page_visuals/Pokedex%20Buttons%20Top.png");
-            }
-
-            #nav-panel-bottom {
-                background-image: url("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/page_visuals/Pokedex%20Buttons%20Bottom.png");
-            }
-        }
-
-        #nav-panel-top.nav-visible,
-        #nav-panel-bottom.nav-visible {
-            transform: translateY(0);
-        }
-
-        /* Nav buttons — 3 per panel. Sizing/positioning scaffolding is
-           unchanged from before: still height-locked to --panel-h and
-           offset via --btn-x/--btn-y (see the comment on --panel-h
-           further up for why), so it keeps tracking the background art's
-           own scale as the viewport changes. background-image now lives
-           on each button's own #id rule below instead of the shared
-           .nav-button class, so each of the 6 can have its own artwork
-           swapped in independently. */
-        .nav-button {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            height: calc(var(--panel-h) * 0.5);
-            aspect-ratio: 1 / 1;
-            border-radius: 50%;
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            cursor: pointer;
-            pointer-events: auto;
-            /* Positioning uses the standalone `translate` property rather
-               than `transform: translate(...)` on purpose. Per the CSS
-               Transforms spec, the individual transform properties
-               compose in a fixed order -- translate, then rotate, then
-               scale, then the `transform` property -- with each one
-               applied to the *already-transformed* result of the ones
-               before it. A `transform` property translate is applied
-               before this pulse's `scale`, so scale would also scale that
-               offset itself, dragging the button toward its unshifted
-               anchor point as it shrinks/grows. The standalone `translate`
-               property is composed *after* scale instead, so scaling
-               happens purely around the button's own center (the default
-               transform-origin) and the position offset is unaffected
-               either way. */
-            translate: calc(-50% + (var(--btn-x, 0) * var(--panel-h))) calc(-50% + (var(--btn-y, 0) * var(--panel-h)));
-        }
-
-        /* Click feedback -- same restart-safe pulse pattern as
-           .image-card.gallery-pulse / .nav-arrow.gallery-pulse (see
-           pulseNavButton() in the script), but shrinking first instead of
-           growing first, and on its own keyframes since the shape is
-           inverted. Animates the standalone `scale` property -- see the
-           comment on .nav-button's own `translate` property above for why
-           it has to be `scale` specifically, and why that positioning is
-           on `translate` rather than `transform` in the first place. */
-        @keyframes nav-button-pulse {
-            0%   { scale: 1; }
-            35%  { scale: 0.925; }
-            65%  { scale: 1.015; }
-            100% { scale: 1; }
-        }
-
-        .nav-button.nav-button-pulse {
-            animation: nav-button-pulse 450ms ease-out;
-        }
-
-        /* Per-button artwork + placement. Each button below has its own
-           background-image and its own --btn-x/--btn-y offset (in
-           --panel-h units, see above) -- adjust either independently per
-           button as needed. Top panel: Game / Search / Discord. Bottom
-           panel: Back / Audio / Close. */
-        #nav-top-btn-game {
-            --btn-x: -0.715; --btn-y: -0.115;
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/93kxf5k6sl9h18rcbw15y/Button_Game.png?rlkey=3a555bqogfocaszoo2pgu48vf&st=0a4qb5co&dl=1");
-        }
-        #nav-top-btn-search {
-            --btn-x: 0.005; --btn-y: 0.04;
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/pg3jwo5em1d1e6tuugdx1/Button_Search.png?rlkey=ck0gtmpo7rgo7eqsfpu37g5py&st=4qxuzmns&dl=1");
-        }
-        #nav-top-btn-discord {
-            --btn-x: 0.725; --btn-y: -0.115;
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/o701qgeh8lmx9q2izh1aw/Button_Discord.png?rlkey=v199k1aym64joy9aucz9ecoud&st=f6tx4im4&dl=1");
-        }
-
-        #nav-bottom-btn-back {
-            --btn-x: -0.715; --btn-y: 0.125;
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/9u5r1nmb6drlofnmr2za9/Button_Back.png?rlkey=m6naql8ixq5vadqp2837e5atm&st=deneysu1&dl=1");
-        }
-        #nav-bottom-btn-audio {
-            --btn-x: 0.005; --btn-y: -0.034;
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/dxcnduxio9cn1v0vt6oho/Button_Audio.png?rlkey=0x1fuxybodrfca6grl2bnjrf9&st=tu5gtjph&dl=1");
-        }
-        #nav-bottom-btn-close {
-            --btn-x: 0.725; --btn-y: 0.125;
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/l2yi6d1i4gka9ef8frkvt/Button_Close.png?rlkey=8076k1tnhy5ywwvrsj1bsrn7i&st=eqjc05m5&dl=1");
-        }
-
-        /* "Coming Soon" toast for nav buttons that aren't wired up to real
-           functionality yet. Sits above everything currently on screen,
-           including #pokedex-panel (1500) -- the highest normal UI layer
-           -- since it needs to be readable no matter what else is open
-           when one of those buttons is clicked. pointer-events: none so
-           it never blocks interaction with whatever's underneath while
-           it's showing. Hidden by default (opacity 0 + a slight upward
-           offset); JS toggles the .visible class on click and removes it
-           again after 3 seconds. */
-        #coming-soon-toast {
-            position: fixed;
-            top: calc(6% + 1.75in);
-            left: 50%;
-            transform: translate(-50%, -12px);
-            z-index: 5000;
-            pointer-events: none;
-            padding: 0.6em 1.4em;
-            background: rgba(0, 0, 0, 0.8);
-            border-radius: 999px;
-            color: #fff;
-            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
-            font-weight: bold;
-            font-size: 1.1em;
-            white-space: nowrap;
-            opacity: 0;
-            transition: opacity 0.25s ease, transform 0.25s ease;
-        }
-
-        #coming-soon-toast.visible {
-            opacity: 1;
-            transform: translate(-50%, 0);
-        }
-
-
-
-        /* Invisible edge zones that trigger the panels above — a thin
-           strip a mouse can hover into, or a finger can start a drag
-           from, without needing to already be on the (currently
-           off-screen) panel itself. Sit just below the panels in
-           z-index: when a panel is visible it fully overlaps and covers
-           its own trigger zone, so hover/touch is naturally handed off to
-           the panel itself once it slides into view. touch-action: none
-           stops mobile browsers from interpreting a touch start here as
-           the beginning of a scroll/refresh/edge-navigation gesture.
-
-           width is a fallback (100%) only — the "Nav trigger width"
-           script block below measures each panel's background image at
-           its current rendered size (background-size: auto 100% means
-           the image's rendered width shrinks/grows with panel height,
-           and doesn't necessarily span the full window) and sets it via
-           inline style, so the hoverable/draggable zone matches the
-           image itself rather than the full width of the screen.
-           left: 50% + translateX(-50%) keeps it centered under that
-           image at any width, matching the image's own centered
-           background-position. */
-        #nav-trigger-top,
-        #nav-trigger-bottom {
-            position: fixed;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 100%;
-            height: 24px;
-            z-index: 1199;
-            pointer-events: auto;
-            touch-action: none;
-        }
-
-        #nav-trigger-top {
-            top: 0;
-        }
-
-        #nav-trigger-bottom {
-            bottom: 0;
-        }
-
     </style>
 </head>
 <body>
@@ -1918,6 +1661,9 @@
              alt="Loading">
     </div>
 
+    <button id="open-pokedex-btn">Close Pokédex</button>
+    <button id="open-filters-btn">Filters</button>
+
     <div id="overlay"></div>
 
     <div id="pokedex-panel" class="closed">
@@ -1939,21 +1685,6 @@
         </div>
     </div>
 
-
-    <div id="coming-soon-toast">Coming Soon</div>
-
-    <div id="nav-trigger-top"></div>
-    <div id="nav-trigger-bottom"></div>
-    <div id="nav-panel-top">
-        <div class="nav-button" id="nav-top-btn-game"></div>
-        <div class="nav-button" id="nav-top-btn-search"></div>
-        <div class="nav-button" id="nav-top-btn-discord"></div>
-    </div>
-    <div id="nav-panel-bottom">
-        <div class="nav-button" id="nav-bottom-btn-back"></div>
-        <div class="nav-button" id="nav-bottom-btn-audio"></div>
-        <div class="nav-button" id="nav-bottom-btn-close"></div>
-    </div>
 
     <div id="filter-panel">
         <div class="filter-panel-bg"></div>
@@ -2406,8 +2137,10 @@
         const gallery = document.getElementById("gallery");
         const panel = document.getElementById('filter-panel');
         const overlay = document.getElementById('overlay');
+        const openBtn = document.getElementById('open-filters-btn');
 
         const pokedexPanel = document.getElementById("pokedex-panel");
+        const pokedexBtn = document.getElementById("open-pokedex-btn");
 
         // Anchor the frame bars to a fixed point in the background artwork
         // itself (500px in from its native-resolution edge) rather than a
@@ -2467,188 +2200,6 @@
                 window.addEventListener('resize', recalc);
             }).catch(err => {
                 console.warn('Could not anchor frame bars to background image; falling back to CSS formula.', err);
-            });
-        })();
-
-        // Size the nav trigger zones (the invisible hover/drag strips that
-        // bring up the top/bottom nav panels) to match the actual
-        // rendered width of each panel's background image, rather than
-        // the full window width. Panels use background-size: auto 100%
-        // (height-locked, width auto-scaled, centered) — since the panel
-        // itself is 100% of the window's width but the image inside it
-        // often isn't, a full-width trigger zone was hoverable well past
-        // where the visible artwork actually ends. Same measuring
-        // approach as the frame-bar anchoring above: load the image,
-        // scale its natural width by the panel's current rendered height.
-        (() => {
-            const navPanelTop = document.getElementById('nav-panel-top');
-            const navPanelBottom = document.getElementById('nav-panel-bottom');
-            const navTriggerTop = document.getElementById('nav-trigger-top');
-            const navTriggerBottom = document.getElementById('nav-trigger-bottom');
-
-            function loadImage(url) {
-                return new Promise((resolve, reject) => {
-                    const img = new Image();
-                    img.onload = () => resolve(img);
-                    img.onerror = reject;
-                    img.src = url;
-                });
-            }
-
-            function bgUrlFor(el) {
-                const cssUrl = getComputedStyle(el).backgroundImage;
-                const match = cssUrl.match(/url\(["']?(.*?)["']?\)/);
-                return match ? match[1] : null;
-            }
-
-            function renderedWidthFor(panelEl, img) {
-                const rect = panelEl.getBoundingClientRect();
-                if (!rect.height || !img.naturalHeight) return rect.width;
-                const scale = rect.height / img.naturalHeight;
-                return img.naturalWidth * scale;
-            }
-
-            Promise.all([
-                loadImage(bgUrlFor(navPanelTop)),
-                loadImage(bgUrlFor(navPanelBottom))
-            ]).then(([topImg, bottomImg]) => {
-                function recalc() {
-                    navTriggerTop.style.width = `${renderedWidthFor(navPanelTop, topImg)}px`;
-                    navTriggerBottom.style.width = `${renderedWidthFor(navPanelBottom, bottomImg)}px`;
-                }
-
-                recalc();
-                new ResizeObserver(recalc).observe(navPanelTop);
-                new ResizeObserver(recalc).observe(navPanelBottom);
-                window.addEventListener('resize', recalc);
-            }).catch(err => {
-                console.warn('Could not size nav trigger zones to background image; falling back to full width.', err);
-            });
-        })();
-
-        // Nav panel transparent-pixel click/hover-through. The panels'
-        // artwork has genuine transparent regions (both the letterboxed
-        // space to either side of the art on wide viewports, and actual
-        // alpha=0 gaps within the art itself) where the gallery
-        // underneath should stay fully interactive -- hoverable and
-        // clickable -- exactly as if the panel weren't there at all.
-        // Plain CSS can't hit-test per-pixel alpha on an arbitrary HTML
-        // element, so this reads the actual pixel data back out of each
-        // panel's background image via an offscreen canvas, and toggles
-        // the panel's own pointer-events on the fly based on what's under
-        // the cursor/finger.
-        (() => {
-            const navPanelTop = document.getElementById('nav-panel-top');
-            const navPanelBottom = document.getElementById('nav-panel-bottom');
-
-            function loadImage(url) {
-                return new Promise((resolve, reject) => {
-                    const img = new Image();
-                    // Needed to read pixel data back out via canvas below --
-                    // without this, drawing a cross-origin image to a canvas
-                    // "taints" it and getImageData throws. Requires the image
-                    // host to actually send CORS headers; see the catch
-                    // block further down for the fallback if it doesn't.
-                    img.crossOrigin = 'anonymous';
-                    img.onload = () => resolve(img);
-                    img.onerror = reject;
-                    img.src = url;
-                });
-            }
-
-            function bgUrlFor(el) {
-                const cssUrl = getComputedStyle(el).backgroundImage;
-                const match = cssUrl.match(/url\(["']?(.*?)["']?\)/);
-                return match ? match[1] : null;
-            }
-
-            function buildAlphaMap(img) {
-                const canvas = document.createElement('canvas');
-                canvas.width = img.naturalWidth;
-                canvas.height = img.naturalHeight;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0);
-                return ctx.getImageData(0, 0, canvas.width, canvas.height); // throws if tainted
-            }
-
-            // Maps a point in viewport coordinates to the alpha value (0-255)
-            // of the panel's background image at that point. Returns 0 for
-            // any point outside the image's own rendered bounds -- e.g. the
-            // letterboxed space to either side on a viewport wider than the
-            // scaled art -- since there's no artwork there to be "opaque".
-            function alphaAt(panelEl, img, imageData, clientX, clientY) {
-                const rect = panelEl.getBoundingClientRect();
-                if (!rect.height || !img.naturalHeight) return 0;
-                const scale = rect.height / img.naturalHeight;
-                const renderedWidth = img.naturalWidth * scale;
-                const imageLeft = rect.left + (rect.width - renderedWidth) / 2;
-                const relX = clientX - imageLeft;
-                const relY = clientY - rect.top;
-                if (relX < 0 || relX >= renderedWidth || relY < 0 || relY >= rect.height) return 0;
-                const px = Math.min(imageData.width - 1, Math.floor((relX / renderedWidth) * imageData.width));
-                const py = Math.min(imageData.height - 1, Math.floor((relY / rect.height) * imageData.height));
-                return imageData.data[(py * imageData.width + px) * 4 + 3];
-            }
-
-            const ALPHA_THRESHOLD = 10; // pixels this transparent (or more) are treated as "not there"
-
-            Promise.all([
-                loadImage(bgUrlFor(navPanelTop)),
-                loadImage(bgUrlFor(navPanelBottom))
-            ]).then(([topImg, bottomImg]) => {
-                let topAlpha, bottomAlpha;
-                try {
-                    topAlpha = buildAlphaMap(topImg);
-                    bottomAlpha = buildAlphaMap(bottomImg);
-                } catch (err) {
-                    console.warn('Could not read nav panel image pixel data (likely a CORS restriction on the image host) -- transparent-area click/hover-through is disabled; panels will behave as fully opaque rectangles instead.', err);
-                    return;
-                }
-
-                const panelData = [
-                    { el: navPanelTop, img: topImg, alpha: topAlpha },
-                    { el: navPanelBottom, img: bottomImg, alpha: bottomAlpha },
-                ];
-
-                // Desktop: re-checked on every mousemove, attached to
-                // document rather than the panels themselves -- a panel
-                // whose pointer-events was just set to 'none' would stop
-                // receiving mouse events on itself, so sampling from the
-                // panel would get stuck the first time it went transparent.
-                // document always gets the bubbled event regardless of which
-                // element actually received it underneath.
-                document.addEventListener('mousemove', (e) => {
-                    panelData.forEach(({ el, img, alpha }) => {
-                        const rect = el.getBoundingClientRect();
-                        if (e.clientY < rect.top || e.clientY > rect.bottom) return; // panel off-screen, or cursor elsewhere entirely
-                        const a = alphaAt(el, img, alpha, e.clientX, e.clientY);
-                        el.style.pointerEvents = a > ALPHA_THRESHOLD ? 'auto' : 'none';
-                    });
-                });
-
-                // Mobile: there's no hover to sample ahead of time, so
-                // instead this catches the tap on the panel itself (which
-                // always has pointer-events: auto going into the gesture),
-                // checks the pixel under it, and -- if transparent --
-                // manually hands the tap to whatever's actually underneath
-                // via elementFromPoint, rather than letting the panel
-                // silently swallow it.
-                panelData.forEach(({ el, img, alpha }) => {
-                    el.addEventListener('touchstart', (e) => {
-                        const touch = e.touches[0];
-                        if (!touch) return;
-                        const a = alphaAt(el, img, alpha, touch.clientX, touch.clientY);
-                        if (a > ALPHA_THRESHOLD) return; // opaque -- let the panel/button handle it normally
-
-                        e.preventDefault();
-                        el.style.pointerEvents = 'none';
-                        const target = document.elementFromPoint(touch.clientX, touch.clientY);
-                        el.style.pointerEvents = 'auto';
-                        if (target) target.click();
-                    }, { passive: false });
-                });
-            }).catch(err => {
-                console.warn('Could not load nav panel images for transparent-area click-through.', err);
             });
         })();
 
@@ -2712,6 +2263,19 @@
         // was already working on manual close/reopen.
         requestAnimationFrame(() => {
             requestAnimationFrame(openPokedexPanels);
+        });
+
+        pokedexBtn.addEventListener("click", () => {
+            const isClosed = pokedexPanel.classList.contains("closed");
+
+            closeFilterPanel();
+            closeImageViewer();
+
+            if (isClosed) {
+                openPokedexPanels();
+            } else {
+                closePokedexPanels();
+            }
         });
 
         document.getElementById("pokedex-click-zone").addEventListener("click", closePokedexPanels);
@@ -3200,72 +2764,43 @@
             }
         }
 
+        openBtn.addEventListener('click', () => {
+            if (!openBtn.disabled) toggleDrawer();
+        });
+
         overlay.addEventListener('click', () => {
             closeFilterPanel();
-        });
-
-        // Nav panel buttons — search/close/back now the only way to
-        // trigger this functionality, since the old standalone Filters
-        // and Close Pokédex buttons have been removed. The other three
-        // (game/discord/audio) aren't wired to anything real yet, so
-        // they just surface the "Coming Soon" toast.
-        document.getElementById('nav-top-btn-search').addEventListener('click', toggleDrawer);
-
-        document.getElementById('nav-bottom-btn-close').addEventListener('click', () => {
-            const isClosed = pokedexPanel.classList.contains('closed');
-
-            closeFilterPanel();
-            closeImageViewer();
-
-            if (isClosed) {
-                openPokedexPanels();
-            } else {
-                closePokedexPanels();
-            }
-        });
-
-        document.getElementById('nav-bottom-btn-back').addEventListener('click', () => {
-            closeImageViewer();
-            closeFilterPanel();
-        });
-
-        const comingSoonToast = document.getElementById('coming-soon-toast');
-        let comingSoonTimeout = null;
-        function showComingSoonToast() {
-            comingSoonToast.classList.add('visible');
-            clearTimeout(comingSoonTimeout);
-            comingSoonTimeout = setTimeout(() => {
-                comingSoonToast.classList.remove('visible');
-                comingSoonTimeout = null;
-            }, 3000);
-        }
-
-        ['nav-top-btn-game', 'nav-top-btn-discord', 'nav-bottom-btn-audio'].forEach(id => {
-            document.getElementById(id).addEventListener('click', showComingSoonToast);
-        });
-
-        // Tactile click feedback for all 6 nav buttons -- same restart-safe
-        // class-toggle pattern as pulseAttention/pulseNavArrow above, just
-        // with its own shrink-first keyframes (see .nav-button-pulse in
-        // CSS). Wired generically to every .nav-button rather than
-        // per-handler, so it applies uniformly regardless of what (if
-        // anything) that particular button actually does on click.
-        function pulseNavButton(btn) {
-            btn.classList.remove('nav-button-pulse');
-            void btn.offsetWidth;
-            btn.classList.add('nav-button-pulse');
-            btn.addEventListener('animationend', () => {
-                btn.classList.remove('nav-button-pulse');
-            }, { once: true });
-        }
-
-        document.querySelectorAll('.nav-button').forEach(btn => {
-            btn.addEventListener('click', () => pulseNavButton(btn));
         });
 
         const imageOverlay = document.getElementById('image-overlay');
         const overlayImg = document.getElementById('overlay-img');
         const imageCloseBtn = document.getElementById('image-close-btn');
+
+        // --- TEMPORARY diagnostic instrumentation for the first-close
+        // freeze bug. Shows timing marks in a small on-screen panel (top
+        // left) so this is readable directly on a phone with no devtools
+        // needed. Safe to delete this whole block plus the dbgLog(...)
+        // calls sprinkled below once we've found the cause.
+        let dbgStartTime = null;
+        let dbgPanel = null;
+        function dbgLog(label) {
+            const now = performance.now();
+            if (dbgStartTime === null) dbgStartTime = now;
+            const delta = (now - dbgStartTime).toFixed(1);
+            if (!dbgPanel) {
+                dbgPanel = document.createElement('div');
+                dbgPanel.style.cssText = 'position:fixed;top:0;left:0;z-index:999999;background:rgba(0,0,0,0.85);color:#0f0;font:11px monospace;padding:6px;max-width:100vw;max-height:45vh;overflow:auto;white-space:pre-wrap;pointer-events:none;';
+                document.body.appendChild(dbgPanel);
+            }
+            dbgPanel.textContent += `+${delta}ms  ${label}\n`;
+            console.log(`[dbg +${delta}ms] ${label}`);
+        }
+        // Logs whenever the panel's own slide transform finishes, on both
+        // open and close, so we can see how it lines up against the marks
+        // below regardless of which one is running when the freeze hits.
+        imageOverlay.addEventListener('transitionend', (e) => {
+            if (e.propertyName === 'transform') dbgLog('#image-overlay transform transition ended');
+        });
         const imagePrevBtn = document.getElementById('image-prev-btn');
         const imageNextBtn = document.getElementById('image-next-btn');
         const imagePrevArrow = imagePrevBtn.querySelector('.nav-arrow');
@@ -3392,12 +2927,16 @@
         // residual is left from chasing a moving target with partial steps.
         function trackImageIntoView(img, duration) {
             const myGeneration = ++trackingGeneration;
+            dbgLog('trackImageIntoView() called');
             const start = performance.now();
             const SMOOTHING = 0.25; // fraction of the remaining distance corrected per frame
 
             function step(now) {
                 if (myGeneration !== trackingGeneration) return; // superseded by a newer call
+                const beforeDelta = performance.now();
                 const { dx, dy } = neededScrollDelta(img);
+                const deltaCost = (performance.now() - beforeDelta).toFixed(1);
+                if (deltaCost > 5) dbgLog(`neededScrollDelta() took ${deltaCost}ms`);
                 if (now - start < duration) {
                     if (dx !== 0 || dy !== 0) {
                         window.scrollBy(dx * SMOOTHING, dy * SMOOTHING);
@@ -3406,6 +2945,7 @@
                 } else {
                     if (dx !== 0 || dy !== 0) window.scrollBy(dx, dy);
                     pulseAttention(img);
+                    dbgLog('trackImageIntoView() finished');
                 }
             }
             requestAnimationFrame(step);
@@ -3882,6 +3422,21 @@
                 const thumb = document.createElement('img');
                 thumb.src = relImg.src;
                 thumb.alt = relImg.alt;
+                // Matches the main gallery's images (see attachImageEvents'
+                // img.loading = "lazy" above) -- without this, every single
+                // open eagerly force-fetches and decodes the *entire* row
+                // of evolution-chain/form thumbnails right away, even the
+                // ones scrolled out of the row's own horizontal overflow.
+                // On a fresh page load, most of those sprite URLs have
+                // never been requested before (the main gallery hasn't
+                // scrolled anywhere near them yet), so this could kick off
+                // several brand-new network fetches simultaneously. Close
+                // the viewer while those are still in flight -- easy to do
+                // on the very first open of a session -- and the browser's
+                // renderer stalls catching up on that in-flight decode
+                // work before it can paint the next frame.
+                thumb.loading = "lazy";
+                thumb.decoding = "async";
                 thumb.draggable = false; // avoid native drag-ghost fighting with the click-and-drag panning below
 
                 // Mirrors .image-card .hit-zone in the main gallery: owns
@@ -4155,6 +3710,7 @@
         }
 
         function closeImageViewer() {
+            dbgLog('closeImageViewer() start');
             const wasOpen = document.body.classList.contains('viewer-open');
             const previouslyActive = activeGalleryImg;
 
@@ -4164,8 +3720,10 @@
             }
 
             imageOverlay.classList.remove('visible');
+            dbgLog('removed .visible (transform transition now starts)');
             overlayImg.src = "";
             beginPanelAnim();
+            dbgLog('beginPanelAnim() returned');
             document.body.classList.remove('viewer-open');
 
             expandedPanel = null;
@@ -4181,9 +3739,12 @@
             // meaningfully scrolled, so trackImageIntoView needs the lock
             // released first for its scrollBy() to do anything.
             if (viewerHoldsScrollLock) {
+                dbgLog('about to call pageScrollLock.unlock()');
                 window.pageScrollLock.unlock();
+                dbgLog('pageScrollLock.unlock() returned');
                 viewerHoldsScrollLock = false;
             }
+            dbgLog('closeImageViewer() sync body done');
 
             // Always re-center on close, on both mobile and desktop — this
             // is also what makes the pulse afterward land in a consistent,
@@ -4207,7 +3768,10 @@
                 if (desktopFilterQuery.matches) {
                     trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS);
                 } else {
+                    const scheduledAt = performance.now();
                     setTimeout(() => {
+                        const actualDelay = (performance.now() - scheduledAt).toFixed(1);
+                        dbgLog(`recenter setTimeout fired (requested 350ms, actual ${actualDelay}ms)`);
                         trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS);
                     }, 350);
                 }
@@ -4245,7 +3809,16 @@
         // Removed rather than special-cased further, since closing on
         // outside-click was never meant to reach inside the panel at all.
 
-        imageCloseBtn.addEventListener('click', closeImageViewer);
+        imageCloseBtn.addEventListener('click', () => {
+            dbgStartTime = null; // restart the clock fresh for this close attempt
+            dbgLog('click fired');
+            closeImageViewer();
+            dbgLog('closeImageViewer() returned (sync JS done)');
+            requestAnimationFrame(() => {
+                dbgLog('first rAF after close');
+                requestAnimationFrame(() => dbgLog('second rAF after close'));
+            });
+        });
 
         imagePrevBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -4325,88 +3898,6 @@
         });
 
         filterGallery();
-
-        // Nav panel show/hide — top/bottom nav panels stay off-screen
-        // (see .nav-visible in CSS) until triggered by a mouse hovering
-        // the edge trigger zones or the panels themselves (desktop), or a
-        // touch/drag starting from those same edge zones (mobile). They
-        // close again on a click/tap outside both panels, or after the
-        // mouse/touch has been away from both trigger zones and both
-        // panels for a few uninterrupted seconds (0.5s on desktop, 3s on
-        // mobile -- mobile's is intentionally more forgiving since a
-        // finger has to actually be lifted off the screen to "leave",
-        // unlike a mouse that can hover continuously).
-        (() => {
-            const navPanelTop = document.getElementById('nav-panel-top');
-            const navPanelBottom = document.getElementById('nav-panel-bottom');
-            const navTriggerTop = document.getElementById('nav-trigger-top');
-            const navTriggerBottom = document.getElementById('nav-trigger-bottom');
-            const navHoverTargets = [navPanelTop, navPanelBottom, navTriggerTop, navTriggerBottom];
-
-            const NAV_HIDE_DELAY_DESKTOP_MS = 500;
-            const NAV_HIDE_DELAY_MOBILE_MS = 3000;
-            let navHideTimer = null;
-
-            function showNavPanels() {
-                clearTimeout(navHideTimer);
-                navHideTimer = null;
-                navPanelTop.classList.add('nav-visible');
-                navPanelBottom.classList.add('nav-visible');
-            }
-
-            function hideNavPanelsNow() {
-                clearTimeout(navHideTimer);
-                navHideTimer = null;
-                navPanelTop.classList.remove('nav-visible');
-                navPanelBottom.classList.remove('nav-visible');
-            }
-
-            function scheduleHideNavPanels(delayMs) {
-                clearTimeout(navHideTimer);
-                navHideTimer = setTimeout(hideNavPanelsNow, delayMs);
-            }
-
-            // Desktop: hovering either trigger strip or either panel keeps
-            // things open; leaving any of them starts the 0.5s countdown,
-            // which the next enter (e.g. moving straight from the trigger
-            // zone into the panel sliding over it) cancels before it fires.
-            navHoverTargets.forEach(el => {
-                el.addEventListener('mouseenter', showNavPanels);
-                el.addEventListener('mouseleave', () => scheduleHideNavPanels(NAV_HIDE_DELAY_DESKTOP_MS));
-            });
-
-            // Mobile: a touch starting in either edge trigger zone opens
-            // the panels immediately and blocks the browser's own
-            // edge-gesture handling (pull-to-refresh / back-navigation
-            // swipe) for that touch, via preventDefault on both
-            // touchstart and touchmove — passive:false is required for
-            // preventDefault to have any effect on these. Release starts
-            // the 3s mobile countdown.
-            [navTriggerTop, navTriggerBottom].forEach(zone => {
-                zone.addEventListener('touchstart', (e) => {
-                    e.preventDefault();
-                    showNavPanels();
-                }, { passive: false });
-
-                zone.addEventListener('touchmove', (e) => {
-                    e.preventDefault();
-                }, { passive: false });
-
-                zone.addEventListener('touchend', () => scheduleHideNavPanels(NAV_HIDE_DELAY_MOBILE_MS));
-                zone.addEventListener('touchcancel', () => scheduleHideNavPanels(NAV_HIDE_DELAY_MOBILE_MS));
-            });
-
-            // Outside click/tap closes immediately, regardless of the
-            // countdown. Capture phase so this still fires even if
-            // something inside the panels later stops propagation for its
-            // own click handling.
-            document.addEventListener('click', (e) => {
-                const isVisible = navPanelTop.classList.contains('nav-visible');
-                if (!isVisible) return;
-                const insideNav = navHoverTargets.some(el => el.contains(e.target));
-                if (!insideNav) hideNavPanelsNow();
-            }, true);
-        })();
 
     </script>
 </body>
