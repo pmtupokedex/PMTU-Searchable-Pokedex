@@ -83,6 +83,16 @@
            this needs no mobile/desktop media guard of its own. */
         html {
             scrollbar-width: thin;
+            /* Stops a drag from the very top/bottom of the page from
+               chaining into the browser's own pull-to-refresh (mobile
+               Chrome) or rubber-band overscroll (mobile Safari) gesture —
+               both of which would otherwise compete with the nav panels'
+               own edge-drag trigger below. */
+            overscroll-behavior-y: none;
+        }
+
+        body {
+            overscroll-behavior-y: none;
         }
 
         html::-webkit-scrollbar {
@@ -1622,42 +1632,83 @@
         }
 
         /* Nav Panels — top and bottom navigation button bars.
-           Height is 15% of the viewport (dvh, so it tracks the live
+           Height is 12% of the viewport (dvh, so it tracks the live
            viewport the same way panels 2/3 do — including the mobile
-           address bar showing/hiding), rather than a fixed pixel height.
-           background-size uses auto 100% (scaled to the panel's own
-           height, native 1920x320 aspect preserved) instead of a fixed
-           1920x320 box, so the art now grows/shrinks with the panel
-           itself. Centered and left uncropped by CSS — on any viewport
-           narrower than the resulting scaled width this still naturally
-           bleeds the art off the left/right edges (same visual result as
-           panels 2/3's own auto-100%-height approach). Fixed to the
-           viewport (not part of #pokedex-panel) so they stay put
-           regardless of that panel's own open/close animation. z-index
-           sits above the gallery/image-viewer/filter panel (all ≤999) but
-           below #pokedex-panel (1500), per spec. */
+           address bar showing/hiding). background-size uses auto 100%
+           (scaled to the panel's own height, native 1920x320 aspect
+           preserved), so the art grows/shrinks with the panel itself.
+           Centered and left uncropped by CSS — on any viewport narrower
+           than the resulting scaled width this still naturally bleeds the
+           art off the left/right edges (same visual result as panels
+           2/3's own auto-100%-height approach). Fixed to the viewport
+           (not part of #pokedex-panel) so they stay put regardless of
+           that panel's own open/close animation. z-index sits above the
+           gallery/image-viewer/filter panel (all ≤999) but below
+           #pokedex-panel (1500), per spec.
+
+           Hidden by default, off-screen via translateY — shown by JS
+           (see the "Nav panel show/hide" script block) adding
+           .nav-visible in response to an edge hover (desktop) or edge
+           drag (mobile), and removed again on outside click or a
+           3-second hover-away timeout. */
         #nav-panel-top,
         #nav-panel-bottom {
             position: fixed;
             left: 0;
             width: 100%;
-            height: 15vh; /* fallback for browsers without dvh support */
-            height: 15dvh;
+            height: 12vh; /* fallback for browsers without dvh support */
+            height: 12dvh;
             z-index: 1200;
             pointer-events: auto;
             background-repeat: no-repeat;
             background-position: center;
             background-size: auto 100%;
+            transition: transform 0.3s ease;
         }
 
         #nav-panel-top {
             top: 0;
+            transform: translateY(-100%);
             background-image: url("https://dl.dropboxusercontent.com/scl/fi/w6r6oz7ebx451wodtoex3/Pokedex-Buttons-Top.png?rlkey=yjyo9ex7f4ld96zs12o85rk8k&st=5g3rb0d9&dl=1");
         }
 
         #nav-panel-bottom {
             bottom: 0;
+            transform: translateY(100%);
             background-image: url("https://dl.dropboxusercontent.com/scl/fi/xhfqkdndy776knq2pcysj/Pokedex-Buttons-Bottom.png?rlkey=208enu9bz1aezl973czino8lx&st=s29woffb&dl=1");
+        }
+
+        #nav-panel-top.nav-visible,
+        #nav-panel-bottom.nav-visible {
+            transform: translateY(0);
+        }
+
+        /* Invisible edge zones that trigger the panels above — a thin
+           strip a mouse can hover into, or a finger can start a drag
+           from, without needing to already be on the (currently
+           off-screen) panel itself. Sit just below the panels in
+           z-index: when a panel is visible it fully overlaps and covers
+           its own trigger zone, so hover/touch is naturally handed off to
+           the panel itself once it slides into view. touch-action: none
+           stops mobile browsers from interpreting a touch start here as
+           the beginning of a scroll/refresh/edge-navigation gesture. */
+        #nav-trigger-top,
+        #nav-trigger-bottom {
+            position: fixed;
+            left: 0;
+            width: 100%;
+            height: 24px;
+            z-index: 1199;
+            pointer-events: auto;
+            touch-action: none;
+        }
+
+        #nav-trigger-top {
+            top: 0;
+        }
+
+        #nav-trigger-bottom {
+            bottom: 0;
         }
 
     </style>
@@ -1723,6 +1774,8 @@
     </div>
 
 
+    <div id="nav-trigger-top"></div>
+    <div id="nav-trigger-bottom"></div>
     <div id="nav-panel-top"></div>
     <div id="nav-panel-bottom"></div>
 
@@ -3874,6 +3927,84 @@
         });
 
         filterGallery();
+
+        // Nav panel show/hide — top/bottom nav panels stay off-screen
+        // (see .nav-visible in CSS) until triggered by a mouse hovering
+        // the edge trigger zones or the panels themselves (desktop), or a
+        // touch/drag starting from those same edge zones (mobile). They
+        // close again on a click/tap outside both panels, or after the
+        // mouse/touch has been away from both trigger zones and both
+        // panels for 3 uninterrupted seconds.
+        (() => {
+            const navPanelTop = document.getElementById('nav-panel-top');
+            const navPanelBottom = document.getElementById('nav-panel-bottom');
+            const navTriggerTop = document.getElementById('nav-trigger-top');
+            const navTriggerBottom = document.getElementById('nav-trigger-bottom');
+            const navHoverTargets = [navPanelTop, navPanelBottom, navTriggerTop, navTriggerBottom];
+
+            const NAV_HIDE_DELAY_MS = 3000;
+            let navHideTimer = null;
+
+            function showNavPanels() {
+                clearTimeout(navHideTimer);
+                navHideTimer = null;
+                navPanelTop.classList.add('nav-visible');
+                navPanelBottom.classList.add('nav-visible');
+            }
+
+            function hideNavPanelsNow() {
+                clearTimeout(navHideTimer);
+                navHideTimer = null;
+                navPanelTop.classList.remove('nav-visible');
+                navPanelBottom.classList.remove('nav-visible');
+            }
+
+            function scheduleHideNavPanels() {
+                clearTimeout(navHideTimer);
+                navHideTimer = setTimeout(hideNavPanelsNow, NAV_HIDE_DELAY_MS);
+            }
+
+            // Desktop: hovering either trigger strip or either panel keeps
+            // things open; leaving any of them starts the 3s countdown,
+            // which the next enter (e.g. moving straight from the trigger
+            // zone into the panel sliding over it) cancels before it fires.
+            navHoverTargets.forEach(el => {
+                el.addEventListener('mouseenter', showNavPanels);
+                el.addEventListener('mouseleave', scheduleHideNavPanels);
+            });
+
+            // Mobile: a touch starting in either edge trigger zone opens
+            // the panels immediately and blocks the browser's own
+            // edge-gesture handling (pull-to-refresh / back-navigation
+            // swipe) for that touch, via preventDefault on both
+            // touchstart and touchmove — passive:false is required for
+            // preventDefault to have any effect on these. Release starts
+            // the same 3s countdown as desktop's mouseleave.
+            [navTriggerTop, navTriggerBottom].forEach(zone => {
+                zone.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    showNavPanels();
+                }, { passive: false });
+
+                zone.addEventListener('touchmove', (e) => {
+                    e.preventDefault();
+                }, { passive: false });
+
+                zone.addEventListener('touchend', scheduleHideNavPanels);
+                zone.addEventListener('touchcancel', scheduleHideNavPanels);
+            });
+
+            // Outside click/tap closes immediately, regardless of the
+            // countdown. Capture phase so this still fires even if
+            // something inside the panels later stops propagation for its
+            // own click handling.
+            document.addEventListener('click', (e) => {
+                const isVisible = navPanelTop.classList.contains('nav-visible');
+                if (!isVisible) return;
+                const insideNav = navHoverTargets.some(el => el.contains(e.target));
+                if (!insideNav) hideNavPanelsNow();
+            }, true);
+        })();
 
     </script>
 </body>
