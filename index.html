@@ -1659,6 +1659,21 @@
             height: 12vh; /* fallback for browsers without dvh support */
             height: 12dvh; /* fallback until the JS below sets --real-vh */
             height: calc(var(--real-vh, 100dvh) * 0.12); /* see the visualViewport comment further down for why */
+            /* Same 0.12 factor as the height above, exposed as a custom
+               property so the placeholder buttons below (and their
+               eventual real artwork) can size/position themselves as a
+               fraction of the panel's own height rather than in raw px or
+               width-relative %. Since the background art is also
+               height-locked (background-size: auto 100% — width scales
+               to match height, aspect preserved), anything sized or
+               offset in --panel-h units scales at exactly the same rate
+               as the art itself, so a button lined up with e.g. a button
+               depicted in the artwork stays lined up with it as the
+               viewport (and therefore the art's rendered size) changes —
+               a plain % or px offset would not track that. Custom
+               properties inherit by default, so children just reference
+               var(--panel-h) with no extra wiring needed. */
+            --panel-h: calc(var(--real-vh, 100dvh) * 0.12);
             z-index: 1200;
             pointer-events: auto;
             background-repeat: no-repeat;
@@ -1698,6 +1713,70 @@
             transform: translateY(0);
         }
 
+        /* Nav buttons — 3 per panel. Sizing/positioning scaffolding is
+           unchanged from before: still height-locked to --panel-h and
+           offset via --btn-x/--btn-y (see the comment on --panel-h
+           further up for why), so it keeps tracking the background art's
+           own scale as the viewport changes. background-image now lives
+           on each button's own #id rule below instead of the shared
+           .nav-button class, so each of the 6 can have its own artwork
+           swapped in independently. */
+        .nav-button {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            height: calc(var(--panel-h) * 0.5);
+            aspect-ratio: 1 / 1;
+            border-radius: 50%;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            cursor: pointer;
+            pointer-events: auto;
+            transform: translate(
+                calc(-50% + (var(--btn-x, 0) * var(--panel-h))),
+                calc(-50% + (var(--btn-y, 0) * var(--panel-h)))
+            );
+            transition: filter 0.15s ease;
+        }
+
+        .nav-button:hover {
+            filter: brightness(1.15);
+        }
+
+        /* Per-button artwork + placement. Each button below has its own
+           background-image and its own --btn-x/--btn-y offset (in
+           --panel-h units, see above) -- adjust either independently per
+           button as needed. Top panel: Game / Search / Discord. Bottom
+           panel: Back / Audio / Close. */
+        #nav-top-btn-game {
+            --btn-x: -0.715; --btn-y: -0.115;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/93kxf5k6sl9h18rcbw15y/Button_Game.png?rlkey=3a555bqogfocaszoo2pgu48vf&st=0a4qb5co&dl=1");
+        }
+        #nav-top-btn-search {
+            --btn-x: 0.005; --btn-y: 0.04;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/pg3jwo5em1d1e6tuugdx1/Button_Search.png?rlkey=ck0gtmpo7rgo7eqsfpu37g5py&st=4qxuzmns&dl=1");
+        }
+        #nav-top-btn-discord {
+            --btn-x: 0.725; --btn-y: -0.115;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/o701qgeh8lmx9q2izh1aw/Button_Discord.png?rlkey=v199k1aym64joy9aucz9ecoud&st=f6tx4im4&dl=1");
+        }
+
+        #nav-bottom-btn-back {
+            --btn-x: -0.72; --btn-y: 0.125;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/9u5r1nmb6drlofnmr2za9/Button_Back.png?rlkey=m6naql8ixq5vadqp2837e5atm&st=deneysu1&dl=1");
+        }
+        #nav-bottom-btn-audio {
+            --btn-x: 0.005; --btn-y: -0.034;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/dxcnduxio9cn1v0vt6oho/Button_Audio.png?rlkey=0x1fuxybodrfca6grl2bnjrf9&st=tu5gtjph&dl=1");
+        }
+        #nav-bottom-btn-close {
+            --btn-x: 0.72; --btn-y: 0.125;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/l2yi6d1i4gka9ef8frkvt/Button_Close.png?rlkey=8076k1tnhy5ywwvrsj1bsrn7i&st=eqjc05m5&dl=1");
+        }
+
+
+
         /* Invisible edge zones that trigger the panels above — a thin
            strip a mouse can hover into, or a finger can start a drag
            from, without needing to already be on the (currently
@@ -1706,11 +1785,23 @@
            its own trigger zone, so hover/touch is naturally handed off to
            the panel itself once it slides into view. touch-action: none
            stops mobile browsers from interpreting a touch start here as
-           the beginning of a scroll/refresh/edge-navigation gesture. */
+           the beginning of a scroll/refresh/edge-navigation gesture.
+
+           width is a fallback (100%) only — the "Nav trigger width"
+           script block below measures each panel's background image at
+           its current rendered size (background-size: auto 100% means
+           the image's rendered width shrinks/grows with panel height,
+           and doesn't necessarily span the full window) and sets it via
+           inline style, so the hoverable/draggable zone matches the
+           image itself rather than the full width of the screen.
+           left: 50% + translateX(-50%) keeps it centered under that
+           image at any width, matching the image's own centered
+           background-position. */
         #nav-trigger-top,
         #nav-trigger-bottom {
             position: fixed;
-            left: 0;
+            left: 50%;
+            transform: translateX(-50%);
             width: 100%;
             height: 24px;
             z-index: 1199;
@@ -1791,8 +1882,17 @@
 
     <div id="nav-trigger-top"></div>
     <div id="nav-trigger-bottom"></div>
-    <div id="nav-panel-top"></div>
-    <div id="nav-panel-bottom"></div>
+    <div id="nav-panel-top">
+        <div class="nav-button" id="nav-top-btn-game"></div>
+        <div class="nav-button" id="nav-top-btn-search"></div>
+        <div class="nav-button" id="nav-top-btn-discord"></div>
+	  WORK IN PROGRESS
+    </div>
+    <div id="nav-panel-bottom">
+        <div class="nav-button" id="nav-bottom-btn-back"></div>
+        <div class="nav-button" id="nav-bottom-btn-audio"></div>
+        <div class="nav-button" id="nav-bottom-btn-close"></div>
+    </div>
 
     <div id="filter-panel">
         <div class="filter-panel-bg"></div>
@@ -2308,6 +2408,62 @@
                 window.addEventListener('resize', recalc);
             }).catch(err => {
                 console.warn('Could not anchor frame bars to background image; falling back to CSS formula.', err);
+            });
+        })();
+
+        // Size the nav trigger zones (the invisible hover/drag strips that
+        // bring up the top/bottom nav panels) to match the actual
+        // rendered width of each panel's background image, rather than
+        // the full window width. Panels use background-size: auto 100%
+        // (height-locked, width auto-scaled, centered) — since the panel
+        // itself is 100% of the window's width but the image inside it
+        // often isn't, a full-width trigger zone was hoverable well past
+        // where the visible artwork actually ends. Same measuring
+        // approach as the frame-bar anchoring above: load the image,
+        // scale its natural width by the panel's current rendered height.
+        (() => {
+            const navPanelTop = document.getElementById('nav-panel-top');
+            const navPanelBottom = document.getElementById('nav-panel-bottom');
+            const navTriggerTop = document.getElementById('nav-trigger-top');
+            const navTriggerBottom = document.getElementById('nav-trigger-bottom');
+
+            function loadImage(url) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.onerror = reject;
+                    img.src = url;
+                });
+            }
+
+            function bgUrlFor(el) {
+                const cssUrl = getComputedStyle(el).backgroundImage;
+                const match = cssUrl.match(/url\(["']?(.*?)["']?\)/);
+                return match ? match[1] : null;
+            }
+
+            function renderedWidthFor(panelEl, img) {
+                const rect = panelEl.getBoundingClientRect();
+                if (!rect.height || !img.naturalHeight) return rect.width;
+                const scale = rect.height / img.naturalHeight;
+                return img.naturalWidth * scale;
+            }
+
+            Promise.all([
+                loadImage(bgUrlFor(navPanelTop)),
+                loadImage(bgUrlFor(navPanelBottom))
+            ]).then(([topImg, bottomImg]) => {
+                function recalc() {
+                    navTriggerTop.style.width = `${renderedWidthFor(navPanelTop, topImg)}px`;
+                    navTriggerBottom.style.width = `${renderedWidthFor(navPanelBottom, bottomImg)}px`;
+                }
+
+                recalc();
+                new ResizeObserver(recalc).observe(navPanelTop);
+                new ResizeObserver(recalc).observe(navPanelBottom);
+                window.addEventListener('resize', recalc);
+            }).catch(err => {
+                console.warn('Could not size nav trigger zones to background image; falling back to full width.', err);
             });
         })();
 
@@ -3949,7 +4105,10 @@
         // touch/drag starting from those same edge zones (mobile). They
         // close again on a click/tap outside both panels, or after the
         // mouse/touch has been away from both trigger zones and both
-        // panels for 3 uninterrupted seconds.
+        // panels for a few uninterrupted seconds (0.5s on desktop, 3s on
+        // mobile -- mobile's is intentionally more forgiving since a
+        // finger has to actually be lifted off the screen to "leave",
+        // unlike a mouse that can hover continuously).
         (() => {
             const navPanelTop = document.getElementById('nav-panel-top');
             const navPanelBottom = document.getElementById('nav-panel-bottom');
@@ -3957,7 +4116,8 @@
             const navTriggerBottom = document.getElementById('nav-trigger-bottom');
             const navHoverTargets = [navPanelTop, navPanelBottom, navTriggerTop, navTriggerBottom];
 
-            const NAV_HIDE_DELAY_MS = 3000;
+            const NAV_HIDE_DELAY_DESKTOP_MS = 500;
+            const NAV_HIDE_DELAY_MOBILE_MS = 3000;
             let navHideTimer = null;
 
             function showNavPanels() {
@@ -3974,18 +4134,18 @@
                 navPanelBottom.classList.remove('nav-visible');
             }
 
-            function scheduleHideNavPanels() {
+            function scheduleHideNavPanels(delayMs) {
                 clearTimeout(navHideTimer);
-                navHideTimer = setTimeout(hideNavPanelsNow, NAV_HIDE_DELAY_MS);
+                navHideTimer = setTimeout(hideNavPanelsNow, delayMs);
             }
 
             // Desktop: hovering either trigger strip or either panel keeps
-            // things open; leaving any of them starts the 3s countdown,
+            // things open; leaving any of them starts the 0.5s countdown,
             // which the next enter (e.g. moving straight from the trigger
             // zone into the panel sliding over it) cancels before it fires.
             navHoverTargets.forEach(el => {
                 el.addEventListener('mouseenter', showNavPanels);
-                el.addEventListener('mouseleave', scheduleHideNavPanels);
+                el.addEventListener('mouseleave', () => scheduleHideNavPanels(NAV_HIDE_DELAY_DESKTOP_MS));
             });
 
             // Mobile: a touch starting in either edge trigger zone opens
@@ -3994,7 +4154,7 @@
             // swipe) for that touch, via preventDefault on both
             // touchstart and touchmove — passive:false is required for
             // preventDefault to have any effect on these. Release starts
-            // the same 3s countdown as desktop's mouseleave.
+            // the 3s mobile countdown.
             [navTriggerTop, navTriggerBottom].forEach(zone => {
                 zone.addEventListener('touchstart', (e) => {
                     e.preventDefault();
@@ -4005,8 +4165,8 @@
                     e.preventDefault();
                 }, { passive: false });
 
-                zone.addEventListener('touchend', scheduleHideNavPanels);
-                zone.addEventListener('touchcancel', scheduleHideNavPanels);
+                zone.addEventListener('touchend', () => scheduleHideNavPanels(NAV_HIDE_DELAY_MOBILE_MS));
+                zone.addEventListener('touchcancel', () => scheduleHideNavPanels(NAV_HIDE_DELAY_MOBILE_MS));
             });
 
             // Outside click/tap closes immediately, regardless of the
