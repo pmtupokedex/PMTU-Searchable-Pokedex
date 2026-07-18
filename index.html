@@ -658,8 +658,8 @@
                measured size after the first render rather than reusing
                the 168px fallback (the grid's own minmum column size)
                forever. */
-            /* content-visibility: auto; */ /* TEMPORARY DIAGNOSTIC CHANGE -- disabled to test whether its first-ever setup across the whole gallery is the source of the freeze */
-            /* contain-intrinsic-size: auto 168px auto 168px; */ /* TEMPORARY DIAGNOSTIC CHANGE */
+            content-visibility: auto;
+            contain-intrinsic-size: auto 168px auto 168px;
         }
         .image-card.show {
             display: flex;
@@ -1966,15 +1966,41 @@
         // that it's worth doing the more robust version up front.
         window.pageScrollLock = (() => {
             let lockCount = 0;
-            let savedScrollY = 0;
 
+            // Previously used position:fixed + a negative top offset (the
+            // common "iOS scroll lock" trick) to pin the body in place,
+            // restoring the real scroll position with scrollTo() on
+            // unlock. That works, but it means the *entire* body -- every
+            // one of the gallery's (800+) content-visibility:auto cards
+            // included -- briefly gets pulled out of normal document flow
+            // and dropped back in, all in one synchronous moment. That
+            // sudden flow discontinuity is exactly the kind of thing that
+            // can force a browser to reconsider content-visibility
+            // relevance for every affected element at once, and on this
+            // specific engine build, doing that for the whole gallery at
+            // once was the actual source of the freeze we spent so long
+            // chasing (confirmed by disabling content-visibility:auto
+            // entirely, which made the freeze disappear).
+            //
+            // overflow:hidden avoids the problem at the root: it never
+            // moves the body out of flow, never changes anything about
+            // where the gallery's cards conceptually sit in the document,
+            // and doesn't need any scroll position save/restore since
+            // nothing about the scroll position ever actually changes --
+            // the page just stops responding to scroll input while locked.
+            //
+            // Trade-off worth knowing about: this is reliably enough to
+            // block scrolling on Android (Chrome/Edge, what's actually
+            // been tested here) and modern desktop browsers, but older
+            // iOS Safari versions are known to sometimes still allow a
+            // rubber-band scroll past a plain overflow:hidden. If iOS
+            // support ever becomes a concern, this may need a
+            // platform-specific fallback back to the position:fixed
+            // technique for iOS only.
             function lock() {
                 if (lockCount === 0) {
-                    savedScrollY = window.scrollY;
-                    document.body.style.position = 'fixed';
-                    document.body.style.top = `-${savedScrollY}px`;
-                    document.body.style.left = '0';
-                    document.body.style.right = '0';
+                    document.documentElement.style.overflow = 'hidden';
+                    document.body.style.overflow = 'hidden';
                 }
                 lockCount++;
             }
@@ -1982,11 +2008,8 @@
             function unlock() {
                 lockCount = Math.max(0, lockCount - 1);
                 if (lockCount === 0) {
-                    document.body.style.position = '';
-                    document.body.style.top = '';
-                    document.body.style.left = '';
-                    document.body.style.right = '';
-                    window.scrollTo(0, savedScrollY);
+                    document.documentElement.style.overflow = '';
+                    document.body.style.overflow = '';
                 }
             }
 
