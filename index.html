@@ -822,6 +822,25 @@
             filter: url(#gallery-halo);
         }
 
+        /* Temporarily overrides content-visibility: auto above for
+           whichever card closeImageViewer() is in the middle of recentering
+           back into view (see the JS comment there for the full
+           explanation) -- content-visibility: auto can skip rendering for
+           an off-screen card entirely, and when a skipped card's rendering
+           resumes (e.g. because it's being scrolled back toward the
+           viewport, which is exactly what the recenter does), the browser
+           can show one stale, not-yet-repainted frame before it catches
+           up. Removing .active-in-viewer's halo filter right as that same
+           card is being scrolled into view is exactly the situation where
+           that stale frame would show the halo still on, then a frame
+           later show it gone -- reading as a flicker. Keeping the card
+           fully rendered (not skippable) for the short duration of that
+           recenter removes the skip/resume cycle entirely instead of
+           trying to win a race against it. */
+        .image-card.force-rendered {
+            content-visibility: visible;
+        }
+
         /* On mobile the viewer opens fullscreen, so this card is never
            visible alongside the halo anyway -- except right during the
            brief pre-open pulse (see openImageViewer's fresh-open pulse),
@@ -4093,6 +4112,21 @@
                 const thumb = document.createElement('img');
                 thumb.src = relImg.src;
                 thumb.alt = relImg.alt;
+                // Matches the main gallery's images (see attachImageEvents'
+                // img.loading = "lazy" above) -- without this, every single
+                // open eagerly force-fetches and decodes the *entire* row
+                // of evolution-chain/form thumbnails right away, even the
+                // ones scrolled out of the row's own horizontal overflow.
+                // On a fresh page load, most of those sprite URLs have
+                // never been requested before (the main gallery hasn't
+                // scrolled anywhere near them yet), so this could kick off
+                // several brand-new network fetches simultaneously. Close
+                // the viewer while those are still in flight -- easy to do
+                // on the very first open of a session -- and the browser's
+                // renderer stalls catching up on that in-flight decode
+                // work before it can paint the next frame.
+                thumb.loading = "lazy";
+                thumb.decoding = "async";
                 thumb.draggable = false; // avoid native drag-ghost fighting with the click-and-drag panning below
 
                 // Mirrors .image-card .hit-zone in the main gallery: owns
@@ -4455,20 +4489,41 @@
             // reads as a continuation of motion that's already happening,
             // not a sudden isolated jerk.
             if (previouslyActive && wasOpen) {
+                // See .image-card.force-rendered in CSS -- keeps this
+                // specific card fully rendered (bypassing
+                // content-visibility: auto's skip-when-off-screen
+                // optimization) for exactly as long as it's being
+                // recentered into view, so removing its halo above can't
+                // get caught in a stale skip/resume repaint. Removed again
+                // once the recenter's own pulse settles, via the same
+                // onSettled callback trackImageIntoView already takes.
+                const previousCard = previouslyActive.closest('.image-card');
+                previousCard?.classList.add('force-rendered');
+
                 if (desktopFilterQuery.matches) {
-                    trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS);
+                    trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS, () => {
+                        previousCard?.classList.remove('force-rendered');
+                    });
+                    // Same safety net as the mobile branch below, in case
+                    // the pulse never settles for some reason.
+                    setTimeout(() => previousCard?.classList.remove('force-rendered'), PANEL_TRANSITION_MS + PULSE_MS + 100);
                 } else {
                     galleryClickLocked = true;
                     setTimeout(() => {
                         trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS, () => {
                             galleryClickLocked = false;
+                            previousCard?.classList.remove('force-rendered');
                         });
                     }, 350);
                     // Same safety net as openImageViewer's own lock above --
                     // if trackImageIntoView's own pulse never settles for
-                    // some reason, this still releases the lock rather than
-                    // leaving gallery clicks stuck forever.
-                    setTimeout(() => { galleryClickLocked = false; }, 350 + PANEL_TRANSITION_MS + PULSE_MS + 100);
+                    // some reason, this still releases the lock (and the
+                    // force-rendered override above) rather than leaving
+                    // either stuck indefinitely.
+                    setTimeout(() => {
+                        galleryClickLocked = false;
+                        previousCard?.classList.remove('force-rendered');
+                    }, 350 + PANEL_TRANSITION_MS + PULSE_MS + 100);
                 }
             }
         }
