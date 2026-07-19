@@ -799,6 +799,22 @@
             filter: url(#gallery-halo);
         }
 
+        /* On mobile the viewer opens fullscreen, so this card is never
+           visible alongside the halo anyway -- except right during the
+           brief pre-open pulse (see openImageViewer's fresh-open pulse),
+           where the halo and the pulse animation would otherwise both be
+           fighting for the same paint/composite budget on top of
+           everything else already competing for it there. Desktop keeps
+           it, since the card stays visible next to the docked panel the
+           whole time it's open. The related-images panel's own halo
+           (.related-thumb-wrap.related-active) is untouched either way --
+           it's a separate, much lighter-weight element. */
+        @media (max-width: 899.98px) {
+            .image-card.active-in-viewer {
+                filter: none;
+            }
+        }
+
         /* Magnified view panel — docks to the top on mobile/portrait and
            is fullscreen there the moment it opens (matching #filter-panel's
            own mobile behavior), and docks to the left on desktop/landscape
@@ -2914,6 +2930,7 @@
                 const img = card.querySelector('img');
                 const hitZone = card.querySelector('.hit-zone');
                 hitZone.addEventListener('click', () => {
+                    if (galleryClickLocked) return; // mid pulse-then-open or close-then-recenter-then-pulse -- ignore until it settles
                     if (card.classList.contains('active-in-viewer')) {
                         closeImageViewer();
                     } else {
@@ -3449,6 +3466,17 @@
         let activeGalleryImg = null;
         let viewerHoldsScrollLock = false;
         let pulseSettleAt = 0; // performance.now() timestamp when the current gallery-pulse animation finishes
+        // Blocks gallery image clicks during the two mobile-only sequences
+        // that have no other guard against being interrupted: the brief
+        // pulse-then-open delay right after a fresh tap (see
+        // openImageViewer), and the close-then-recenter-then-pulse
+        // sequence after closing (see closeImageViewer). Both involve a
+        // gap where the tapped/previous image's card is mid-animation but
+        // the gallery is otherwise fully clickable, so a second tap on a
+        // different card in that gap could race the first sequence.
+        // Switching images while the viewer's already open isn't guarded
+        // by this -- there's no competing animation to race there.
+        let galleryClickLocked = false;
 
         const PANEL_TRANSITION_MS = 500; // matches beginPanelAnim's own duration (0.35s base * 1.25, slowed 25%)
         const PULSE_MS = 600; // must match .image-card.gallery-pulse's animation-duration above
@@ -3461,7 +3489,7 @@
         // Takes the img (matching every caller's existing identity
         // reference) but pulses its enclosing .image-card instead — see the
         // .image-card.gallery-pulse CSS comment for why it lives there now.
-        function pulseAttention(img) {
+        function pulseAttention(img, onSettled) {
             const card = img.closest('.image-card') || img;
             card.classList.remove('gallery-pulse');
             void card.offsetWidth;
@@ -3469,6 +3497,7 @@
             pulseSettleAt = performance.now() + PULSE_MS;
             card.addEventListener('animationend', () => {
                 card.classList.remove('gallery-pulse');
+                if (onSettled) onSettled();
             }, { once: true });
         }
 
@@ -3549,7 +3578,7 @@
         // the very end (using the same shared delta calculation, rather
         // than the browser's own native centering) cleans up whatever small
         // residual is left from chasing a moving target with partial steps.
-        function trackImageIntoView(img, duration) {
+        function trackImageIntoView(img, duration, onSettled) {
             const myGeneration = ++trackingGeneration;
             const start = performance.now();
             const SMOOTHING = 0.25; // fraction of the remaining distance corrected per frame
@@ -3564,7 +3593,7 @@
                     requestAnimationFrame(step);
                 } else {
                     if (dx !== 0 || dy !== 0) window.scrollBy(dx, dy);
-                    pulseAttention(img);
+                    pulseAttention(img, onSettled);
                 }
             }
             requestAnimationFrame(step);
@@ -4249,6 +4278,27 @@
             renderRelatedImages(galleryImg);
             loadPokemonInfo(galleryImg);
 
+            // On a fresh mobile open (viewer currently closed), pulse the
+            // just-tapped card in place -- it's already in view, so no
+            // scroll needed alongside it -- and lock out further gallery
+            // clicks until that settles. This also naturally covers the
+            // pre-existing "still mid-pulse from a recent close" case
+            // below: calling pulseAttention here always resets
+            // pulseSettleAt to *this* pulse's own end time, which is
+            // never earlier than any leftover one.
+            if (!alreadyOpen && !desktopFilterQuery.matches) {
+                galleryClickLocked = true;
+                pulseAttention(galleryImg, () => {
+                    galleryClickLocked = false;
+                });
+                // Safety net: if the card gets removed from the DOM mid-pulse
+                // (e.g. a filter change hides it) animationend never fires,
+                // which would otherwise leave gallery clicks stuck locked
+                // forever. Harmless to also fire normally -- clearing an
+                // already-false flag is a no-op.
+                setTimeout(() => { galleryClickLocked = false; }, PULSE_MS + 100);
+            }
+
             // On mobile, a fresh open (panel currently closed) can land
             // while the card just closed onto is still mid-pulse from
             // closeImageViewer's own recenter-and-pulse. That pulse is a
@@ -4385,9 +4435,17 @@
                 if (desktopFilterQuery.matches) {
                     trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS);
                 } else {
+                    galleryClickLocked = true;
                     setTimeout(() => {
-                        trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS);
+                        trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS, () => {
+                            galleryClickLocked = false;
+                        });
                     }, 350);
+                    // Same safety net as openImageViewer's own lock above --
+                    // if trackImageIntoView's own pulse never settles for
+                    // some reason, this still releases the lock rather than
+                    // leaving gallery clicks stuck forever.
+                    setTimeout(() => { galleryClickLocked = false; }, 350 + PANEL_TRANSITION_MS + PULSE_MS + 100);
                 }
             }
         }
