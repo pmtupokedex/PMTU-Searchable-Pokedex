@@ -784,12 +784,20 @@
                that now, and only across the circle it's actually clipped
                to. Setting it here too would show a pointer cursor across
                the whole square, including the corners that no longer do
-               anything on click. 
-            filter:
-                drop-shadow(3px 3px 4px rgba(0,0,0,0.55)); */
+               anything on click. */
         }
 
-        /* Forces its own stable compositing layer -- see attachLayerPromotion()
+        /* !!! ATTN CLAUDE !!!
+		I am removing the filter: drop-shadow from the gallery images and 
+		embedding the drop-shadow effect directly onto the background image 
+		to achieve the same visual effect without dealing with additional cost 
+		for the browser to do it. I'm leaving this comment block in the code 
+		as record of what was here before so that you can find anything that 
+		used this section and adjust it. I wrapped the offending css rule into 
+		the end of this comment, so that it's here for you to see but not 
+		affecting page performance.
+	  
+	     Forces its own stable compositing layer -- see attachLayerPromotion()
            in the script for why this is a toggled class now instead of an
            unconditional rule on .image-card img.
 
@@ -820,7 +828,8 @@
            for the life of the page. 
         .image-card img.layer-promoted {
             transform: translateZ(0);
-        } */
+        } 
+	  */
 	  
 	  /* :has() lets hovering the hit-zone (the actual circle) drive the
 	     zoom on the whole card — frame included — rather than triggering
@@ -1967,6 +1976,15 @@
             --btn-x: 0.005; --btn-y: 0.04;
             background-image: url("https://dl.dropboxusercontent.com/scl/fi/pg3jwo5em1d1e6tuugdx1/Button_Search.png?rlkey=ck0gtmpo7rgo7eqsfpu37g5py&st=4qxuzmns&dl=1");
         }
+        /* State 2 — swapped in whenever at least one filter (any filter
+           button, search-box tag, or explicit OR-group) is currently
+           active, and swapped back out the moment none are. Driven by
+           refreshSearchButtonState(), which runs at the end of every
+           updateFilters() call. Placeholder artwork URL below — swap in
+           the real "active" icon whenever it's ready. */
+        #nav-top-btn-search.filters-active {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/84e5orkqwgdyt6844y66n/Button_Search_Active.png?rlkey=f8ulz25sp9hyjya4nzl58lpwt&st=ftn4fov6&dl=1");
+        }
         #nav-top-btn-discord {
             --btn-x: 0.725; --btn-y: -0.115;
             background-image: url("https://dl.dropboxusercontent.com/scl/fi/o701qgeh8lmx9q2izh1aw/Button_Discord.png?rlkey=v199k1aym64joy9aucz9ecoud&st=f6tx4im4&dl=1");
@@ -1975,6 +1993,17 @@
         #nav-bottom-btn-back {
             --btn-x: -0.715; --btn-y: 0.125;
             background-image: url("https://dl.dropboxusercontent.com/scl/fi/9u5r1nmb6drlofnmr2za9/Button_Back.png?rlkey=m6naql8ixq5vadqp2837e5atm&st=deneysu1&dl=1");
+        }
+        /* Greyed-out "nothing to do" state — set whenever no panel
+           (filter panel or image viewer) is open AND no filter is active
+           for it to clear. Driven by refreshBackButtonState(). Disabling
+           pointer-events keeps this state genuinely inert rather than
+           just visually flat — otherwise the generic tactile-pulse
+           listener on every .nav-button would still fire a click feedback
+           pulse for a press that does nothing. */
+        #nav-bottom-btn-back.back-disabled {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/tea1bo2khkzswd6dxnuif/Button_Back_Gray.png?rlkey=fh8tkgc5f5l6x37aus82n9l51&st=nuw1gn11&dl=1");
+            pointer-events: none;
         }
         #nav-bottom-btn-audio {
             --btn-x: 0.005; --btn-y: -0.034;
@@ -3178,6 +3207,42 @@
 
             parseSearchFilters();
             filterGallery();
+            refreshSearchButtonState();
+            refreshBackButtonState();
+        }
+
+        // Shared by both nav buttons that care whether a filter is
+        // currently active — checks every source that can affect the
+        // gallery: the loose include/exclude pools, every per-section
+        // bucket, and explicit slash OR-groups from the search box.
+        function filtersActive() {
+            return includeFilters.length > 0 ||
+                excludeFilters.length > 0 ||
+                explicitOrGroups.length > 0 ||
+                Object.values(sectionFilters).some(list => list.length > 0);
+        }
+
+        // Swaps the Search nav button between its two artwork states:
+        // state 1 (no class) when no filters are active anywhere, state 2
+        // (.filters-active) the moment any filter is.
+        function refreshSearchButtonState() {
+            document.getElementById('nav-top-btn-search')
+                .classList.toggle('filters-active', filtersActive());
+        }
+
+        // Swaps the Back nav button into its "nothing to do" greyed-out
+        // state whenever there's no panel open (filter panel or image
+        // viewer) AND no active filter for it to clear. Called any time
+        // one of those three things could have changed: filters
+        // (updateFilters), the filter panel (open/closeFilterPanel), or
+        // the image viewer (open/closeImageViewer).
+        function refreshBackButtonState() {
+            const anyPanelOpen =
+                panel.classList.contains('open') ||
+                document.body.classList.contains('viewer-open');
+            const nothingToDo = !anyPanelOpen && !filtersActive();
+            document.getElementById('nav-bottom-btn-back')
+                .classList.toggle('back-disabled', nothingToDo);
         }
 
         function filterGallery() {
@@ -3449,6 +3514,7 @@
                     window.pageScrollLock.lock();
                 }
             }
+            refreshBackButtonState();
         }
 
         function closeFilterPanel() {
@@ -3462,6 +3528,7 @@
                     window.pageScrollLock.unlock();
                 }
             }
+            refreshBackButtonState();
         }
 
         // If the breakpoint is crossed while the panel happens to be open
@@ -3514,9 +3581,26 @@
         });
 
         document.getElementById('nav-bottom-btn-back').addEventListener('click', () => {
-            closeImageViewer();
-            closeFilterPanel();
+            const viewerOpen = document.body.classList.contains('viewer-open');
+            const panelOpen = panel.classList.contains('open');
+
+            if (viewerOpen || panelOpen) {
+                closeImageViewer();
+                closeFilterPanel();
+            } else if (filtersActive()) {
+                // Nothing open, but a filter is active (Search button is
+                // in its state-2 look) — same clear as the filter panel's
+                // own "Clear All Filters" button.
+                resetFilters();
+            }
+            // Nothing open and no active filter: back-disabled is set and
+            // pointer-events:none keeps this click from even reaching here.
         });
+
+        // Set the correct initial state on load — page starts with no
+        // panel open and no filters active, so this starts it greyed out
+        // rather than waiting for the first panel/filter interaction.
+        refreshBackButtonState();
 
         const comingSoonToast = document.getElementById('coming-soon-toast');
         let comingSoonTimeout = null;
@@ -3593,6 +3677,7 @@
 
         const PANEL_TRANSITION_MS = 500; // matches beginPanelAnim's own duration (0.35s base * 1.25, slowed 25%)
         const PULSE_MS = 600; // must match .image-card.gallery-pulse's animation-duration above
+        const NAV_PANEL_TRANSITION_MS = 300; // matches #nav-panel-top/bottom's own transition: transform 0.3s ease
 
         // Briefly pulses an image's card to draw the eye to its new
         // position after a scroll settles. Removing the class first and
@@ -4382,15 +4467,28 @@
         function openImageViewer(galleryImg) {
             const alreadyOpen = document.body.classList.contains('viewer-open');
 
-            // See .nav-panel-gpu-paused in CSS -- frees up compositing
-            // budget for #image-overlay's own layer promotion right as it
-            // needs it most, on mobile specifically (where the panels are
-            // permanently visible/promoted, unlike desktop). Restored the
-            // instant closeImageViewer starts, well before the panels
-            // themselves become visible again.
-            if (!desktopFilterQuery.matches) {
-                document.getElementById('nav-panel-top').classList.add('nav-panel-gpu-paused');
-                document.getElementById('nav-panel-bottom').classList.add('nav-panel-gpu-paused');
+            // Mobile only, and only on a fresh open (switching images
+            // while the viewer's already open leaves the panels exactly
+            // where this already put them). Retracts the nav panels off-
+            // screen via the same nav-visible transition used for
+            // desktop's own hover show/hide, rather than an instant
+            // visibility:hidden pop -- timed to play out alongside the
+            // tap-pulse on the card below (600ms) so the two motions read
+            // as one. Once genuinely off-screen (300ms, matching that
+            // transition), .nav-panel-gpu-paused takes over to free up
+            // compositing budget for #image-overlay's own heavy layer
+            // promotion just as it's about to need it -- same reasoning
+            // as before, just delayed until there's actually nothing left
+            // to see by pausing.
+            if (!desktopFilterQuery.matches && !alreadyOpen) {
+                const navPanelTop = document.getElementById('nav-panel-top');
+                const navPanelBottom = document.getElementById('nav-panel-bottom');
+                navPanelTop.classList.remove('nav-visible');
+                navPanelBottom.classList.remove('nav-visible');
+                setTimeout(() => {
+                    navPanelTop.classList.add('nav-panel-gpu-paused');
+                    navPanelBottom.classList.add('nav-panel-gpu-paused');
+                }, NAV_PANEL_TRANSITION_MS);
             }
 
             if (activeGalleryImg) {
@@ -4451,6 +4549,7 @@
                 imageOverlay.classList.add('visible');
                 beginPanelAnim();
                 document.body.classList.add('viewer-open');
+                refreshBackButtonState();
 
                 if (alreadyOpen) {
                     // Panel's already open, just switching images — nothing is
@@ -4506,11 +4605,12 @@
             const wasOpen = document.body.classList.contains('viewer-open');
             const previouslyActive = activeGalleryImg;
 
-            // Restore right away rather than waiting for the close
-            // transition to finish -- see .nav-panel-gpu-paused in CSS.
-            // This gives the panels the whole ~350ms of #image-overlay
-            // sliding away to repaint before they're actually uncovered,
-            // rather than popping in unpainted the moment it's gone.
+            // Un-pausing compositing right away (rather than waiting for
+            // the close transition to finish) gives the panels the whole
+            // ~350ms of #image-overlay sliding away, plus however long
+            // the recenter scroll below takes, to repaint before they're
+            // actually slid back into view -- see the nav-visible reveal
+            // further down, timed to land alongside the recenter pulse.
             document.getElementById('nav-panel-top').classList.remove('nav-panel-gpu-paused');
             document.getElementById('nav-panel-bottom').classList.remove('nav-panel-gpu-paused');
 
@@ -4574,8 +4674,27 @@
                     // some reason, this still releases the lock rather than
                     // leaving gallery clicks stuck forever.
                     setTimeout(() => { galleryClickLocked = false; }, 350 + PANEL_TRANSITION_MS + PULSE_MS + 100);
+
+                    // Nav panels slide back into view timed to land right
+                    // as the pulse above starts (the 350ms recenter delay
+                    // plus the PANEL_TRANSITION_MS scroll duration
+                    // trackImageIntoView takes before it calls
+                    // pulseAttention) -- so the reveal and the pulse read
+                    // as one connected motion instead of an instant pop
+                    // followed by a separate, later pulse.
+                    setTimeout(() => {
+                        document.getElementById('nav-panel-top').classList.add('nav-visible');
+                        document.getElementById('nav-panel-bottom').classList.add('nav-visible');
+                    }, 350 + PANEL_TRANSITION_MS);
                 }
+            } else if (wasOpen && !desktopFilterQuery.matches) {
+                // Viewer was open but there's no previously-active image to
+                // recenter/pulse on -- nothing to sync the reveal with, so
+                // just bring the panels back right away.
+                document.getElementById('nav-panel-top').classList.add('nav-visible');
+                document.getElementById('nav-panel-bottom').classList.add('nav-visible');
             }
+            refreshBackButtonState();
         }
 
         // Currently-filtered images in gallery order — prev/next only ever
