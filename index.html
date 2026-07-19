@@ -2988,6 +2988,36 @@
                 filterGallery();
             });
 
+        // Defers promote/demote toggles that land while the viewer/filter
+        // panel's open-close transition is actively reflowing the gallery
+        // (body.panel-animating, set by beginPanelAnim() below -- the
+        // padding-left/padding-top change that makes room for the panel
+        // shifts every card's position for the duration of that
+        // transition). Applying a toggle in that same moment is the same
+        // reactive promote/demote gap described on #image-overlay's own
+        // will-change further up -- just triggered here by a card crossing
+        // the observer's rootMargin boundary as the layout shifts, rather
+        // than by an animation starting. Queuing the change and flushing
+        // it once panel-animating clears keeps layer promotion off the
+        // compositor's critical path during the shift instead of racing
+        // it, which is what was showing up as a flash on close (and, for
+        // cards clustered near the boundary at the top of the page, on
+        // several cards at once).
+        const pendingLayerPromotions = new Map(); // img -> latest isIntersecting seen mid-transition
+
+        function flushPendingLayerPromotions() {
+            pendingLayerPromotions.forEach((isIntersecting, img) => {
+                img.classList.toggle('layer-promoted', isIntersecting);
+            });
+            pendingLayerPromotions.clear();
+        }
+
+        new MutationObserver(() => {
+            if (!document.body.classList.contains('panel-animating')) {
+                flushPendingLayerPromotions();
+            }
+        }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
         // Caps how many gallery images hold the permanent compositor layer
         // (.layer-promoted, see .image-card img.layer-promoted in the CSS)
         // at once, instead of every image in the gallery accumulating one
@@ -2999,7 +3029,11 @@
         // viewer, rather than promoting reactively right as it's needed.
         const layerPromotionObserver = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
-                entry.target.classList.toggle('layer-promoted', entry.isIntersecting);
+                if (document.body.classList.contains('panel-animating')) {
+                    pendingLayerPromotions.set(entry.target, entry.isIntersecting);
+                } else {
+                    entry.target.classList.toggle('layer-promoted', entry.isIntersecting);
+                }
             });
         }, { rootMargin: '200% 0px' });
 
