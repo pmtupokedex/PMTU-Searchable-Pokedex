@@ -111,27 +111,6 @@
             overscroll-behavior-y: none;
         }
 
-        /* pageScrollLock's actual mechanism (see the script near the top).
-           Plain overflow: hidden rather than the more common "pin body
-           with position: fixed" scroll-lock trick — that trick works by
-           changing body's positioning scheme, which is one of the most
-           invalidating changes there is: it forces the browser to
-           recompute the containing block, and therefore the layout, of
-           every fixed/absolutely-positioned descendant on the page in one
-           synchronous pass. Under enough load (a long gallery, an
-           installed PWA with less compositing headroom than a full
-           browser tab) that whole-document reflow was what was showing up
-           as unrelated cards flickering in sync, or even the page
-           background flickering, on lock/unlock -- not any single card's
-           own state. overflow: hidden on the root element blocks scrolling
-           just as completely without touching any element's positioning
-           scheme, and it preserves scroll position automatically (nothing
-           to save/restore), so there's no equivalent whole-page
-           invalidation to trigger the same flicker. */
-        html.scroll-locked {
-            overflow: hidden;
-        }
-
         body {
             overscroll-behavior-y: none;
         }
@@ -841,6 +820,23 @@
            .related-thumb-wrap.related-active). */
         .image-card.active-in-viewer {
             filter: url(#gallery-halo);
+            /* Same promote-up-front reasoning as #image-overlay's,
+               #filter-panel's, and #nav-panel-top/bottom's will-change
+               above -- this is the one place in the file that toggles a
+               property needing GPU layer promotion (filter, here, instead
+               of transform) without it. Unlike those, will-change can't
+               live on the unconditional base rule (.image-card) the way
+               it does for those elements: this class only ever sits on a
+               single card at a time, but .image-card itself covers every
+               card in the gallery, and permanently promoting all of them
+               is exactly the unbounded-hot-layers cost content-visibility
+               above exists to cap. Scoping will-change to this class
+               keeps the promotion to just the one active card, which is
+               cheap, while still requesting it as an up-front layer
+               instead of a reactive one -- closing the same promote/
+               demote gap that produces the blue-halo flicker on repeated
+               open/close. */
+            will-change: filter;
         }
 
         /* On mobile the viewer opens fullscreen, so this card is never
@@ -2403,19 +2399,15 @@
         // that it's worth doing the more robust version up front.
         window.pageScrollLock = (() => {
             let lockCount = 0;
+            let savedScrollY = 0;
 
-            // See html.scroll-locked in CSS for why this is a plain
-            // overflow: hidden class toggle rather than the more common
-            // "pin body with position: fixed at -scrollY" trick -- that
-            // trick's own whole-document reflow turned out to be the
-            // actual source of the gallery/background flicker on
-            // open/close, not anything specific to the viewer or any one
-            // card. overflow: hidden needs no manual scroll position
-            // save/restore either, since the scroll position is never
-            // touched in the first place.
             function lock() {
                 if (lockCount === 0) {
-                    document.documentElement.classList.add('scroll-locked');
+                    savedScrollY = window.scrollY;
+                    document.body.style.position = 'fixed';
+                    document.body.style.top = `-${savedScrollY}px`;
+                    document.body.style.left = '0';
+                    document.body.style.right = '0';
                 }
                 lockCount++;
             }
@@ -2423,7 +2415,11 @@
             function unlock() {
                 lockCount = Math.max(0, lockCount - 1);
                 if (lockCount === 0) {
-                    document.documentElement.classList.remove('scroll-locked');
+                    document.body.style.position = '';
+                    document.body.style.top = '';
+                    document.body.style.left = '';
+                    document.body.style.right = '';
+                    window.scrollTo(0, savedScrollY);
                 }
             }
 
