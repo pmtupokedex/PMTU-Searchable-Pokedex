@@ -787,15 +787,38 @@
                anything on click. */
             filter:
                 drop-shadow(3px 3px 4px rgba(0,0,0,0.55));
-            /* Forces its own stable compositing layer. Without this, a
-               lazily-loaded image with a filter can finish decoding without
-               the browser properly re-invalidating the filter's expanded
-               paint region — leaving the drop-shadow clipped, or the image
-               itself invisible, until something else (like a scroll) forces
-               a repaint. This is a known interaction between loading="lazy"
-               and CSS filter, and became far more visible once the service
-               worker started resolving image loads near-instantly instead
-               of over the network. */
+        }
+
+        /* Forces its own stable compositing layer -- see attachLayerPromotion()
+           in the script for why this is a toggled class now instead of an
+           unconditional rule on .image-card img.
+
+           Without SOME layer promotion, a lazily-loaded image with a filter
+           can finish decoding without the browser properly re-invalidating
+           the filter's expanded paint region -- leaving the drop-shadow
+           clipped, or the image itself invisible, until something else
+           (like a scroll) forces a repaint. This is a known interaction
+           between loading="lazy" and CSS filter, and became far more
+           visible once the service worker started resolving image loads
+           near-instantly instead of over the network.
+
+           But applying transform: translateZ(0) unconditionally to every
+           image in the gallery (as this used to) promotes every one of
+           them to its own GPU layer permanently and never demotes any of
+           them again, regardless of content-visibility -- once an image
+           has scrolled near the viewport once, it stays "hot" for the rest
+           of the session. On a long gallery, mobile GPUs (and the PWA's
+           own renderer process, which has a tighter compositor budget than
+           a browser tab) eventually run out of layer/texture budget under
+           that unbounded pile, and start reusing or corrupting layer slots
+           between unrelated elements -- surfacing as unrelated cards
+           flashing on open/close, worse the more scrolling/interaction has
+           happened in the session, and worse in the PWA specifically. This
+           class keeps the same fix, but only for images an
+           IntersectionObserver has determined are actually near the
+           viewport, so the promoted count stays capped instead of growing
+           for the life of the page. */
+        .image-card img.layer-promoted {
             transform: translateZ(0);
         }
 	  
@@ -2965,10 +2988,26 @@
                 filterGallery();
             });
 
+        // Caps how many gallery images hold the permanent compositor layer
+        // (.layer-promoted, see .image-card img.layer-promoted in the CSS)
+        // at once, instead of every image in the gallery accumulating one
+        // forever -- see that CSS rule's comment for the full reasoning.
+        // rootMargin extends the "near enough to promote" zone well past
+        // the visible viewport in both directions (roughly two extra
+        // screens' worth) so the layer's already standing by the time an
+        // image actually scrolls into view or is about to open in the
+        // viewer, rather than promoting reactively right as it's needed.
+        const layerPromotionObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                entry.target.classList.toggle('layer-promoted', entry.isIntersecting);
+            });
+        }, { rootMargin: '200% 0px' });
+
         function attachImageEvents() {
             document.querySelectorAll('.image-card').forEach(card => {
                 const img = card.querySelector('img');
                 const hitZone = card.querySelector('.hit-zone');
+                layerPromotionObserver.observe(img);
                 hitZone.addEventListener('click', () => {
                     if (galleryClickLocked) return; // mid pulse-then-open or close-then-recenter-then-pulse -- ignore until it settles
                     if (card.classList.contains('active-in-viewer')) {
