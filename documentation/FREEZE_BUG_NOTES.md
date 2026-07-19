@@ -75,30 +75,32 @@ not a confirmed mechanism.
 All of the above were tested via real trial-disabling on an actual device,
 not just reasoning about the code. None of them changed the freeze.
 
-## Current mitigation: pre-warming during the splash screen
+## Attempted mitigation: pre-warming during the splash screen (DID NOT WORK)
 
-Rather than continuing to chase the exact mechanism, the freeze is now paid
-once, silently, during the loading splash — see `prewarmViewer()` in the
-splash-sequencing `<script>` block. Right as the splash settles into its
-hold phase (fully opaque, well before any fade-out begins), it:
+The original plan here was to pay the one-time cost silently during the
+splash screen instead of during a real user's first close — a
+`prewarmViewer()` function was added to the splash sequence that ran a real
+open+close cycle against the first gallery card while the splash was still
+fully opaque, using a release-and-reacquire of `pageScrollLock` so it would
+genuinely trigger the same cost rather than nesting harmlessly inside an
+already-held lock.
 
-1. Temporarily releases the splash's own scroll lock (so the upcoming
-   lock/unlock pair below actually reaches a real unlocked state in between,
-   rather than nesting harmlessly inside an already-held lock).
-2. Opens the real image viewer against the first visible gallery card.
-3. Closes it again shortly after.
-4. Re-acquires the splash's scroll lock to hold until the splash actually
-   finishes.
+**This was tested on a real device and the freeze still happened on the
+user's first real close after the splash finished.** The pre-warm cycle
+during the splash did not pay down whatever the real cost is — either the
+mechanism doesn't trigger the same way when run programmatically during the
+splash as it does from a real user interaction later, or there's some other
+condition (elapsed time since page load, some other one-time state, etc.)
+that the pre-warm didn't reproduce. This was not investigated further before
+reverting the change.
 
-This triggers the same one-time cost the same way a real user's first close
-would, but while the splash screen is still fully covering everything, so
-it's invisible. `content-visibility: auto` is left fully enabled, so the
-gallery keeps the performance benefit it was added for (see below).
-
-If the gallery hasn't finished loading yet when the splash reaches its hold
-phase (slow connection), `prewarmViewer()` retries every 200ms up to 10
-times before giving up — `HOLD_DURATION` (4s) leaves comfortable room for
-this.
+**Current status: the freeze bug is unresolved.** The `prewarmViewer()` code
+has been removed. The only known-working fix remains fully disabling
+`content-visibility: auto`, which isn't a fix we want to keep (see above for
+why). The lazy-loading fix for related-image thumbnails (`thumb.loading =
+"lazy"`, `thumb.decoding = "async"`) is unrelated to this bug specifically —
+it was a legitimate improvement discovered while investigating a different
+theory, and has been kept/merged forward independently.
 
 ## Why `content-visibility: auto` is worth keeping despite being the trigger
 
@@ -115,6 +117,21 @@ it grow unbounded with scroll depth.
 ## If picking this back up later
 
 Things worth trying that we didn't get to:
+- **Figuring out why the pre-warm attempt didn't work.** This is probably
+  the single most useful next step — it implies our model of the trigger
+  condition is still incomplete. Worth checking with the same trace-capture
+  approach used originally: does the pre-warm cycle during the splash
+  actually show the same layout storm in a trace, just silently? If it does
+  and the storm still happens *again* on the real first close anyway, the
+  cost may not be as strictly "once per page load" as the earlier testing
+  suggested — maybe it's closer to "once per N seconds of elapsed page
+  time" or tied to something else that resets between the pre-warm and the
+  real interaction. If the storm does *not* show up during the pre-warm
+  cycle at all, then whatever triggers this needs something a real user
+  interaction provides that a programmatic call doesn't (e.g. an actual
+  trusted Event, real pointer/touch input, or something about timing
+  relative to the splash's own animation/layout work still being in
+  flight).
 - Testing on a different device/Chrome version to see if this is specific to
   this exact engine build (the freeze was found on a Samsung S23 running
   Chrome for Android; whether it reproduces on other hardware or after a
