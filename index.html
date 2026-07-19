@@ -416,7 +416,7 @@
                 display: none !important;
             }
 
-            /* Extra right padding versus the mobile default calc(var(--real-vh, 100dvh) * 0.12)
+            /* Extra right padding versus the mobile default (20px 20px 15px)
                — desktop browsers reserve real layout width for the filter
                panel's own vertical scrollbar (#filter-scroll below), while
                mobile browsers almost universally use an overlay scrollbar
@@ -1793,6 +1793,30 @@
         #nav-panel-top.nav-visible,
         #nav-panel-bottom.nav-visible {
             transform: translateY(0);
+        }
+
+        /* Temporarily suspends the nav panels' painting/compositing
+           entirely -- toggled by openImageViewer()/closeImageViewer()
+           on mobile only, for the ~350ms the viewer panel is sliding in
+           or out. On mobile the panels are permanently visible now,
+           which means they're *permanently* GPU-promoted too (will-change
+           further up, plus filter: drop-shadow(), which forces its own
+           compositing layer) -- unlike before, when they were only
+           promoted for the brief moment they were actually shown. The
+           instant the viewer needs to promote and fully paint its own
+           heavy layer (blended backgrounds, a large image) on top of
+           that already-standing load, there may not be enough spare
+           compositing budget left for it to finish in time -- which is
+           the same "layer not ready yet" gap #image-overlay's own
+           will-change is meant to close, just tipped over by load that
+           didn't exist before the panels went permanent. visibility:
+           hidden (rather than toggling will-change/display) drops them
+           from painting and compositing altogether without any layout
+           reflow, and since the opaque, higher-z-index #image-overlay
+           fully covers them within that same window anyway on mobile,
+           there's nothing visible to lose by pausing them there. */
+        .nav-panel-gpu-paused {
+            visibility: hidden;
         }
 
         /* Nav buttons — 3 per panel. Sizing/positioning scaffolding is
@@ -4201,6 +4225,17 @@
         function openImageViewer(galleryImg) {
             const alreadyOpen = document.body.classList.contains('viewer-open');
 
+            // See .nav-panel-gpu-paused in CSS -- frees up compositing
+            // budget for #image-overlay's own layer promotion right as it
+            // needs it most, on mobile specifically (where the panels are
+            // permanently visible/promoted, unlike desktop). Restored the
+            // instant closeImageViewer starts, well before the panels
+            // themselves become visible again.
+            if (!desktopFilterQuery.matches) {
+                document.getElementById('nav-panel-top').classList.add('nav-panel-gpu-paused');
+                document.getElementById('nav-panel-bottom').classList.add('nav-panel-gpu-paused');
+            }
+
             if (activeGalleryImg) {
                 activeGalleryImg.closest('.image-card')?.classList.remove('active-in-viewer');
             }
@@ -4292,6 +4327,14 @@
         function closeImageViewer() {
             const wasOpen = document.body.classList.contains('viewer-open');
             const previouslyActive = activeGalleryImg;
+
+            // Restore right away rather than waiting for the close
+            // transition to finish -- see .nav-panel-gpu-paused in CSS.
+            // This gives the panels the whole ~350ms of #image-overlay
+            // sliding away to repaint before they're actually uncovered,
+            // rather than popping in unpainted the moment it's gone.
+            document.getElementById('nav-panel-top').classList.remove('nav-panel-gpu-paused');
+            document.getElementById('nav-panel-bottom').classList.remove('nav-panel-gpu-paused');
 
             if (activeGalleryImg) {
                 activeGalleryImg.closest('.image-card')?.classList.remove('active-in-viewer');
