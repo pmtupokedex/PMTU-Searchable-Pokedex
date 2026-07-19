@@ -176,10 +176,9 @@
 
         /* Brief attention pulse, triggered once the scroll that follows an
            open/close settles, to draw the eye to the image's new position.
-           Uses its own translateZ(0) layer-promotion (same trick as the
-           base .image-card img rule) since this now animates the card
-           itself rather than the img, so the img's own promotion doesn't
-           cover it. */
+           Uses its own translateZ(0) layer-promotion, scoped to just this
+           animation, so the scale transform gets a stable compositor layer
+           for its duration without promoting the card any other time. */
         @keyframes gallery-pulse {
             0%   { transform: translateZ(0) scale(1); }
             35%  { transform: translateZ(0) scale(1.15); }
@@ -333,6 +332,95 @@
 
         #loading-splash-img.loaded {
             opacity: 1;
+        }
+
+        /* Sounds Panel */
+        /* Structurally identical to #filter-panel above (same size,
+           position, open/close transition, and desktop-vs-mobile
+           docking) -- just its own element so it can open/close
+           independently of the filter panel, with its own background
+           image. See #filter-panel for the reasoning behind each of
+           these rules. */
+        #sounds-panel {
+            position: fixed;
+            left: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100vh; /* fallback for browsers without dvh support */
+            height: 100dvh;
+            background: #ffffff;
+            box-shadow: 0 -4px 10px rgba(0,0,0,0.25);
+            transform: translateY(100%);
+            transition: transform 0.35s ease;
+            will-change: transform;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sounds-panel-bg {
+            position: absolute;
+            inset: -10%;
+            z-index: -1;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/agngqud9g1d58p7ajr56m/Pokedex-Extra-Background-1.png?rlkey=emj5itn446t358jhzsuxsoftq&st=1386sgkw&dl=1"), url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
+            background-size: cover, 240px 240px;
+            background-position: center, center;
+		background-repeat: no-repeat, repeat;
+		background-blend-mode: multiply;
+        }
+
+        #sounds-panel.open {
+            transform: translateY(0);
+        }
+
+        @media (min-width: 664px) {
+            #sounds-panel {
+                left: auto;
+                right: 0;
+                top: 0;
+                bottom: 0;
+                width: 480px;
+                max-width: 90vw;
+                height: 100vh;
+                min-height: 0;
+                border-radius: 15px 0 0 15px;
+                box-shadow: -4px 0 10px rgba(0,0,0,0.25);
+                transform: translateX(100%);
+            }
+
+            #sounds-panel.open {
+                transform: translateX(0);
+            }
+
+            /* Same reasoning as body.filters-open above -- reserves space
+               on the right equal to the panel's width instead of dimming
+               the gallery, so it stays interactive while open. */
+            body.sounds-open {
+                padding-right: calc(20px + min(480px, 90vw));
+            }
+        }
+
+        #sounds-scroll {
+            overflow-y: auto;
+            padding: calc(var(--real-vh, 100dvh) * 0.12) 20px calc(var(--real-vh, 100dvh) * 0.13);
+            flex-grow: 1;
+            width: 100%;
+            max-width: 480px;
+            margin: 0 auto;
+            box-sizing: border-box;
+            scrollbar-gutter: stable;
+        }
+
+        @media (min-width: 664px) {
+            /* Same reasoning as the #filter-top/#filter-scroll desktop
+               overrides below: no permanently-visible mobile nav panels
+               to reserve top/bottom space for on desktop, so those
+               collapse to flat values, plus extra right padding for the
+               real (non-overlay) desktop scrollbar. */
+            #sounds-scroll {
+                padding: 20px 35px 80px 20px;
+            }
         }
 
 	/* Filter Panel */
@@ -705,16 +793,12 @@
                doesn't fight the hover-zoom for control of the same
                property. */
             transition: scale 0.15s ease;
-            /* Every card's img is permanently promoted to its own
-               compositor layer (see .image-card img's translateZ(0)
-               below), and native loading="lazy" only defers the initial
-               fetch -- once a card has scrolled near the viewport and
-               decoded, it stays fully painted and composited forever,
-               with nothing that ever un-loads it. On a long gallery that
-               means the number of "hot" layers the browser has to
-               recomposite keeps growing the deeper you've scrolled, which
-               is exactly what made the viewer-open flicker worse further
-               down the page.
+            /* Native loading="lazy" only defers the initial fetch -- once
+               a card has scrolled near the viewport and decoded, it stays
+               fully painted forever by default, with nothing that ever
+               un-loads it. On a long gallery that means the amount of
+               painted content the browser has to keep around keeps
+               growing the deeper you've scrolled.
 
                content-visibility:auto skips layout/paint/compositing
                entirely for cards that are well outside the viewport (it
@@ -743,12 +827,10 @@
            visible artwork, rather than the <img>'s full square box (whose
            corners are transparent PNG, not empty space the browser
            otherwise knows to ignore for clicks). Kept as its own element
-           rather than clip-path on the <img> itself, since clip-path
-           applies after filter effects — clipping the image directly would
-           also chop off its drop-shadow's few px of bleed past the circle,
-           flattening it at the clip edge instead of letting it fade
-           naturally. This overlay has no visual content of its own, so
-           clipping it has no such side effect. Sits on top of the image in
+           rather than clip-path on the <img> itself so the image element
+           stays untouched — this overlay has no visual content of its
+           own, so clipping it has no visible side effect either way.
+           Sits on top of the image in
            paint order (later in the DOM); clicks inside the circle land
            here, clicks in the corners (now including the frame border
            around the art) fall through to the card's own background,
@@ -787,51 +869,7 @@
                anything on click. */
         }
 
-        /* !!! ATTN CLAUDE !!!
-		I am removing the filter: drop-shadow from the gallery images and 
-		embedding the drop-shadow effect directly onto the background image 
-		to achieve the same visual effect without dealing with additional cost 
-		for the browser to do it. I'm leaving this comment block in the code 
-		as record of what was here before so that you can find anything that 
-		used this section and adjust it. I wrapped the offending css rule into 
-		the end of this comment, so that it's here for you to see but not 
-		affecting page performance.
-	  
-	     Forces its own stable compositing layer -- see attachLayerPromotion()
-           in the script for why this is a toggled class now instead of an
-           unconditional rule on .image-card img.
-
-           Without SOME layer promotion, a lazily-loaded image with a filter
-           can finish decoding without the browser properly re-invalidating
-           the filter's expanded paint region -- leaving the drop-shadow
-           clipped, or the image itself invisible, until something else
-           (like a scroll) forces a repaint. This is a known interaction
-           between loading="lazy" and CSS filter, and became far more
-           visible once the service worker started resolving image loads
-           near-instantly instead of over the network.
-
-           But applying transform: translateZ(0) unconditionally to every
-           image in the gallery (as this used to) promotes every one of
-           them to its own GPU layer permanently and never demotes any of
-           them again, regardless of content-visibility -- once an image
-           has scrolled near the viewport once, it stays "hot" for the rest
-           of the session. On a long gallery, mobile GPUs (and the PWA's
-           own renderer process, which has a tighter compositor budget than
-           a browser tab) eventually run out of layer/texture budget under
-           that unbounded pile, and start reusing or corrupting layer slots
-           between unrelated elements -- surfacing as unrelated cards
-           flashing on open/close, worse the more scrolling/interaction has
-           happened in the session, and worse in the PWA specifically. This
-           class keeps the same fix, but only for images an
-           IntersectionObserver has determined are actually near the
-           viewport, so the promoted count stays capped instead of growing
-           for the life of the page. 
-        .image-card img.layer-promoted {
-            transform: translateZ(0);
-        } 
-	  */
-	  
-	  /* :has() lets hovering the hit-zone (the actual circle) drive the
+        /* :has() lets hovering the hit-zone (the actual circle) drive the
 	     zoom on the whole card — frame included — rather than triggering
 	     off the card's full square box like before, and rather than
 	     zooming just the art and leaving the frame behind. Uses the
@@ -2354,6 +2392,13 @@
         </div>
     </div>
 
+    <div id="sounds-panel">
+        <div class="sounds-panel-bg"></div>
+        <div id="sounds-scroll">
+            Coming Soon
+        </div>
+    </div>
+
     <div class="gallery-container" id="gallery"></div>
 
     <div id="image-overlay">
@@ -2628,6 +2673,7 @@
         const gallery = document.getElementById("gallery");
         const panel = document.getElementById('filter-panel');
         const overlay = document.getElementById('overlay');
+        const soundsPanel = document.getElementById('sounds-panel');
 
         const pokedexPanel = document.getElementById("pokedex-panel");
 
@@ -3017,60 +3063,10 @@
                 filterGallery();
             });
 
-        // Defers promote/demote toggles that land while the viewer/filter
-        // panel's open-close transition is actively reflowing the gallery
-        // (body.panel-animating, set by beginPanelAnim() below -- the
-        // padding-left/padding-top change that makes room for the panel
-        // shifts every card's position for the duration of that
-        // transition). Applying a toggle in that same moment is the same
-        // reactive promote/demote gap described on #image-overlay's own
-        // will-change further up -- just triggered here by a card crossing
-        // the observer's rootMargin boundary as the layout shifts, rather
-        // than by an animation starting. Queuing the change and flushing
-        // it once panel-animating clears keeps layer promotion off the
-        // compositor's critical path during the shift instead of racing
-        // it, which is what was showing up as a flash on close (and, for
-        // cards clustered near the boundary at the top of the page, on
-        // several cards at once).
-        const pendingLayerPromotions = new Map(); // img -> latest isIntersecting seen mid-transition
-
-        function flushPendingLayerPromotions() {
-            pendingLayerPromotions.forEach((isIntersecting, img) => {
-                img.classList.toggle('layer-promoted', isIntersecting);
-            });
-            pendingLayerPromotions.clear();
-        }
-
-        new MutationObserver(() => {
-            if (!document.body.classList.contains('panel-animating')) {
-                flushPendingLayerPromotions();
-            }
-        }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
-
-        // Caps how many gallery images hold the permanent compositor layer
-        // (.layer-promoted, see .image-card img.layer-promoted in the CSS)
-        // at once, instead of every image in the gallery accumulating one
-        // forever -- see that CSS rule's comment for the full reasoning.
-        // rootMargin extends the "near enough to promote" zone well past
-        // the visible viewport in both directions (roughly two extra
-        // screens' worth) so the layer's already standing by the time an
-        // image actually scrolls into view or is about to open in the
-        // viewer, rather than promoting reactively right as it's needed.
-        const layerPromotionObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (document.body.classList.contains('panel-animating')) {
-                    pendingLayerPromotions.set(entry.target, entry.isIntersecting);
-                } else {
-                    entry.target.classList.toggle('layer-promoted', entry.isIntersecting);
-                }
-            });
-        }, { rootMargin: '200% 0px' });
-
         function attachImageEvents() {
             document.querySelectorAll('.image-card').forEach(card => {
                 const img = card.querySelector('img');
                 const hitZone = card.querySelector('.hit-zone');
-                layerPromotionObserver.observe(img);
                 hitZone.addEventListener('click', () => {
                     if (galleryClickLocked) return; // mid pulse-then-open or close-then-recenter-then-pulse -- ignore until it settles
                     if (card.classList.contains('active-in-viewer')) {
@@ -3231,14 +3227,16 @@
         }
 
         // Swaps the Back nav button into its "nothing to do" greyed-out
-        // state whenever there's no panel open (filter panel or image
-        // viewer) AND no active filter for it to clear. Called any time
-        // one of those three things could have changed: filters
-        // (updateFilters), the filter panel (open/closeFilterPanel), or
-        // the image viewer (open/closeImageViewer).
+        // state whenever there's no panel open (filter panel, sounds
+        // panel, or image viewer) AND no active filter for it to clear.
+        // Called any time one of those could have changed: filters
+        // (updateFilters), the filter panel (open/closeFilterPanel), the
+        // sounds panel (open/closeSoundsPanel), or the image viewer
+        // (open/closeImageViewer).
         function refreshBackButtonState() {
             const anyPanelOpen =
                 panel.classList.contains('open') ||
+                soundsPanel.classList.contains('open') ||
                 document.body.classList.contains('viewer-open');
             const nothingToDo = !anyPanelOpen && !filtersActive();
             document.getElementById('nav-bottom-btn-back')
@@ -3502,6 +3500,7 @@
             if (!panel.classList.contains('open')) {
                 panel.classList.add('open');
                 closeImageViewer();
+                closeSoundsPanel();
                 beginPanelAnim();
                 if (desktopFilterQuery.matches) {
                     // Desktop: gallery reserves space and stays interactive —
@@ -3530,6 +3529,70 @@
             }
             refreshBackButtonState();
         }
+
+        // Sounds panel — structurally identical open/close to the filter
+        // panel above (same #overlay dimming + scroll lock on mobile,
+        // same reserved-space class on desktop, just its own 'sounds-open'
+        // body class instead of 'filters-open'). Mutually exclusive with
+        // the filter panel: opening either one closes the other, same as
+        // both already do with the image viewer, so there's never two
+        // panels sliding in over each other at once.
+        function openSoundsPanel() {
+            if (!soundsPanel.classList.contains('open')) {
+                soundsPanel.classList.add('open');
+                closeImageViewer();
+                closeFilterPanel();
+                beginPanelAnim();
+                if (desktopFilterQuery.matches) {
+                    document.body.classList.add('sounds-open');
+                } else {
+                    overlay.classList.add('visible');
+                    window.pageScrollLock.lock();
+                }
+            }
+            refreshBackButtonState();
+        }
+
+        function closeSoundsPanel() {
+            if (soundsPanel.classList.contains('open')) {
+                soundsPanel.classList.remove('open');
+                beginPanelAnim();
+                if (desktopFilterQuery.matches) {
+                    document.body.classList.remove('sounds-open');
+                } else {
+                    overlay.classList.remove('visible');
+                    window.pageScrollLock.unlock();
+                }
+            }
+            refreshBackButtonState();
+        }
+
+        function toggleSoundsDrawer() {
+            if (soundsPanel.classList.contains('open')) {
+                closeSoundsPanel();
+            } else {
+                openSoundsPanel();
+            }
+        }
+
+        // Same breakpoint reconciliation as the filter panel's own listener
+        // just below, mirrored for the sounds panel.
+        desktopFilterQuery.addEventListener('change', (e) => {
+            if (!soundsPanel.classList.contains('open')) return;
+            if (e.matches) {
+                overlay.classList.remove('visible');
+                window.pageScrollLock.unlock();
+                document.body.classList.add('sounds-open');
+            } else {
+                document.body.classList.remove('sounds-open');
+                overlay.classList.add('visible');
+                window.pageScrollLock.lock();
+            }
+        });
+
+        overlay.addEventListener('click', () => {
+            closeSoundsPanel();
+        });
 
         // If the breakpoint is crossed while the panel happens to be open
         // (e.g. rotating a tablet), reconcile which mode's side-effects
@@ -3560,17 +3623,17 @@
             closeFilterPanel();
         });
 
-        // Nav panel buttons — search/close/back now the only way to
-        // trigger this functionality, since the old standalone Filters
-        // and Close Pokédex buttons have been removed. The other three
-        // (game/discord/audio) aren't wired to anything real yet, so
-        // they just surface the "Coming Soon" toast.
+        // Nav panel buttons — search/close/back/audio now the only ones
+        // wired to real functionality. The other two (game/discord) aren't
+        // wired to anything real yet, so they just surface the "Coming
+        // Soon" toast.
         document.getElementById('nav-top-btn-search').addEventListener('click', toggleDrawer);
 
         document.getElementById('nav-bottom-btn-close').addEventListener('click', () => {
             const isClosed = pokedexPanel.classList.contains('closed');
 
             closeFilterPanel();
+            closeSoundsPanel();
             closeImageViewer();
 
             if (isClosed) {
@@ -3583,10 +3646,12 @@
         document.getElementById('nav-bottom-btn-back').addEventListener('click', () => {
             const viewerOpen = document.body.classList.contains('viewer-open');
             const panelOpen = panel.classList.contains('open');
+            const soundsOpen = soundsPanel.classList.contains('open');
 
-            if (viewerOpen || panelOpen) {
+            if (viewerOpen || panelOpen || soundsOpen) {
                 closeImageViewer();
                 closeFilterPanel();
+                closeSoundsPanel();
             } else if (filtersActive()) {
                 // Nothing open, but a filter is active (Search button is
                 // in its state-2 look) — same clear as the filter panel's
@@ -3613,7 +3678,11 @@
             }, 3000);
         }
 
-        ['nav-top-btn-game', 'nav-top-btn-discord', 'nav-bottom-btn-audio'].forEach(id => {
+        // Audio nav button opens/closes the sounds panel, same as Search
+        // does for the filter panel.
+        document.getElementById('nav-bottom-btn-audio').addEventListener('click', toggleSoundsDrawer);
+
+        ['nav-top-btn-game', 'nav-top-btn-discord'].forEach(id => {
             document.getElementById(id).addEventListener('click', showComingSoonToast);
         });
 
@@ -4501,6 +4570,7 @@
             overlayImg.alt = galleryImg.alt;
 
             closeFilterPanel();
+            closeSoundsPanel();
             renderRelatedImages(galleryImg);
             loadPokemonInfo(galleryImg);
 
@@ -4751,6 +4821,7 @@
         function closeOpenPanels() {
             closeImageViewer();
             closeFilterPanel();
+            closeSoundsPanel();
         }
 
         // Clicking empty space in the gallery (not on a card/image) closes
