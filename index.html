@@ -235,15 +235,6 @@
         }
 
         /* Buttons */
-        #overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.35);
-            display: none;
-            z-index: 998;
-        }
-        #overlay.visible { display: block; }
-
         /* Loading splash: covers the whole page from the moment the HTML
            parses, so nothing underneath (background images, panels, etc.)
            is visible mid-load. The image fades in once it's actually
@@ -598,13 +589,13 @@
         #filter-panel {
             position: fixed;
             left: 0;
-            bottom: 0;
+            top: 0;
             width: 100%;
             height: 100vh; /* fallback for browsers without dvh support */
             height: 100dvh;
             background: #ffffff;
-            box-shadow: 0 -4px 10px rgba(0,0,0,0.25);
-            transform: translateY(100%);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+            transform: translateY(-100%);
             transition: transform 0.35s ease;
             /* Same reasoning as #image-overlay's will-change above -- this
                is the element whose transform actually slides on open. */
@@ -649,13 +640,11 @@
                 transform: translateX(0);
             }
 
-            /* Desktop/landscape: instead of the panel overlaying the gallery
-               (which is what #overlay's dimming was for), the gallery
-               reserves space on the right equal to the panel's width and
-               reflows into what's left — nothing gets covered, so no dimming
-               is needed and the gallery stays fully interactive while the
-               panel is open. #overlay is force-hidden here since it no
-               longer serves a purpose at this breakpoint. */
+            /* Desktop/landscape: instead of the panel overlaying the
+               gallery, the gallery reserves space on the right equal to
+               the panel's width and reflows into what's left — nothing
+               gets covered, so the gallery stays fully interactive while
+               the panel is open. */
             body.filters-open {
                 padding-right: calc(20px + min(480px, 90vw));
             }
@@ -669,10 +658,6 @@
                 padding-top: 20px;
                 padding-left: calc(20px + min(clamp(480px, 53vw, 100vh), 90vw)); /* fallback for browsers without dvh support */
                 padding-left: calc(20px + min(clamp(480px, 53vw, 100dvh), 90vw));
-            }
-
-            #overlay {
-                display: none !important;
             }
         }
 
@@ -910,7 +895,6 @@
         #color-section,
         #types-section,
         #abilities-section,
-        #other-section,
         #unique-properties-section {
             display: flex;
             flex-wrap: wrap;
@@ -922,7 +906,6 @@
         #color-section .filter-btn,
         #types-section .filter-btn,
         #abilities-section .filter-btn,
-        #other-section .filter-btn,
         #unique-properties-section .filter-btn {
             flex: 1 1 100px;
         }
@@ -933,7 +916,6 @@
         #color-section .own-row,
         #types-section .own-row,
         #abilities-section .own-row,
-        #other-section .own-row,
         #unique-properties-section .own-row {
             flex-basis: 100%;
         }
@@ -1003,18 +985,22 @@
 
         /* Small rotating chevron on the How To Use button, matching the
            arrow treatment already used on .filter-section-header/
-           .specific-region-header, so the toggle affordance reads
-           consistently across the panel. */
+           .specific-region-header (right-pointing while collapsed,
+           down-pointing once open), so the toggle affordance reads
+           consistently across the panel. Starts rotated since the button
+           has no .collapsed class of its own to key off of -- .open is
+           only added once the section's actually expanded. */
         #how-to-use-btn::after {
             content: "▼";
             font-size: 12px;
             margin-left: 6px;
             display: inline-block;
             transition: transform 0.3s ease;
+            transform: rotate(-90deg);
         }
 
         #how-to-use-btn.open::after {
-            transform: rotate(180deg);
+            transform: rotate(0deg);
         }
 
         /* Placeholder instructions section -- sits below the button row
@@ -1093,10 +1079,11 @@
             margin-left: 6px;
             display: inline-block;
             transition: transform 0.3s ease;
+            transform: rotate(-90deg);
         }
 
         #how-to-use-tags-toggle.open::after {
-            transform: rotate(180deg);
+            transform: rotate(0deg);
         }
 
         #how-to-use-tags-list {
@@ -1120,13 +1107,77 @@
             margin-bottom: 0;
         }
 
+        #tag-search-wrapper {
+            position: relative;
+            width: 100%;
+            margin-top: 10px;
+        }
+
         #tag-search {
             padding: 10px;
+            padding-right: 42px; /* room for the help icon below */
             width: 100%;
             max-width: 100%;
             box-sizing: border-box;
             font-size: 16px;
-            margin-top: 10px;
+        }
+
+        /* Small "?" help icon sitting inside the search bar's own right
+           edge — hover/focus (and tap, via the JS toggle below, for
+           touch devices where hover doesn't reliably fire) reveals the
+           tooltip with the same search-syntax shorthand that used to
+           live in the input's placeholder text, so it stays visible even
+           once something's actually typed in the box. */
+        #tag-search-help {
+            position: absolute;
+            top: 50%;
+            right: 8px;
+            transform: translateY(-50%);
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: none;
+            background-color: rgba(0, 0, 0, 0.55);
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            line-height: 24px;
+            text-align: center;
+            padding: 0;
+            cursor: help;
+        }
+
+        #tag-search-help:hover,
+        #tag-search-help:focus,
+        #tag-search-help.tooltip-visible {
+            background-color: rgba(0, 0, 0, 0.8);
+        }
+
+        #tag-search-help::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: calc(100% + 8px);
+            right: 0;
+            background-color: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 8px 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: normal;
+            line-height: 1.4;
+            width: max-content;
+            max-width: 220px;
+            text-align: left;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            z-index: 10;
+        }
+
+        #tag-search-help:hover::after,
+        #tag-search-help:focus::after,
+        #tag-search-help.tooltip-visible::after {
+            opacity: 1;
         }
 
         /* ⭐ Responsive Gallery Grid */
@@ -2547,8 +2598,6 @@
              alt="Loading">
     </div>
 
-    <div id="overlay"></div>
-
     <div id="pokedex-panel" class="closed">
         <div id="pokedex-panel-1">
             <div class="pokedex-bg"></div>
@@ -2587,20 +2636,23 @@
     <div id="filter-panel">
         <div class="filter-panel-bg"></div>
         <div id="filter-top">
-            <input type="text" id="tag-search" placeholder="Search tags (space-separated, -tag to exclude, tag1/tag2 for OR)">
+            <div id="tag-search-wrapper">
+                <input type="text" id="tag-search" placeholder="Search by tag">
+                <button type="button" id="tag-search-help" data-tooltip="space=AND, tag1/tag2=OR, tag1+tag2=AND, -tag to exclude" title="space=AND, tag1/tag2=OR, tag1+tag2=AND, -tag to exclude">?</button>
+            </div>
             <div id="filter-top-buttons">
                 <button id="how-to-use-btn" class="filter-btn">How To Use</button>
                 <button id="filter-search-btn" class="filter-btn" disabled>Search</button>
                 <button id="reset-filters-btn" class="filter-btn">Clear All Filters</button>
             </div>
             <div id="how-to-use-section">
-                <p>You can search for Pokémon that fit specific criteria by typing in various terms, or "tags" that may be associated with the Pokémon you are looking for. There are several broad categories of tag that apply to many Pokémon (such as "red" for any red Pokémon token, or "water" for any Water-Type Pokémon), and these categories will have a corresponding button in one of the sections below. There are also some tags that apply to only a few or even a single Pokémon. Any tag can be typed into the search bar, even if there's a button for it. You can find examples of the tags you can use below.</p>
+                <p>You can search for Pokémon that fit specific criteria by typing in various terms, or "tags," that may be associated with the Pokémon you're looking for. There are several broad tag categories that apply to many Pokémon (such as "red" for any red Pokémon token, or "water" for any Water-Type Pokémon), and these categories will have a corresponding button in one of the sections below. There are some tags that apply to only a few or even a single Pokémon. Any tag can be typed into the search bar, even if there's already a button for it. You can find examples of the tags you can use below.</p>
 
-                <p>Broadly speaking, the tags you use will apply with either AND, OR, or EXCLUDE logic. When you press a filter button below and it turns blue, it will use OR logic. Some sections (Evolution State, Pokémon Types, Token Abilities, and Unique Properties) have their own "Match" button, which starts on "Match: Any" (OR logic). Pressing it switches to "Match: All", which uses AND logic instead and turns that section's selected buttons green so you can tell at a glance which mode you're in.</p>
+                <p>Broadly speaking, the tags you use will apply with AND, OR, or NOT logic. When you press a filter button below and it turns blue, it will use OR logic. Some sections (Evolution State, Pokémon Types, Token Abilities, and Unique Properties) have their own "Match" button, which starts on "Match: Any" (OR logic). Pressing it switches to "Match: All" (AND logic) and turns that section's selected buttons green so you can tell at a glance which mode you're in.</p>
 
-                <p>If you press and hold a filter button, it will turn red, meaning that tag is EXCLUDED from the search. You can click the button again to reset it.</p>
+                <p>If you press and hold a filter button, it will turn red and apply NOT logic, meaning that tag is excluded from the search. You can click the button again to reset it.</p>
 
-                <p>The tags in the Generation section always apply with OR logic among themselves and AND logic with other sections. This allows you to narrow your searches utilizing other tags to only particular generations.</p>
+                <p>Typing directly into the search box has its own shorthand for AND, OR, and NOT, so you don't need a button for a tag to combine it this way. Separating tags with a space combines them the same way clicking their buttons would: tags from different sections always AND together ("water gen1" finds Water-Types from Generation 1, since Types and Generation are different sections), while tags that share a section combine however that section is currently set — OR by default, or AND if you've flipped that section to "Match: All" (While the Evolution State Match button is set to Any, "splitevo camega" finds anything that is either part of a branched Evolution Chain or capable of Mega Evolution; while it's set to All, only those that fulfill both those requirements simultaneously are found). Join tags with a slash to OR them regardless of section ("water/ground" finds anything that's Water-type, Ground-type, or both). Join tags with a plus to AND them within that one term regardless of section ("water+ground" finds only Pokémon that are both Water and Ground-type). Start a term with a dash to exclude it, and this combines with slash or plus too — "-water/ground" excludes anything Water-type or Ground-type, while "-water+ground" excludes only Pokémon that are both at once.</p>
 
                 <p>Tags that apply to broad categories of Pokémon such that they have a filter button assigned are as follows:</p>
 
@@ -2611,8 +2663,7 @@
                     <li><strong>Token Color:</strong> The color of the Pokémon's game token.</li>
                     <li><strong>Pokémon Types:</strong> The Pokémon's Type(s). Under "Match: All", selection is capped at two, since no Pokémon has more than two types.</li>
                     <li><strong>Token Abilities:</strong> Any Abilities the Pokémon may have that can be used outside of Battle.</li>
-                    <li><strong>Unique Properties:</strong> A few standalone categories describing something notable about a Pokémon's origin or design.</li>
-                    <li><strong>Other Filters:</strong> Several more-narrow categories that apply to several Pokémon but have no overarching theme among them.</li>
+                    <li><strong>Unique Properties:</strong> A few gameplay-relevant traits a Pokémon may have that don't cleanly fit into other categories, and more than one may apply to a Pokémon.</li>
                 </ul>
 
                 <button id="how-to-use-tags-toggle" class="filter-btn">Show Example Tags</button>
@@ -2623,8 +2674,7 @@
                     <p><strong>Token Color:</strong> pink, green, blue, yellow, red, legendary, mega, ultrabeast, gmax, paradox</p>
                     <p><strong>Pokémon Types:</strong> bug, dark, dragon, electric, fairy, fighting, fire, flying, ghost, grass, ground, ice, normal, poison, psychic, rock, steel, water, monotype</p>
                     <p><strong>Token Abilities:</strong> dig, fly, surf, teleport</p>
-                    <p><strong>Unique Properties:</strong> starter, regional, formchange</p>
-                    <p><strong>Other Filters:</strong> fossil, ultrabeast, paradox, special, tvinterviewer, pokestar</p>
+                    <p><strong>Unique Properties:</strong> starter, regional, formchange, fossil, ultrabeast, paradox, special, tvinterviewer, pokestar</p>
                 </div>
 
                 <p>More unique tags that may apply to a small number of Pokémon follow the formats detailed below.</p>
@@ -2800,19 +2850,14 @@
 		<button class="filter-btn" data-tag="starter">Starter</button>
 		<button class="filter-btn" data-tag="regional">Regional Forms</button>
 		<button class="filter-btn" data-tag="formchange">Has Multiple Forms</button>
-		<button id="unique-match-toggle" class="filter-btn own-row">Match: Any</button>
-		<button class="filter-btn own-row" id="show-all-unique">Show All</button>
-	    </div>
-
-	    <div class="filter-section-header">Other Filters</div>
-	    <div id="other-section">
 		<button class="filter-btn" data-tag="fossil">Fossil</button>
 		<button class="filter-btn" data-tag="ultrabeast">Ultra Beast</button>
 		<button class="filter-btn" data-tag="paradox">Paradox</button>
 		<button class="filter-btn" data-tag="special">Special</button>
 		<button class="filter-btn" data-tag="tvinterviewer">TV Interviewer</button>
 		<button class="filter-btn" data-tag="pokestar">Pokéstar Studios</button>
-		<button class="filter-btn own-row" id="show-all-other">Show All</button>
+		<button id="unique-match-toggle" class="filter-btn own-row">Match: Any</button>
+		<button class="filter-btn own-row" id="show-all-unique">Show All</button>
 	    </div>
 
         </div>
@@ -3112,7 +3157,6 @@
             types: 'types-section',
             evolution: 'evolution-section',
             abilities: 'abilities-section',
-            other: 'other-section',
             generation: 'generation-section',
             regional: 'regional-pokedex-section',
             color: 'color-section',
@@ -3153,7 +3197,7 @@
         // could end up OR'd against each other and canceling each other
         // out.
         let sectionFilters = {
-            types: [], evolution: [], abilities: [], other: [],
+            types: [], evolution: [], abilities: [],
             generation: [], regional: [], color: [], unique: [],
         };
 
@@ -3171,9 +3215,21 @@
         // preserve.
         let explicitOrGroups = [];
 
+        // Same idea, for '+' instead of '/' — e.g. "water+ground" requires
+        // every tag in the group to be present (AND-within) rather than
+        // just one (OR-within). Also bypasses section-based AND/OR
+        // routing, for the same reason explicitOrGroups does. Split into
+        // an include-side and an exclude-side bucket rather than one list
+        // like excludeFilters, because "-water+ground" (exclude only
+        // things that are BOTH) needs every-tag-present logic to decide
+        // whether a group applies at all — that can't be flattened into
+        // excludeFilters' simple some()-over-single-tags check the way
+        // "-water/ground" can.
+        let explicitAndGroups = [];
+        let explicitAndExcludeGroups = [];
+
         const gallery = document.getElementById("gallery");
         const panel = document.getElementById('filter-panel');
-        const overlay = document.getElementById('overlay');
         const soundsPanel = document.getElementById('sounds-panel');
 
         const pokedexPanel = document.getElementById("pokedex-panel");
@@ -3616,6 +3672,8 @@
             includeFilters = includeFilters.filter(f => !f.startsWith("search:"));
             excludeFilters = excludeFilters.filter(f => !f.startsWith("search:"));
             explicitOrGroups = [];
+            explicitAndGroups = [];
+            explicitAndExcludeGroups = [];
             Object.keys(sectionFilters).forEach(key => {
                 sectionFilters[key] = sectionFilters[key].filter(f => !f.startsWith("search:"));
             });
@@ -3627,6 +3685,26 @@
             parts.forEach(token => {
                 const isExclude = token.startsWith("-");
                 const body = isExclude ? token.substring(1) : token;
+
+                // '+' (AND) is checked before '/' (OR) -- a token mixing
+                // both isn't really a sensible thing to type (there's no
+                // way to express grouping/precedence in a bare token), so
+                // rather than silently doing something confusing with it,
+                // whichever operator is actually present wins, with '+'
+                // simply checked first. A token that's only '+' characters
+                // (nothing else) has nothing usable in it, same as a
+                // lone '/' below.
+                const plusSegments = body.split(/\+/).filter(Boolean);
+                if (plusSegments.length === 0) return;
+                if (plusSegments.length >= 2) {
+                    if (isExclude) {
+                        explicitAndExcludeGroups.push(plusSegments);
+                    } else {
+                        explicitAndGroups.push(plusSegments);
+                    }
+                    return;
+                }
+
                 // Splits "water/ground" or "water\ground" (either
                 // separator, freely mixed) into its individual tags. A
                 // stray/lone slash with nothing on one or both sides (e.g.
@@ -3679,7 +3757,7 @@
             includeFilters = [];
             excludeFilters = [];
             sectionFilters = {
-                types: [], evolution: [], abilities: [], other: [],
+                types: [], evolution: [], abilities: [],
                 generation: [], regional: [], color: [], unique: [],
             };
 
@@ -3712,11 +3790,13 @@
         // Shared by both nav buttons that care whether a filter is
         // currently active — checks every source that can affect the
         // gallery: the loose include/exclude pools, every per-section
-        // bucket, and explicit slash OR-groups from the search box.
+        // bucket, and explicit slash/plus groups from the search box.
         function filtersActive() {
             return includeFilters.length > 0 ||
                 excludeFilters.length > 0 ||
                 explicitOrGroups.length > 0 ||
+                explicitAndGroups.length > 0 ||
+                explicitAndExcludeGroups.length > 0 ||
                 Object.values(sectionFilters).some(list => list.length > 0);
         }
 
@@ -3733,8 +3813,9 @@
         // either a filter button is selected or something's typed in the
         // search box -- filtersActive() already covers both, since typed
         // search-box text gets folded into includeFilters/excludeFilters/
-        // sectionFilters/explicitOrGroups by parseSearchFilters() just
-        // above in updateFilters().
+        // sectionFilters/explicitOrGroups/explicitAndGroups/
+        // explicitAndExcludeGroups by parseSearchFilters() just above in
+        // updateFilters().
         function refreshFilterSearchButtonState() {
             const filterSearchBtn = document.getElementById('filter-search-btn');
             if (filterSearchBtn) filterSearchBtn.disabled = !filtersActive();
@@ -3787,8 +3868,26 @@
                     group => group.some(f => tags.includes(f))
                 );
 
+                // Same across-groups AND, but every tag within a '+'-group
+                // must be present (AND-within too) — e.g. "water+ground"
+                // requires the card to have both, not just one.
+                const explicitAndMatch = explicitAndGroups.every(
+                    group => group.every(f => tags.includes(f))
+                );
+
                 const excludeMatch =
                     excludeFilters.some(f => tags.includes(f.replace("search:", "")));
+
+                // "-water+ground" only excludes a card that has BOTH —
+                // De Morgan's dual of "-water/ground" (which already
+                // excludes on having EITHER, via plain excludeFilters
+                // above). A card is excluded here if any one '+'-exclude-
+                // group is fully satisfied (every tag in that group
+                // present), same "excluded if any condition fires" logic
+                // excludeMatch itself uses.
+                const explicitAndExcludeMatch = explicitAndExcludeGroups.some(
+                    group => group.every(f => tags.includes(f))
+                );
 
                 const hideNoAbilityMatch =
                     !hideNoAbility ||
@@ -3796,7 +3895,8 @@
 
                 card.classList.toggle(
                     'show',
-                    sectionsMatch && includeMatch && explicitOrMatch && hideNoAbilityMatch && !excludeMatch
+                    sectionsMatch && includeMatch && explicitOrMatch && explicitAndMatch &&
+                        hideNoAbilityMatch && !(excludeMatch || explicitAndExcludeMatch)
                 );
             });
         }
@@ -3927,14 +4027,6 @@
             // explicitly so "Show All" here really does show all.
             hideNoAbility = false;
             hideNoAbilityToggle.textContent = "Hide Pokémon Without Abilities";
-            updateFilters();
-        }
-
-        function resetOther() {
-            document.querySelectorAll('#other-section .filter-btn[data-tag]').forEach(btn => {
-                btn.classList.remove('include', 'exclude');
-                syncTagButtons(btn);
-            });
             updateFilters();
         }
 
@@ -4126,7 +4218,6 @@
         document.getElementById('show-all-color').addEventListener('click', resetColor);
         document.getElementById('show-all-types').addEventListener('click', resetTypes);
         document.getElementById('show-all-abilities').addEventListener('click', resetAbilities);
-        document.getElementById('show-all-other').addEventListener('click', resetOther);
         document.getElementById('show-all-unique').addEventListener('click', resetUniqueProperties);
         document.getElementById('reset-filters-btn').addEventListener('click', resetFilters);
 
@@ -4152,6 +4243,22 @@
         // while nothing's selected, so no extra guard is needed here.
         document.getElementById('filter-search-btn').addEventListener('click', closeFilterPanel);
         document.getElementById('tag-search').addEventListener('input', updateFilters);
+
+        // Tap-to-toggle for the search syntax tooltip -- CSS hover/focus
+        // already shows it for a mouse, but touch devices don't reliably
+        // trigger :hover at all, so this is the only way it's reachable
+        // there. Toggles independently of hover/focus; tapping anywhere
+        // else on the page closes it.
+        const tagSearchHelpBtn = document.getElementById('tag-search-help');
+        tagSearchHelpBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            tagSearchHelpBtn.classList.toggle('tooltip-visible');
+        });
+        document.addEventListener('click', (e) => {
+            if (e.target !== tagSearchHelpBtn) {
+                tagSearchHelpBtn.classList.remove('tooltip-visible');
+            }
+        });
 
         // On mobile, the filter panel is a full-screen sheet, so once the
         // on-screen keyboard is up there's no visible gallery left to tap
@@ -4196,8 +4303,8 @@
                     document.body.classList.add('filters-open');
                 } else {
                     // Mobile: panel is full-screen, so the gallery underneath
-                    // is genuinely hidden — dim it and lock scrolling.
-                    overlay.classList.add('visible');
+                    // is genuinely hidden -- lock scrolling, but no dimming
+                    // (neither panel dims anymore -- see openSoundsPanel).
                     window.pageScrollLock.lock();
                 }
             }
@@ -4211,7 +4318,6 @@
                 if (desktopFilterQuery.matches) {
                     document.body.classList.remove('filters-open');
                 } else {
-                    overlay.classList.remove('visible');
                     window.pageScrollLock.unlock();
                 }
             }
@@ -4219,12 +4325,13 @@
         }
 
         // Sounds panel — structurally identical open/close to the filter
-        // panel above (same #overlay dimming + scroll lock on mobile,
-        // same reserved-space class on desktop, just its own 'sounds-open'
-        // body class instead of 'filters-open'). Mutually exclusive with
-        // the filter panel: opening either one closes the other, same as
-        // both already do with the image viewer, so there's never two
-        // panels sliding in over each other at once.
+        // panel above (scroll lock on mobile, same reserved-space class
+        // on desktop, just its own 'sounds-open' body class instead of
+        // 'filters-open'), except it still slides from the bottom on
+        // mobile rather than the top. Mutually exclusive with the filter
+        // panel: opening either one closes the other, same as both
+        // already do with the image viewer, so there's never two panels
+        // sliding in over each other at once.
         function openSoundsPanel() {
             if (!soundsPanel.classList.contains('open')) {
                 soundsPanel.classList.add('open');
@@ -4234,7 +4341,6 @@
                 if (desktopFilterQuery.matches) {
                     document.body.classList.add('sounds-open');
                 } else {
-                    overlay.classList.add('visible');
                     window.pageScrollLock.lock();
                 }
             }
@@ -4248,7 +4354,6 @@
                 if (desktopFilterQuery.matches) {
                     document.body.classList.remove('sounds-open');
                 } else {
-                    overlay.classList.remove('visible');
                     window.pageScrollLock.unlock();
                 }
             }
@@ -4702,33 +4807,28 @@
         desktopFilterQuery.addEventListener('change', (e) => {
             if (!soundsPanel.classList.contains('open')) return;
             if (e.matches) {
-                overlay.classList.remove('visible');
                 window.pageScrollLock.unlock();
                 document.body.classList.add('sounds-open');
             } else {
                 document.body.classList.remove('sounds-open');
-                overlay.classList.add('visible');
                 window.pageScrollLock.lock();
             }
         });
 
-        overlay.addEventListener('click', () => {
-            closeSoundsPanel();
-        });
+        // No overlay click-to-close for the sounds panel either now -- it
+        // no longer shows one on mobile, and on desktop it never did.
 
         // If the breakpoint is crossed while the panel happens to be open
         // (e.g. rotating a tablet), reconcile which mode's side-effects
-        // (dimming/lock vs. reserved space) are currently in play, rather
+        // (scroll lock vs. reserved space) are currently in play, rather
         // than leaving stale ones behind.
         desktopFilterQuery.addEventListener('change', (e) => {
             if (!panel.classList.contains('open')) return;
             if (e.matches) {
-                overlay.classList.remove('visible');
                 window.pageScrollLock.unlock();
                 document.body.classList.add('filters-open');
             } else {
                 document.body.classList.remove('filters-open');
-                overlay.classList.add('visible');
                 window.pageScrollLock.lock();
             }
         });
@@ -4741,9 +4841,9 @@
             }
         }
 
-        overlay.addEventListener('click', () => {
-            closeFilterPanel();
-        });
+        // No overlay click-to-close for the filter panel -- it no longer
+        // shows one on mobile, and on desktop it never did (the gallery
+        // stays interactive alongside it there).
 
         // Nav panel buttons — search/close/back/audio now the only ones
         // wired to real functionality. The other two (game/discord) aren't
@@ -5944,7 +6044,15 @@
         // be open. Both close functions already no-op safely if their
         // panel isn't open, so it's fine to call both unconditionally
         // rather than tracking which one to target.
+        //
+        // Desktop only: every panel (filter, sounds, image viewer) is
+        // fullscreen on mobile now, so there's no gallery background left
+        // exposed to click on while one's open in the first place — this
+        // would just be a no-op there regardless, but skipping it
+        // explicitly is clearer than relying on that being true by
+        // accident.
         function closeOpenPanels() {
+            if (!desktopFilterQuery.matches) return;
             closeImageViewer();
             closeFilterPanel();
             closeSoundsPanel();
