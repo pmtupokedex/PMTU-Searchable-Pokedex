@@ -1457,42 +1457,89 @@
            background-blend-mode applies to every layer in a stack
            uniformly -- there's no way to blend two layers with multiply
            while leaving a third layer un-blended within a single
-           background. Pulling it out into its own ::before box sidesteps
-           that: it's now a fully independent paint layer with no blend
-           mode of its own, sitting between #viewer-frame's own
-           (multiplied) background and the artwork/buttons on top.
-           inset:-25% oversizes the box so its corners still cover the
-           frame once rotated, and position:absolute lifts it out of the
-           flex layout so it doesn't get flexed alongside overlay-img and
-           the nav buttons. pointer-events:none keeps it from ever
-           intercepting clicks meant for what's rendered above it,
-           regardless of paint order. #viewer-frame's own z-index:0 (making
-           it a stacking context) plus this layer's z-index:-1 is what
-           keeps it behind overlay-img and the nav buttons; overflow:hidden
-           on #viewer-frame clips the oversized, rotated box back down to
-           the frame's actual rectangle.
+           background. Pulling it out into its own box sidesteps that:
+           it's now a fully independent paint layer with no blend mode of
+           its own, sitting between #viewer-frame's own (multiplied)
+           background and the artwork/buttons on top.
 
-           Starts invisible and with no animation applied at all -- not
-           just paused -- since even a paused/invisible animation can still
-           cost a repaint on some devices. The animation itself only gets
-           applied once #image-overlay carries .visible (see below), so
-           there's nothing for the browser to paint here at all until the
-           panel is actually open. */
-        #viewer-frame::before {
-            content: "";
+           This used to be a single #viewer-frame::before pseudo-element.
+           It's now two real, separate elements -- #viewer-frame-tile
+           (the normal Pokéball pattern) and #viewer-frame-tile-shiny (the
+           sparkle pattern) -- because the shiny toggle needs to fade one
+           out and only *then* fade the other in (see updateViewerTile in
+           the script below), rather than crossfading both at once. A
+           single pseudo-element can only hold one background at a time,
+           and pseudo-elements can't be targeted with classList from JS
+           anyway, so genuine sequencing needs two real, independently
+           classable boxes.
+
+           inset:-25% oversizes each box so its corners still cover the
+           frame once rotated, and position:absolute lifts them out of the
+           flex layout so neither gets flexed alongside overlay-img and
+           the nav buttons. pointer-events:none keeps them from ever
+           intercepting clicks meant for what's rendered above them,
+           regardless of paint order. #viewer-frame's own z-index:0 (making
+           it a stacking context) plus these layers' z-index:-1 is what
+           keeps them behind overlay-img and the nav buttons; overflow:hidden
+           on #viewer-frame clips the oversized, rotated boxes back down to
+           the frame's actual rectangle. */
+        .viewer-frame-tile {
             position: absolute;
             inset: -25%; /* oversized so rotated corners still cover the frame */
-		transform: rotate(-10deg);
-		z-index: -1;
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/z0jiby2gqwo2s4t84lj2b/Pokedex-Background-8.png?rlkey=gt1o6z6omzhlkav876b1ra92v&st=afglo6te&dl=1");
+            transform: rotate(-10deg);
+            z-index: -1;
             background-size: 600px 600px;
             background-repeat: repeat;
             pointer-events: none;
+            /* Starts invisible with no transition/animation applied at all --
+               not just paused -- since even a paused/invisible animation can
+               still cost a repaint on some devices. Both get applied only
+               once the rules below actually make each tile relevant. */
             opacity: 0;
         }
 
-        /* Fades the tile in and sets its scroll going only once the panel
-           itself is open, both delayed 1s -- giving the panel's own
+        #viewer-frame-tile {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/z0jiby2gqwo2s4t84lj2b/Pokedex-Background-8.png?rlkey=gt1o6z6omzhlkav876b1ra92v&st=afglo6te&dl=1");
+        }
+
+        #viewer-frame-tile-shiny {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/s2eyi32um5yf9taulzfhx/Pokedex-Background-11.png?rlkey=807actt5t2wp74q2qag6c9hsh&st=9t6h6q9m&dl=1");
+        }
+
+        /* Shiny-mode background. Sits behind both tiles above (-2, so it
+           stays behind whichever one is currently showing rather than
+           covering it) and directly over #viewer-frame's own base
+           background, crossfading in via opacity rather than swapping
+           background-image outright -- background-image itself can't
+           transition, so a second stacked layer that fades in/out is what
+           actually gets the fade. */
+        #viewer-frame::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            z-index: -2;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/m81gn9feipqlsrp49n86k/Pokedex-Background-10.png?rlkey=h94lwe9oovmpnr0er3nbwburb&st=99x98lc0&dl=1"), url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
+            background-size: cover, 240px 240px;
+            background-position: center, center;
+            background-repeat: no-repeat, repeat;
+            background-blend-mode: multiply;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.8s ease;
+        }
+
+        /* Toggled by setShinyShowing (see script below) alongside the
+           button's own active state -- fades the gold layer in over the
+           base background whenever the shiny toggle is on, independent of
+           whether the current token actually has shiny art (the viewer
+           panel's background reflects the toggle itself, not any one
+           image's availability). */
+        #image-overlay.shiny-bg-active #viewer-frame::after {
+            opacity: 1;
+        }
+
+        /* Fades the normal tile in and sets its scroll going only once the
+           panel itself is open, both delayed 1s -- giving the panel's own
            transform slide-in (0.35s) plenty of room to finish uncontested
            before this layer starts costing any repaints of its own. The
            animation-delay holds the tile at its static "from" position
@@ -1502,11 +1549,48 @@
            and only starting to move afterward. Re-applying the animation
            here (rather than leaving it running permanently and just
            toggling opacity) also means it fully stops -- rather than
-           merely hiding -- the moment the panel closes. */
-        #image-overlay.visible #viewer-frame::before {
+           merely hiding -- the moment the panel closes.
+
+           This is always the tile that appears on a fresh open, since the
+           shiny toggle itself always starts off then (see openImageViewer)
+           -- the shiny tile only ever comes into play through a later,
+           explicit toggle click while the panel's already open. */
+        #image-overlay.visible #viewer-frame-tile {
             opacity: 1;
             transition: opacity 1.5s ease 1s;
             animation: viewer-frame-tile-scroll 118s linear 1s infinite;
+        }
+
+        /* Once the shiny toggle has been clicked at least once this
+           session (see shinyToggleBtn's click handler adding .tile-live),
+           every further opacity change on the normal tile uses a quick,
+           undelayed crossfade instead of the slow one-time intro above --
+           there's no slide-in animation left to wait out by then. Extra
+           specificity from the added class is what lets this win over the
+           rule above without needing !important. */
+        #image-overlay.visible.tile-live #viewer-frame-tile {
+            transition: opacity 0.5s ease;
+            animation: viewer-frame-tile-scroll 118s linear infinite;
+        }
+
+        /* Hides the normal tile specifically once the shiny tile has taken
+           over (see updateViewerTile) -- .tile-hidden and .tile-live are
+           always added together, so this never fires before the fast
+           transition above is already in effect. */
+        #image-overlay.visible.tile-live #viewer-frame-tile.tile-hidden {
+            opacity: 0;
+            animation: none;
+        }
+
+        /* Mirrors the fast crossfade above for the shiny tile -- it's
+           never part of the initial slow open, only ever shown via a
+           live toggle, so it only needs the one transition speed. */
+        #viewer-frame-tile-shiny {
+            transition: opacity 0.5s ease;
+        }
+        #image-overlay.visible.tile-live #viewer-frame-tile-shiny.tile-visible {
+            opacity: 1;
+            animation: viewer-frame-tile-scroll 118s linear infinite;
         }
 
         /* Scrolls the tile along a path of (6600px, 2400px) -- both exact
@@ -1516,19 +1600,29 @@
            after the box's own -10° rotation reads as ~100° on-screen
            (measuring clockwise from north, compass-style). Swap the 600px
            in background-size above and both of these multiples-of-600px
-           numbers together if you resize the tile again. */
+           numbers together if you resize the tile again. Shared by both
+           tiles so their motion always lines up, whichever is showing. */
         @keyframes viewer-frame-tile-scroll {
             from { background-position: 0 0; }
             to   { background-position: 6600px 2400px; }
         }
 
-        /* Respect reduced-motion preferences -- shows the tile immediately
-           at full opacity instead of fading in, and never sets it
-           scrolling at all. Matches the .visible selector's specificity
-           so it actually wins over the rule above rather than being
-           silently outweighed by it. */
+        /* Respect reduced-motion preferences -- shows whichever tile is
+           active immediately at full opacity instead of fading/animating
+           it. Matches the relevant selectors' specificity so these
+           actually win over the animated rules above rather than being
+           silently outweighed by them. */
         @media (prefers-reduced-motion: reduce) {
-            #image-overlay.visible #viewer-frame::before {
+            #image-overlay.visible #viewer-frame-tile {
+                opacity: 1;
+                transition: none;
+                animation: none;
+            }
+            #image-overlay.visible.tile-live #viewer-frame-tile.tile-hidden {
+                opacity: 0;
+                transition: none;
+            }
+            #image-overlay.visible.tile-live #viewer-frame-tile-shiny.tile-visible {
                 opacity: 1;
                 transition: none;
                 animation: none;
@@ -1561,6 +1655,32 @@
             padding: 4px 10px;
             border-radius: 6px;
             cursor: pointer;
+        }
+
+        /* Mirrors #image-close-btn exactly, just pinned to the opposite
+           top corner -- same fixed-to-the-panel anchoring reasoning
+           applies here too. */
+        #shiny-toggle-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 2;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            border: none;
+            font-size: 24px;
+            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        /* Active (shiny-showing) state -- a gold tint on the same pill so
+           it reads as "toggled on" at a glance rather than needing to
+           compare the glyph itself. */
+        #shiny-toggle-btn.shiny-active {
+            background: rgba(212, 175, 55, 0.85);
+            color: #111;
         }
 
         /* Prev/next hit zones span the panel's full height and a third of
@@ -2931,7 +3051,10 @@
 
     <div id="image-overlay">
         <button id="image-close-btn">✕</button>
+        <button id="shiny-toggle-btn" aria-pressed="false" title="Toggle shiny">✨</button>
         <div id="viewer-frame">
+            <div id="viewer-frame-tile" class="viewer-frame-tile"></div>
+            <div id="viewer-frame-tile-shiny" class="viewer-frame-tile"></div>
             <button id="image-prev-btn" class="image-nav-btn image-nav-prev" aria-label="Previous image"><span class="nav-arrow">&#10094;</span></button>
             <button id="image-next-btn" class="image-nav-btn image-nav-next" aria-label="Next image"><span class="nav-arrow">&#10095;</span></button>
             <img id="overlay-img" src="" alt="">
@@ -3603,6 +3726,12 @@
                     img.loading = "lazy";
                     img.src = p.src;
                     img.alt = p.name;
+                    // Stashed here (rather than looked up from the JSON
+                    // again later) so the viewer's shiny-toggle button can
+                    // grab it directly off activeGalleryImg, the same way
+                    // it already grabs .src -- no separate data lookup
+                    // needed at toggle time.
+                    img.dataset.shinysrc = p.shinysrc || '';
                     // First tag is always the National Dex number (e.g. "025"),
                     // or a non-numeric marker ("???", "PS1"...) for entries with
                     // no official Pokédex data — used by the info panel below.
@@ -4930,6 +5059,9 @@
         const imageOverlay = document.getElementById('image-overlay');
         const overlayImg = document.getElementById('overlay-img');
         const imageCloseBtn = document.getElementById('image-close-btn');
+        const shinyToggleBtn = document.getElementById('shiny-toggle-btn');
+        const viewerFrameTile = document.getElementById('viewer-frame-tile');
+        const viewerFrameTileShiny = document.getElementById('viewer-frame-tile-shiny');
         const imagePrevBtn = document.getElementById('image-prev-btn');
         const imageNextBtn = document.getElementById('image-next-btn');
         const imagePrevArrow = imagePrevBtn.querySelector('.nav-arrow');
@@ -4954,6 +5086,13 @@
         });
 
         let activeGalleryImg = null;
+        // Whether the viewer's magnified image (and the related-images
+        // row) is currently showing shinysrc instead of src. Reset to
+        // false only on a fresh open of the viewer (see openImageViewer);
+        // while the viewer stays open, it carries over across prev/next
+        // navigation and related-image picks, since those all route
+        // through openImageViewer too -- see the alreadyOpen check there.
+        let shinyShowing = false;
         let viewerHoldsScrollLock = false;
         let pulseSettleAt = 0; // performance.now() timestamp when the current gallery-pulse animation finishes
         // Blocks gallery image clicks during the two mobile-only sequences
@@ -5561,7 +5700,13 @@
             let activeThumb = null;
             related.forEach(relImg => {
                 const thumb = document.createElement('img');
-                thumb.src = relImg.src;
+                // Both sources are stashed on the thumb itself (rather than
+                // just picking one at render time and forgetting where the
+                // other came from) so setShinyShowing can flip already-
+                // rendered thumbs later without needing a full re-render.
+                thumb.dataset.regularsrc = relImg.src;
+                thumb.dataset.shinysrc = relImg.dataset.shinysrc || '';
+                thumb.src = (shinyShowing && hasShinyForm(thumb.dataset.shinysrc)) ? thumb.dataset.shinysrc : thumb.dataset.regularsrc;
                 thumb.alt = relImg.alt;
                 // Matches the main gallery's images (see attachImageEvents'
                 // img.loading = "lazy" above) -- without this, every single
@@ -5759,6 +5904,72 @@
             setExpandedPanel('related');
         });
 
+        // The JSON marks tokens with no shiny art using placeholder text
+        // ("No Shiny Form", formerly "PLACEHOLDER") instead of a real URL.
+        // Checking for an actual http(s) URL, rather than matching those
+        // exact strings, means any future placeholder wording still fails
+        // safe into the regular image instead of trying to load literal
+        // placeholder text as an <img> src.
+        function hasShinyForm(src) {
+            return typeof src === 'string' && /^https?:\/\//i.test(src);
+        }
+
+        // Single source of truth for both halves of the shiny toggle --
+        // which image(s) are actually displayed and how the button
+        // reflects that -- so nothing can update one without the other.
+        // Covers the main overlay image plus every thumbnail currently in
+        // the related-images row; the main gallery grid is deliberately
+        // left untouched.
+        function setShinyShowing(showShiny) {
+            shinyShowing = showShiny;
+            if (activeGalleryImg) {
+                const shinySrc = activeGalleryImg.dataset.shinysrc;
+                overlayImg.src = (showShiny && hasShinyForm(shinySrc)) ? shinySrc : activeGalleryImg.src;
+            }
+            shinyToggleBtn.classList.toggle('shiny-active', shinyShowing);
+            shinyToggleBtn.setAttribute('aria-pressed', shinyShowing ? 'true' : 'false');
+            // Drives #viewer-frame::after's crossfade (see CSS) -- reflects
+            // the toggle itself, not whether this particular image has
+            // shiny art, so the background stays gold across a no-shiny-
+            // form fallback like Ash's Pikachu.
+            imageOverlay.classList.toggle('shiny-bg-active', shinyShowing);
+            viewerRelatedGrid.querySelectorAll('img').forEach(thumb => {
+                thumb.src = (shinyShowing && hasShinyForm(thumb.dataset.shinysrc)) ? thumb.dataset.shinysrc : thumb.dataset.regularsrc;
+            });
+        }
+
+        // Must match the fast opacity transition duration on
+        // .viewer-frame-tile in CSS (#image-overlay.visible.tile-live
+        // rules) -- this is how long updateViewerTile waits after hiding
+        // one tile before it starts showing the other, so the two never
+        // overlap on screen.
+        const TILE_CROSSFADE_MS = 500;
+        let tileCrossfadeTimer = null;
+
+        // Sequences the scrolling-tile swap: fades whichever tile is
+        // currently showing out, and only once that's actually finished
+        // fades the other one in -- rather than crossfading both at once
+        // -- per the "one pattern should fully fade out before the other
+        // fades in" request. Only ever called from a genuine toggle click
+        // (see shinyToggleBtn's listener below), never from
+        // openImageViewer's own calls to setShinyShowing, since switching
+        // images while the toggle's state doesn't change shouldn't replay
+        // this animation.
+        function updateViewerTile(showShiny) {
+            clearTimeout(tileCrossfadeTimer);
+            if (showShiny) {
+                viewerFrameTile.classList.add('tile-hidden');
+                tileCrossfadeTimer = setTimeout(() => {
+                    viewerFrameTileShiny.classList.add('tile-visible');
+                }, TILE_CROSSFADE_MS);
+            } else {
+                viewerFrameTileShiny.classList.remove('tile-visible');
+                tileCrossfadeTimer = setTimeout(() => {
+                    viewerFrameTile.classList.remove('tile-hidden');
+                }, TILE_CROSSFADE_MS);
+            }
+        }
+
         function openImageViewer(galleryImg) {
             const alreadyOpen = document.body.classList.contains('viewer-open');
 
@@ -5792,8 +6003,15 @@
             activeGalleryImg = galleryImg;
             galleryImg.closest('.image-card')?.classList.add('active-in-viewer');
 
-            overlayImg.src = galleryImg.src;
             overlayImg.alt = galleryImg.alt;
+            // Fresh open (viewer was closed): always start on the regular
+            // image. Already open (prev/next, a related-image pick):
+            // carry the current toggle state over onto the new image
+            // instead of resetting it -- setShinyShowing still needs to
+            // run either way, since activeGalleryImg just changed and the
+            // overlay image needs to be pointed at whichever src is
+            // currently active for it.
+            setShinyShowing(alreadyOpen ? shinyShowing : false);
 
             closeFilterPanel();
             closeSoundsPanel();
@@ -5917,6 +6135,18 @@
 
             imageOverlay.classList.remove('visible');
             overlayImg.src = "";
+            shinyShowing = false;
+            shinyToggleBtn.classList.remove('shiny-active');
+            shinyToggleBtn.setAttribute('aria-pressed', 'false');
+            imageOverlay.classList.remove('shiny-bg-active');
+            // Resets the tile back to its fresh-open state too, so
+            // reopening later replays the original slow intro fade
+            // instead of picking up the fast (post-tile-live) transition
+            // or leftover mid-swap classes from before this close.
+            clearTimeout(tileCrossfadeTimer);
+            imageOverlay.classList.remove('tile-live');
+            viewerFrameTile.classList.remove('tile-hidden');
+            viewerFrameTileShiny.classList.remove('tile-visible');
             beginPanelAnim();
             document.body.classList.remove('viewer-open');
 
@@ -6025,6 +6255,15 @@
         // outside-click was never meant to reach inside the panel at all.
 
         imageCloseBtn.addEventListener('click', closeImageViewer);
+        shinyToggleBtn.addEventListener('click', () => {
+            const next = !shinyShowing;
+            // Switches the normal tile's fade to the fast, undelayed
+            // transition from here on (see CSS) -- only matters the first
+            // time this fires per open, but harmless to set again after.
+            imageOverlay.classList.add('tile-live');
+            setShinyShowing(next);
+            updateViewerTile(next);
+        });
 
         imagePrevBtn.addEventListener('click', (e) => {
             e.stopPropagation();
