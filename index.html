@@ -1221,34 +1221,26 @@
                doesn't fight the hover-zoom for control of the same
                property. */
             transition: scale 0.15s ease;
-            /* Native loading="lazy" only defers the initial fetch -- once
-               a card has scrolled near the viewport and decoded, it stays
-               fully painted forever by default, with nothing that ever
-               un-loads it. On a long gallery that means the amount of
-               painted content the browser has to keep around keeps
-               growing the deeper you've scrolled.
-
-               content-visibility:auto skips layout/paint/compositing
-               entirely for cards that are well outside the viewport (it
-               only affects .show cards -- .image-card is display:none by
-               default, which is already zero-cost), and lets the browser
-               pick that work back up automatically the moment a card
-               nears the viewport again. This is what actually caps the
-               standing cost instead of letting it grow unbounded with
-               scroll depth. contain-intrinsic-size gives it a placeholder
-               box to reserve so the grid's scroll height doesn't jump
-               around as cards skip in and out of rendering; the `auto`
-               keyword on each axis tells it to remember each card's real
-               measured size after the first render rather than reusing
-               the 168px fallback (the grid's own minmum column size)
-               forever. */
-            content-visibility: auto;
-            contain-intrinsic-size: auto 168px auto 168px;
         }
         .image-card.show {
             display: flex;
             align-items: center;
             justify-content: center;
+        }
+
+        /* The gallery only ever mounts a scrolling window of cards (plus a
+           buffer above/below) rather than the whole dataset — see the
+           virtualization block in the script for why. These two elements
+           are permanent children of #gallery, always first and last, and
+           stand in for however many unmounted rows currently sit above and
+           below the mounted window. grid-column spans every column
+           regardless of how many the responsive grid above has resolved
+           to, so each one always occupies exactly the full width of one
+           logical row -- which is what lets their height alone represent
+           "this many rows are missing" accurately. */
+        #gallery-top-spacer, #gallery-bottom-spacer {
+            grid-column: 1 / -1;
+            width: 100%;
         }
 
         /* Defines the actual clickable area as a circle matching the
@@ -1263,7 +1255,7 @@
            here, clicks in the corners (now including the frame border
            around the art) fall through to the card's own background,
            handled the same as any other empty gallery space (see
-           attachImageEvents). Hover-triggered zoom is unaffected either
+           attachCardEvents). Hover-triggered zoom is unaffected either
            way, since that's keyed off the whole card's box, not this
            overlay. */
         .image-card .hit-zone {
@@ -3591,66 +3583,257 @@
 
         document.getElementById("pokedex-click-zone").addEventListener("click", closePokedexPanels);
 
+        // The full dataset, fetched once and kept around as plain data —
+        // this is now the only permanent record of "every Pokémon in the
+        // gallery." DOM nodes are a transient, on-demand rendering of a
+        // small window into this array (see the virtualization block
+        // below), not the source of truth the way they used to be.
+        // tagsLower is precomputed once here rather than repeatedly inside
+        // filterGallery()'s hot loop, which runs on every filter change
+        // across the entire dataset.
+        let galleryData = [];
+
+        // Indices into galleryData currently matching the active filters,
+        // in original dataset order. filterGallery() rebuilds this; the
+        // virtualization engine below is the only thing that reads it.
+        let filteredIndices = [];
+
+        // --- Gallery virtualization ---
+        //
+        // Only a scrolling window of cards (plus a buffer above/below,
+        // BUFFER_SCREENS worth) is ever mounted as real DOM at once,
+        // instead of the whole dataset. This is what makes
+        // content-visibility unnecessary (see .image-card's CSS) — there's
+        // nothing left for the browser to lazily skip and resolve, since
+        // unmounted cards simply don't exist in the DOM to begin with.
+        //
+        // Mounted cards are recycled from a fixed-size pool rather than
+        // created/destroyed as the window moves: each pool entry's
+        // listeners are attached exactly once, and reused across whatever
+        // gallery index currently scrolls into its slot. The pool only
+        // grows (never shrinks) to whatever the largest window seen so far
+        // needed, since the same size window keeps recurring as you
+        // scroll.
+        const CARD_MIN_PX = 168; // matches .gallery-container's minmax(168px, 15%)
+        const GAP_PX = 6;        // matches .gallery-container's gap
+        const BUFFER_SCREENS = 2.5; // "medium" buffer -- mirrors the old content-visibility rootMargin choice
+
+        let columnsPerRow = 1;
+        let rowHeightPx = CARD_MIN_PX + GAP_PX;
+        let gridMeasured = false;
+
+        const cardPool = []; // [{ card, img, hitZone }, ...], reused across renders
+        const mountedCardByIndex = new Map(); // galleryIndex -> pool entry, only for currently-mounted cards
+
+        const topSpacer = document.createElement('div');
+        topSpacer.id = 'gallery-top-spacer';
+        const bottomSpacer = document.createElement('div');
+        bottomSpacer.id = 'gallery-bottom-spacer';
+        gallery.appendChild(topSpacer);
+        gallery.appendChild(bottomSpacer);
+
+        // Attached once per pooled card, never re-attached on reuse — reads
+        // which gallery index the card currently represents from its own
+        // dataset at click time, since that changes every time the pool
+        // entry gets recycled for a different row.
+        function attachCardEvents(card, img, hitZone) {
+            hitZone.addEventListener('click', () => {
+                if (galleryClickLocked) return; // mid pulse-then-open or close-then-recenter-then-pulse -- ignore until it settles
+                const idx = parseInt(card.dataset.galleryIndex, 10);
+                if (card.classList.contains('active-in-viewer')) {
+                    closeImageViewer();
+                } else {
+                    openImageViewer(idx);
+                }
+            });
+            // A click landing directly on the image itself (rather than
+            // the hit-zone on top of it) only happens in the square's
+            // transparent corners, since the hit-zone covers the circle
+            // and intercepts anything within it first. Treated the same
+            // as clicking any other empty space in the gallery.
+            img.addEventListener('click', () => closeOpenPanels());
+            // Defensive catch-all: a click landing on .image-card's own
+            // background (neither the image nor the hit-zone) shouldn't
+            // be possible now that display:block above removes the
+            // known baseline-gap cause, but sub-pixel layout rounding
+            // between a parent and child box that are meant to match
+            // exactly can still occasionally leave a stray edge pixel
+            // uncovered in some browsers/zoom levels. Same treatment as
+            // any other empty space either way.
+            card.addEventListener('click', (e) => {
+                if (e.target === card) closeOpenPanels();
+            });
+        }
+
+        function ensurePoolSize(n) {
+            while (cardPool.length < n) {
+                const card = document.createElement('div');
+                card.className = 'image-card show';
+
+                const img = document.createElement('img');
+                img.loading = 'lazy';
+                img.decoding = 'async';
+
+                const hitZone = document.createElement('div');
+                hitZone.className = 'hit-zone';
+
+                card.appendChild(img);
+                card.appendChild(hitZone);
+                attachCardEvents(card, img, hitZone);
+                cardPool.push({ card, img, hitZone });
+            }
+        }
+
+        // Reads real column count and row height off currently-mounted
+        // cards rather than trying to replicate .gallery-container's own
+        // repeat(auto-fit, minmax(168px, 15%)) math in JS -- that
+        // algorithm depends on exact container width in a way that's
+        // fragile to reproduce by hand, while just measuring what the
+        // browser actually laid out is always correct by construction.
+        //
+        // Returns whether it actually got a trustworthy measurement.
+        // Counting consecutive same-offsetTop cards only proves the real
+        // column count if either (a) a card actually landed on a
+        // different offsetTop (a confirmed wrap to row 2 -- we've seen
+        // every column), or (b) every currently-filtered entry is
+        // mounted, so there's nothing left that could have wrapped to a
+        // second row even in principle. Without one of those, a small
+        // mounted count (e.g. the very first bootstrap pass, or a filter
+        // whittling the result set down) is indistinguishable from "this
+        // really is the whole row" and would otherwise lock in a
+        // too-small column count that corrupts every render after it.
+        function remeasureGrid() {
+            if (cardPool.length === 0 || !cardPool[0].card.isConnected) return false;
+            const firstTop = cardPool[0].card.offsetTop;
+            let cols = 1;
+            let sawWrap = false;
+            for (let i = 1; i < cardPool.length; i++) {
+                if (!cardPool[i].card.isConnected) break;
+                if (cardPool[i].card.offsetTop === firstTop) {
+                    cols++;
+                } else {
+                    sawWrap = true;
+                    break;
+                }
+            }
+            if (!sawWrap && cols < filteredIndices.length) return false; // inconclusive -- can't rule out a wrap just past what's mounted
+            columnsPerRow = Math.max(1, cols);
+            const gap = parseFloat(getComputedStyle(gallery).rowGap) || GAP_PX;
+            rowHeightPx = cardPool[0].card.offsetHeight + gap;
+            gridMeasured = true;
+            return true;
+        }
+
+        function estimateInitialColumns() {
+            const w = gallery.clientWidth || window.innerWidth;
+            return Math.max(1, Math.floor(w / (CARD_MIN_PX + GAP_PX)));
+        }
+
+        // Page-absolute Y of the top of row 0 (i.e. the gallery's own
+        // content start, right after the top spacer). Only shifts if
+        // something above the gallery in the page changes height -- never
+        // as a result of the gallery's own spacer resizing itself, since a
+        // child's height can't affect its own top position. Cheap enough
+        // (one rect read) to just recompute fresh每次 rather than cache.
+        function galleryContentTopY() {
+            const rect = gallery.getBoundingClientRect();
+            return rect.top + window.scrollY;
+        }
+
+        function computeIdealWindow() {
+            const totalRows = columnsPerRow > 0 ? Math.ceil(filteredIndices.length / columnsPerRow) : 0;
+            const galleryTop = galleryContentTopY();
+            const bufferPx = window.innerHeight * BUFFER_SCREENS;
+            const wantTop = window.scrollY - bufferPx;
+            const wantBottom = window.scrollY + window.innerHeight + bufferPx;
+
+            const firstRow = Math.max(0, Math.floor((wantTop - galleryTop) / rowHeightPx));
+            const lastRow = Math.min(totalRows - 1, Math.ceil((wantBottom - galleryTop) / rowHeightPx));
+
+            const startIdx = Math.min(filteredIndices.length, firstRow * columnsPerRow);
+            const endIdx = totalRows === 0 ? 0 : Math.min(filteredIndices.length, (lastRow + 1) * columnsPerRow);
+
+            return { startIdx, endIdx, firstRow: Math.min(firstRow, totalRows), totalRows };
+        }
+
+        let virtualRenderScheduled = false;
+        function scheduleVirtualRender() {
+            if (virtualRenderScheduled) return;
+            virtualRenderScheduled = true;
+            requestAnimationFrame(() => {
+                virtualRenderScheduled = false;
+                renderVirtualGallery();
+            });
+        }
+
+        function renderVirtualGallery() {
+            if (!gridMeasured) columnsPerRow = estimateInitialColumns();
+
+            const { startIdx, endIdx, firstRow, totalRows } = computeIdealWindow();
+            ensurePoolSize(endIdx - startIdx);
+
+            topSpacer.style.height = (firstRow * rowHeightPx) + 'px';
+            const mountedRows = columnsPerRow > 0 ? Math.ceil((endIdx - startIdx) / columnsPerRow) : 0;
+            const bottomRows = totalRows - firstRow - mountedRows;
+            bottomSpacer.style.height = Math.max(0, bottomRows * rowHeightPx) + 'px';
+
+            mountedCardByIndex.clear();
+            const frag = document.createDocumentFragment();
+            for (let i = startIdx; i < endIdx; i++) {
+                const entry = cardPool[i - startIdx];
+                const galleryIndex = filteredIndices[i];
+                const data = galleryData[galleryIndex];
+
+                entry.card.dataset.galleryIndex = galleryIndex;
+                entry.img.src = data.src;
+                entry.img.alt = data.name;
+                entry.img.dataset.dex = data.tags[0] || '';
+                entry.card.classList.toggle('active-in-viewer', galleryIndex === activeIndex);
+
+                mountedCardByIndex.set(galleryIndex, entry);
+                frag.appendChild(entry.card);
+            }
+            // Anything in the pool beyond what's needed this render stays
+            // in the pool (for reuse next time a bigger window is needed)
+            // but is detached from the document in the meantime.
+            for (let i = endIdx - startIdx; i < cardPool.length; i++) {
+                if (cardPool[i].card.isConnected) cardPool[i].card.remove();
+            }
+            gallery.insertBefore(frag, bottomSpacer);
+
+            if (!gridMeasured) {
+                // First pass used an estimated column count; now that real
+                // cards are actually laid out, measure for real and
+                // re-render once against the accurate numbers -- but only
+                // if that measurement actually succeeded. If it didn't
+                // (nothing mounted yet -- e.g. a scroll/resize event
+                // firing before the initial fetch resolves, or a filter
+                // currently matching zero entries), leave gridMeasured
+                // false and simply stop here rather than recursing forever
+                // with nothing new to measure each time: the next real
+                // scroll, resize, or filter change will call this again
+                // naturally once there's something to measure.
+                if (remeasureGrid()) renderVirtualGallery();
+            }
+        }
+
+        window.addEventListener('scroll', scheduleVirtualRender, { passive: true });
+        new ResizeObserver(() => {
+            gridMeasured = false; // container width may have changed the column count
+            scheduleVirtualRender();
+        }).observe(gallery);
+
         fetch("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/pokemon-data.json")
             .then(response => response.json())
             .then(data => {
-                data.forEach(p => {
-                    const card = document.createElement("div");
-                    card.className = "image-card";
-                    card.dataset.tags = p.tags.join(" ");
-
-                    const img = document.createElement("img");
-                    img.loading = "lazy";
-                    img.src = p.src;
-                    img.alt = p.name;
-                    // First tag is always the National Dex number (e.g. "025"),
-                    // or a non-numeric marker ("???", "PS1"...) for entries with
-                    // no official Pokédex data — used by the info panel below.
-                    img.dataset.dex = p.tags[0] || '';
-
-                    const hitZone = document.createElement("div");
-                    hitZone.className = "hit-zone";
-
-                    card.appendChild(img);
-                    card.appendChild(hitZone);
-                    gallery.appendChild(card);
-                });
-
-                attachImageEvents();
+                galleryData = data.map(p => ({
+                    name: p.name,
+                    src: p.src,
+                    tags: p.tags,
+                    tagsLower: p.tags.map(t => t.toLowerCase()),
+                }));
                 filterGallery();
             });
-
-        function attachImageEvents() {
-            document.querySelectorAll('.image-card').forEach(card => {
-                const img = card.querySelector('img');
-                const hitZone = card.querySelector('.hit-zone');
-                hitZone.addEventListener('click', () => {
-                    if (galleryClickLocked) return; // mid pulse-then-open or close-then-recenter-then-pulse -- ignore until it settles
-                    if (card.classList.contains('active-in-viewer')) {
-                        closeImageViewer();
-                    } else {
-                        openImageViewer(img);
-                    }
-                });
-                // A click landing directly on the image itself (rather than
-                // the hit-zone on top of it) only happens in the square's
-                // transparent corners, since the hit-zone covers the circle
-                // and intercepts anything within it first. Treated the same
-                // as clicking any other empty space in the gallery.
-                img.addEventListener('click', () => closeOpenPanels());
-                // Defensive catch-all: a click landing on .image-card's own
-                // background (neither the image nor the hit-zone) shouldn't
-                // be possible now that display:block above removes the
-                // known baseline-gap cause, but sub-pixel layout rounding
-                // between a parent and child box that are meant to match
-                // exactly can still occasionally leave a stray edge pixel
-                // uncovered in some browsers/zoom levels. Same treatment as
-                // any other empty space either way.
-                card.addEventListener('click', (e) => {
-                    if (e.target === card) closeOpenPanels();
-                });
-            });
-        }
 
 
         // Most tags typed into the search box have no corresponding button
@@ -3839,9 +4022,9 @@
         }
 
         function filterGallery() {
-            const cards = document.querySelectorAll('.image-card');
-            cards.forEach(card => {
-                const tags = card.dataset.tags.toLowerCase().split(/\s+/);
+            filteredIndices = [];
+            for (let i = 0; i < galleryData.length; i++) {
+                const tags = galleryData[i].tagsLower;
                 const includeMatch =
                     includeFilters.length === 0 ||
                     includeFilters.some(f => tags.includes(f.replace("search:", "")));
@@ -3893,12 +4076,13 @@
                     !hideNoAbility ||
                     ['dig', 'fly', 'surf', 'teleport'].some(f => tags.includes(f));
 
-                card.classList.toggle(
-                    'show',
+                const matches =
                     sectionsMatch && includeMatch && explicitOrMatch && explicitAndMatch &&
-                        hideNoAbilityMatch && !(excludeMatch || explicitAndExcludeMatch)
-                );
-            });
+                        hideNoAbilityMatch && !(excludeMatch || explicitAndExcludeMatch);
+
+                if (matches) filteredIndices.push(i);
+            }
+            scheduleVirtualRender();
         }
 
         // One toggle button per AND/OR-switchable section — mirrors the
@@ -4953,7 +5137,7 @@
             cryAudio.play().catch(() => { /* ignore playback errors (e.g. file missing) */ });
         });
 
-        let activeGalleryImg = null;
+        let activeIndex = null; // index into galleryData, or null if the viewer's closed
         let viewerHoldsScrollLock = false;
         let pulseSettleAt = 0; // performance.now() timestamp when the current gallery-pulse animation finishes
         // Blocks gallery image clicks during the two mobile-only sequences
@@ -5090,6 +5274,74 @@
             requestAnimationFrame(step);
         }
 
+        // Page-Y of a filtered-list row's vertical center, computed purely
+        // from grid math (row/column arithmetic) rather than by measuring
+        // a real element -- works whether or not galleryIndex is currently
+        // mounted. Returns null if galleryIndex isn't in the current
+        // filtered set at all (shouldn't normally happen for the active
+        // image, but guards against a filter change invalidating it out
+        // from under an in-flight scroll).
+        function galleryIndexRowCenterY(galleryIndex) {
+            const filteredPos = filteredIndices.indexOf(galleryIndex);
+            if (filteredPos === -1) return null;
+            const row = Math.floor(filteredPos / columnsPerRow);
+            return galleryContentTopY() + row * rowHeightPx + rowHeightPx / 2;
+        }
+
+        // Same job as trackImageIntoView above -- scroll a gallery entry
+        // into view, then pulse it -- but keyed by galleryData index
+        // instead of requiring a live DOM element, since the target of a
+        // prev/next jump (or the image the viewer was opened on, per the
+        // "open now, recenter on close" design) may not be mounted at all.
+        //
+        // If it's currently mounted, this is just trackImageIntoView with
+        // extra steps -- delegates straight to it for the exact same
+        // precise, real-measurement homing behavior as before. If it
+        // isn't, scrolls toward the row's mathematically-computed position
+        // instead (same generation-guard pattern, so a newer call always
+        // wins over a stale one); once the target scrolls close enough
+        // that the virtualization window picks it up and actually mounts
+        // it, hands off to trackImageIntoView for a precise final
+        // approach and the pulse, rather than pulsing a card that doesn't
+        // exist yet.
+        function scrollIndexIntoView(galleryIndex, duration, onSettled) {
+            const alreadyMounted = mountedCardByIndex.get(galleryIndex);
+            if (alreadyMounted) {
+                trackImageIntoView(alreadyMounted.img, duration, onSettled);
+                return;
+            }
+
+            const myGeneration = ++trackingGeneration;
+            const start = performance.now();
+            const SMOOTHING = 0.25;
+            const targetY = galleryIndexRowCenterY(galleryIndex);
+            if (targetY === null) {
+                if (onSettled) onSettled();
+                return;
+            }
+
+            function step(now) {
+                if (myGeneration !== trackingGeneration) return;
+
+                const nowMounted = mountedCardByIndex.get(galleryIndex);
+                if (nowMounted) {
+                    trackImageIntoView(nowMounted.img, Math.max(150, duration - (now - start)), onSettled);
+                    return;
+                }
+
+                const currentCenterY = window.scrollY + window.innerHeight / 2;
+                const remaining = targetY - currentCenterY;
+                if (now - start < duration && Math.abs(remaining) > 2) {
+                    window.scrollBy(0, remaining * SMOOTHING);
+                    requestAnimationFrame(step);
+                } else {
+                    window.scrollBy(0, remaining);
+                    if (onSettled) onSettled();
+                }
+            }
+            requestAnimationFrame(step);
+        }
+
         // Pulls the name-tag straight out of an image's own tags by
         // position (the 2nd tag, index 1) rather than deriving it from the
         // display name — the JSON's tag ordering convention is reliable
@@ -5097,43 +5349,45 @@
         // parenthetical qualifiers, regional-variant prefixes, "Mega ",
         // "G-Max ", etc. out of free-text names to reconstruct the same
         // value.
-        function getNameTag(img) {
-            const card = img.closest('.image-card');
-            const tags = (card?.dataset.tags || '').trim().split(/\s+/);
-            return (tags[1] || '').toLowerCase();
+        function getNameTag(galleryIndex) {
+            const tags = galleryData[galleryIndex]?.tagsLower || [];
+            return tags[1] || '';
         }
 
         // Pulls the numeric stage out of an image's "stageX" tag, if it has
         // one — used purely for sorting the related set below. Entries
         // without a recognizable stage tag sort to the end rather than
         // being dropped or throwing.
-        function getStageRank(img) {
-            const card = img.closest('.image-card');
-            const tags = (card?.dataset.tags || '').toLowerCase().split(/\s+/);
+        function getStageRank(galleryIndex) {
+            const tags = galleryData[galleryIndex]?.tagsLower || [];
             const stageTag = tags.find(t => /^stage\d+$/.test(t));
             return stageTag ? parseInt(stageTag.slice(5), 10) : Infinity;
         }
 
-        // Every gallery image (regardless of current filters) that carries
-        // this image's own name-tag — including the image itself, since its
-        // own tags trivially include its own name-tag — sorted left-to-right
-        // by stage (stage1, stage2, ...). Any entry whose tags don't follow
-        // the expected ordering will simply turn up no related images rather
+        // Every gallery entry (regardless of current filters or what's
+        // currently mounted) that carries this entry's own name-tag —
+        // including the entry itself, since its own tags trivially include
+        // its own name-tag — sorted left-to-right by stage (stage1,
+        // stage2, ...). Searches the full data array rather than the DOM,
+        // since most matches (especially evolutions/forms scrolled far
+        // from this entry) won't be mounted at all. Returns galleryData
+        // indices, not elements. Any entry whose tags don't follow the
+        // expected ordering will simply turn up no related images rather
         // than erroring.
-        function getRelatedImages(img) {
-            const nameTag = getNameTag(img);
+        function getRelatedImages(galleryIndex) {
+            const nameTag = getNameTag(galleryIndex);
             if (!nameTag) return [];
-            const matches = Array.from(document.querySelectorAll('.image-card img')).filter(other => {
-                const tags = (other.closest('.image-card').dataset.tags || '').toLowerCase().split(/\s+/);
-                return tags.includes(nameTag);
-            });
+            const matches = [];
+            for (let i = 0; i < galleryData.length; i++) {
+                if (galleryData[i].tagsLower.includes(nameTag)) matches.push(i);
+            }
             // Explicit index tie-break keeps entries sharing a stage (or
             // both lacking one) in their original gallery order, rather
             // than relying on sort() being stable.
             return matches
-                .map((el, index) => ({ el, index, rank: getStageRank(el) }))
+                .map((idx, index) => ({ idx, index, rank: getStageRank(idx) }))
                 .sort((a, b) => a.rank - b.rank || a.index - b.index)
-                .map(x => x.el);
+                .map(x => x.idx);
         }
 
         // ---- PokeAPI-powered "General Information" panel ----------------
@@ -5522,10 +5776,11 @@
             cryAudio.play().catch(() => { /* autoplay blocked or file missing — silently skip */ });
         }
 
-        async function loadPokemonInfo(galleryImg) {
-            const name = galleryImg.alt;
-            const dexRaw = galleryImg.dataset.dex || '';
-            const tagsRaw = galleryImg.closest('.image-card')?.dataset.tags || '';
+        async function loadPokemonInfo(galleryIndex) {
+            const data = galleryData[galleryIndex];
+            const name = data.name;
+            const dexRaw = data.tags[0] || '';
+            const tagsRaw = data.tags.join(' ');
             const token = ++pokeInfoRequestToken;
 
             if (pokeInfoCache.has(name)) {
@@ -5548,8 +5803,8 @@
             }
         }
 
-        function renderRelatedImages(img) {
-            const related = getRelatedImages(img);
+        function renderRelatedImages(galleryIndex) {
+            const related = getRelatedImages(galleryIndex);
             viewerRelatedGrid.innerHTML = '';
             if (related.length === 0) {
                 const empty = document.createElement('div');
@@ -5559,11 +5814,12 @@
                 return;
             }
             let activeThumb = null;
-            related.forEach(relImg => {
+            related.forEach(relIndex => {
+                const relData = galleryData[relIndex];
                 const thumb = document.createElement('img');
-                thumb.src = relImg.src;
-                thumb.alt = relImg.alt;
-                // Matches the main gallery's images (see attachImageEvents'
+                thumb.src = relData.src;
+                thumb.alt = relData.name;
+                // Matches the main gallery's images (see attachCardEvents'
                 // img.loading = "lazy" above) -- without this, every single
                 // open eagerly force-fetches and decodes the *entire* row
                 // of evolution-chain/form thumbnails right away, even the
@@ -5596,14 +5852,14 @@
                     // the event finishes bubbling — a detached node has no
                     // ancestors left to match against.
                     e.stopPropagation();
-                    openImageViewer(relImg);
+                    openImageViewer(relIndex);
                 });
 
                 const wrap = document.createElement('div');
                 wrap.className = 'related-thumb-wrap';
                 wrap.appendChild(thumb);
                 wrap.appendChild(hitZone);
-                if (relImg === img) {
+                if (relIndex === galleryIndex) {
                     // Lives on the wrapper, not the img — see the CSS
                     // comments on .related-thumb-wrap.related-active /
                     // .gallery-pulse for why.
@@ -5744,8 +6000,8 @@
             // gallery if it landed during a gap in the panel's own open
             // animation.
             beginPanelAnim();
-            if (activeGalleryImg && desktopFilterQuery.matches) {
-                trackImageIntoView(activeGalleryImg, PANEL_TRANSITION_MS);
+            if (activeIndex !== null && desktopFilterQuery.matches) {
+                scrollIndexIntoView(activeIndex, PANEL_TRANSITION_MS);
             }
         }
 
@@ -5759,8 +6015,18 @@
             setExpandedPanel('related');
         });
 
-        function openImageViewer(galleryImg) {
+        // Takes a galleryData index rather than a DOM element -- the
+        // target may not currently be mounted at all (a prev/next jump
+        // or a related-thumbnail click can easily land somewhere outside
+        // the virtualized window). Anywhere this needs an actual element
+        // (toggling active-in-viewer, pulsing), it resolves through
+        // mountedCardByIndex and simply skips the DOM step if there's
+        // nothing currently mounted for that index -- per the chosen
+        // design, opening never forces the gallery to scroll to the
+        // target; only closing does (see closeImageViewer's recenter).
+        function openImageViewer(galleryIndex) {
             const alreadyOpen = document.body.classList.contains('viewer-open');
+            const data = galleryData[galleryIndex];
 
             // Mobile only, and only on a fresh open (switching images
             // while the viewer's already open leaves the panels exactly
@@ -5786,19 +6052,20 @@
                 }, NAV_PANEL_TRANSITION_MS);
             }
 
-            if (activeGalleryImg) {
-                activeGalleryImg.closest('.image-card')?.classList.remove('active-in-viewer');
+            if (activeIndex !== null) {
+                mountedCardByIndex.get(activeIndex)?.card.classList.remove('active-in-viewer');
             }
-            activeGalleryImg = galleryImg;
-            galleryImg.closest('.image-card')?.classList.add('active-in-viewer');
+            activeIndex = galleryIndex;
+            const mountedAtOpen = mountedCardByIndex.get(galleryIndex);
+            mountedAtOpen?.card.classList.add('active-in-viewer');
 
-            overlayImg.src = galleryImg.src;
-            overlayImg.alt = galleryImg.alt;
+            overlayImg.src = data.src;
+            overlayImg.alt = data.name;
 
             closeFilterPanel();
             closeSoundsPanel();
-            renderRelatedImages(galleryImg);
-            loadPokemonInfo(galleryImg);
+            renderRelatedImages(galleryIndex);
+            loadPokemonInfo(galleryIndex);
 
             // On a fresh mobile open (viewer currently closed), pulse the
             // just-tapped card in place -- it's already in view, so no
@@ -5810,9 +6077,18 @@
             // never earlier than any leftover one.
             if (!alreadyOpen && !desktopFilterQuery.matches) {
                 galleryClickLocked = true;
-                pulseAttention(galleryImg, () => {
-                    galleryClickLocked = false;
-                });
+                if (mountedAtOpen) {
+                    pulseAttention(mountedAtOpen.img, () => {
+                        galleryClickLocked = false;
+                    });
+                } else {
+                    // Opened on something not currently mounted (e.g. a
+                    // related-thumbnail jump) -- nothing on-screen to
+                    // pulse, so just release the lock after the same
+                    // nominal delay instead of waiting on an animationend
+                    // that has nothing to fire on.
+                    setTimeout(() => { galleryClickLocked = false; }, PULSE_MS);
+                }
                 // Safety net: if the card gets removed from the DOM mid-pulse
                 // (e.g. a filter change hides it) animationend never fires,
                 // which would otherwise leave gallery clicks stuck locked
@@ -5852,23 +6128,30 @@
                     // reflowing, so there's no moving target to chase.
                     if (desktopFilterQuery.matches) {
                         // Desktop: panel docks left and never covers vertical
-                        // space, so an ordinary smooth scroll is enough.
-                        galleryImg.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+                        // space. scrollIndexIntoView handles both "currently
+                        // mounted" (precise real-measurement homing) and "not
+                        // mounted" (mathematical positioning) uniformly, and
+                        // pulses once it lands either way -- so no separate
+                        // pulseAttention call is needed for this branch.
+                        scrollIndexIntoView(galleryIndex, PANEL_TRANSITION_MS);
+                    } else {
+                        // Mobile: the panel is fullscreen the whole time it's
+                        // open, so the gallery is never visible behind it --
+                        // no need to scroll it at all here. (It gets
+                        // recentered once on close, in closeImageViewer
+                        // below, which is the only moment on mobile where the
+                        // gallery's scroll position is actually seen.) Pulse
+                        // right away if there's a mounted card to pulse,
+                        // regardless of whether anything actually needed to
+                        // scroll — tapping a different thumbnail should
+                        // always give a bit of tactile feedback that the
+                        // magnified view updated.
+                        const m = mountedCardByIndex.get(galleryIndex);
+                        if (m) pulseAttention(m.img);
                     }
-                    // Mobile: the panel is fullscreen the whole time it's open,
-                    // so the gallery is never visible behind it -- no need to
-                    // scroll it at all here. (It gets recentered once on close,
-                    // in closeImageViewer below, which is the only moment on
-                    // mobile where the gallery's scroll position is actually
-                    // seen.)
-                    // Pulse right away regardless of whether anything actually
-                    // needed to scroll — tapping a different thumbnail should
-                    // always give a bit of tactile feedback that the magnified
-                    // view updated.
-                    pulseAttention(galleryImg);
                 } else {
                     if (desktopFilterQuery.matches) {
-                        trackImageIntoView(galleryImg, PANEL_TRANSITION_MS);
+                        scrollIndexIntoView(galleryIndex, PANEL_TRANSITION_MS);
                     } else {
                         // Mobile: panel is full-screen, so the gallery
                         // underneath is genuinely hidden -- lock scrolling,
@@ -5899,7 +6182,7 @@
 
         function closeImageViewer() {
             const wasOpen = document.body.classList.contains('viewer-open');
-            const previouslyActive = activeGalleryImg;
+            const previouslyActiveIndex = activeIndex;
 
             // Un-pausing compositing right away (rather than waiting for
             // the close transition to finish) gives the panels the whole
@@ -5910,9 +6193,9 @@
             document.getElementById('nav-panel-top').classList.remove('nav-panel-gpu-paused');
             document.getElementById('nav-panel-bottom').classList.remove('nav-panel-gpu-paused');
 
-            if (activeGalleryImg) {
-                activeGalleryImg.closest('.image-card')?.classList.remove('active-in-viewer');
-                activeGalleryImg = null;
+            if (activeIndex !== null) {
+                mountedCardByIndex.get(activeIndex)?.card.classList.remove('active-in-viewer');
+                activeIndex = null;
             }
 
             imageOverlay.classList.remove('visible');
@@ -5955,13 +6238,13 @@
             // and reflowing the whole time (padding-left), so the recenter
             // reads as a continuation of motion that's already happening,
             // not a sudden isolated jerk.
-            if (previouslyActive && wasOpen) {
+            if (previouslyActiveIndex !== null && wasOpen) {
                 if (desktopFilterQuery.matches) {
-                    trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS);
+                    scrollIndexIntoView(previouslyActiveIndex, PANEL_TRANSITION_MS);
                 } else {
                     galleryClickLocked = true;
                     setTimeout(() => {
-                        trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS, () => {
+                        scrollIndexIntoView(previouslyActiveIndex, PANEL_TRANSITION_MS, () => {
                             galleryClickLocked = false;
                         });
                     }, 350);
@@ -5993,23 +6276,18 @@
             refreshBackButtonState();
         }
 
-        // Currently-filtered images in gallery order — prev/next only ever
-        // steps through what's actually visible under the active filters,
-        // not the full unfiltered set.
-        function getVisibleGalleryImages() {
-            return Array.from(document.querySelectorAll('.image-card.show img'));
-        }
-
         // Wraps around at either end rather than stopping dead, since these
         // buttons give no visual indication of "first"/"last" to justify a
-        // dead click.
+        // dead click. Walks filteredIndices directly -- prev/next only
+        // ever steps through what's actually matching the active filters,
+        // not the full unfiltered dataset -- rather than querying the DOM,
+        // since the target of a step is very often not currently mounted.
         function navigateImage(direction) {
-            const visible = getVisibleGalleryImages();
-            if (visible.length < 2) return;
-            const currentIndex = visible.indexOf(activeGalleryImg);
-            if (currentIndex === -1) return;
-            const nextIndex = (currentIndex + direction + visible.length) % visible.length;
-            openImageViewer(visible[nextIndex]);
+            if (filteredIndices.length < 2) return;
+            const currentPos = filteredIndices.indexOf(activeIndex);
+            if (currentPos === -1) return;
+            const nextPos = (currentPos + direction + filteredIndices.length) % filteredIndices.length;
+            openImageViewer(filteredIndices[nextPos]);
         }
 
         // Closing on an "outside" click is handled entirely by the
@@ -6040,7 +6318,7 @@
 
         // Clicking genuinely empty space — the gallery's own background,
         // bare body, or the transparent/edge slivers of a gallery image
-        // (see attachImageEvents) — closes whichever of these happens to
+        // (see attachCardEvents) — closes whichever of these happens to
         // be open. Both close functions already no-op safely if their
         // panel isn't open, so it's fine to call both unconditionally
         // rather than tracking which one to target.
