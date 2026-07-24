@@ -1420,6 +1420,15 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            /* Same formula as #nav-panel-top/bottom's own --panel-h (see
+               the comment there) -- reproduced locally rather than
+               inherited, since this element sits outside the nav panels'
+               subtree and wouldn't otherwise see their custom property.
+               Both reference the same global --real-vh though, so a
+               button sized off this --panel-h renders at the exact same
+               on-screen size as a real .nav-button, regardless of where
+               in the document either one lives. */
+            --panel-h: calc(var(--real-vh, 100dvh) * 0.12);
         }
 
         /* On mobile the viewer (and its nested GENERAL INFORMATION /
@@ -1684,21 +1693,105 @@
             filter: none;
         }
 
+        /* Purely decorative "socket" backdrop sitting behind the four
+           corner buttons -- inert (pointer-events: none, no z-index high
+           enough to intercept anything) so every click still lands on the
+           real buttons layered on top of it. Sourced from a single
+           640x640 sprite sheet (Viewer-Buttons.png), split into four
+           320x320 quadrants, one per corner.
+
+           Sized the same way the navbar's own background art is: a box
+           whose height is var(--panel-h) (the panel's full height, not a
+           fraction of it -- see #nav-panel-top/bottom's own --panel-h/
+           background-size: auto 100% further down for the source of this
+           pattern), rather than trying to hand-compute an exact pixel
+           match. The sprite sheet and the navbar's source images share
+           the same native height, and each one's button-sized artwork is
+           drawn at the same proportion of that height, so reusing the
+           same var(--panel-h)-driven sizing here lines the two up closely
+           without needing any extra fudge factor.
+
+           background-size: 200% 200% on a var(--panel-h)-tall box renders
+           the full 640x640 sheet at 2x var(--panel-h) tall -- i.e. each
+           320x320 quadrant (half the sheet's own height/width) lands at
+           exactly var(--panel-h), matching that "auto 100%" full-height
+           navbar scale. background-position then picks which quadrant:
+           0%/0% = top-left, 100%/0% = top-right, 0%/100% = bottom-left,
+           100%/100% = bottom-right. */
+        .viewer-corner-decor {
+            position: absolute;
+            /* 1, not 0 -- the top-left/top-right decor divs are siblings
+               of #viewer-frame inside #image-overlay, and #viewer-frame
+               is its own stacking context (position: relative; z-index: 0)
+               with an opaque background that comes later in the DOM. At
+               matching z-index: 0 that background paints over these decor
+               divs entirely; z-index: 1 clears it while staying below the
+               real buttons' z-index: 2. Doesn't affect the bottom-left/
+               bottom-right decor divs (which live inside #viewer-frame
+               itself) since they only need to clear its -1 tile layer,
+               which they already did either way. */
+            z-index: 1;
+            height: var(--panel-h);
+            aspect-ratio: 1 / 1;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/gr9y7ctat4n3e3jpz0fax/Viewer-Buttons.png?rlkey=zze42scgofd8jnsoux0ecb8yo&st=wdtl04mu&dl=1");
+            background-size: 200% 200%;
+            background-repeat: no-repeat;
+            pointer-events: none;
+        }
+
+        /* Top two corners are positioned relative to #image-overlay, same
+           as #image-close-btn/#shiny-toggle-btn below -- see their own
+           anchoring comment. */
+        #viewer-corner-decor-tl {
+            top: 0;
+            left: 0;
+            background-position: 0% 0%;
+        }
+
+        #viewer-corner-decor-tr {
+            top: 0;
+            right: 0;
+            background-position: 100% 0%;
+        }
+
+        /* Bottom two corners live inside #viewer-frame instead (see its
+           HTML placement), same as the real prev/next buttons -- so they
+           track the image frame's own corners rather than the whole
+           panel's, which is what those buttons are actually anchored to. */
+        #viewer-corner-decor-bl {
+            bottom: 0;
+            left: 0;
+            background-position: 0% 100%;
+        }
+
+        #viewer-corner-decor-br {
+            bottom: 0;
+            right: 0;
+            background-position: 100% 100%;
+        }
+
         /* Anchored to the panel's own fixed corner (not the image's), so
            it's always in a predictable, reachable spot regardless of the
-           image's size or alignment. */
+           image's size or alignment. Sized to match the real .nav-button
+           elements exactly -- same height: calc(var(--panel-h) * 0.5) /
+           aspect-ratio: 1/1 formula, off the local --panel-h declared on
+           #image-overlay above (which in turn matches the nav panels'
+           own --panel-h, both driven by the same --real-vh). */
         #image-close-btn {
             position: absolute;
-            top: 10px;
-            left: 10px;
+            top: 7.5px;
+            left: 7.5px;
             z-index: 2;
-            background: rgba(0,0,0,0.6);
-            color: white;
+            height: calc(var(--panel-h) * 0.5);
+            aspect-ratio: 1 / 1;
+            background-color: transparent;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/9u5r1nmb6drlofnmr2za9/Button_Back.png?rlkey=m6naql8ixq5vadqp2837e5atm&st=deneysu1&dl=1");
+            background-size: contain;
+            background-position: center;
+            background-repeat: no-repeat;
             border: none;
-            font-size: 24px;
-            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
-            padding: 4px 10px;
-            border-radius: 6px;
+            border-radius: 0;
+            padding: 0;
             cursor: pointer;
         }
 
@@ -1707,84 +1800,73 @@
            applies here too. */
         #shiny-toggle-btn {
             position: absolute;
-            top: 10px;
-            right: 10px;
+            top: 7.5px;
+            right: 7.5px;
             z-index: 2;
-            background: rgba(0,0,0,0.6);
-            color: white;
+            height: calc(var(--panel-h) * 0.5);
+            aspect-ratio: 1 / 1;
+            background-color: transparent;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/jzoefrp7qplv8xaxzqmp2/Button_Shiny.png?rlkey=sbtjh5xasj2fwxdyhqu3af3h1&st=aifne9c5&dl=1");
+            background-size: contain;
+            background-position: center;
+            background-repeat: no-repeat;
             border: none;
-            font-size: 24px;
-            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
-            padding: 4px 10px;
-            border-radius: 6px;
+            border-radius: 0;
+            padding: 0;
             cursor: pointer;
         }
 
-        /* Active (shiny-showing) state -- a gold tint on the same pill so
-           it reads as "toggled on" at a glance rather than needing to
-           compare the glyph itself. */
-        #shiny-toggle-btn.shiny-active {
-            background: rgba(212, 175, 55, 0.85);
-            color: #111;
-        }
-
-        /* Prev/next hit zones span the panel's full height and a third of
-           its width each — unchanged from before. What moved is the
-           visible arrow glyph itself: align-items/justify-content push it
-           into the bottom corner of its zone (flex-end + flex-start/end)
-           instead of dead-center, and the button is always visible now
-           rather than only on hover/tap — see the removed .nav-btn-flash
-           JS logic, which existed solely to manage that hover state and
-           is no longer needed. Sits above #overlay-img but below
-           #image-close-btn, so the close button stays reachable where its
-           area overlaps the left-side prev zone. */
+        /* Prev/next hit zones are sized to the icon itself and pinned to
+           the panel's bottom corners -- mirroring exactly how
+           #image-close-btn/#shiny-toggle-btn are pinned to the top corners
+           -- rather than spanning the panel's full height and a third of
+           its width each (the old, much larger click zone). */
         .image-nav-btn {
             position: absolute;
-            top: 0;
-            bottom: 0;
-            width: 33%;
+            bottom: 4.5px;
             z-index: 1;
             background: transparent;
             border: none;
-            color: white;
-            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
+            padding: 0;
             cursor: pointer;
-            display: flex;
-            align-items: flex-end; /* pins the arrow to the bottom of its zone */
-            padding-bottom: 14px;
         }
 
-        /* The glyph lives in its own span, sized up independently of the
-           button's own hit zone (which stays exactly as wide/tall as
-           before — see .image-nav-btn above). Keeping it as a separate
-           element also gives the click-pulse below something to animate
-           that's anchored right at the glyph's own position, rather than
-           scaling the entire 33%-wide button and having the corner-pinned
-           arrow visibly drift as a side effect. display:inline-block is
-           what makes the transform-based pulse behave predictably here. */
+        /* The icon itself, sized to match the real .nav-button elements
+           exactly (same formula as #image-close-btn/#shiny-toggle-btn
+           above). Now fills its button directly (the button is shrunk to
+           fit it, see .image-nav-btn above) rather than sitting inside a
+           much larger hit zone. */
         .nav-arrow {
             display: inline-block;
-            font-size: 56px; /* 2x the original 28px */
+            height: calc(var(--panel-h) * 0.5);
+            aspect-ratio: 1 / 1;
+            background-size: contain;
+            background-position: center;
+            background-repeat: no-repeat;
         }
 
-        /* Reuses the same gallery-pulse keyframes the gallery cards and
-           related-image thumbnails already pulse with (defined near the
-           top of the stylesheet) — same class-toggle-on-click pattern too,
-           see pulseNavArrow() in the script. */
-        .nav-arrow.gallery-pulse {
-            animation: gallery-pulse 600ms ease-out;
+        /* Reuses the same nav-button-pulse keyframes + class the navbar
+           buttons pulse with (defined further down the stylesheet) — same
+           restart-safe class-toggle-on-click pattern too, see
+           pulseNavButton() in the script. */
+        .nav-arrow.nav-button-pulse {
+            animation: nav-button-pulse 450ms ease-out;
         }
 
         .image-nav-prev {
-            left: 0;
-            justify-content: flex-start; /* pins the arrow to the left edge */
-            padding-left: 14px;
+            left: 7.5px;
+        }
+
+        .image-nav-prev .nav-arrow {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/0b97wp10bo3etqjfe4huu/Button_Previous.png?rlkey=e83eatu1iir8g43q772gozwle&st=xxnotssq&dl=1");
         }
 
         .image-nav-next {
-            right: 0;
-            justify-content: flex-end; /* pins the arrow to the right edge */
-            padding-right: 14px;
+            right: 7.5px;
+        }
+
+        .image-nav-next .nav-arrow {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/hfam5460cu0op0tm0xk0d/Button_Next.png?rlkey=kv0re6nxb7kejm6dekpqjd7ed&st=pdmquoyj&dl=1");
         }
 
         /* Row itself is the flex item that reserves its natural (button)
@@ -2576,13 +2658,16 @@
         }
 
         /* Click feedback -- same restart-safe pulse pattern as
-           .image-card.gallery-pulse / .nav-arrow.gallery-pulse (see
-           pulseNavButton() in the script), but shrinking first instead of
-           growing first, and on its own keyframes since the shape is
-           inverted. Animates the standalone `scale` property -- see the
-           comment on .nav-button's own `translate` property above for why
-           it has to be `scale` specifically, and why that positioning is
-           on `translate` rather than `transform` in the first place. */
+           .image-card.gallery-pulse (see pulseNavButton() in the script),
+           but shrinking first instead of growing first, and on its own
+           keyframes since the shape is inverted. Also reused as-is by the
+           viewer panel's corner buttons (#image-close-btn,
+           #shiny-toggle-btn, .nav-arrow) so their click feedback matches
+           these navbar buttons exactly. Animates the standalone `scale`
+           property -- see the comment on .nav-button's own `translate`
+           property above for why it has to be `scale` specifically, and
+           why that positioning is on `translate` rather than `transform`
+           in the first place. */
         @keyframes nav-button-pulse {
             0%   { scale: 1; }
             35%  { scale: 0.925; }
@@ -2590,7 +2675,12 @@
             100% { scale: 1; }
         }
 
-        .nav-button.nav-button-pulse {
+        /* Not scoped to .nav-button specifically -- the viewer panel's
+           corner buttons (#image-close-btn, #shiny-toggle-btn, and the
+           .nav-arrow icons inside the prev/next hit zones) reuse this same
+           class + keyframes so their click feedback matches the navbar
+           buttons exactly. See pulseNavButton() in the script. */
+        .nav-button-pulse {
             animation: nav-button-pulse 450ms ease-out;
         }
 
@@ -2639,6 +2729,19 @@
         #nav-bottom-btn-audio {
             --btn-x: 0.005; --btn-y: -0.034;
             background-image: url("https://dl.dropboxusercontent.com/scl/fi/dxcnduxio9cn1v0vt6oho/Button_Audio.png?rlkey=0x1fuxybodrfca6grl2bnjrf9&st=tu5gtjph&dl=1");
+        }
+        /* State 2 -- music currently playing in the Sounds panel. Driven
+           by refreshAudioButtonState(), called from renderMusicPlayerUI()
+           any time play/pause state could have changed. */
+        #nav-bottom-btn-audio.audio-playing {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/8h8x3b0r1hnc502ri5u9e/Button_Audio_Playing.png?rlkey=5xr58y2dfrksthjs4zyxfi9yk&st=hjia2z5u&dl=1");
+        }
+        /* State 3 -- Global Mute is on. Takes priority over state 2 above
+           when both are true at once -- refreshAudioButtonState() only
+           ever applies one of these two classes, never both, so there's
+           no cascade-order ambiguity between them. */
+        #nav-bottom-btn-audio.audio-muted {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/3zsn7wm5od6ljeuro1cuz/Button_Audio_Mute.png?rlkey=f13ed5olf9isoejm55bf21m6k&st=3fzul2sv&dl=1");
         }
         #nav-bottom-btn-close {
             --btn-x: 0.725; --btn-y: 0.125;
@@ -3116,13 +3219,17 @@
     <div class="gallery-container" id="gallery"></div>
 
     <div id="image-overlay">
-        <button id="image-close-btn">✕</button>
-        <button id="shiny-toggle-btn" aria-pressed="false" title="Toggle shiny">✨</button>
+        <div id="viewer-corner-decor-tl" class="viewer-corner-decor"></div>
+        <div id="viewer-corner-decor-tr" class="viewer-corner-decor"></div>
+        <button id="image-close-btn" aria-label="Close"></button>
+        <button id="shiny-toggle-btn" aria-pressed="false" title="Toggle shiny" aria-label="Toggle shiny"></button>
         <div id="viewer-frame">
             <div id="viewer-frame-tile" class="viewer-frame-tile"></div>
             <div id="viewer-frame-tile-shiny" class="viewer-frame-tile"></div>
-            <button id="image-prev-btn" class="image-nav-btn image-nav-prev" aria-label="Previous image"><span class="nav-arrow">&#10094;</span></button>
-            <button id="image-next-btn" class="image-nav-btn image-nav-next" aria-label="Next image"><span class="nav-arrow">&#10095;</span></button>
+            <div id="viewer-corner-decor-bl" class="viewer-corner-decor"></div>
+            <div id="viewer-corner-decor-br" class="viewer-corner-decor"></div>
+            <button id="image-prev-btn" class="image-nav-btn image-nav-prev" aria-label="Previous image"><span class="nav-arrow"></span></button>
+            <button id="image-next-btn" class="image-nav-btn image-nav-next" aria-label="Next image"><span class="nav-arrow"></span></button>
             <img id="overlay-img" src="" alt="">
         </div>
         <div id="viewer-toggle-row">
@@ -4733,11 +4840,28 @@
             }
         }
 
+        // Swaps the Audio nav button between its three artwork states,
+        // same pattern as refreshSearchButtonState/refreshBackButtonState
+        // above: default (no class) on load with sound unmuted and
+        // nothing playing; .audio-playing while music is playing; and
+        // .audio-muted whenever Global Mute is on, which wins over
+        // .audio-playing if both would otherwise apply -- at most one of
+        // the two classes ever gets added, so there's nothing for the
+        // two artworks to conflict over.
+        function refreshAudioButtonState() {
+            const btn = document.getElementById('nav-bottom-btn-audio');
+            const isMuted = audioSettings.globalMuted;
+            const isPlaying = !musicAudio.paused;
+            btn.classList.toggle('audio-muted', isMuted);
+            btn.classList.toggle('audio-playing', !isMuted && isPlaying);
+        }
+
         // Reflects the current audioSettings state onto every control in
         // the Sounds panel. Called after every settings change (plus once
         // on load) so the UI can never drift out of sync with what's
         // actually stored.
         function renderAudioSettingsUI() {
+            refreshAudioButtonState();
             const globalBtn = document.getElementById('global-mute-toggle');
             globalBtn.textContent = `Mute All: ${audioSettings.globalMuted ? 'On' : 'Off'}`;
             globalBtn.classList.toggle('exclude', audioSettings.globalMuted);
@@ -4795,6 +4919,12 @@
         document.getElementById('global-volume-slider').addEventListener('input', (e) => {
             setGlobalVolume(Number(e.target.value) / 100);
         });
+
+        // Declared here (well ahead of the rest of the music player setup
+        // further down) because refreshAudioButtonState() needs it to
+        // exist for the renderAudioSettingsUI() call immediately below,
+        // which runs before the script reaches the music player section.
+        const musicAudio = new Audio();
 
         renderAudioSettingsUI();
 
@@ -4875,7 +5005,11 @@
         let musicTracks = [];  // everything loaded from music-tracks.json
         let musicQueue = [];   // musicTracks filtered to the current category + region
         let musicQueueIndex = -1;
-        const musicAudio = new Audio();
+        // musicAudio itself is declared earlier, above the initial
+        // renderAudioSettingsUI() call -- refreshAudioButtonState() (called
+        // from there) needs it to already exist. Everything else music-
+        // related is fine staying here since nothing outside this block
+        // touches it before the whole script has finished running once.
 
         // Stack of queue indices visited before the current track while
         // shuffle is on, so Prev can retrace actual play order instead of
@@ -5127,6 +5261,7 @@
         musicAudio.addEventListener('pause', renderMusicPlayerUI);
 
         function renderMusicPlayerUI() {
+            refreshAudioButtonState();
             const track = musicQueueIndex >= 0 ? musicQueue[musicQueueIndex] : null;
             musicNowPlayingEl.textContent = track
                 ? track.title
@@ -5417,18 +5552,6 @@
             card.addEventListener('animationend', () => {
                 card.classList.remove('gallery-pulse');
                 if (onSettled) onSettled();
-            }, { once: true });
-        }
-
-        // Same restart-safe class-toggle pattern as pulseAttention above,
-        // applied directly to a prev/next arrow span on click instead of a
-        // gallery card.
-        function pulseNavArrow(arrow) {
-            arrow.classList.remove('gallery-pulse');
-            void arrow.offsetWidth;
-            arrow.classList.add('gallery-pulse');
-            arrow.addEventListener('animationend', () => {
-                arrow.classList.remove('gallery-pulse');
             }, { once: true });
         }
 
@@ -6543,8 +6666,12 @@
         // Removed rather than special-cased further, since closing on
         // outside-click was never meant to reach inside the panel at all.
 
-        imageCloseBtn.addEventListener('click', closeImageViewer);
+        imageCloseBtn.addEventListener('click', () => {
+            pulseNavButton(imageCloseBtn);
+            closeImageViewer();
+        });
         shinyToggleBtn.addEventListener('click', () => {
+            pulseNavButton(shinyToggleBtn);
             const next = !shinyShowing;
             // Switches the normal tile's fade to the fast, undelayed
             // transition from here on (see CSS) -- only matters the first
@@ -6556,13 +6683,13 @@
 
         imagePrevBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            pulseNavArrow(imagePrevArrow);
+            pulseNavButton(imagePrevArrow);
             navigateImage(-1);
         });
 
         imageNextBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            pulseNavArrow(imageNextArrow);
+            pulseNavButton(imageNextArrow);
             navigateImage(1);
         });
 
