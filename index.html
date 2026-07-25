@@ -560,6 +560,24 @@
 		margin-right: 0;
         }
 
+        /* Overrides just the top margin from the shared
+           .filter-section-header rule (10px auto 5px) -- this header sits
+           right at the top of the Music Player block, where that gap just
+           reads as unwanted extra space above the panel's first control
+           rather than separation from a previous section. */
+        .music-region-header {
+            margin-top: 0;
+        }
+
+        /* Wraps only the label text (not the header's own ::after arrow)
+           so renderMusicRegionUI() can measure it independently via
+           getClientRects().length -- an inline span reports one rect per
+           line it's wrapped onto, which is how that function decides
+           whether to fall back to the shortened "BGM - X" label. */
+        #music-region-header-text {
+            overflow-wrap: break-word;
+        }
+
         /* Same flex-wrap/flex-grow approach as #generation-section etc.
            in the Filter Panel -- shown/hidden by the shared
            .filter-section-header collapse logic via inline display:none/''
@@ -3438,7 +3456,7 @@
                          text is kept in sync with the active region by
                          renderMusicRegionUI() instead of being static
                          markup like the other section headers. -->
-                    <div class="filter-section-header music-region-header" id="music-region-header">Background Music - All Regions</div>
+                    <div class="filter-section-header music-region-header" id="music-region-header"><span id="music-region-header-text">Background Music - All Regions</span></div>
                     <div id="music-region-buttons" class="music-region-buttons"></div>
                     <!-- Stand-in for the future Badge Tracker, same idea as
                          the Region Filter above -- once that panel exists
@@ -5431,6 +5449,7 @@
 
         const musicPlaylistButtons = document.getElementById('music-playlist-buttons');
         const musicRegionHeader = document.getElementById('music-region-header');
+        const musicRegionHeaderText = document.getElementById('music-region-header-text');
         const musicRegionButtons = document.getElementById('music-region-buttons');
         const musicGameStageSelect = document.getElementById('music-gamestage-select');
         const musicGameStageValueEl = document.getElementById('music-gamestage-value');
@@ -5474,15 +5493,38 @@
             return region === 'all' ? 'All Regions' : (MUSIC_REGION_LABELS[region] || titleCaseFromId(region));
         }
 
-        // Keeps the expandable section's own header text ("Region - X")
-        // and which region button reads as active in sync with
-        // musicState.activeRegion -- called on every region change, and
-        // once up front after the buttons are first built.
+        // Keeps the expandable section's own header text and which region
+        // button reads as active in sync with musicState.activeRegion --
+        // called on every region change, once up front after the buttons
+        // are first built, and (via the ResizeObserver below) whenever
+        // the header's own width changes for any other reason.
+        //
+        // Prefers the full "Background Music - X" label, but falls back
+        // to a shortened "BGM - X" whenever the full one would wrap onto
+        // a second line at the header's current width. Detected by
+        // setting the full label first and checking
+        // musicRegionHeaderText.getClientRects().length -- an inline
+        // span reports one DOMRect per line it's actually wrapped onto,
+        // which sidesteps having to hand-compute available width against
+        // font metrics.
         function renderMusicRegionUI() {
-            musicRegionHeader.textContent = `Background Music - ${musicRegionLabel(musicState.activeRegion)}`;
+            const regionLabel = musicRegionLabel(musicState.activeRegion);
+            musicRegionHeaderText.textContent = `Background Music - ${regionLabel}`;
+            if (musicRegionHeaderText.getClientRects().length > 1) {
+                musicRegionHeaderText.textContent = `BGM - ${regionLabel}`;
+            }
             musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => {
                 btn.classList.toggle('include', btn.dataset.region === musicState.activeRegion);
             });
+        }
+
+        // Re-runs the fit check above whenever the header's own width
+        // changes for reasons other than a region change -- window
+        // resize, crossing the desktop/mobile breakpoint, the Sounds
+        // panel's own open animation, font/zoom changes, etc. -- rather
+        // than trying to enumerate every such event individually.
+        if (window.ResizeObserver) {
+            new ResizeObserver(() => renderMusicRegionUI()).observe(musicRegionHeader);
         }
 
         // Same shape as setActiveMusicRegion above -- the future Badge
@@ -5811,7 +5853,17 @@
             ).join('');
 
             musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => {
-                btn.addEventListener('click', () => setActiveMusicRegion(btn.dataset.region));
+                btn.addEventListener('click', () => {
+                    setActiveMusicRegion(btn.dataset.region);
+                    // Auto-close the expandable "Background Music" section
+                    // once a region's picked, same collapsed state/display
+                    // toggling the generic .filter-section-header click
+                    // handler uses (see the querySelectorAll loop further
+                    // down) -- just applied directly rather than waiting
+                    // for a second click on the header itself.
+                    musicRegionHeader.classList.add('collapsed');
+                    musicRegionButtons.style.display = 'none';
+                });
             });
 
             // Restore persisted selections if they're still valid (the
