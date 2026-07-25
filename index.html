@@ -560,6 +560,20 @@
 		margin-right: 0;
         }
 
+        /* Same flex-wrap/flex-grow approach as #generation-section etc.
+           in the Filter Panel -- shown/hidden by the shared
+           .filter-section-header collapse logic via inline display:none/''
+           on this element (its next sibling), same as those other
+           sections. */
+        .music-region-buttons {
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        .music-region-buttons .filter-btn {
+            flex: 1 1 100px;
+        }
+
         /* Same visual language as .sounds-volume-slider (blue accent,
            thin track) so the one slider in this panel doesn't look like a
            different control type from the ones in the Sounds panel. */
@@ -3415,12 +3429,17 @@
 			  <!-- Temporary stand-in for the future Gameplay Companion
                          panel's region selector -- see setActiveMusicRegion().
                          Once that panel exists, it can call the same
-                         function and this dropdown can move there or go
-                         away entirely. -->
-                    <div class="music-player-row">
-                        <label class="music-player-label" for="music-region-select">Region Filter</label>
-                        <select id="music-region-select" class="music-player-select"></select>
-                    </div>
+                         function and this section can move there or go
+                         away entirely. Reuses .filter-section-header's
+                         existing collapse behavior (see the
+                         .filter-section-header querySelectorAll loop
+                         further down) rather than a separate expand/
+                         collapse implementation of its own -- its header
+                         text is kept in sync with the active region by
+                         renderMusicRegionUI() instead of being static
+                         markup like the other section headers. -->
+                    <div class="filter-section-header music-region-header" id="music-region-header">Background Music - All Regions</div>
+                    <div id="music-region-buttons" class="music-region-buttons"></div>
                     <!-- Stand-in for the future Badge Tracker, same idea as
                          the Region Filter above -- once that panel exists
                          it can set this via setActiveGameStage() and this
@@ -5366,12 +5385,11 @@
             return {
                 activeRegion: typeof stored?.activeRegion === 'string' ? stored.activeRegion : 'all',
                 activeCategory: typeof stored?.activeCategory === 'string' ? stored.activeCategory : null,
-                // 'any' is a valid choice (like Region's 'all'), but unlike
-                // Region this one does NOT default to the unfiltered
-                // option -- a fresh visitor starts scoped to Early Game.
+                // Both Region and Game Stage now default to their
+                // unfiltered option ('all' / 'any') for a fresh visitor.
                 activeGameStage: GAME_STAGE_ORDER.includes(stored?.activeGameStage) || stored?.activeGameStage === 'any'
                     ? stored.activeGameStage
-                    : 'early',
+                    : 'any',
                 shuffle: typeof stored?.shuffle === 'boolean' ? stored.shuffle : false,
                 repeat: stored?.repeat === 'one' ? 'one' : 'off',
             };
@@ -5412,7 +5430,8 @@
         let musicLastTrackIdByCategory = {};
 
         const musicPlaylistButtons = document.getElementById('music-playlist-buttons');
-        const musicRegionSelect = document.getElementById('music-region-select');
+        const musicRegionHeader = document.getElementById('music-region-header');
+        const musicRegionButtons = document.getElementById('music-region-buttons');
         const musicGameStageSelect = document.getElementById('music-gamestage-select');
         const musicGameStageValueEl = document.getElementById('music-gamestage-value');
 
@@ -5444,8 +5463,26 @@
         function setActiveMusicRegion(region) {
             musicState.activeRegion = region;
             saveMusicPlayerState();
-            musicRegionSelect.value = region;
+            renderMusicRegionUI();
             rebuildMusicQueue({ keepCurrentTrack: true });
+        }
+
+        // Region's display name, "All Regions" aside (that one's fixed
+        // vocabulary, not derived from the data like the rest of
+        // MUSIC_REGION_LABELS is).
+        function musicRegionLabel(region) {
+            return region === 'all' ? 'All Regions' : (MUSIC_REGION_LABELS[region] || titleCaseFromId(region));
+        }
+
+        // Keeps the expandable section's own header text ("Region - X")
+        // and which region button reads as active in sync with
+        // musicState.activeRegion -- called on every region change, and
+        // once up front after the buttons are first built.
+        function renderMusicRegionUI() {
+            musicRegionHeader.textContent = `Background Music - ${musicRegionLabel(musicState.activeRegion)}`;
+            musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => {
+                btn.classList.toggle('include', btn.dataset.region === musicState.activeRegion);
+            });
         }
 
         // Same shape as setActiveMusicRegion above -- the future Badge
@@ -5635,6 +5672,24 @@
             loadCurrentTrack({ autoplay: wasPlaying });
         }
 
+        // Holding Prev (see MUSIC_PREV_HOLD_MS below) jumps straight to
+        // whichever track is first in the *current* queue -- which is
+        // already in the same order those tracks appear in
+        // music-tracks.json, since musicQueue is just musicTracks filtered
+        // down to the active category/region/stage without any
+        // reordering (see rebuildMusicQueue). That holds true regardless
+        // of shuffle mode: this always means "the JSON's first match for
+        // this filter arrangement", not shuffle's own notion of where
+        // things started. Clears shuffleHistory since a jump like this
+        // isn't part of whatever shuffle sequence was in progress.
+        function jumpToFirstTrackInQueue() {
+            if (musicQueue.length === 0) return;
+            const wasPlaying = !musicAudio.paused;
+            musicQueueIndex = 0;
+            shuffleHistory = [];
+            loadCurrentTrack({ autoplay: wasPlaying });
+        }
+
         function setShuffle(enabled) {
             musicState.shuffle = enabled;
             shuffleHistory = [];
@@ -5748,15 +5803,23 @@
                 btn.addEventListener('click', () => setActiveMusicCategory(btn.dataset.category));
             });
 
-            musicRegionSelect.innerHTML = '<option value="all">All Regions</option>' + regions.map(id =>
-                `<option value="${id}">${MUSIC_REGION_LABELS[id] || titleCaseFromId(id)}</option>`
+            // "All Regions" plus one button per region, in the order
+            // regions first appear in music-tracks.json -- same order the
+            // old dropdown's <option> list used.
+            musicRegionButtons.innerHTML = ['all', ...regions].map(id =>
+                `<button type="button" class="filter-btn music-region-btn" data-region="${id}">${musicRegionLabel(id)}</button>`
             ).join('');
+
+            musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => {
+                btn.addEventListener('click', () => setActiveMusicRegion(btn.dataset.region));
+            });
 
             // Restore persisted selections if they're still valid (the
             // data could have changed since the last visit), else fall
             // back to the first available category / "All Regions".
-            // refreshMusicPlaylistButtons() (called from rebuildMusicQueue
-            // below) reflects the resolved activeCategory onto the actual
+            // refreshMusicPlaylistButtons() and renderMusicRegionUI()
+            // (called from rebuildMusicQueue below and just after this,
+            // respectively) reflect the resolved state onto the actual
             // buttons -- nothing else to set here now that there's no
             // select element to sync.
             musicState.activeCategory = categories.includes(musicState.activeCategory)
@@ -5766,7 +5829,7 @@
             musicState.activeRegion = (musicState.activeRegion === 'all' || regions.includes(musicState.activeRegion))
                 ? musicState.activeRegion
                 : 'all';
-            musicRegionSelect.value = musicState.activeRegion;
+            renderMusicRegionUI();
 
             // Game Stage's fixed vocabulary is always valid, so nothing to
             // fall back from here -- just reflect whatever loadMusicPlayerState
@@ -5778,10 +5841,44 @@
             rebuildMusicQueue({ keepCurrentTrack: false });
         }
 
-        musicRegionSelect.addEventListener('change', (e) => setActiveMusicRegion(e.target.value));
         musicGameStageSelect.addEventListener('input', (e) => setActiveGameStage(GAME_STAGE_STEPS[Number(e.target.value)]));
         musicPlayPauseBtn.addEventListener('click', toggleMusicPlayPause);
-        musicPrevBtn.addEventListener('click', musicPrev);
+        // A held Prev press (see jumpToFirstTrackInQueue above) is
+        // distinguished from a normal tap/click via a plain pointerdown
+        // timer: if it fires before the pointer comes back up/away, the
+        // hold action runs and musicPrevHoldFired is set so the 'click'
+        // event that still follows the pointerup doesn't *also* run a
+        // normal Prev right after it.
+        const MUSIC_PREV_HOLD_MS = 1000;
+        let musicPrevHoldTimer = null;
+        let musicPrevHoldFired = false;
+
+        function startMusicPrevHold() {
+            musicPrevHoldFired = false;
+            clearTimeout(musicPrevHoldTimer);
+            musicPrevHoldTimer = setTimeout(() => {
+                musicPrevHoldFired = true;
+                jumpToFirstTrackInQueue();
+            }, MUSIC_PREV_HOLD_MS);
+        }
+
+        function cancelMusicPrevHold() {
+            clearTimeout(musicPrevHoldTimer);
+            musicPrevHoldTimer = null;
+        }
+
+        musicPrevBtn.addEventListener('pointerdown', startMusicPrevHold);
+        musicPrevBtn.addEventListener('pointerup', cancelMusicPrevHold);
+        musicPrevBtn.addEventListener('pointerleave', cancelMusicPrevHold);
+        musicPrevBtn.addEventListener('pointercancel', cancelMusicPrevHold);
+
+        musicPrevBtn.addEventListener('click', () => {
+            if (musicPrevHoldFired) {
+                musicPrevHoldFired = false;
+                return;
+            }
+            musicPrev();
+        });
         musicNextBtn.addEventListener('click', musicNext);
         musicShuffleBtn.addEventListener('click', () => setShuffle(!musicState.shuffle));
         musicRepeatBtn.addEventListener('click', toggleRepeatOne);
