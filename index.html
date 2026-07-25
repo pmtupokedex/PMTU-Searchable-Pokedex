@@ -560,6 +560,30 @@
 		margin-right: 0;
         }
 
+        /* Same visual language as .sounds-volume-slider (blue accent,
+           thin track) so the one slider in this panel doesn't look like a
+           different control type from the ones in the Sounds panel. */
+        .music-gamestage-slider {
+            flex: 1 1 auto;
+            min-width: 0;
+            height: 6px;
+            accent-color: #0099ff;
+            cursor: pointer;
+            margin-left: auto;
+        }
+
+        .music-gamestage-value {
+            color: white;
+            font-weight: bold;
+            text-shadow:
+                -1px -1px 0 black,
+                 1px -1px 0 black,
+                -1px  1px 0 black,
+                 1px  1px 0 black;
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
         .music-now-playing {
             color: white;
             font-weight: bold;
@@ -589,10 +613,37 @@
             text-align: center;
         }
 
-        /* Shuffle/repeat are mode toggles, not the primary transport --
-           smaller footprint keeps Prev/Play/Next visually dominant. */
+        /* Buttons now hold an <img> icon instead of a text glyph (see
+           renderMusicPlayerUI for the two that swap src on state change).
+           Locked to the buttons' pre-existing 44px rendered height (measured:
+           .filter-btn's 10px padding + 3px border, both sides, plus the old
+           15px-glyph line height) so swapping in the 100x84 source images
+           doesn't grow the row -- the .filter-btn.music-transport-btn
+           combo-selector is needed to outrank .filter-btn's own padding
+           rule later in the cascade, since both are single-class selectors
+           of equal specificity. */
+        .filter-btn.music-transport-btn {
+            height: 44px;
+            padding: 4px 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .music-transport-icon {
+            height: 30px;
+            width: auto;
+            display: block;
+            pointer-events: none;
+        }
+
+        /* Shuffle/repeat used to be narrower (44px) to read as secondary
+           mode toggles rather than primary transport -- now matched to the
+           same 60px width as Prev/Play/Next per request, just keeping the
+           smaller font-size so their glyphs/labels don't look oversized. */
         .music-transport-btn.music-mode-btn {
-            flex: 0 0 44px;
+            flex: 0 0 60px;
             font-size: 15px;
         }
 
@@ -608,6 +659,50 @@
         .music-player-select:disabled {
             opacity: 0.4;
             cursor: default;
+        }
+
+        /* Same 2-column-grid-plus-full-width-own-row pattern already used
+           by #color-section/#abilities-section below -- deliberately a
+           fixed 2-up grid rather than flex-wrap, so these sit in strict
+           pairs instead of however many happen to fit a row's width.
+           Spacing between buttons comes from .filter-btn's own 5px margin
+           (no extra grid gap), same as those other grids. The final
+           button gets .own-row (added in populateMusicControls) to span
+           both columns on its own line. */
+        .music-playlist-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .music-playlist-buttons .own-row {
+            grid-column: 1 / -1;
+        }
+
+        /* Icon-left, text-right, left-aligned -- rather than the centered
+           icon+label look of the transport buttons, since these also carry
+           a variable-length playlist name that reads better left-aligned
+           than centered. */
+        .music-playlist-btn {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 8px;
+            text-align: left;
+            overflow: hidden;
+        }
+
+        .music-playlist-btn-icon {
+            height: 48px;
+            width: 48px;
+            flex: 0 0 auto;
+            object-fit: contain;
+            pointer-events: none;
+        }
+
+        .music-playlist-btn-label {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow-wrap: break-word;
         }
 
 	/* Filter Panel */
@@ -862,6 +957,10 @@
         }
         .filter-btn.include { background-color: rgba(0, 153, 255, 0.70); color: white; }
         .filter-btn.exclude { background-color: rgba(255, 77, 77, 0.70); color: white; }
+	  
+	  .music-playlist-btn {
+		padding: 4px 10px;
+	  }
 
         /* Included buttons combine with AND logic instead of OR whenever
            their section's own Match button is set to "All" (see
@@ -3307,21 +3406,34 @@
                          dropdown can move there or go away entirely. -->
                     <div class="music-player-row">
                         <label class="music-player-label" for="music-gamestage-select">Game Stage</label>
-                        <select id="music-gamestage-select" class="music-player-select"></select>
+                        <input type="range" id="music-gamestage-select" class="music-gamestage-slider" min="0" max="4" step="1" value="1" list="music-gamestage-ticks">
+                        <span class="music-gamestage-value" id="music-gamestage-value">Early Game</span>
                     </div>
+                    <datalist id="music-gamestage-ticks">
+                        <option value="0"></option>
+                        <option value="1"></option>
+                        <option value="2"></option>
+                        <option value="3"></option>
+                        <option value="4"></option>
+                    </datalist>
                     <div class="music-player-row">
-                        <label class="music-player-label" for="music-playlist-select">Music Playlist</label>
-                        <select id="music-playlist-select" class="music-player-select"></select>
+                        <label class="music-player-label">Music Playlist</label>
                     </div>
+                    <!-- Built in populateMusicControls() -- one button per
+                         category, in the order categories first appear in
+                         music-tracks.json. See .music-playlist-buttons /
+                         .music-playlist-btn CSS for the 2-column-plus-
+                         final-own-row layout. -->
+                    <div id="music-playlist-buttons" class="music-playlist-buttons"></div>
                     
                     <div class="music-now-playing" id="music-now-playing">No track loaded</div>
 
                     <div class="music-transport">
-                        <button id="music-shuffle-btn" class="filter-btn music-transport-btn music-mode-btn" title="Shuffle: Off">⇄</button>
-                        <button id="music-prev-btn" class="filter-btn music-transport-btn" title="Previous track">⏮</button>
-                        <button id="music-play-pause-btn" class="filter-btn music-transport-btn" title="Play">▶</button>
-                        <button id="music-next-btn" class="filter-btn music-transport-btn" title="Next track">⏭</button>
-                        <button id="music-repeat-btn" class="filter-btn music-transport-btn music-mode-btn" title="Repeat: Whole playlist">↻</button>
+                        <button id="music-shuffle-btn" class="filter-btn music-transport-btn music-mode-btn" title="Shuffle: Off"><img class="music-transport-icon" src="https://dl.dropboxusercontent.com/scl/fi/f2b9tc48n15ylrymnnehq/Media_Shuffle.png?rlkey=zj6d1m81w803hyzvl5mv74h2v&st=8b4y29ol&dl=1" alt="Shuffle"></button>
+                        <button id="music-prev-btn" class="filter-btn music-transport-btn" title="Previous track"><img class="music-transport-icon" src="https://dl.dropboxusercontent.com/scl/fi/vbxrhm9bo4io5flm5c37u/Media_Back.png?rlkey=tq9yj9q1eftxx4dqzhqpbhq37&st=fhn9mi6z&dl=1" alt="Previous track"></button>
+                        <button id="music-play-pause-btn" class="filter-btn music-transport-btn" title="Play"><img id="music-play-pause-icon" class="music-transport-icon" src="https://dl.dropboxusercontent.com/scl/fi/icl2hmts5d9nsh14pwskv/Media_Play.png?rlkey=jr4g7xayl72eti7d8sis9e366&st=nnxhw1qa&dl=1" alt="Play"></button>
+                        <button id="music-next-btn" class="filter-btn music-transport-btn" title="Next track"><img class="music-transport-icon" src="https://dl.dropboxusercontent.com/scl/fi/wuq9qpywpzee2wk7bl3cf/Media_Next.png?rlkey=iuja202qq9slozwyvjth4u9db&st=39t1ujnq&dl=1" alt="Next track"></button>
+                        <button id="music-repeat-btn" class="filter-btn music-transport-btn music-mode-btn" title="Repeat: Whole playlist"><img id="music-repeat-icon" class="music-transport-icon" src="https://dl.dropboxusercontent.com/scl/fi/2wnj27t9zudwm0a00y54o/Media_RepeatAll.png?rlkey=10vqepezzpp194wfsdk3n58dv&st=9ggu434f&dl=1" alt="Repeat: Whole playlist"></button>
                     </div>
                 </div>
 		    
@@ -5178,6 +5290,24 @@
             'kanto': 'Kanto', 'johto': 'Johto', 'hoenn': 'Hoenn', 'sinnoh': 'Sinnoh',
             'unova': 'Unova', 'kalos': 'Kalos', 'alola': 'Alola', 'galar': 'Galar', 'paldea': 'Paldea',
         };
+        // Icon shown on each Master Playlist button, keyed by category id.
+        // PLACEHOLDER URLs below -- swap these for real icon URLs. Falls
+        // back to MUSIC_ICON_PLACEHOLDER_FALLBACK for any category that
+        // shows up in the JSON without an entry here yet.
+        const MUSIC_CATEGORY_ICONS = {
+            'intro': 'https://www.dropbox.com/scl/fi/lipdevhlo19qi3wo8dpko/Playlist_Intro.png?rlkey=o6gl5bw6l4pxfutjkec2gxkoo&st=bgyrrnpb&dl=1',
+            'route': 'https://www.dropbox.com/scl/fi/8kiw12crzinu2qv3q9x20/Playlist_Route.png?rlkey=lknrth0j5on86c1njv130cx7i&st=e5loqv5u&dl=1',
+            'wild-battle': 'https://www.dropbox.com/scl/fi/n1jkqtsuluwerg0ewnqhr/Playlist_Wild.png?rlkey=ytyk08ot2phn0ui7tlywo9kss&st=tgff1la5&dl=1',
+            'wild-legendary-battle': 'https://www.dropbox.com/scl/fi/wnc6qq0ordllcyp1m96eb/Playlist_Legendary.png?rlkey=trv8aii1tw07hccjhmfy29zp1&st=ni0xasgc&dl=1',
+            'trainer-battle': 'https://www.dropbox.com/scl/fi/dcqclc3xpq3fhlf710cxq/Playlist_Trainer.png?rlkey=7ew0nrtl6o4mtw1jm7s5agj8a&st=xttbi25l&dl=1',
+            'rival-battle': 'https://www.dropbox.com/scl/fi/3wxrxu7be5dcowabaq0fu/Playlist_Rival.png?rlkey=4jux9gdio0qo47mp8b41jj64m&st=hf1b8s0n&dl=1',
+            'gym-battle': 'https://www.dropbox.com/scl/fi/g73cg8m7ndp3cd0v9o2uj/Playlist_Gym.png?rlkey=h802sw2p2jtlqonkb1e45dvwa&st=g3ngf2tv&dl=1',
+            'villain-battle': 'https://www.dropbox.com/scl/fi/r4mbr0yjllemcg1326iqk/Playlist_Villain.png?rlkey=tfp5aysptgrlqyp11ax0trnqb&st=s8unfow2&dl=1',
+            'elite-four-battle': 'https://www.dropbox.com/scl/fi/qgizkmfv9wmzdfx5zaomq/Playlist_EliteFour.png?rlkey=456r5mgz7dpsv4nggie754a1a&st=9ki766hw&dl=1',
+            'champion-battle': 'https://www.dropbox.com/scl/fi/pqw7cxogz4eg9m4zjrnrv/Playlist_Champion.png?rlkey=5ki24xvkn5gs4tik0vrzohnu2&st=bai9mo32&dl=1',
+            'victory': 'https://www.dropbox.com/scl/fi/fsf7od8nemefi736i9zh4/Playlist_Victory.png?rlkey=7rfom0c8dy0gfm8sblusmh57l&st=6n9fiuf6&dl=1',
+        };
+        const MUSIC_ICON_PLACEHOLDER_FALLBACK = 'PLACEHOLDER_ICON_URL_default';
         // Fixed vocabulary (not derived from the data like categories/
         // regions are) since this is standing in for the future Badge
         // Tracker's own stage concept, not an open-ended tag. Order here
@@ -5186,8 +5316,13 @@
         // to list values in.
         const GAME_STAGE_ORDER = ['early', 'mid', 'late', 'end'];
         const GAME_STAGE_LABELS = {
-            early: 'Early Game', mid: 'Mid Game', late: 'Late Game', end: 'End Game',
+            any: 'Any Stage', early: 'Early Game', mid: 'Mid Game', late: 'Late Game', end: 'End Game',
         };
+        // The slider's 5 steps (index 0-4): "any" plus the 4 real stages
+        // above, in playthrough order. Kept separate from GAME_STAGE_ORDER
+        // since that array is also used for data-filtering logic where
+        // "any" isn't a real stage value to match against.
+        const GAME_STAGE_STEPS = ['any', ...GAME_STAGE_ORDER];
         function titleCaseFromId(id) {
             return id.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         }
@@ -5249,15 +5384,31 @@
         // every playlist at the top again.
         let musicLastTrackIdByCategory = {};
 
-        const musicPlaylistSelect = document.getElementById('music-playlist-select');
+        const musicPlaylistButtons = document.getElementById('music-playlist-buttons');
         const musicRegionSelect = document.getElementById('music-region-select');
         const musicGameStageSelect = document.getElementById('music-gamestage-select');
+        const musicGameStageValueEl = document.getElementById('music-gamestage-value');
+
+        function updateGameStageValueDisplay() {
+            const stage = GAME_STAGE_STEPS[Number(musicGameStageSelect.value)];
+            musicGameStageValueEl.textContent = GAME_STAGE_LABELS[stage];
+        }
         const musicNowPlayingEl = document.getElementById('music-now-playing');
         const musicPlayPauseBtn = document.getElementById('music-play-pause-btn');
         const musicPrevBtn = document.getElementById('music-prev-btn');
         const musicNextBtn = document.getElementById('music-next-btn');
         const musicShuffleBtn = document.getElementById('music-shuffle-btn');
         const musicRepeatBtn = document.getElementById('music-repeat-btn');
+        const musicPlayPauseIcon = document.getElementById('music-play-pause-icon');
+        const musicRepeatIcon = document.getElementById('music-repeat-icon');
+
+        // The two transport icons that change depending on state (play vs.
+        // pause, repeat-all vs. repeat-one) -- swapped in as img src rather
+        // than text glyphs, see renderMusicPlayerUI.
+        const MUSIC_ICON_PLAY = 'https://dl.dropboxusercontent.com/scl/fi/icl2hmts5d9nsh14pwskv/Media_Play.png?rlkey=jr4g7xayl72eti7d8sis9e366&st=nnxhw1qa&dl=1';
+        const MUSIC_ICON_PAUSE = 'https://dl.dropboxusercontent.com/scl/fi/xkvtrlb9jfih8tpzbqr9y/Media_Pause.png?rlkey=szsgaquvi3ocqsj8qzzb5oqn9&st=f3td0s4m&dl=1';
+        const MUSIC_ICON_REPEAT_ALL = 'https://dl.dropboxusercontent.com/scl/fi/2wnj27t9zudwm0a00y54o/Media_RepeatAll.png?rlkey=10vqepezzpp194wfsdk3n58dv&st=9ggu434f&dl=1';
+        const MUSIC_ICON_REPEAT_ONE = 'https://dl.dropboxusercontent.com/scl/fi/4q4fqp8r8648xla34desh/Media_RepeatOne.png?rlkey=0swed4u0yuujhi7q9z55skfnj&st=v571v85w&dl=1';
 
         // The one call the future Gameplay Companion panel needs to make
         // once it exists -- everything else (rebuilding the queue, keeping
@@ -5278,14 +5429,14 @@
         function setActiveGameStage(stage) {
             musicState.activeGameStage = stage;
             saveMusicPlayerState();
-            musicGameStageSelect.value = stage;
+            musicGameStageSelect.value = GAME_STAGE_STEPS.indexOf(stage);
+            updateGameStageValueDisplay();
             rebuildMusicQueue({ keepCurrentTrack: true });
         }
 
         function setActiveMusicCategory(category) {
             musicState.activeCategory = category;
             saveMusicPlayerState();
-            musicPlaylistSelect.value = category;
             rebuildMusicQueue({ keepCurrentTrack: false });
         }
 
@@ -5296,7 +5447,35 @@
         // -- otherwise falls back to the queue's first track (e.g.
         // switching Master Playlists outright, where there's no "same
         // track" to preserve).
+        // Enables/disables each Master Playlist button based on whether
+        // any track in its own category satisfies the current Region +
+        // Game Stage filters -- independent of which category is actually
+        // selected, so a button can go disabled/enabled purely from a
+        // Region or Game Stage change even if the active playlist itself
+        // still has matches. Also reflects which button (if any) is the
+        // active one. A currently-active category that has just lost all
+        // matches stays visually active-but-disabled, rather than losing
+        // its highlight, so it's still clear *what's* selected even though
+        // nothing plays -- musicNowPlayingEl already explains why (see
+        // renderMusicPlayerUI's "No tracks match this filter").
+        function refreshMusicPlaylistButtons() {
+            musicPlaylistButtons.querySelectorAll('.music-playlist-btn').forEach(btn => {
+                const category = btn.dataset.category;
+                const hasValidTrack = musicTracks.some(track => {
+                    if (track.category !== category) return false;
+                    const regionMatches = musicState.activeRegion === 'all' ||
+                        track.regions.includes(musicState.activeRegion);
+                    const stageMatches = musicState.activeGameStage === 'any' ||
+                        (track.gamestage || []).includes(musicState.activeGameStage);
+                    return regionMatches && stageMatches;
+                });
+                btn.disabled = !hasValidTrack;
+                btn.classList.toggle('include', category === musicState.activeCategory);
+            });
+        }
+
         function rebuildMusicQueue({ keepCurrentTrack }) {
+            refreshMusicPlaylistButtons();
             // Old history entries are indices into the queue *before* this
             // rebuild -- meaningless (and potentially pointing at the
             // wrong track entirely) against the queue after it.
@@ -5496,49 +5675,64 @@
             musicPlayPauseBtn.disabled = !hasQueue;
 
             const isPlaying = hasQueue && !musicAudio.paused;
-            musicPlayPauseBtn.textContent = isPlaying ? '⏸' : '▶';
+            musicPlayPauseIcon.src = isPlaying ? MUSIC_ICON_PAUSE : MUSIC_ICON_PLAY;
+            musicPlayPauseIcon.alt = isPlaying ? 'Pause' : 'Play';
             musicPlayPauseBtn.title = isPlaying ? 'Pause' : 'Play';
 
             musicShuffleBtn.classList.toggle('include', musicState.shuffle);
             musicShuffleBtn.title = `Shuffle: ${musicState.shuffle ? 'On' : 'Off'}`;
 
             const repeatOne = musicState.repeat === 'one';
-            musicRepeatBtn.textContent = repeatOne ? '↻¹' : '↻';
+            musicRepeatIcon.src = repeatOne ? MUSIC_ICON_REPEAT_ONE : MUSIC_ICON_REPEAT_ALL;
+            musicRepeatIcon.alt = repeatOne ? 'Repeat: Current track' : 'Repeat: Whole playlist';
             musicRepeatBtn.classList.toggle('include', repeatOne);
             musicRepeatBtn.title = repeatOne ? 'Repeat: Current track' : 'Repeat: Whole playlist';
         }
 
-        // Builds all three dropdowns. Categories/regions still come from
-        // whatever actually appears in the loaded track data -- adding a
-        // new one to music-tracks.json is enough on its own, nothing here
-        // needs to change to pick it up. Game Stage is the one exception:
-        // its 4 values are a fixed vocabulary (see GAME_STAGE_ORDER above)
-        // rather than something to discover from the data, so it's always
-        // built in full regardless of which stages the current data
-        // happens to use.
+        // Builds the two remaining dropdowns (categories/regions still come
+        // from whatever actually appears in the loaded track data -- adding
+        // a new one to music-tracks.json is enough on its own, nothing here
+        // needs to change to pick it up). Game Stage no longer needs
+        // building here since it's a fixed-vocabulary slider now (see
+        // GAME_STAGE_STEPS above) rather than a dynamically-populated list.
         function populateMusicControls() {
+            // Categories become the Master Playlist buttons, in the order
+            // they first appear in music-tracks.json -- musicTracks is
+            // already in that order straight out of the fetch, so a plain
+            // first-seen Set dedupe preserves it without any extra sort.
             const categories = [...new Set(musicTracks.map(t => t.category))];
             const regions = [...new Set(musicTracks.flatMap(t => t.regions))];
 
-            musicPlaylistSelect.innerHTML = categories.map(id =>
-                `<option value="${id}">${MUSIC_CATEGORY_LABELS[id] || titleCaseFromId(id)}</option>`
-            ).join('');
+            musicPlaylistButtons.innerHTML = categories.map((id, index) => {
+                const label = MUSIC_CATEGORY_LABELS[id] || titleCaseFromId(id);
+                const icon = MUSIC_CATEGORY_ICONS[id] || MUSIC_ICON_PLACEHOLDER_FALLBACK;
+                // Last button spans both grid columns on its own line;
+                // every other one sits in the regular 2-up grid.
+                const ownRow = index === categories.length - 1 ? ' own-row' : '';
+                return `<button type="button" class="filter-btn music-playlist-btn${ownRow}" data-category="${id}" title="${label}">` +
+                    `<img class="music-playlist-btn-icon" src="${icon}" alt="">` +
+                    `<span class="music-playlist-btn-label">${label}</span>` +
+                    `</button>`;
+            }).join('');
+
+            musicPlaylistButtons.querySelectorAll('.music-playlist-btn').forEach(btn => {
+                btn.addEventListener('click', () => setActiveMusicCategory(btn.dataset.category));
+            });
 
             musicRegionSelect.innerHTML = '<option value="all">All Regions</option>' + regions.map(id =>
                 `<option value="${id}">${MUSIC_REGION_LABELS[id] || titleCaseFromId(id)}</option>`
             ).join('');
 
-            musicGameStageSelect.innerHTML = '<option value="any">Any Stage</option>' + GAME_STAGE_ORDER.map(id =>
-                `<option value="${id}">${GAME_STAGE_LABELS[id]}</option>`
-            ).join('');
-
             // Restore persisted selections if they're still valid (the
             // data could have changed since the last visit), else fall
             // back to the first available category / "All Regions".
+            // refreshMusicPlaylistButtons() (called from rebuildMusicQueue
+            // below) reflects the resolved activeCategory onto the actual
+            // buttons -- nothing else to set here now that there's no
+            // select element to sync.
             musicState.activeCategory = categories.includes(musicState.activeCategory)
                 ? musicState.activeCategory
                 : (categories[0] || null);
-            musicPlaylistSelect.value = musicState.activeCategory || '';
 
             musicState.activeRegion = (musicState.activeRegion === 'all' || regions.includes(musicState.activeRegion))
                 ? musicState.activeRegion
@@ -5548,15 +5742,15 @@
             // Game Stage's fixed vocabulary is always valid, so nothing to
             // fall back from here -- just reflect whatever loadMusicPlayerState
             // already settled on (persisted choice, or "early" by default).
-            musicGameStageSelect.value = musicState.activeGameStage;
+            musicGameStageSelect.value = GAME_STAGE_STEPS.indexOf(musicState.activeGameStage);
+            updateGameStageValueDisplay();
 
             saveMusicPlayerState();
             rebuildMusicQueue({ keepCurrentTrack: false });
         }
 
-        musicPlaylistSelect.addEventListener('change', (e) => setActiveMusicCategory(e.target.value));
         musicRegionSelect.addEventListener('change', (e) => setActiveMusicRegion(e.target.value));
-        musicGameStageSelect.addEventListener('change', (e) => setActiveGameStage(e.target.value));
+        musicGameStageSelect.addEventListener('input', (e) => setActiveGameStage(GAME_STAGE_STEPS[Number(e.target.value)]));
         musicPlayPauseBtn.addEventListener('click', toggleMusicPlayPause);
         musicPrevBtn.addEventListener('click', musicPrev);
         musicNextBtn.addEventListener('click', musicNext);
