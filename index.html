@@ -21,6 +21,23 @@
     <style>
         * { box-sizing: border-box; }
 
+        /* Pins #viewer-toggle-row (the GENERAL INFORMATION / EVOLUTION
+           CHAIN buttons) to a known, fixed height rather than letting it
+           size off its own padding/line-height/border, so that value can
+           also be subtracted from #image-overlay's width ceiling and
+           body.viewer-open's matching padding-left (see both further
+           down) to get an exact available-height figure instead of an
+           approximation. 8px top padding + 8px bottom padding + a 14px
+           line's rendered height (~16.8px at the browser default
+           line-height) + the row's own border ~ 33.8px; rounded up to
+           41px for a little breathing room. Global rather than scoped to
+           #image-overlay because body.viewer-open needs it too, and
+           custom properties only inherit downward -- body isn't a
+           descendant of #image-overlay. */
+        :root {
+            --viewer-toggle-row-h: 41px;
+        }
+
         /* Kills the browser's default blue/gray flash on tap (mobile
            Safari/Chrome) for every element at once, rather than chasing it
            down on individual clickable zones one at a time. It was always
@@ -832,17 +849,20 @@
                which side reserves space (and reset the mobile top rule).
                Must match the panel's own width formula exactly (see
                #image-overlay above, including its width ceiling's
-               subtraction for the two .viewer-edge-spacer bars) or the
-               reserved space and the panel's actual width drift apart as
-               the window is resized. Can't reference #image-overlay's own
-               --viewer-edge-spacer here since custom properties only
-               inherit down the DOM tree, and body isn't a descendant of
-               it, so the 2 * 25% * --panel-h it resolves to (0.06 of
-               --real-vh) is spelled out directly instead. */
+               subtraction for the two .viewer-edge-spacer bars and
+               #viewer-toggle-row) or the reserved space and the panel's
+               actual width drift apart as the window is resized. Can't
+               reference #image-overlay's own --viewer-edge-spacer here
+               since custom properties only inherit down the DOM tree, and
+               body isn't a descendant of it, so the 2 * 25% * --panel-h
+               it resolves to (0.06 of --real-vh) is spelled out directly
+               instead. --viewer-toggle-row-h doesn't have that problem --
+               it's defined at :root, an ancestor of body -- so it's
+               referenced directly. */
             body.viewer-open {
                 padding-top: 20px;
-                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100vh - (var(--real-vh, 100vh) * 0.06))), 90vw)); /* fallback for browsers without dvh support */
-                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100dvh - (var(--real-vh, 100dvh) * 0.06))), 90vw));
+                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100vh - (var(--real-vh, 100vh) * 0.06) - var(--viewer-toggle-row-h, 0px))), 90vw)); /* fallback for browsers without dvh support */
+                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100dvh - (var(--real-vh, 100dvh) * 0.06) - var(--viewer-toggle-row-h, 0px))), 90vw));
             }
         }
 
@@ -2114,9 +2134,13 @@
 
         /* Row itself is the flex item that reserves its natural (button)
            height within #image-overlay's column layout — the two buttons
-           inside just split that row's width evenly. */
+           inside just split that row's width evenly. Fixed to
+           --viewer-toggle-row-h (defined at :root) rather than left to
+           intrinsic content sizing, so #image-overlay's width ceiling and
+           body.viewer-open's padding-left (both further down) can
+           subtract an exact figure instead of guessing at it. */
         #viewer-toggle-row {
-            flex: 0 0 auto;
+            flex: 0 0 var(--viewer-toggle-row-h);
             width: 100%;
             display: flex;
         }
@@ -2528,16 +2552,13 @@
                    thing, back when #image-overlay ran edge-to-edge, but
                    now two .viewer-edge-spacer bars (25% of --panel-h
                    each, see #image-overlay's own --viewer-edge-spacer
-                   below) eat into that space, so the width ceiling needs
-                   to shrink by the same amount or the panel keeps
-                   growing wider past the point the image has actually
-                   stopped growing taller. Doesn't additionally account
-                   for #viewer-toggle-row's own small fixed height (the
-                   GENERAL INFORMATION / EVOLUTION CHAIN buttons) --
-                   same approximation the original 100dvh ceiling already
-                   made, just narrowed to match the new available space. */
-                width: clamp(480px, 53vw, calc(100vh - (var(--viewer-edge-spacer, 0px) * 2))); /* fallback for browsers without dvh support */
-                width: clamp(480px, 53vw, calc(100dvh - (var(--viewer-edge-spacer, 0px) * 2)));
+                   below) plus #viewer-toggle-row's own fixed height (see
+                   --viewer-toggle-row-h, defined at :root) eat into that
+                   space, so the width ceiling needs to shrink by the same
+                   amount or the panel keeps growing wider past the point
+                   the image has actually stopped growing taller. */
+                width: clamp(480px, 53vw, calc(100vh - (var(--viewer-edge-spacer, 0px) * 2) - var(--viewer-toggle-row-h, 0px))); /* fallback for browsers without dvh support */
+                width: clamp(480px, 53vw, calc(100dvh - (var(--viewer-edge-spacer, 0px) * 2) - var(--viewer-toggle-row-h, 0px)));
                 max-width: 90vw;
                 height: 100vh; /* fallback for browsers without dvh support */
                 height: 100dvh;
