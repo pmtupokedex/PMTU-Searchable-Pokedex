@@ -21,6 +21,26 @@
     <style>
         * { box-sizing: border-box; }
 
+        /* Pins #viewer-toggle-row (the GENERAL INFORMATION / EVOLUTION
+           CHAIN buttons) to a known, fixed height rather than letting it
+           size off its own padding/line-height, so that value can also
+           be subtracted from #image-overlay's width ceiling and
+           body.viewer-open's matching padding-left (see both further
+           down) to get an exact available-height figure instead of an
+           approximation. #viewer-info-toggle/#viewer-related-toggle's
+           own 6px top + 6px bottom padding, plus .viewer-toggle-label's
+           10px top + 10px bottom padding (the darkened bubble around the
+           text/arrow -- see that rule for why), plus a 20px line's
+           rendered height (~24px at the browser default line-height) ~
+           56px; rounded up to 58px for a little breathing room. No
+           border to account for anymore now that both elements dropped
+           theirs. Global rather than scoped to #image-overlay because
+           body.viewer-open needs it too, and custom properties only
+           inherit downward -- body isn't a descendant of #image-overlay. */
+        :root {
+            --viewer-toggle-row-h: 58px;
+        }
+
         /* Kills the browser's default blue/gray flash on tap (mobile
            Safari/Chrome) for every element at once, rather than chasing it
            down on individual clickable zones one at a time. It was always
@@ -522,6 +542,8 @@
             display: flex;
             flex-direction: column;
             gap: 10px;
+            margin-top: 8px;
+            padding-top: 12px;
         }
 
         .music-player-row {
@@ -829,12 +851,21 @@
             /* Magnify panel docks left on desktop instead of top, so swap
                which side reserves space (and reset the mobile top rule).
                Must match the panel's own width formula exactly (see
-               #image-overlay above) or the reserved space and the panel's
-               actual width drift apart as the window is resized. */
+               #image-overlay above, including its width ceiling's
+               subtraction for the two .viewer-edge-spacer bars and
+               #viewer-toggle-row) or the reserved space and the panel's
+               actual width drift apart as the window is resized. Can't
+               reference #image-overlay's own --viewer-edge-spacer here
+               since custom properties only inherit down the DOM tree, and
+               body isn't a descendant of it, so the 2 * 25% * --panel-h
+               it resolves to (0.06 of --real-vh) is spelled out directly
+               instead. --viewer-toggle-row-h doesn't have that problem --
+               it's defined at :root, an ancestor of body -- so it's
+               referenced directly. */
             body.viewer-open {
                 padding-top: 20px;
-                padding-left: calc(20px + min(clamp(480px, 53vw, 100vh), 90vw)); /* fallback for browsers without dvh support */
-                padding-left: calc(20px + min(clamp(480px, 53vw, 100dvh), 90vw));
+                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100vh - (var(--real-vh, 100vh) * 0.06) - var(--viewer-toggle-row-h, 0px))), 90vw)); /* fallback for browsers without dvh support */
+                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100dvh - (var(--real-vh, 100dvh) * 0.06) - var(--viewer-toggle-row-h, 0px))), 90vw));
             }
         }
 
@@ -1877,6 +1908,46 @@
            navbar scale. background-position then picks which quadrant:
            0%/0% = top-left, 100%/0% = top-right, 0%/100% = bottom-left,
            100%/100% = bottom-right. */
+        /* Real, first/last flex children of #image-overlay -- reserves
+           the clearance --viewer-edge-spacer defines (0px on mobile,
+           25% of --panel-h on desktop; see #image-overlay's own
+           min-width:664px rule) as actual paintable elements, rather
+           than just an inset gap that let the gallery show through.
+           Style with background-color or background-image as needed.
+           #viewer-frame and the other flex children (viewer-toggle-row,
+           viewer-info-wrapper, viewer-related-wrapper) naturally get
+           pushed inward to make room, same as any other flex sibling.
+
+           The four corner-anchored elements up top
+           (#viewer-corner-decor-tl/tr, #image-close-btn,
+           #shiny-toggle-btn) are position: absolute against
+           #image-overlay itself rather than flex children, so they
+           don't shift out of the way automatically -- their own top
+           offsets add var(--viewer-edge-spacer, 0px) explicitly to
+           compensate (see their rules further down). Nothing at the
+           bottom needs the same treatment: the bottom-anchored elements
+           (image-nav-prev/next, the bl/br corner decor) are all
+           positioned against #viewer-frame instead, which already gets
+           pushed up by the bottom spacer through ordinary flex layout. */
+        .viewer-edge-spacer {
+            flex: 0 0 auto;
+            width: 100%;
+            height: var(--viewer-edge-spacer, 0px);
+            /* Matches #viewer-info-toggle/#viewer-related-toggle's own
+               background further down, so the spacer reads as part of
+               the same panel chrome as those buttons rather than a
+               separate strip. Same two-layer setup as .sounds-panel-bg
+               (Viewer_GrayBar as the art layer, cover/no-repeat;
+               Pokedex-Background-5 tiled on top at 240px 240px/repeat)
+               multiply-blended together, in place of the flat rgba color
+               this used to sit on. */
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/py64w3542d668us6jh5c7/Viewer_GrayBar.png?rlkey=ebzz99v3dfl24kxfhtc8xfp3y&st=4p3bw9tx&dl=1"), url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
+            background-size: cover, 240px 240px;
+            background-position: center, center;
+            background-repeat: no-repeat, repeat;
+            background-blend-mode: multiply;
+        }
+
         .viewer-corner-decor {
             position: absolute;
             /* 1, not 0 -- the top-left/top-right decor divs are siblings
@@ -1900,15 +1971,17 @@
 
         /* Top two corners are positioned relative to #image-overlay, same
            as #image-close-btn/#shiny-toggle-btn below -- see their own
-           anchoring comment. */
+           anchoring comment. top adds var(--viewer-edge-spacer, 0px) so
+           they land right below .viewer-edge-spacer-top instead of
+           under it (0px on mobile, where that variable is never set). */
         #viewer-corner-decor-tl {
-            top: 0;
+            top: var(--viewer-edge-spacer, 0px);
             left: 0;
             background-position: 0% 0%;
         }
 
         #viewer-corner-decor-tr {
-            top: 0;
+            top: var(--viewer-edge-spacer, 0px);
             right: 0;
             background-position: 100% 0%;
         }
@@ -1950,7 +2023,7 @@
            multiplier itself (not back to px) if it needs adjusting. */
         #image-close-btn {
             position: absolute;
-            top: calc(var(--panel-h) * 0.07);
+            top: calc(var(--viewer-edge-spacer, 0px) + var(--panel-h) * 0.07);
             left: calc(var(--panel-h) * 0.07);
             z-index: 2;
             height: calc(var(--panel-h) * 0.5);
@@ -1971,7 +2044,7 @@
            applies here too, including the panel-h-relative inset. */
         #shiny-toggle-btn {
             position: absolute;
-            top: calc(var(--panel-h) * 0.07);
+            top: calc(var(--viewer-edge-spacer, 0px) + var(--panel-h) * 0.07);
             right: calc(var(--panel-h) * 0.067);
             z-index: 2;
             height: calc(var(--panel-h) * 0.5);
@@ -2071,38 +2144,186 @@
 
         /* Row itself is the flex item that reserves its natural (button)
            height within #image-overlay's column layout — the two buttons
-           inside just split that row's width evenly. */
+           inside just split that row's width evenly. Fixed to
+           --viewer-toggle-row-h (defined at :root) rather than left to
+           intrinsic content sizing, so #image-overlay's width ceiling and
+           body.viewer-open's padding-left (both further down) can
+           subtract an exact figure instead of guessing at it. */
+        /* The shared grey-bar texture now lives here, on the row itself,
+           rather than on each button individually. It used to be applied
+           separately to #viewer-info-toggle and #viewer-related-toggle
+           (each at background-size: cover against its own 50%-width
+           box) -- since both were independent copies of the same source
+           image, and Viewer_GrayBar.png has a bright highlight running
+           along its edges, that highlight got rendered twice right where
+           the two buttons met, showing up as a pale seam/divider down
+           the middle of the row. A single copy spanning the full row
+           has no seam to double up, since there's now only ever one
+           edge (the row's own outer edges) instead of two independent
+           images butted against each other.
+
+           Split into two pseudo-elements (::before for the art layer,
+           ::after for the tiled overlay) instead of the single two-layer
+           `background-image` shorthand used elsewhere (e.g.
+           .viewer-edge-spacer) -- a plain background's layers can't be
+           transformed independently of one another, and the art layer
+           needs its own vertical flip (see ::before below) without
+           flipping the tile on top of it. mix-blend-mode: multiply on
+           ::after reproduces the same blend the shorthand's
+           background-blend-mode gave the two layers before, just applied
+           between two real elements instead of two background layers.
+           position: relative on the row gives both pseudo-elements their
+           positioning context; z-index: -1 on both keeps them behind the
+           row's actual children (the two buttons), which are regular
+           z-index: auto flex items and would otherwise sit below a
+           same-tree-order ::after with no z-index of its own. */
         #viewer-toggle-row {
-            flex: 0 0 auto;
+            flex: 0 0 var(--viewer-toggle-row-h);
             width: 100%;
             display: flex;
+            position: relative;
+        }
+
+        #viewer-toggle-row::before,
+        #viewer-toggle-row::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            z-index: -1;
+        }
+
+        #viewer-toggle-row::before {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/py64w3542d668us6jh5c7/Viewer_GrayBar.png?rlkey=ebzz99v3dfl24kxfhtc8xfp3y&st=4p3bw9tx&dl=1");
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            /* Flips the bar art vertically -- transform-origin defaults
+               to the element's own center, so this mirrors it in place
+               without shifting its position. */
+            transform: scaleY(-1);
+        }
+
+        #viewer-toggle-row::after {
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
+            background-size: 240px 240px;
+            background-position: center;
+            background-repeat: repeat;
+            mix-blend-mode: multiply;
         }
 
         #viewer-info-toggle,
         #viewer-related-toggle {
             flex: 1 1 50%;
-            background: rgba(255,255,255,0.08);
-            color: rgba(255,255,255,0.85);
+            /* No background of its own anymore -- the shared texture now
+               lives on #viewer-toggle-row above, so the button is just a
+               transparent hit target that the .viewer-toggle-label bubble
+               sits on top of. */
+            background: transparent;
             border: none;
-            border-top: 1px solid rgba(255,255,255,0.15);
-            padding: 8px 12px;
-            font-size: 14px;
-            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
-		font-weight: bold;
+            padding: 6px 8px;
             cursor: pointer;
-            text-align: center;
+            /* Typography (font-size/weight/family/transform/color/
+               text-shadow) lives here rather than on .viewer-toggle-label
+               below -- all of those are inheritable properties, so the
+               label picks them up for free without needing its own
+               copy. Still matches .filter-section-header/
+               .sounds-section-header's 20px bold uppercase white text
+               with the 4-direction black text-shadow standing in for an
+               outline. */
+            font-size: 20px;
+            font-weight: bold;
+            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
+            text-transform: uppercase;
+            color: white;
+            text-shadow:
+                -1px -1px 0 black,
+                 1px -1px 0 black,
+                -1px  1px 0 black,
+                 1px  1px 0 black;
+            /* .viewer-toggle-label now stretches to fill this box (see
+               its own width: 100% below) rather than sizing to its own
+               content, so justify-content here just centers the text/
+               arrow *within* that now full-width bubble instead of
+               centering a small bubble within the button. min-width: 0
+               still lets the button shrink below the label's natural
+               content width instead of the default flex-item floor of
+               "never smaller than my content" -- needed for the label's
+               own ellipsis (further down) to ever actually kick in
+               inside this flex: 1 1 50% row. */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 0;
         }
 
-        /* Divider between the two buttons — only the right-hand one needs
-           it, since the row's own edges already have nothing to divide
-           against. */
-        #viewer-related-toggle {
-            border-left: 1px solid rgba(255,255,255,0.15);
+        /* The darkened "bubble" .filter-section-header/.sounds-section-
+           header get from their own background (rgba(0,0,0,0.25) +
+           border-radius: 10px + padding: 10px 14px) applied here instead,
+           same as before -- but now expanded to fill the full width of
+           its button (width: 100%) rather than sizing to just the text's
+           own length, so it reads as one continuous bar per button
+           (matching how .filter-section-header fills its own full
+           width) instead of a small pill floating in the middle of a
+           mostly-empty button. Arrow lives inside this element (see
+           ::after further down) rather than the button's, so it sits
+           inside the bubble alongside the text, same as the header rules
+           it's matching. */
+        .viewer-toggle-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            background: rgba(0, 0, 0, 0.25);
+            border-radius: 10px;
+            padding: 10px 14px;
+            width: 100%;
+            /* Even shortened to "EVOLUTIONS / FORMS", it's not guaranteed
+               to fit half the panel's width at 20px bold/uppercase on
+               the panel's 480px floor, so it's clipped with an ellipsis
+               rather than wrapping and blowing out --viewer-toggle-row-h's
+               fixed height. min-width: 0 is the other half of the
+               button's own min-width: 0 above -- without it this would
+               refuse to shrink past its own content width regardless of
+               what the flex parent allows. */
+            min-width: 0;
+            max-width: 100%;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
-        #viewer-info-toggle:hover,
-        #viewer-related-toggle:hover {
-            background: rgba(255,255,255,0.15);
+        #viewer-info-toggle:hover .viewer-toggle-label,
+        #viewer-related-toggle:hover .viewer-toggle-label {
+            /* Same hover convention as .filter-section-header:hover --
+               dim via opacity instead of tinting the background. Scoped
+               to just the label bubble (not the whole button) so hovering
+               one button dims only its own bubble, the same thing that
+               dims on a filter-section-header hover -- rather than
+               dimming the button's full box, which since the shared
+               texture moved to #viewer-toggle-row above would otherwise
+               have nothing left to visibly dim besides the bubble anyway,
+               but this keeps the intent explicit and matches the header
+               convention exactly. */
+            opacity: 0.85;
+        }
+
+        /* Same arrow glyph/rotation as .filter-section-header::after --
+           content: "▼" resting state, rotated -90deg (pointing right)
+           while collapsed. Lives on .viewer-toggle-label now (not the
+           button) so it sits inside the darkened bubble alongside the
+           text, same as the header rules it's matching. Still keyed off
+           the buttons' own aria-expanded attribute rather than a
+           separate class, since the click handler was already keeping
+           that in sync for accessibility. */
+        .viewer-toggle-label::after {
+            content: "▼";
+            font-size: 14px;
+            transition: transform 0.3s ease;
+        }
+
+        #viewer-info-toggle[aria-expanded="false"] .viewer-toggle-label::after,
+        #viewer-related-toggle[aria-expanded="false"] .viewer-toggle-label::after {
+            transform: rotate(-90deg);
         }
 
         /* Lets the section's height be driven by its own content (so it
@@ -2143,7 +2364,7 @@
         #viewer-info-content {
             padding: 16px 16px 80px;
             height: 40dvh; /* fallback until the JS below sets --real-vh */
-            height: calc(var(--real-vh, 100dvh) * 0.4); /* see the visualViewport comment further down for why */
+            height: calc(var(--real-vh, 100dvh) * 0.34); /* see the visualViewport comment further down for why */
             box-sizing: border-box;
             color: rgba(0,0,0,0.85);
             font-size: 14px;
@@ -2367,7 +2588,7 @@
             padding: 12px;
 		padding-bottom: 8vh;
             height: 40dvh; /* fallback until the JS below sets --real-vh */
-            height: calc(var(--real-vh, 100dvh) * 0.4); /* see the visualViewport comment further down for why */
+            height: calc(var(--real-vh, 100dvh) * 0.34); /* see the visualViewport comment further down for why */
 		align-items: center;
             /* "safe" falls back to flex-start once the row is wider than
                the section, so the left edge of an overflowing row stays
@@ -2486,15 +2707,33 @@
                 left: 0;
                 /* Holds at 480px near the breakpoint (clamp's floor), then
                    grows proportionally with viewport width past that, up
-                   to a ceiling of the full viewport height — beyond which
-                   a square image can't get any larger anyway. */
-                width: clamp(480px, 53vw, 100vh); /* fallback for browsers without dvh support */
-                width: clamp(480px, 53vw, 100dvh);
+                   to a ceiling of the vertical space actually left over
+                   for the (roughly square) magnified image -- not the
+                   full 100dvh viewport height. That used to be the same
+                   thing, back when #image-overlay ran edge-to-edge, but
+                   now two .viewer-edge-spacer bars (25% of --panel-h
+                   each, see #image-overlay's own --viewer-edge-spacer
+                   below) plus #viewer-toggle-row's own fixed height (see
+                   --viewer-toggle-row-h, defined at :root) eat into that
+                   space, so the width ceiling needs to shrink by the same
+                   amount or the panel keeps growing wider past the point
+                   the image has actually stopped growing taller. */
+                width: clamp(480px, 53vw, calc(100vh - (var(--viewer-edge-spacer, 0px) * 2) - var(--viewer-toggle-row-h, 0px))); /* fallback for browsers without dvh support */
+                width: clamp(480px, 53vw, calc(100dvh - (var(--viewer-edge-spacer, 0px) * 2) - var(--viewer-toggle-row-h, 0px)));
                 max-width: 90vw;
                 height: 100vh; /* fallback for browsers without dvh support */
                 height: 100dvh;
                 transform: translateX(-100%);
                 box-shadow: 4px 0 10px rgba(0,0,0,0.35);
+                /* Exposes the clearance .viewer-edge-spacer (further down)
+                   reserves at the top and bottom of the panel -- see that
+                   rule's own comment for why 25% of --panel-h. Defined
+                   here (rather than baked into .viewer-edge-spacer
+                   directly) so it only takes effect on desktop --
+                   .viewer-edge-spacer's own fallback of 0px, for when this
+                   variable is never set (mobile), is what collapses it to
+                   nothing there. */
+                --viewer-edge-spacer: calc(var(--panel-h) * 0.25);
             }
 
             #image-overlay.visible {
@@ -2761,6 +3000,13 @@
                properties inherit by default, so children just reference
                var(--panel-h) with no extra wiring needed. */
             --panel-h: calc(var(--real-vh, 100dvh) * 0.12);
+            /* How far the panel peeks out on desktop hover before a click
+               commits to the full pop-out (see .nav-peek below) -- a
+               percentage of the panel's own travel distance, same units
+               .nav-visible's translateY(0) is measured against. Tune this
+               one value to adjust how much of the panel (and its odd-
+               shaped artwork) shows during the peek. */
+            --nav-peek-amount: 30%;
             z-index: 1200;
             pointer-events: auto;
             background-repeat: no-repeat;
@@ -2827,6 +3073,78 @@
         #nav-panel-top.nav-visible,
         #nav-panel-bottom.nav-visible {
             transform: translateY(0);
+        }
+
+        /* Panels are only fully interactive once genuinely OPEN --
+           peeking or hidden, everything in them (including the buttons,
+           see .nav-button below) is inert. This is what lets .nav-hot-
+           zone's own explicit auto (below) be the *only* clickable/
+           hoverable surface while peeking: an ancestor's pointer-events
+           doesn't block a descendant that sets its own value, so the
+           hot-zone punches through this none regardless, while
+           everywhere else in the panel (including the buttons) stays
+           genuinely inert until .nav-visible restores auto here and lets
+           it cascade back to anything that doesn't override it itself. */
+        #nav-panel-top,
+        #nav-panel-bottom {
+            pointer-events: none;
+        }
+
+        #nav-panel-top.nav-visible,
+        #nav-panel-bottom.nav-visible {
+            pointer-events: auto;
+        }
+
+        /* Desktop hover "peek" -- shows just a sliver of the panel
+           (--nav-peek-amount) rather than popping it all the way out, so
+           it doesn't immediately eat into the gallery/other panels. A
+           click while peeking promotes to the full .nav-visible state
+           above (see the nav show/hide script further down); mousing
+           away without clicking retracts it again. Mutually exclusive
+           with .nav-visible in practice -- the script never applies both
+           classes at once -- but .nav-visible is declared first in the
+           stylesheet so it wins on equal specificity if that ever
+           changes. Mobile never gets this class (see
+           applyNavPanelResponsiveMode). */
+        #nav-panel-top.nav-peek {
+            transform: translateY(calc(-100% + var(--nav-peek-amount)));
+        }
+
+        #nav-panel-bottom.nav-peek {
+            transform: translateY(calc(100% - var(--nav-peek-amount)));
+        }
+
+        /* The one always-interactive strip inside an otherwise-inert
+           (see above) peeking/hidden panel -- centered, narrower than
+           the full panel (width set by the "Nav trigger width" script,
+           same NAV_HOT_ZONE_FRACTION as #nav-trigger-top/bottom's own
+           width), and spanning the panel's full height so it moves
+           together with the panel's own translateY and stays lined up
+           with whatever sliver is currently visible during a peek.
+           First child in the HTML so the buttons (later siblings, no
+           z-index needed) paint and hit-test above it once the panel's
+           genuinely open -- otherwise this would sit over them and steal
+           their clicks. */
+        .nav-hot-zone {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%; /* fallback only -- the "Nav trigger width" script sets the real (narrower) width once the artwork loads */
+            height: 100%;
+            pointer-events: auto;
+        }
+
+        /* Buttons stay inert (see the panel-level pointer-events above)
+           until the panel is genuinely OPEN -- peeking should never let
+           you actually press Game/Search/Discord/etc, only promote to
+           the full pop-out via the hot zone. cursor: default backs this
+           up visually so hovering an inert button while peeking doesn't
+           show a misleading pointer cursor. */
+        #nav-panel-top:not(.nav-visible) .nav-button,
+        #nav-panel-bottom:not(.nav-visible) .nav-button {
+            pointer-events: none;
+            cursor: default;
         }
 
         /* Temporarily suspends the nav panels' painting/compositing
@@ -3203,11 +3521,13 @@
     <div id="nav-trigger-top"></div>
     <div id="nav-trigger-bottom"></div>
     <div id="nav-panel-top">
+        <div class="nav-hot-zone" id="nav-hot-zone-top"></div>
         <div class="nav-button" id="nav-top-btn-game"></div>
         <div class="nav-button" id="nav-top-btn-search"></div>
         <div class="nav-button" id="nav-top-btn-discord"></div>
     </div>
     <div id="nav-panel-bottom">
+        <div class="nav-hot-zone" id="nav-hot-zone-bottom"></div>
         <div class="nav-button" id="nav-bottom-btn-back"></div>
         <div class="nav-button" id="nav-bottom-btn-audio"></div>
         <div class="nav-button" id="nav-bottom-btn-close"></div>
@@ -3546,6 +3866,7 @@
     <div class="gallery-container" id="gallery"></div>
 
     <div id="image-overlay">
+        <div id="viewer-edge-spacer-top" class="viewer-edge-spacer"></div>
         <div id="viewer-corner-decor-tl" class="viewer-corner-decor"></div>
         <div id="viewer-corner-decor-tr" class="viewer-corner-decor"></div>
         <button id="image-close-btn" aria-label="Close"></button>
@@ -3561,8 +3882,8 @@
             <img id="overlay-img" src="" alt="">
         </div>
         <div id="viewer-toggle-row">
-            <button id="viewer-info-toggle" aria-expanded="false">▸ GENERAL INFORMATION</button>
-            <button id="viewer-related-toggle" aria-expanded="false">▸ EVOLUTION CHAIN / FORMS</button>
+            <button id="viewer-info-toggle" aria-expanded="false"><span class="viewer-toggle-label">INFORMATION</span></button>
+            <button id="viewer-related-toggle" aria-expanded="false"><span class="viewer-toggle-label">EVOLUTIONS / FORMS</span></button>
         </div>
         <div id="viewer-info-wrapper">
             <div id="viewer-info-inner">
@@ -3574,6 +3895,7 @@
                 <div id="viewer-related-grid"></div>
             </div>
         </div>
+        <div id="viewer-edge-spacer-bottom" class="viewer-edge-spacer"></div>
     </div>
 
     <script>
@@ -3919,21 +4241,36 @@
             });
         })();
 
-        // Size the nav trigger zones (the invisible hover/drag strips that
-        // bring up the top/bottom nav panels) to match the actual
-        // rendered width of each panel's background image, rather than
-        // the full window width. Panels use background-size: auto 100%
-        // (height-locked, width auto-scaled, centered) — since the panel
-        // itself is 100% of the window's width but the image inside it
-        // often isn't, a full-width trigger zone was hoverable well past
-        // where the visible artwork actually ends. Same measuring
-        // approach as the frame-bar anchoring above: load the image,
-        // scale its natural width by the panel's current rendered height.
+        // Size the nav trigger zones AND the panels' own .nav-hot-zone
+        // (the invisible hover/click strips that respectively bring up
+        // and promote-to-open the top/bottom nav panels) to the middle
+        // NAV_HOT_ZONE_FRACTION of each panel's actual rendered
+        // background image width, rather than the image's full width.
+        // Panels use background-size: auto 100% (height-locked, width
+        // auto-scaled, centered) -- since the panel itself is 100% of
+        // the window's width but the image inside it often isn't, sizing
+        // off the image's rendered width (not the window's) keeps this
+        // centered on the artwork at any viewport width; shrinking it
+        // further to just the middle fraction keeps the actual hover/
+        // click surface well clear of the art's outer edges. Same
+        // measuring approach as the frame-bar anchoring above: load the
+        // image, scale its natural width by the panel's current rendered
+        // height.
         (() => {
             const navPanelTop = document.getElementById('nav-panel-top');
             const navPanelBottom = document.getElementById('nav-panel-bottom');
             const navTriggerTop = document.getElementById('nav-trigger-top');
             const navTriggerBottom = document.getElementById('nav-trigger-bottom');
+            const navHotZoneTop = document.getElementById('nav-hot-zone-top');
+            const navHotZoneBottom = document.getElementById('nav-hot-zone-bottom');
+
+            // How much of the rendered artwork's width counts as the
+            // hoverable/clickable strip -- centered, so e.g. 0.3 leaves
+            // 35% clear on either side. Tune this one value to adjust
+            // both the trigger zone (entering a peek) and the hot zone
+            // (holding a peek open / clicking to fully open) together,
+            // since they're meant to always match.
+            const NAV_HOT_ZONE_FRACTION = 0.3;
 
             function loadImage(url) {
                 return new Promise((resolve, reject) => {
@@ -3967,7 +4304,13 @@
                 bottom: { url: null, img: null },
             };
 
-            function refresh(panelEl, triggerEl, key) {
+            function applyWidth(panelEl, img, triggerEl, hotZoneEl) {
+                const width = `${renderedWidthFor(panelEl, img) * NAV_HOT_ZONE_FRACTION}px`;
+                triggerEl.style.width = width;
+                hotZoneEl.style.width = width;
+            }
+
+            function refresh(panelEl, triggerEl, hotZoneEl, key) {
                 const url = bgUrlFor(panelEl);
                 if (url !== state[key].url) {
                     state[key].url = url;
@@ -3975,22 +4318,22 @@
                     loadImage(url).then(img => {
                         if (state[key].url !== url) return; // superseded by another swap before this load finished
                         state[key].img = img;
-                        triggerEl.style.width = `${renderedWidthFor(panelEl, img)}px`;
+                        applyWidth(panelEl, img, triggerEl, hotZoneEl);
                     }).catch(err => {
-                        console.warn('Could not size nav trigger zone to background image; falling back to full width.', err);
+                        console.warn('Could not size nav trigger/hot zone to background image; falling back to full width.', err);
                     });
                     return; // wait for the load rather than measuring a stale image this tick
                 }
                 // Same image as before -- just a resize, so just resize the
-                // trigger zone to match the same artwork's new rendered width.
+                // trigger/hot zone to match the same artwork's new rendered width.
                 if (state[key].img) {
-                    triggerEl.style.width = `${renderedWidthFor(panelEl, state[key].img)}px`;
+                    applyWidth(panelEl, state[key].img, triggerEl, hotZoneEl);
                 }
             }
 
             function recalcAll() {
-                refresh(navPanelTop, navTriggerTop, 'top');
-                refresh(navPanelBottom, navTriggerBottom, 'bottom');
+                refresh(navPanelTop, navTriggerTop, navHotZoneTop, 'top');
+                refresh(navPanelBottom, navTriggerBottom, navHotZoneBottom, 'bottom');
             }
 
             recalcAll();
@@ -4117,10 +4460,39 @@
             // element actually received it underneath.
             document.addEventListener('mousemove', (e) => {
                 panels.forEach(({ el, key }) => {
+                    // Only relevant once the panel is genuinely open --
+                    // while peeking/hidden, interactivity is intentionally
+                    // restricted to just .nav-hot-zone (see the panel/
+                    // .nav-button pointer-events rules in CSS), and since
+                    // an inline style here would otherwise outrank any of
+                    // that regardless of selector specificity, this has to
+                    // stay hands-off until nav-visible says otherwise.
+                    if (!el.classList.contains('nav-visible')) return;
                     const { img, alpha } = state[key];
                     if (!img || !alpha) return; // not loaded (yet, or at all) -- leave default pointer-events alone
                     const rect = el.getBoundingClientRect();
                     if (e.clientY < rect.top || e.clientY > rect.bottom) return; // panel off-screen, or cursor elsewhere entirely
+                    // The nav buttons (and the hot zone) are their own opaque
+                    // artwork, drawn independently on top of the panel's
+                    // background image -- the background pixel directly
+                    // underneath a button is often itself transparent, since
+                    // the button's own art is what fills that spot in, not
+                    // the shared background PNG. Sampling that pixel here
+                    // would read "transparent" and set pointer-events:none on
+                    // the *whole panel* -- which doesn't just block clicks,
+                    // it removes the panel from hit-testing entirely, so the
+                    // browser hands mouseenter/mouseleave to whatever's
+                    // underneath (the gallery) instead. That's what was
+                    // firing a spurious mouseleave -- and the hide countdown
+                    // that comes with it -- the instant the cursor reached a
+                    // button. Buttons/hot-zone are always genuinely opaque
+                    // interactive UI regardless of the art behind them, so
+                    // skip the sample and force auto whenever the cursor is
+                    // over one.
+                    if (e.target.closest('.nav-button, .nav-hot-zone')) {
+                        el.style.pointerEvents = 'auto';
+                        return;
+                    }
                     const a = alphaAt(el, img, alpha, e.clientX, e.clientY);
                     el.style.pointerEvents = a > ALPHA_THRESHOLD ? 'auto' : 'none';
                 });
@@ -6898,9 +7270,7 @@
             document.body.classList.toggle('related-expanded', relatedOpen);
 
             viewerInfoToggle.setAttribute('aria-expanded', String(infoOpen));
-            viewerInfoToggle.textContent = infoOpen ? '▾ GENERAL INFORMATION' : '▸ GENERAL INFORMATION';
             viewerRelatedToggle.setAttribute('aria-expanded', String(relatedOpen));
-            viewerRelatedToggle.textContent = relatedOpen ? '▾ EVOLUTION CHAIN / FORMS' : '▸ EVOLUTION CHAIN / FORMS';
 
             // Reuses the same brief transition-enabling window as open/close
             // so the gallery's reserved space grows/shrinks smoothly.
@@ -7210,9 +7580,7 @@
             imageOverlay.classList.remove('related-expanded', 'info-expanded');
             document.body.classList.remove('related-expanded', 'info-expanded');
             viewerInfoToggle.setAttribute('aria-expanded', 'false');
-            viewerInfoToggle.textContent = '▸ GENERAL INFORMATION';
             viewerRelatedToggle.setAttribute('aria-expanded', 'false');
-            viewerRelatedToggle.textContent = '▸ EVOLUTION CHAIN / FORMS';
 
             // Must unlock before the recenter scroll below -- pageScrollLock
             // pins body with position:fixed, and a fixed body can't be
@@ -7426,76 +7794,160 @@
         // below) -- no trigger zones, no hover, no outside-click-close, no
         // timeout, since there's nothing to reveal or dismiss there
         // anymore. On desktop the panels stay off-screen (see
-        // .nav-visible in CSS) until triggered by a mouse hovering the
-        // edge trigger zones or the panels themselves, then close again on
-        // a click outside both panels, or after the mouse has been away
-        // from both trigger zones and both panels for 0.5 uninterrupted
-        // seconds.
+        // .nav-visible/.nav-peek in CSS) until triggered by a mouse
+        // hovering the edge trigger zones or the panels themselves, then
+        // close again on a click outside both panels, or after the mouse
+        // has been away from both trigger zones and both panels for 0.5
+        // uninterrupted seconds.
+        //
+        // Three states rather than a plain on/off toggle: HIDDEN (fully
+        // off-screen), PEEK (just --nav-peek-amount of the panel showing,
+        // entered on hover so the panel doesn't immediately eat into the
+        // gallery/other panels the moment the mouse grazes the edge), and
+        // OPEN (the full .nav-visible pop-out, entered only by an
+        // explicit click while peeking/hovering -- the deliberate action
+        // that upgrades "just glancing at the edge" into "actually wants
+        // the nav"). Hovering away from PEEK retracts to HIDDEN the same
+        // way hovering away from OPEN used to close it outright.
         (() => {
             const navPanelTop = document.getElementById('nav-panel-top');
             const navPanelBottom = document.getElementById('nav-panel-bottom');
             const navTriggerTop = document.getElementById('nav-trigger-top');
             const navTriggerBottom = document.getElementById('nav-trigger-bottom');
-            const navHoverTargets = [navPanelTop, navPanelBottom, navTriggerTop, navTriggerBottom];
+            const navHotZoneTop = document.getElementById('nav-hot-zone-top');
+            const navHotZoneBottom = document.getElementById('nav-hot-zone-bottom');
+            // navPanelTop/Bottom themselves stay in here for the OPEN
+            // state, where the whole panel (buttons included) is meant to
+            // be fully hoverable -- see the panel/.nav-button
+            // pointer-events rules in CSS. While peeking or hidden,
+            // those two are inert everywhere except their own
+            // .nav-hot-zone child, which is what actually narrows the
+            // hover/click surface down to the middle
+            // NAV_HOT_ZONE_FRACTION for those two states.
+            const navHoverTargets = [navPanelTop, navPanelBottom, navTriggerTop, navTriggerBottom, navHotZoneTop, navHotZoneBottom];
 
             const NAV_HIDE_DELAY_DESKTOP_MS = 500;
             let navHideTimer = null;
+            let navState = 'hidden'; // 'hidden' | 'peek' | 'open'
 
-            function showNavPanels() {
+            function setNavState(state) {
+                navState = state;
+                navPanelTop.classList.toggle('nav-peek', state === 'peek');
+                navPanelBottom.classList.toggle('nav-peek', state === 'peek');
+                navPanelTop.classList.toggle('nav-visible', state === 'open');
+                navPanelBottom.classList.toggle('nav-visible', state === 'open');
+                if (state !== 'open') {
+                    // The transparent-pixel click-through system (see the
+                    // "Nav panel transparent-pixel click/hover-through"
+                    // script) sets pointer-events directly as an inline
+                    // style while open, which -- being inline -- would
+                    // otherwise permanently outrank the CSS rules that are
+                    // supposed to govern peeking/hidden (panel inert
+                    // except for .nav-hot-zone). Clearing it here lets
+                    // those rules take back over the moment OPEN ends.
+                    navPanelTop.style.pointerEvents = '';
+                    navPanelBottom.style.pointerEvents = '';
+                }
+            }
+
+            function clearNavHideTimer() {
                 clearTimeout(navHideTimer);
                 navHideTimer = null;
-                navPanelTop.classList.add('nav-visible');
-                navPanelBottom.classList.add('nav-visible');
+            }
+
+            // Peeking or opening both cancel any pending retract/close --
+            // re-entering a trigger/panel mid-countdown should always
+            // cancel it, same as the old show/hide pair did.
+            function peekNavPanels() {
+                clearNavHideTimer();
+                if (navState !== 'open') setNavState('peek');
+            }
+
+            function openNavPanels() {
+                clearNavHideTimer();
+                setNavState('open');
             }
 
             function hideNavPanelsNow() {
                 // Mobile keeps the panels open permanently -- this is a
                 // no-op there regardless of what queued it.
                 if (!desktopFilterQuery.matches) return;
-                clearTimeout(navHideTimer);
-                navHideTimer = null;
-                navPanelTop.classList.remove('nav-visible');
-                navPanelBottom.classList.remove('nav-visible');
+                clearNavHideTimer();
+                setNavState('hidden');
             }
 
             function scheduleHideNavPanels(delayMs) {
-                clearTimeout(navHideTimer);
+                clearNavHideTimer();
                 navHideTimer = setTimeout(hideNavPanelsNow, delayMs);
             }
 
-            // Hovering either trigger strip or either panel keeps things
-            // open; leaving any of them starts the 0.5s countdown, which
-            // the next enter (e.g. moving straight from the trigger zone
-            // into the panel sliding over it) cancels before it fires.
-            // These listeners are harmless on mobile (no real hover there,
-            // and hideNavPanelsNow() refuses to actually hide anything
-            // while the mobile breakpoint is active anyway).
+            // Hovering either trigger strip or either panel opens/holds
+            // the peek (or keeps a full OPEN state alive); leaving any of
+            // them starts the 0.5s countdown back to HIDDEN, which the
+            // next enter (e.g. moving straight from the trigger zone into
+            // the peeking sliver of the panel itself) cancels before it
+            // fires. Clicking while peeking (or while hovering at all)
+            // promotes straight to the full OPEN pop-out -- that's the
+            // one thing that's an explicit "yes, I want this open" rather
+            // than just a passing hover. These listeners are harmless on
+            // mobile (no real hover there, and hideNavPanelsNow() itself
+            // refuses to actually hide anything while the mobile
+            // breakpoint is active anyway).
+            //
+            // .nav-hot-zone is a SIBLING of the .nav-button elements
+            // (both children of the same panel), not their ancestor --
+            // and the buttons paint on top of it since they come later in
+            // the DOM. So the moment the cursor moves off the hot-zone
+            // and onto a button sitting over it, the browser's hit-test
+            // target genuinely changes from the hot-zone to the button,
+            // and since the button isn't a descendant of the hot-zone,
+            // that's a real "leave" as far as the hot-zone's own
+            // mouseleave is concerned -- even though the cursor never
+            // actually left the navbar. That's what was firing the hide
+            // countdown the instant a button was hovered. Checking
+            // relatedTarget here -- and skipping the countdown whenever
+            // the cursor is headed to another part of the same nav
+            // system (a button, the other trigger/hot-zone, the panel
+            // itself) -- treats that as still "inside" rather than a
+            // genuine exit.
+            function isStillInsideNavSystem(target) {
+                return target instanceof Node && navHoverTargets.some(el => el.contains(target));
+            }
+
             navHoverTargets.forEach(el => {
-                el.addEventListener('mouseenter', showNavPanels);
-                el.addEventListener('mouseleave', () => scheduleHideNavPanels(NAV_HIDE_DELAY_DESKTOP_MS));
+                el.addEventListener('mouseenter', peekNavPanels);
+                el.addEventListener('mouseleave', (e) => {
+                    if (isStillInsideNavSystem(e.relatedTarget)) return;
+                    scheduleHideNavPanels(NAV_HIDE_DELAY_DESKTOP_MS);
+                });
+                el.addEventListener('click', () => {
+                    if (desktopFilterQuery.matches) openNavPanels();
+                });
             });
 
             // Outside click/tap closes immediately on desktop, regardless
             // of the countdown; a no-op on mobile since hideNavPanelsNow()
             // itself refuses. Capture phase so this still fires even if
             // something inside the panels later stops propagation for its
-            // own click handling.
+            // own click handling. Only fires while genuinely OPEN -- a
+            // click that's merely promoting a PEEK to OPEN (handled by
+            // the per-target listener above) shouldn't also get treated
+            // as an outside click on the same event.
             document.addEventListener('click', (e) => {
-                const isVisible = navPanelTop.classList.contains('nav-visible');
-                if (!isVisible) return;
+                if (navState !== 'open') return;
                 const insideNav = navHoverTargets.some(el => el.contains(e.target));
                 if (!insideNav) hideNavPanelsNow();
             }, true);
 
             // Mobile: no drag-to-reveal needed anymore since the panels
             // are permanently open there -- just force them visible, and
-            // leave desktop to the hover system above whenever the
+            // leave desktop to the hover/peek system above whenever the
             // breakpoint says desktop. Reacts live to desktopFilterQuery
             // (the same min-width: 664px query already driving the filter
             // panel's own desktop/mobile reconciliation elsewhere), so
             // resizing across it doesn't need a reload.
             function applyNavPanelResponsiveMode() {
-                if (!desktopFilterQuery.matches) showNavPanels();
+                if (!desktopFilterQuery.matches) openNavPanels();
             }
 
             applyNavPanelResponsiveMode();
