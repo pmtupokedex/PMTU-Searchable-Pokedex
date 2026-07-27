@@ -21,26 +21,6 @@
     <style>
         * { box-sizing: border-box; }
 
-        /* Pins #viewer-toggle-row (the GENERAL INFORMATION / EVOLUTION
-           CHAIN buttons) to a known, fixed height rather than letting it
-           size off its own padding/line-height, so that value can also
-           be subtracted from #image-overlay's width ceiling and
-           body.viewer-open's matching padding-left (see both further
-           down) to get an exact available-height figure instead of an
-           approximation. #viewer-info-toggle/#viewer-related-toggle's
-           own 6px top + 6px bottom padding, plus .viewer-toggle-label's
-           10px top + 10px bottom padding (the darkened bubble around the
-           text/arrow -- see that rule for why), plus a 20px line's
-           rendered height (~24px at the browser default line-height) ~
-           56px; rounded up to 58px for a little breathing room. No
-           border to account for anymore now that both elements dropped
-           theirs. Global rather than scoped to #image-overlay because
-           body.viewer-open needs it too, and custom properties only
-           inherit downward -- body isn't a descendant of #image-overlay. */
-        :root {
-            --viewer-toggle-row-h: 58px;
-        }
-
         /* Kills the browser's default blue/gray flash on tap (mobile
            Safari/Chrome) for every element at once, rather than chasing it
            down on individual clickable zones one at a time. It was always
@@ -852,20 +832,17 @@
                which side reserves space (and reset the mobile top rule).
                Must match the panel's own width formula exactly (see
                #image-overlay above, including its width ceiling's
-               subtraction for the two .viewer-edge-spacer bars and
-               #viewer-toggle-row) or the reserved space and the panel's
-               actual width drift apart as the window is resized. Can't
-               reference #image-overlay's own --viewer-edge-spacer here
-               since custom properties only inherit down the DOM tree, and
-               body isn't a descendant of it, so the 2 * 25% * --panel-h
-               it resolves to (0.06 of --real-vh) is spelled out directly
-               instead. --viewer-toggle-row-h doesn't have that problem --
-               it's defined at :root, an ancestor of body -- so it's
-               referenced directly. */
+               subtraction for the two .viewer-edge-spacer bars) or the
+               reserved space and the panel's actual width drift apart as
+               the window is resized. Can't reference #image-overlay's own
+               --viewer-edge-spacer here since custom properties only
+               inherit down the DOM tree, and body isn't a descendant of
+               it, so the 2 * 25% * --panel-h it resolves to (0.06 of
+               --real-vh) is spelled out directly instead. */
             body.viewer-open {
                 padding-top: 20px;
-                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100vh - (var(--real-vh, 100vh) * 0.06) - var(--viewer-toggle-row-h, 0px))), 90vw)); /* fallback for browsers without dvh support */
-                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100dvh - (var(--real-vh, 100dvh) * 0.06) - var(--viewer-toggle-row-h, 0px))), 90vw));
+                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100vh - (var(--real-vh, 100vh) * 0.06))), 90vw)); /* fallback for browsers without dvh support */
+                padding-left: calc(20px + min(clamp(480px, 53vw, calc(100dvh - (var(--real-vh, 100dvh) * 0.06))), 90vw));
             }
         }
 
@@ -1936,16 +1913,9 @@
             /* Matches #viewer-info-toggle/#viewer-related-toggle's own
                background further down, so the spacer reads as part of
                the same panel chrome as those buttons rather than a
-               separate strip. Same two-layer setup as .sounds-panel-bg
-               (Viewer_GrayBar as the art layer, cover/no-repeat;
-               Pokedex-Background-5 tiled on top at 240px 240px/repeat)
-               multiply-blended together, in place of the flat rgba color
-               this used to sit on. */
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/py64w3542d668us6jh5c7/Viewer_GrayBar.png?rlkey=ebzz99v3dfl24kxfhtc8xfp3y&st=4p3bw9tx&dl=1"), url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
-            background-size: cover, 240px 240px;
-            background-position: center, center;
-            background-repeat: no-repeat, repeat;
-            background-blend-mode: multiply;
+               separate dark strip. */
+            background: rgba(255,255,255,0.08);
+		border: 1px solid rgba(255,255,255,0.15);
         }
 
         .viewer-corner-decor {
@@ -2144,186 +2114,31 @@
 
         /* Row itself is the flex item that reserves its natural (button)
            height within #image-overlay's column layout — the two buttons
-           inside just split that row's width evenly. Fixed to
-           --viewer-toggle-row-h (defined at :root) rather than left to
-           intrinsic content sizing, so #image-overlay's width ceiling and
-           body.viewer-open's padding-left (both further down) can
-           subtract an exact figure instead of guessing at it. */
-        /* The shared grey-bar texture now lives here, on the row itself,
-           rather than on each button individually. It used to be applied
-           separately to #viewer-info-toggle and #viewer-related-toggle
-           (each at background-size: cover against its own 50%-width
-           box) -- since both were independent copies of the same source
-           image, and Viewer_GrayBar.png has a bright highlight running
-           along its edges, that highlight got rendered twice right where
-           the two buttons met, showing up as a pale seam/divider down
-           the middle of the row. A single copy spanning the full row
-           has no seam to double up, since there's now only ever one
-           edge (the row's own outer edges) instead of two independent
-           images butted against each other.
-
-           Split into two pseudo-elements (::before for the art layer,
-           ::after for the tiled overlay) instead of the single two-layer
-           `background-image` shorthand used elsewhere (e.g.
-           .viewer-edge-spacer) -- a plain background's layers can't be
-           transformed independently of one another, and the art layer
-           needs its own vertical flip (see ::before below) without
-           flipping the tile on top of it. mix-blend-mode: multiply on
-           ::after reproduces the same blend the shorthand's
-           background-blend-mode gave the two layers before, just applied
-           between two real elements instead of two background layers.
-           position: relative on the row gives both pseudo-elements their
-           positioning context; z-index: -1 on both keeps them behind the
-           row's actual children (the two buttons), which are regular
-           z-index: auto flex items and would otherwise sit below a
-           same-tree-order ::after with no z-index of its own. */
+           inside just split that row's width evenly. */
         #viewer-toggle-row {
-            flex: 0 0 var(--viewer-toggle-row-h);
+            flex: 0 0 auto;
             width: 100%;
             display: flex;
-            position: relative;
-        }
-
-        #viewer-toggle-row::before,
-        #viewer-toggle-row::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            z-index: -1;
-        }
-
-        #viewer-toggle-row::before {
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/py64w3542d668us6jh5c7/Viewer_GrayBar.png?rlkey=ebzz99v3dfl24kxfhtc8xfp3y&st=4p3bw9tx&dl=1");
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            /* Flips the bar art vertically -- transform-origin defaults
-               to the element's own center, so this mirrors it in place
-               without shifting its position. */
-            transform: scaleY(-1);
-        }
-
-        #viewer-toggle-row::after {
-            background-image: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
-            background-size: 240px 240px;
-            background-position: center;
-            background-repeat: repeat;
-            mix-blend-mode: multiply;
         }
 
         #viewer-info-toggle,
         #viewer-related-toggle {
             flex: 1 1 50%;
-            /* No background of its own anymore -- the shared texture now
-               lives on #viewer-toggle-row above, so the button is just a
-               transparent hit target that the .viewer-toggle-label bubble
-               sits on top of. */
-            background: transparent;
+            background: rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.85);
             border: none;
-            padding: 6px 8px;
-            cursor: pointer;
-            /* Typography (font-size/weight/family/transform/color/
-               text-shadow) lives here rather than on .viewer-toggle-label
-               below -- all of those are inheritable properties, so the
-               label picks them up for free without needing its own
-               copy. Still matches .filter-section-header/
-               .sounds-section-header's 20px bold uppercase white text
-               with the 4-direction black text-shadow standing in for an
-               outline. */
-            font-size: 20px;
-            font-weight: bold;
-            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
-            text-transform: uppercase;
-            color: white;
-            text-shadow:
-                -1px -1px 0 black,
-                 1px -1px 0 black,
-                -1px  1px 0 black,
-                 1px  1px 0 black;
-            /* .viewer-toggle-label now stretches to fill this box (see
-               its own width: 100% below) rather than sizing to its own
-               content, so justify-content here just centers the text/
-               arrow *within* that now full-width bubble instead of
-               centering a small bubble within the button. min-width: 0
-               still lets the button shrink below the label's natural
-               content width instead of the default flex-item floor of
-               "never smaller than my content" -- needed for the label's
-               own ellipsis (further down) to ever actually kick in
-               inside this flex: 1 1 50% row. */
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 0;
-        }
-
-        /* The darkened "bubble" .filter-section-header/.sounds-section-
-           header get from their own background (rgba(0,0,0,0.25) +
-           border-radius: 10px + padding: 10px 14px) applied here instead,
-           same as before -- but now expanded to fill the full width of
-           its button (width: 100%) rather than sizing to just the text's
-           own length, so it reads as one continuous bar per button
-           (matching how .filter-section-header fills its own full
-           width) instead of a small pill floating in the middle of a
-           mostly-empty button. Arrow lives inside this element (see
-           ::after further down) rather than the button's, so it sits
-           inside the bubble alongside the text, same as the header rules
-           it's matching. */
-        .viewer-toggle-label {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            background: rgba(0, 0, 0, 0.25);
-            border-radius: 10px;
-            padding: 10px 14px;
-            width: 100%;
-            /* Even shortened to "EVOLUTIONS / FORMS", it's not guaranteed
-               to fit half the panel's width at 20px bold/uppercase on
-               the panel's 480px floor, so it's clipped with an ellipsis
-               rather than wrapping and blowing out --viewer-toggle-row-h's
-               fixed height. min-width: 0 is the other half of the
-               button's own min-width: 0 above -- without it this would
-               refuse to shrink past its own content width regardless of
-               what the flex parent allows. */
-            min-width: 0;
-            max-width: 100%;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        #viewer-info-toggle:hover .viewer-toggle-label,
-        #viewer-related-toggle:hover .viewer-toggle-label {
-            /* Same hover convention as .filter-section-header:hover --
-               dim via opacity instead of tinting the background. Scoped
-               to just the label bubble (not the whole button) so hovering
-               one button dims only its own bubble, the same thing that
-               dims on a filter-section-header hover -- rather than
-               dimming the button's full box, which since the shared
-               texture moved to #viewer-toggle-row above would otherwise
-               have nothing left to visibly dim besides the bubble anyway,
-               but this keeps the intent explicit and matches the header
-               convention exactly. */
-            opacity: 0.85;
-        }
-
-        /* Same arrow glyph/rotation as .filter-section-header::after --
-           content: "▼" resting state, rotated -90deg (pointing right)
-           while collapsed. Lives on .viewer-toggle-label now (not the
-           button) so it sits inside the darkened bubble alongside the
-           text, same as the header rules it's matching. Still keyed off
-           the buttons' own aria-expanded attribute rather than a
-           separate class, since the click handler was already keeping
-           that in sync for accessibility. */
-        .viewer-toggle-label::after {
-            content: "▼";
+            border: 1px solid rgba(255,255,255,0.15);
+            padding: 8px 12px;
             font-size: 14px;
-            transition: transform 0.3s ease;
+            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
+		font-weight: bold;
+            cursor: pointer;
+            text-align: center;
         }
 
-        #viewer-info-toggle[aria-expanded="false"] .viewer-toggle-label::after,
-        #viewer-related-toggle[aria-expanded="false"] .viewer-toggle-label::after {
-            transform: rotate(-90deg);
+        #viewer-info-toggle:hover,
+        #viewer-related-toggle:hover {
+            background: rgba(255,255,255,0.15);
         }
 
         /* Lets the section's height be driven by its own content (so it
@@ -2363,8 +2178,8 @@
 
         #viewer-info-content {
             padding: 16px 16px 80px;
-            height: 34dvh; /* fallback until the JS below sets --real-vh */
-            height: calc(var(--real-vh, 100dvh) * 0.34); /* see the visualViewport comment further down for why */
+            height: 40dvh; /* fallback until the JS below sets --real-vh */
+            height: calc(var(--real-vh, 100dvh) * 0.4); /* see the visualViewport comment further down for why */
             box-sizing: border-box;
             color: rgba(0,0,0,0.85);
             font-size: 14px;
@@ -2587,8 +2402,8 @@
             gap: 10px;
             padding: 12px;
 		padding-bottom: 8vh;
-            height: 34dvh; /* fallback until the JS below sets --real-vh */
-            height: calc(var(--real-vh, 100dvh) * 0.34); /* see the visualViewport comment further down for why */
+            height: 40dvh; /* fallback until the JS below sets --real-vh */
+            height: calc(var(--real-vh, 100dvh) * 0.4); /* see the visualViewport comment further down for why */
 		align-items: center;
             /* "safe" falls back to flex-start once the row is wider than
                the section, so the left edge of an overflowing row stays
@@ -2713,13 +2528,16 @@
                    thing, back when #image-overlay ran edge-to-edge, but
                    now two .viewer-edge-spacer bars (25% of --panel-h
                    each, see #image-overlay's own --viewer-edge-spacer
-                   below) plus #viewer-toggle-row's own fixed height (see
-                   --viewer-toggle-row-h, defined at :root) eat into that
-                   space, so the width ceiling needs to shrink by the same
-                   amount or the panel keeps growing wider past the point
-                   the image has actually stopped growing taller. */
-                width: clamp(480px, 53vw, calc(100vh - (var(--viewer-edge-spacer, 0px) * 2) - var(--viewer-toggle-row-h, 0px))); /* fallback for browsers without dvh support */
-                width: clamp(480px, 53vw, calc(100dvh - (var(--viewer-edge-spacer, 0px) * 2) - var(--viewer-toggle-row-h, 0px)));
+                   below) eat into that space, so the width ceiling needs
+                   to shrink by the same amount or the panel keeps
+                   growing wider past the point the image has actually
+                   stopped growing taller. Doesn't additionally account
+                   for #viewer-toggle-row's own small fixed height (the
+                   GENERAL INFORMATION / EVOLUTION CHAIN buttons) --
+                   same approximation the original 100dvh ceiling already
+                   made, just narrowed to match the new available space. */
+                width: clamp(480px, 53vw, calc(100vh - (var(--viewer-edge-spacer, 0px) * 2))); /* fallback for browsers without dvh support */
+                width: clamp(480px, 53vw, calc(100dvh - (var(--viewer-edge-spacer, 0px) * 2)));
                 max-width: 90vw;
                 height: 100vh; /* fallback for browsers without dvh support */
                 height: 100dvh;
@@ -3882,8 +3700,8 @@
             <img id="overlay-img" src="" alt="">
         </div>
         <div id="viewer-toggle-row">
-            <button id="viewer-info-toggle" aria-expanded="false"><span class="viewer-toggle-label">INFORMATION</span></button>
-            <button id="viewer-related-toggle" aria-expanded="false"><span class="viewer-toggle-label">EVOLUTIONS / FORMS</span></button>
+            <button id="viewer-info-toggle" aria-expanded="false">▸ GENERAL INFORMATION</button>
+            <button id="viewer-related-toggle" aria-expanded="false">▸ EVOLUTION CHAIN / FORMS</button>
         </div>
         <div id="viewer-info-wrapper">
             <div id="viewer-info-inner">
@@ -7270,7 +7088,9 @@
             document.body.classList.toggle('related-expanded', relatedOpen);
 
             viewerInfoToggle.setAttribute('aria-expanded', String(infoOpen));
+            viewerInfoToggle.textContent = infoOpen ? '▾ GENERAL INFORMATION' : '▸ GENERAL INFORMATION';
             viewerRelatedToggle.setAttribute('aria-expanded', String(relatedOpen));
+            viewerRelatedToggle.textContent = relatedOpen ? '▾ EVOLUTION CHAIN / FORMS' : '▸ EVOLUTION CHAIN / FORMS';
 
             // Reuses the same brief transition-enabling window as open/close
             // so the gallery's reserved space grows/shrinks smoothly.
@@ -7580,7 +7400,9 @@
             imageOverlay.classList.remove('related-expanded', 'info-expanded');
             document.body.classList.remove('related-expanded', 'info-expanded');
             viewerInfoToggle.setAttribute('aria-expanded', 'false');
+            viewerInfoToggle.textContent = '▸ GENERAL INFORMATION';
             viewerRelatedToggle.setAttribute('aria-expanded', 'false');
+            viewerRelatedToggle.textContent = '▸ EVOLUTION CHAIN / FORMS';
 
             // Must unlock before the recenter scroll below -- pageScrollLock
             // pins body with position:fixed, and a fixed body can't be
