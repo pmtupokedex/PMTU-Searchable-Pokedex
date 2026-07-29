@@ -1342,6 +1342,40 @@
             margin-top: 0;
         }
 
+        /* Modifier for whichever .game-section-header should actually be
+           collapsible -- just the Saves header for now (see
+           #game-saves-header/#game-saves-section in the script). Kept as
+           this panel's own small class rather than reusing
+           .filter-section-header's identical-looking arrow/collapse
+           treatment directly, since that class is wired page-wide (see
+           the .filter-section-header querySelectorAll loop) to start
+           every section it's applied to collapsed on load -- not what's
+           wanted here, since Saves should start open until a save
+           actually becomes active (see setSavesSectionCollapsed() in the
+           script). Owning this small bit of CSS+JS separately avoids two
+           click handlers fighting over the same class. */
+        .game-collapsible-header {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .game-collapsible-header:hover {
+            opacity: 0.85;
+        }
+
+        .game-collapsible-header::after {
+            content: "\25BC";
+            font-size: 14px;
+            transition: transform 0.3s ease;
+        }
+
+        .game-collapsible-header.collapsed::after {
+            transform: rotate(-90deg);
+        }
+
         /* "Playing: <name>" -- only populated (see renderActiveSaveLabel()
            in the script) when a real save is active; empty and taking up
            no visual room otherwise. */
@@ -4326,8 +4360,9 @@
                     <button class="filter-btn game-save-progress-btn">Save This Progress</button>
                 </div>
 
-                <div class="game-section-header">Saves</div>
+                <div class="game-section-header game-collapsible-header" id="game-saves-header">Saves</div>
 
+                <div id="game-saves-section">
                 <div class="game-save-slot" data-slot="0" data-state="empty">
                     <div class="game-save-slot-loaded">
                         <p class="game-save-slot-name"></p>
@@ -4407,6 +4442,7 @@
                             <button class="filter-btn game-create-cancel-btn" data-slot="2">Cancel</button>
                         </div>
                     </div>
+                </div>
                 </div>
 
                 <p class="game-active-save-label" id="game-menu-active-save-name"></p>
@@ -6271,6 +6307,7 @@
                 unsavedSessionTouched = false;
                 pendingUnsavedCommit = false;
             }
+            setSavesSectionCollapsed(true);
             refreshGameUI();
         }
 
@@ -6280,6 +6317,7 @@
             persistGameSaves();
             activeSaveSlot = slotIndex;
             persistActiveSaveSlot();
+            setSavesSectionCollapsed(true);
             refreshGameUI();
         }
 
@@ -6289,6 +6327,10 @@
             if (activeSaveSlot === slotIndex) {
                 activeSaveSlot = null;
                 persistActiveSaveSlot();
+                // Nothing active anymore -- reopen Saves so there's
+                // something to pick/create rather than leaving it
+                // collapsed with nothing obviously loaded.
+                setSavesSectionCollapsed(false);
             }
             refreshGameUI();
         }
@@ -6356,6 +6398,24 @@
             if (badgesEl) badgesEl.textContent = `Badges: ${data.badges.count || 0} (${label})`;
             const teamEl = document.getElementById('game-team-debug-readout');
             if (teamEl) teamEl.textContent = `Team Members: ${data.team.count || 0} (${label})`;
+        }
+
+        // Collapses/expands the Saves section -- starts open (see the
+        // initial call further down) so there's something to pick/create
+        // right away, then auto-collapses itself once a save is created
+        // or loaded (see createSave()/loadSaveSlot() above), the same way
+        // .filter-section-header sections do once a choice is made, just
+        // driven by that choice here instead of starting collapsed by
+        // default. Re-expanded if the active save gets deleted out from
+        // under it (see deleteSaveSlot() above). Manual clicks on the
+        // header itself (see the delegated listener below) can always
+        // override either state in the meantime.
+        function setSavesSectionCollapsed(collapsed) {
+            const header = document.getElementById('game-saves-header');
+            const section = document.getElementById('game-saves-section');
+            if (!header || !section) return;
+            header.classList.toggle('collapsed', collapsed);
+            section.style.display = collapsed ? 'none' : '';
         }
 
         function refreshGameUI() {
@@ -6448,6 +6508,7 @@
             }
             pendingUnsavedCommit = true;
             setGameScreen('main');
+            setSavesSectionCollapsed(false);
             beginCreatingSave(emptyIndex);
         }
 
@@ -6480,17 +6541,27 @@
 
         refreshGameUI();
         resetGameScreen();
+        // A save loaded from a previous session should start collapsed
+        // (nothing new to decide); otherwise start open so there's
+        // something to pick/create right away.
+        setSavesSectionCollapsed(activeSaveSlot !== null);
 
         // Single delegated listener covers every interactive element in
         // the panel -- back buttons and menu tiles (both just carry a
-        // data-target to jump to), the save picker's own
-        // new/create/cancel/load/delete buttons (data-slot instead), the
-        // save-progress banner's button, and the two temporary Test
-        // buttons.
+        // data-target to jump to), the Saves header itself, the save
+        // picker's own new/create/cancel/load/delete buttons (data-slot
+        // instead), the save-progress banner's button, and the two
+        // temporary Test buttons.
         document.getElementById('game-scroll').addEventListener('click', (e) => {
             const navTarget = e.target.closest('[data-target]');
             if (navTarget) {
                 setGameScreen(navTarget.dataset.target);
+                return;
+            }
+
+            const savesHeader = e.target.closest('#game-saves-header');
+            if (savesHeader) {
+                setSavesSectionCollapsed(!savesHeader.classList.contains('collapsed'));
                 return;
             }
 
