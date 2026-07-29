@@ -927,8 +927,6 @@
         #discord-scroll {
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: center;
             overflow-y: auto;
             padding: calc(var(--real-vh, 100dvh) * 0.12) 20px calc(var(--real-vh, 100dvh) * 0.13);
             flex-grow: 1;
@@ -940,6 +938,24 @@
             font-size: 20px;
             color: #333;
             text-align: center;
+        }
+
+        /* Vertically centers short content via auto margins instead of
+           #discord-scroll using justify-content:center. justify-content
+           center on the scrollable parent has a well-known flexbox bug:
+           once content overflows (e.g. Credits expanded), the "centering"
+           shows up as unreachable space above the first child too, so you
+           can't scroll back up to it. Auto margins don't have that
+           problem -- they center when there's spare room, and simply
+           collapse to 0 (instead of phantom overflow) once content is
+           taller than the container, so the top stays reachable either
+           way. */
+        #discord-scroll-inner {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            margin: auto 0;
         }
 
         @media (min-width: 664px) {
@@ -1134,8 +1150,7 @@
 
         #game-scroll {
             display: flex;
-            align-items: center;
-            justify-content: center;
+            flex-direction: column;
             overflow-y: auto;
             padding: calc(var(--real-vh, 100dvh) * 0.12) 20px calc(var(--real-vh, 100dvh) * 0.13);
             flex-grow: 1;
@@ -1144,9 +1159,7 @@
             margin: 0 auto;
             box-sizing: border-box;
             scrollbar-gutter: stable;
-            font-size: 20px;
             color: #333;
-            text-align: center;
         }
 
         @media (min-width: 664px) {
@@ -1155,6 +1168,248 @@
             #game-scroll {
                 padding: 20px 35px 80px 20px;
             }
+        }
+
+        /* Game panel screens -- exactly one of these is ever visible at
+           once (see setGameScreen() in the script). Each screen is its
+           own flex column so its content and the placeholder text below
+           both lay out predictably regardless of which screen it is. */
+        .game-screen {
+            display: none;
+            flex-direction: column;
+            flex: 1;
+            width: 100%;
+        }
+
+        .game-screen.active {
+            display: flex;
+        }
+
+        /* Shared centered stand-in for the four real tools and the
+           lobby, until each gets built out for real. */
+        .game-placeholder-text {
+            margin: auto;
+            font-size: 20px;
+            text-align: center;
+        }
+
+        /* Every screen except the save picker (the true root) gets one
+           of these at the top -- the menu's goes back to the save
+           picker, every tool/lobby screen's goes back to the menu. Each
+           back button carries its own target in data-target rather than
+           this being driven by a JS lookup table, so the screens stay
+           self-describing in the markup. */
+        .game-screen-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .game-back-btn {
+            background: none;
+            border: none;
+            color: #333;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 6px 4px;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: manipulation;
+        }
+
+        .game-screen-title {
+            font-size: 20px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        /* Save picker -- 3 fixed slots (see GAME_SAVE_SLOT_COUNT). Each
+           one is either showing its saved name + Load/Delete, or (empty)
+           a single "+ New Save" button, or (mid-creation) the little
+           name/rule form below. */
+        .game-save-slot {
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            padding: 14px;
+            margin-bottom: 15px;
+        }
+
+        .game-save-slot-name {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 0 0 4px;
+        }
+
+        .game-save-slot-meta {
+            font-size: 13px;
+            color: #666;
+            margin: 0 0 10px;
+        }
+
+        .game-save-slot-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .game-save-slot-actions .filter-btn {
+            margin: 0;
+            font-size: 13px;
+            padding: 8px 14px;
+        }
+
+        /* Swapped in for the "Tap Again to Delete" confirmation window
+           (see armDeleteConfirm() in the script) -- red like
+           .filter-btn.exclude elsewhere, rather than a native confirm(). */
+        .game-save-slot-actions .filter-btn.confirm-delete {
+            background-color: rgba(255, 77, 77, 0.70);
+        }
+
+        /* Each slot is in exactly one of these three states at a time
+           (see renderSavePicker()/data-state in the script) -- loaded
+           (a save exists here), empty (nothing here yet), or creating
+           (the name/rule form above is up, mid-creation). */
+        .game-save-slot-loaded,
+        .game-save-slot-empty,
+        .game-save-new-form {
+            display: none;
+        }
+
+        .game-save-slot[data-state="loaded"] .game-save-slot-loaded {
+            display: block;
+        }
+
+        .game-save-slot[data-state="empty"] .game-save-slot-empty {
+            display: block;
+        }
+
+        .game-save-slot[data-state="creating"] .game-save-new-form {
+            display: flex;
+        }
+
+        .game-save-new-form {
+            flex-direction: column;
+            gap: 10px;
+        }
+        .game-save-new-form select {
+            font-size: 15px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            font-family: inherit;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .game-save-new-form label {
+            font-size: 13px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #555;
+        }
+
+        /* Tool menu -- stacked full-width buttons for now (see
+           .filter-btn), same as every other button-list in the app,
+           until real tile art exists for these. */
+        .game-menu-tiles {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .game-menu-tiles .filter-btn {
+            width: 100%;
+            box-sizing: border-box;
+            text-align: center;
+        }
+
+        /* Section labels within the merged main screen ("Saves" /
+           "Tools") -- own class rather than reusing .sounds-section-header
+           directly, matching how each panel here keeps its own visual
+           language even where two happen to look alike (see .filter-btn
+           for the one class that IS deliberately shared app-wide). */
+        .game-section-header {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 15px 0 10px;
+            text-transform: uppercase;
+            color: #333;
+        }
+
+        .game-section-header:first-child {
+            margin-top: 0;
+        }
+
+        /* "Playing: <name>" -- only populated (see renderActiveSaveLabel()
+           in the script) when a real save is active; empty and taking up
+           no visual room otherwise. */
+        .game-active-save-label {
+            font-size: 15px;
+            font-weight: bold;
+            color: #333;
+            margin: 0 0 5px;
+        }
+
+        /* Unsaved-progress safety net -- hidden until the in-memory
+           session actually has something in it worth losing (see
+           markUnsavedProgressChanged() in the script), then shown on the
+           main screen and inside whichever save-scoped tool screens
+           exist (Badge/Team Tracker for now). Same idea as
+           .filter-btn.exclude's red for "something needs your attention"
+           but its own softer amber, since this isn't a destructive
+           action being flagged, just an unsaved one. */
+        .game-save-progress-banner {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            background: rgba(255, 196, 0, 0.18);
+            border: 2px solid rgba(255, 170, 0, 0.55);
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-bottom: 15px;
+        }
+
+        .game-save-progress-banner.visible {
+            display: flex;
+        }
+
+        .game-save-progress-banner span {
+            font-size: 14px;
+            font-weight: bold;
+            color: #7a5200;
+        }
+
+        .game-save-progress-banner .filter-btn {
+            margin: 0;
+            font-size: 13px;
+            padding: 8px 12px;
+            white-space: nowrap;
+        }
+
+        /* One-time nudge (see pulseSaveProgressPrompt()) the first time
+           there's actually something to save -- after that it's just a
+           persistent, ignorable button. Restart-safe the same way
+           .gallery-pulse is (remove class, force reflow, re-add) rather
+           than this rule needing anything special itself. */
+        @keyframes game-save-progress-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.04); }
+        }
+
+        .game-save-progress-banner.pulse-once {
+            animation: game-save-progress-pulse 0.5s ease 2;
+        }
+
+        /* Temporary -- lives next to the Test buttons in Badge/Team
+           Tracker (see the script) and goes away with them once those
+           tools are real. */
+        .game-debug-readout {
+            font-size: 13px;
+            color: #666;
+            margin: 10px 0;
         }
 
         #filter-top {
@@ -4028,12 +4283,13 @@
     <div id="discord-panel">
         <div class="filter-panel-bg"></div>
         <div id="discord-scroll">
+          <div id="discord-scroll-inner">
             <div id="discord-title">Become a Master Trainer!</div>
-            <p id="discord-intro">Join the Pokémon Master Trainer: Ultimate Edition <br>Discord server! (200+ members and counting)</p>
+            <p id="discord-intro">Join the Pokémon Master Trainer: Ultimate Edition <br>Discord server! (1,600+ members and counting)</p>
             <ul id="discord-features">
-                <li>Chat with your fellow trainers.</li>
-                <li>Need help with rules? You'll find an answer!</li>
-                <li>Get the latest news and sneak peaks of future updates.</li>
+                <li>Chat with your fellow Trainers.</li>
+                <li>Need help with rules? You'll find an answer here!</li>
+                <li>Get the latest news and sneak peaks of future updates!</li>
                 <li>Provide feedback and suggestions for the game.</li>
                 <li>Find user-created custom game content!</li>
                 <li>Organise games online with other players.</li>
@@ -4052,12 +4308,178 @@
                 <p>Special thanks to everyone in the Discord community for testing, feedback, and support!</p>
 		    <p class="rights-disclaimer">Pokémon Master Trainer: Ultimate Edition and this website are fanmade works based on Pokémon by The Pokémon Company (Nintendo, Game Freak, and Creatures Inc.). All rights to the characters and setting belong to The Pokémon Company. This website, PMTU, and their creators are not affiliated with The Pokémon Company.</p>
             </div>
+          </div>
         </div>
     </div>
 
     <div id="game-panel">
         <div class="sounds-panel-bg"></div>
-        <div id="game-scroll">Under Construction</div>
+        <div id="game-scroll">
+
+            <!-- The one root screen now -- saves and tools are both
+                 always visible together, so using a tool never requires
+                 picking a save first (see the unsaved-session system in
+                 the script for how Badge/Team Tracker cope with that). -->
+            <div class="game-screen active" id="game-screen-main">
+                <div class="game-save-progress-banner" id="game-save-progress-banner-main">
+                    <span>You have unsaved progress.</span>
+                    <button class="filter-btn game-save-progress-btn">Save This Progress</button>
+                </div>
+
+                <div class="game-section-header">Saves</div>
+
+                <div class="game-save-slot" data-slot="0" data-state="empty">
+                    <div class="game-save-slot-loaded">
+                        <p class="game-save-slot-name"></p>
+                        <p class="game-save-slot-meta"></p>
+                        <div class="game-save-slot-actions">
+                            <button class="filter-btn game-load-btn" data-slot="0">Load</button>
+                            <button class="filter-btn game-delete-btn" data-slot="0">Delete</button>
+                        </div>
+                    </div>
+                    <div class="game-save-slot-empty">
+                        <button class="filter-btn game-new-btn" data-slot="0">+ New Save</button>
+                    </div>
+                    <div class="game-save-new-form" data-slot="0">
+                        <label for="game-new-name-0">Save Name</label>
+                        <input type="text" id="game-new-name-0" class="game-new-name-input" placeholder="My Game" maxlength="24">
+                        <label for="game-new-rule-0">Badge Stage Rule</label>
+                        <select id="game-new-rule-0" class="game-new-rule-select">
+                            <option value="count">Badge Count</option>
+                            <option value="points">Badge Points</option>
+                        </select>
+                        <div class="game-save-slot-actions">
+                            <button class="filter-btn game-create-confirm-btn" data-slot="0">Create</button>
+                            <button class="filter-btn game-create-cancel-btn" data-slot="0">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="game-save-slot" data-slot="1" data-state="empty">
+                    <div class="game-save-slot-loaded">
+                        <p class="game-save-slot-name"></p>
+                        <p class="game-save-slot-meta"></p>
+                        <div class="game-save-slot-actions">
+                            <button class="filter-btn game-load-btn" data-slot="1">Load</button>
+                            <button class="filter-btn game-delete-btn" data-slot="1">Delete</button>
+                        </div>
+                    </div>
+                    <div class="game-save-slot-empty">
+                        <button class="filter-btn game-new-btn" data-slot="1">+ New Save</button>
+                    </div>
+                    <div class="game-save-new-form" data-slot="1">
+                        <label for="game-new-name-1">Save Name</label>
+                        <input type="text" id="game-new-name-1" class="game-new-name-input" placeholder="My Game" maxlength="24">
+                        <label for="game-new-rule-1">Badge Stage Rule</label>
+                        <select id="game-new-rule-1" class="game-new-rule-select">
+                            <option value="count">Badge Count</option>
+                            <option value="points">Badge Points</option>
+                        </select>
+                        <div class="game-save-slot-actions">
+                            <button class="filter-btn game-create-confirm-btn" data-slot="1">Create</button>
+                            <button class="filter-btn game-create-cancel-btn" data-slot="1">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="game-save-slot" data-slot="2" data-state="empty">
+                    <div class="game-save-slot-loaded">
+                        <p class="game-save-slot-name"></p>
+                        <p class="game-save-slot-meta"></p>
+                        <div class="game-save-slot-actions">
+                            <button class="filter-btn game-load-btn" data-slot="2">Load</button>
+                            <button class="filter-btn game-delete-btn" data-slot="2">Delete</button>
+                        </div>
+                    </div>
+                    <div class="game-save-slot-empty">
+                        <button class="filter-btn game-new-btn" data-slot="2">+ New Save</button>
+                    </div>
+                    <div class="game-save-new-form" data-slot="2">
+                        <label for="game-new-name-2">Save Name</label>
+                        <input type="text" id="game-new-name-2" class="game-new-name-input" placeholder="My Game" maxlength="24">
+                        <label for="game-new-rule-2">Badge Stage Rule</label>
+                        <select id="game-new-rule-2" class="game-new-rule-select">
+                            <option value="count">Badge Count</option>
+                            <option value="points">Badge Points</option>
+                        </select>
+                        <div class="game-save-slot-actions">
+                            <button class="filter-btn game-create-confirm-btn" data-slot="2">Create</button>
+                            <button class="filter-btn game-create-cancel-btn" data-slot="2">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
+                <p class="game-active-save-label" id="game-menu-active-save-name"></p>
+
+                <div class="game-section-header">Tools</div>
+
+                <div class="game-menu-tiles">
+                    <button class="filter-btn" data-target="badges">Badge Tracker</button>
+                    <button class="filter-btn" data-target="calc">Attack Calculator</button>
+                    <button class="filter-btn" data-target="matchup">Type Matchup</button>
+                    <button class="filter-btn" data-target="team">Team Tracker</button>
+                    <button class="filter-btn" data-target="lobby">Multiplayer Lobby</button>
+                </div>
+            </div>
+
+            <div class="game-screen" id="game-screen-badges">
+                <div class="game-screen-header">
+                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
+                    <span class="game-screen-title">Badge Tracker</span>
+                </div>
+                <div class="game-save-progress-banner" id="game-save-progress-banner-badges">
+                    <span>You have unsaved progress.</span>
+                    <button class="filter-btn game-save-progress-btn">Save This Progress</button>
+                </div>
+                <p class="game-placeholder-text">Under Construction</p>
+                <!-- Temporary test hook -- exercises the unsaved-progress
+                     safety net end-to-end before there's a real Badge
+                     Tracker UI to trigger it with. Remove once real
+                     badge-tracking controls exist. -->
+                <p class="game-debug-readout" id="game-badges-debug-readout"></p>
+                <button class="filter-btn" id="game-badges-test-btn">Test: +1 Badge</button>
+            </div>
+
+            <div class="game-screen" id="game-screen-calc">
+                <div class="game-screen-header">
+                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
+                    <span class="game-screen-title">Attack Calculator</span>
+                </div>
+                <p class="game-placeholder-text">Under Construction</p>
+            </div>
+
+            <div class="game-screen" id="game-screen-matchup">
+                <div class="game-screen-header">
+                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
+                    <span class="game-screen-title">Type Matchup</span>
+                </div>
+                <p class="game-placeholder-text">Under Construction</p>
+            </div>
+
+            <div class="game-screen" id="game-screen-team">
+                <div class="game-screen-header">
+                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
+                    <span class="game-screen-title">Team Tracker</span>
+                </div>
+                <div class="game-save-progress-banner" id="game-save-progress-banner-team">
+                    <span>You have unsaved progress.</span>
+                    <button class="filter-btn game-save-progress-btn">Save This Progress</button>
+                </div>
+                <p class="game-placeholder-text">Under Construction</p>
+                <!-- Same temporary test hook as Badge Tracker above. -->
+                <p class="game-debug-readout" id="game-team-debug-readout"></p>
+                <button class="filter-btn" id="game-team-test-btn">Test: +1 Team Member</button>
+            </div>
+
+            <div class="game-screen" id="game-screen-lobby">
+                <div class="game-screen-header">
+                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
+                    <span class="game-screen-title">Multiplayer Lobby</span>
+                </div>
+                <p class="game-placeholder-text">Under Construction</p>
+            </div>
+
+        </div>
     </div>
 
     <div class="gallery-container" id="gallery"></div>
@@ -5716,6 +6138,7 @@
                     window.pageScrollLock.unlock();
                 }
             }
+            resetGameScreen();
             refreshBackButtonState();
         }
 
@@ -5726,6 +6149,422 @@
                 openGamePanel();
             }
         }
+
+        // ---- Game panel contents (save system + menu/tool screens) ----
+        //
+        // Three fixed save slots (see GAME_SAVE_SLOT_COUNT), each holding
+        // everything a single playthrough needs -- badges, team, and
+        // whatever else future tools add -- as one bundle, so loading a
+        // save brings all of it in at once and deleting one clears all of
+        // it in one go. Persisted to localStorage the same defensive way
+        // audio settings are (see loadAudioSettings() below), just
+        // simpler here since a save's shape isn't user-editable the way
+        // settings are.
+        const GAME_SAVES_KEY = 'pmtuGameSaves';
+        const ACTIVE_SAVE_KEY = 'pmtuActiveSaveSlot';
+        const GAME_SAVE_SLOT_COUNT = 3;
+
+        function loadGameSaves() {
+            let stored = null;
+            try {
+                stored = JSON.parse(localStorage.getItem(GAME_SAVES_KEY));
+            } catch (err) {
+                stored = null;
+            }
+            const slots = Array.isArray(stored) ? stored.slice(0, GAME_SAVE_SLOT_COUNT) : [];
+            while (slots.length < GAME_SAVE_SLOT_COUNT) slots.push(null);
+            return slots;
+        }
+
+        function persistGameSaves() {
+            try {
+                localStorage.setItem(GAME_SAVES_KEY, JSON.stringify(gameSaves));
+            } catch (err) {
+                console.warn('Could not save game saves:', err);
+            }
+        }
+
+        function loadActiveSaveSlot(slots) {
+            let stored = null;
+            try {
+                stored = JSON.parse(localStorage.getItem(ACTIVE_SAVE_KEY));
+            } catch (err) {
+                stored = null;
+            }
+            // Only trust it if it actually points at a save that still
+            // exists -- a stale index left over from a save that's since
+            // been deleted elsewhere shouldn't silently resurrect the
+            // menu into thinking something's loaded.
+            return (typeof stored === 'number' && slots[stored]) ? stored : null;
+        }
+
+        function persistActiveSaveSlot() {
+            try {
+                if (activeSaveSlot === null) {
+                    localStorage.removeItem(ACTIVE_SAVE_KEY);
+                } else {
+                    localStorage.setItem(ACTIVE_SAVE_KEY, JSON.stringify(activeSaveSlot));
+                }
+            } catch (err) {
+                console.warn('Could not save active save slot:', err);
+            }
+        }
+
+        let gameSaves = loadGameSaves();
+        let activeSaveSlot = loadActiveSaveSlot(gameSaves);
+
+        // In-memory-only "unsaved session" -- what Badge Tracker/Team
+        // Tracker (and eventually Trainer Card) read and write through
+        // whenever no save is active, via getActiveSaveData() below.
+        // Deliberately never persisted to localStorage: that's the whole
+        // point of the "Save This Progress" safety net further down --
+        // if this silently survived a refresh on its own, there'd be no
+        // real difference between "saved" and "unsaved" and nothing to
+        // ever nudge anyone about.
+        function emptySaveScopedData() {
+            return { badges: {}, team: {} };
+        }
+        let unsavedSessionData = emptySaveScopedData();
+        let unsavedSessionTouched = false; // true once it's actually held something worth losing
+
+        // The one accessor every save-scoped tool should read/write
+        // through, so tool code never needs its own if/else for "is
+        // there a real save right now or not" -- it just asks for
+        // "whatever's active," and gets a direct reference it can
+        // mutate in place either way.
+        function getActiveSaveData() {
+            return activeSaveSlot !== null ? gameSaves[activeSaveSlot] : unsavedSessionData;
+        }
+
+        // Set right before opening a slot's creation form via the "Save
+        // This Progress" flow (see promptSaveUnsavedProgress()) so
+        // createSave() below knows to seed the new save from the
+        // in-memory session instead of starting it empty -- cleared again
+        // on either an actual create or a cancel, so it can never leak
+        // into an unrelated later "+ New Save".
+        let pendingUnsavedCommit = false;
+
+        function createSave(slotIndex, name, stageRule) {
+            const now = new Date().toISOString();
+            const seed = pendingUnsavedCommit ? unsavedSessionData : emptySaveScopedData();
+            gameSaves[slotIndex] = {
+                name: name || `Save ${slotIndex + 1}`,
+                createdAt: now,
+                lastPlayed: now,
+                stageRule, // 'count' | 'points' -- exact thresholds come with the badge tracker itself
+                // Placeholder until the badge tracker exists to actually
+                // derive this -- 'early' matches the Sounds panel's own
+                // GAME_STAGE_ORDER labels (see setActiveGameStage() below)
+                // so the two line up once they're wired together.
+                stage: 'early',
+                badges: seed.badges,
+                team: seed.team,
+            };
+            persistGameSaves();
+            activeSaveSlot = slotIndex;
+            persistActiveSaveSlot();
+            if (pendingUnsavedCommit) {
+                // Its contents live in a real save now -- getActiveSaveData()
+                // resolves to that save from here on regardless, this just
+                // keeps a stale duplicate out of memory.
+                unsavedSessionData = emptySaveScopedData();
+                unsavedSessionTouched = false;
+                pendingUnsavedCommit = false;
+            }
+            refreshGameUI();
+        }
+
+        function loadSaveSlot(slotIndex) {
+            if (!gameSaves[slotIndex]) return;
+            gameSaves[slotIndex].lastPlayed = new Date().toISOString();
+            persistGameSaves();
+            activeSaveSlot = slotIndex;
+            persistActiveSaveSlot();
+            refreshGameUI();
+        }
+
+        function deleteSaveSlot(slotIndex) {
+            gameSaves[slotIndex] = null;
+            persistGameSaves();
+            if (activeSaveSlot === slotIndex) {
+                activeSaveSlot = null;
+                persistActiveSaveSlot();
+            }
+            refreshGameUI();
+        }
+
+        function formatSaveTimestamp(iso) {
+            try {
+                return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            } catch (err) {
+                return '';
+            }
+        }
+
+        // Rebuilds each slot's data-state and displayed text from
+        // gameSaves -- called any time a save is created/loaded/deleted
+        // so the picker never shows stale info.
+        function renderSavePicker() {
+            for (let i = 0; i < GAME_SAVE_SLOT_COUNT; i++) {
+                const slotEl = document.querySelector(`.game-save-slot[data-slot="${i}"]`);
+                if (!slotEl) continue;
+                const save = gameSaves[i];
+                if (save) {
+                    slotEl.dataset.state = 'loaded';
+                    slotEl.querySelector('.game-save-slot-name').textContent = save.name;
+                    slotEl.querySelector('.game-save-slot-meta').textContent = `Last played ${formatSaveTimestamp(save.lastPlayed)}`;
+                } else if (slotEl.dataset.state !== 'creating') {
+                    slotEl.dataset.state = 'empty';
+                }
+            }
+        }
+
+        function renderActiveSaveLabel() {
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            document.getElementById('game-menu-active-save-name').textContent = save ? `Playing: ${save.name}` : '';
+        }
+
+        // Shown/hidden together on the main screen and inside whichever
+        // save-scoped tool screens exist (Badge/Team Tracker for now) --
+        // see .game-save-progress-banner in CSS. Visible any time there's
+        // unsaved progress sitting in memory, regardless of which of
+        // those screens happens to be showing.
+        function renderSaveProgressPrompt() {
+            const show = activeSaveSlot === null && unsavedSessionTouched;
+            document.querySelectorAll('.game-save-progress-banner').forEach(el => {
+                el.classList.toggle('visible', show);
+            });
+        }
+
+        function pulseSaveProgressPrompt() {
+            document.querySelectorAll('.game-save-progress-banner').forEach(el => {
+                el.classList.remove('pulse-once');
+                void el.offsetWidth;
+                el.classList.add('pulse-once');
+            });
+        }
+
+        // Temporary -- mirrors whatever's actually in the active save
+        // data (real or unsaved) next to the Test buttons in Badge/Team
+        // Tracker, purely so the safety net above is visibly exercised
+        // before those tools have real UI of their own. Goes away with
+        // the Test buttons once they do.
+        function renderDebugReadouts() {
+            const data = getActiveSaveData();
+            const label = activeSaveSlot !== null ? gameSaves[activeSaveSlot].name : 'unsaved';
+            const badgesEl = document.getElementById('game-badges-debug-readout');
+            if (badgesEl) badgesEl.textContent = `Badges: ${data.badges.count || 0} (${label})`;
+            const teamEl = document.getElementById('game-team-debug-readout');
+            if (teamEl) teamEl.textContent = `Team Members: ${data.team.count || 0} (${label})`;
+        }
+
+        function refreshGameUI() {
+            renderSavePicker();
+            renderActiveSaveLabel();
+            renderSaveProgressPrompt();
+            renderDebugReadouts();
+        }
+
+        // Called by any save-scoped tool whenever it mutates badges/team
+        // (or eventually Trainer Card data) while unsaved -- turns on the
+        // persistent "Save This Progress" banner and, the first time
+        // only, pulses it once so it's not just something to stumble
+        // across on the way back to the main screen. A no-op once a real
+        // save is active, so tool code can call this unconditionally
+        // after every change without checking activeSaveSlot itself.
+        function markUnsavedProgressChanged() {
+            renderDebugReadouts();
+            if (activeSaveSlot !== null) return;
+            const alreadyTouched = unsavedSessionTouched;
+            unsavedSessionTouched = true;
+            renderSaveProgressPrompt();
+            if (!alreadyTouched) pulseSaveProgressPrompt();
+        }
+
+        // "Tap again to delete" -- a delete button turns red and its own
+        // label changes for GAME_DELETE_CONFIRM_MS; a second tap in that
+        // window actually deletes, otherwise it quietly reverts on its
+        // own. A small state machine here rather than a native confirm(),
+        // consistent with the rest of the site building its own UI for
+        // everything instead of relying on browser dialogs.
+        const GAME_DELETE_CONFIRM_MS = 4000;
+        let armedDeleteBtn = null;
+        let armedDeleteTimer = null;
+
+        function disarmDeleteConfirm() {
+            if (armedDeleteBtn) {
+                armedDeleteBtn.classList.remove('confirm-delete');
+                armedDeleteBtn.textContent = 'Delete';
+            }
+            clearTimeout(armedDeleteTimer);
+            armedDeleteBtn = null;
+            armedDeleteTimer = null;
+        }
+
+        function armDeleteConfirm(btn) {
+            disarmDeleteConfirm();
+            armedDeleteBtn = btn;
+            btn.classList.add('confirm-delete');
+            btn.textContent = 'Tap Again to Delete';
+            armedDeleteTimer = setTimeout(disarmDeleteConfirm, GAME_DELETE_CONFIRM_MS);
+        }
+
+        // Opens a given (empty) slot's creation form -- shared by the
+        // ordinary "+ New Save" button and the unsaved-progress flow
+        // below, which is just this plus setting pendingUnsavedCommit
+        // and making sure the main screen is showing first.
+        function beginCreatingSave(slotIndex) {
+            const slotEl = document.querySelector(`.game-save-slot[data-slot="${slotIndex}"]`);
+            if (!slotEl) return;
+            disarmDeleteConfirm();
+            slotEl.dataset.state = 'creating';
+            const nameInput = slotEl.querySelector('.game-new-name-input');
+            if (nameInput) nameInput.focus();
+        }
+
+        // "Save This Progress" -- finds the first empty slot and opens
+        // its creation form (same form as an ordinary new save, since the
+        // stage-rule question that got deferred by skipping that step
+        // originally lives right there already), flagged so createSave()
+        // seeds it from the in-memory session instead of starting empty.
+        let saveProgressFullMsgTimer = null;
+
+        function promptSaveUnsavedProgress() {
+            const emptyIndex = gameSaves.findIndex(save => !save);
+            if (emptyIndex === -1) {
+                // Nowhere to put it -- say so right on the button itself
+                // rather than a native alert(), same reasoning as the
+                // delete-confirm pattern above.
+                document.querySelectorAll('.game-save-progress-btn').forEach(btn => {
+                    btn.textContent = 'All Slots Full \u2014 Delete One First';
+                });
+                clearTimeout(saveProgressFullMsgTimer);
+                saveProgressFullMsgTimer = setTimeout(() => {
+                    document.querySelectorAll('.game-save-progress-btn').forEach(btn => {
+                        btn.textContent = 'Save This Progress';
+                    });
+                }, 3000);
+                return;
+            }
+            pendingUnsavedCommit = true;
+            setGameScreen('main');
+            beginCreatingSave(emptyIndex);
+        }
+
+        // Game panel screens -- exactly one .game-screen is ever .active
+        // at a time. Mirrors the same show-exactly-one-thing idea as
+        // setNavState() elsewhere, just simpler since there's no peek/
+        // hidden equivalent here, only "which screen." 'main' is the one
+        // root screen now (saves and tools together -- see the HTML)
+        // rather than there being a separate pre-save-picked root.
+        let currentGameScreen = 'main';
+
+        function setGameScreen(screenId) {
+            currentGameScreen = screenId;
+            document.querySelectorAll('.game-screen').forEach(el => {
+                el.classList.toggle('active', el.id === `game-screen-${screenId}`);
+            });
+            // A scroll position left over from whatever screen was
+            // showing before shouldn't carry over to the new one.
+            const scrollEl = document.getElementById('game-scroll');
+            if (scrollEl) scrollEl.scrollTop = 0;
+        }
+
+        // Called on load and every time the panel closes, so it's always
+        // back on the main screen the next time it opens rather than
+        // stranding the panel mid-tool.
+        function resetGameScreen() {
+            disarmDeleteConfirm();
+            setGameScreen('main');
+        }
+
+        refreshGameUI();
+        resetGameScreen();
+
+        // Single delegated listener covers every interactive element in
+        // the panel -- back buttons and menu tiles (both just carry a
+        // data-target to jump to), the save picker's own
+        // new/create/cancel/load/delete buttons (data-slot instead), the
+        // save-progress banner's button, and the two temporary Test
+        // buttons.
+        document.getElementById('game-scroll').addEventListener('click', (e) => {
+            const navTarget = e.target.closest('[data-target]');
+            if (navTarget) {
+                setGameScreen(navTarget.dataset.target);
+                return;
+            }
+
+            const saveProgressBtn = e.target.closest('.game-save-progress-btn');
+            if (saveProgressBtn) {
+                promptSaveUnsavedProgress();
+                return;
+            }
+
+            const newBtn = e.target.closest('.game-new-btn');
+            if (newBtn) {
+                pendingUnsavedCommit = false;
+                beginCreatingSave(Number(newBtn.dataset.slot));
+                return;
+            }
+
+            const cancelBtn = e.target.closest('.game-create-cancel-btn');
+            if (cancelBtn) {
+                pendingUnsavedCommit = false;
+                const slotEl = cancelBtn.closest('.game-save-slot');
+                slotEl.dataset.state = gameSaves[Number(slotEl.dataset.slot)] ? 'loaded' : 'empty';
+                return;
+            }
+
+            const confirmBtn = e.target.closest('.game-create-confirm-btn');
+            if (confirmBtn) {
+                const slotEl = confirmBtn.closest('.game-save-slot');
+                const nameInput = slotEl.querySelector('.game-new-name-input');
+                const ruleSelect = slotEl.querySelector('.game-new-rule-select');
+                createSave(Number(confirmBtn.dataset.slot), nameInput.value.trim(), ruleSelect.value);
+                nameInput.value = '';
+                return;
+            }
+
+            const loadBtn = e.target.closest('.game-load-btn');
+            if (loadBtn) {
+                loadSaveSlot(Number(loadBtn.dataset.slot));
+                return;
+            }
+
+            const deleteBtn = e.target.closest('.game-delete-btn');
+            if (deleteBtn) {
+                if (armedDeleteBtn === deleteBtn) {
+                    const slotIndex = Number(deleteBtn.dataset.slot);
+                    disarmDeleteConfirm();
+                    deleteSaveSlot(slotIndex);
+                } else {
+                    armDeleteConfirm(deleteBtn);
+                }
+                return;
+            }
+
+            // Temporary test hooks (see the HTML comments next to these
+            // buttons) -- mutate whatever getActiveSaveData() resolves to
+            // right now, persisting for real if that's a real save, or
+            // just marking the in-memory session touched if not.
+            const badgesTestBtn = e.target.closest('#game-badges-test-btn');
+            if (badgesTestBtn) {
+                const data = getActiveSaveData();
+                data.badges.count = (data.badges.count || 0) + 1;
+                if (activeSaveSlot !== null) persistGameSaves();
+                markUnsavedProgressChanged();
+                return;
+            }
+
+            const teamTestBtn = e.target.closest('#game-team-test-btn');
+            if (teamTestBtn) {
+                const data = getActiveSaveData();
+                data.team.count = (data.team.count || 0) + 1;
+                if (activeSaveSlot !== null) persistGameSaves();
+                markUnsavedProgressChanged();
+                return;
+            }
+        });
 
         // ---- Audio settings (global + per-category mute & volume) ------
         //
