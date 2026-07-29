@@ -8366,18 +8366,183 @@
             return v.split('-').map(w => /^\d+$/.test(w) ? w : capitalize(w)).join(' ');
         }
 
-        // Collapses flavor-text entries that share identical wording (very
-        // common across paired versions, e.g. Red & Blue) into one row
-        // listing every version it appeared in, instead of repeating the
-        // same paragraph over and over.
-        function groupFlavorEntries(entries) {
-            const map = new Map(); // text -> [version names]
-            entries.forEach(e => {
-                const text = e.flavor_text.replace(/[\n\f\u000c]/g, ' ').trim();
-                if (!map.has(text)) map.set(text, []);
-                map.get(text).push(e.version.name);
+        // --- Flavor-text cleanup (pre-grouping) -----------------------
+        //
+        // PokéAPI serves flavor text verbatim from each game's own
+        // script, which wasn't written with cross-game consistency in
+        // mind. Two recurring quirks otherwise produce near-duplicate
+        // entries that read as separate (seemingly contradictory)
+        // Pokédex entries rather than the one shared entry they really
+        // are:
+        //
+        //   1. Games through about Gen 3 render the Pokémon's own name
+        //      in full caps inside its own entries (e.g. "CHARMANDER"),
+        //      while every later game uses normal title case for the
+        //      same sentence.
+        //   2. Small, inconsistent spelling/spacing choices between
+        //      paired versions of the same game -- e.g. HeartGold's
+        //      entry has "lower back" where SoulSilver's has
+        //      "lower-back" for the identical sentence otherwise.
+        //
+        // Both are normalized below, before grouping, so entries that
+        // only differ in these superficial ways collapse into a single
+        // row instead of listing twice.
+
+        // Any run of 2+ uppercase Latin letters gets title-cased.
+        // Flavor text is prose, not headers or acronyms, so this is
+        // safe to apply blanket -- older games have no legitimate
+        // reason to shout mid-sentence other than rendering a name in
+        // full caps. The one recurring exception is genuine acronyms
+        // (e.g. "UFO", used in some Unown/UFO-shaped Pokémon's entries)
+        // that are *meant* to stay all-caps -- those are carved out via
+        // ALL_CAPS_EXCEPTIONS below rather than title-cased like a name.
+        const ALL_CAPS_EXCEPTIONS = new Set(['UFO']);
+
+        function fixAllCapsWords(text) {
+            return text.replace(/\b[A-Z]{2,}\b/g, w => (
+                ALL_CAPS_EXCEPTIONS.has(w) ? w : w.charAt(0) + w.slice(1).toLowerCase()
+            ));
+        }
+
+        // Known punctuation/spelling variants PokéAPI carries over
+        // verbatim from the source games -- normalized to one canonical
+        // form so paired versions that only differ here don't render
+        // as separate entries. This is a targeted fix for known quirks
+        // (add to it as new pairs turn up), not a general spellchecker;
+        // the edit-distance pass below in groupFlavorEntries catches
+        // the more general "minor typo" case this list doesn't.
+        const FLAVOR_TEXT_SPELLING_FIXES = [
+            [/\blower[- ]back\b/gi, 'lower-back'],
+            // "Pokémon" itself needs its own fix rather than relying on
+            // fixAllCapsWords above: older entries render it in caps as
+            // "POKéMON", with a lowercase é even mid-shout (the source
+            // games/PokéAPI's transcription have no uppercase É). That
+            // lowercase é splits what should be one all-caps run into
+            // two separate ones -- "POK" and "MON" -- which
+            // fixAllCapsWords then title-cases independently, producing
+            // "PokéMon" instead of "Pokémon". Matching case-insensitively
+            // on either accented or plain "e" catches every variant
+            // (POKEMON, POKéMON, PokéMon, Pokemon, ...) and normalizes
+            // them all to the one correct spelling in one step.
+            [/\bpok(?:e|é)mon\b/gi, 'Pokémon'],
+        ];
+
+        function cleanFlavorText(text) {
+            let cleaned = fixAllCapsWords(text);
+            FLAVOR_TEXT_SPELLING_FIXES.forEach(([pattern, replacement]) => {
+                cleaned = cleaned.replace(pattern, replacement);
             });
-            return Array.from(map.entries()).map(([text, versions]) => ({ text, versions }));
+            return cleaned;
+        }
+
+        // Levenshtein edit distance -- used below to catch entries that
+        // are identical apart from a stray typo the fixed-list above
+        // doesn't anticipate. Flavor text entries only run 30-100ish
+        // characters, so a plain O(n*m) table is trivial here; this
+        // isn't meant for long-text use.
+        function levenshteinDistance(a, b) {
+            const m = a.length, n = b.length;
+            const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+            for (let i = 0; i <= m; i++) dp[i][0] = i;
+            for (let j = 0; j <= n; j++) dp[0][j] = j;
+            for (let i = 1; i <= m; i++) {
+                for (let j = 1; j <= n; j++) {
+                    dp[i][j] = a[i - 1] === b[j - 1]
+                        ? dp[i - 1][j - 1]
+                        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+                }
+            }
+            return dp[m][n];
+        }
+
+        // Chronological release order of every mainline (and mainline-
+        // adjacent) game whose slug can show up as a flavor-text
+        // entry's version.name. Used only as a tie-break in
+        // groupFlavorEntries below, when two near-duplicate wordings
+        // otherwise have equal support -- the newer game's spelling
+        // wins, since that's the version most current players will
+        // recognize. A version this list doesn't recognize is treated
+        // as newer than everything listed, not older, so a future game
+        // PokéAPI adds before this list is updated still wins ties
+        // against older, already-mapped games rather than silently
+        // losing to them.
+        const VERSION_RELEASE_ORDER = [
+            'red', 'blue', 'yellow',
+            'gold', 'silver', 'crystal',
+            'ruby', 'sapphire', 'emerald', 'firered', 'leafgreen',
+            'diamond', 'pearl', 'platinum', 'heartgold', 'soulsilver',
+            'black', 'white', 'black-2', 'white-2',
+            'x', 'y', 'omega-ruby', 'alpha-sapphire',
+            'sun', 'moon', 'ultra-sun', 'ultra-moon',
+            'lets-go-pikachu', 'lets-go-eevee',
+            'sword', 'shield',
+            'brilliant-diamond', 'shining-pearl', 'legends-arceus',
+            'scarlet', 'violet',
+        ];
+
+        function versionReleaseIndex(versionName) {
+            const i = VERSION_RELEASE_ORDER.indexOf(versionName);
+            return i === -1 ? VERSION_RELEASE_ORDER.length : i;
+        }
+
+        // The newest game referenced anywhere in a group's version
+        // list -- what the tie-break below compares two groups by.
+        function newestVersionIndex(versions) {
+            return Math.max(...versions.map(versionReleaseIndex));
+        }
+
+        // Collapses flavor-text entries that share the same wording
+        // (very common across paired versions, e.g. Red & Blue) into
+        // one row listing every version it appeared in, instead of
+        // repeating the same paragraph over and over. Two passes:
+        //
+        //   1. Exact-match grouping, but on cleaned text rather than
+        //      the raw string, so caps-only and known spelling
+        //      differences (see cleanFlavorText) already collapse here.
+        //   2. A fuzzy pass over what's left, merging any two groups
+        //      whose cleaned text is within a small edit distance of
+        //      each other -- catching stray typos step 1's fixed list
+        //      doesn't know about. The threshold scales with text
+        //      length (~4%, floored at 2 characters) so short entries
+        //      need a near-exact match while longer ones tolerate a
+        //      couple more differing characters. When two groups merge,
+        //      whichever wording belongs to the newer game is kept as
+        //      the one shown to the user; if both merging groups' newest
+        //      version is the same one, whichever wording more versions
+        //      agree on wins that tie instead.
+        function groupFlavorEntries(entries) {
+            const map = new Map(); // cleanedText -> [version names]
+            entries.forEach(e => {
+                const raw = e.flavor_text.replace(/[\n\f\u000c]/g, ' ').trim();
+                const cleaned = cleanFlavorText(raw);
+                if (!map.has(cleaned)) map.set(cleaned, []);
+                map.get(cleaned).push(e.version.name);
+            });
+
+            const groups = Array.from(map.entries()).map(([text, versions]) => ({ text, versions }));
+
+            const merged = [];
+            groups.forEach(group => {
+                const match = merged.find(g => {
+                    const threshold = Math.max(2, Math.round(Math.max(g.text.length, group.text.length) * 0.04));
+                    return levenshteinDistance(g.text, group.text) <= threshold;
+                });
+                if (match) {
+                    const groupNewest = newestVersionIndex(group.versions);
+                    const matchNewest = newestVersionIndex(match.versions);
+                    const groupIsNewer = groupNewest > matchNewest;
+                    const isTiedOnNewest = groupNewest === matchNewest;
+                    const groupHasMoreSupport = group.versions.length > match.versions.length;
+                    if (groupIsNewer || (isTiedOnNewest && groupHasMoreSupport)) {
+                        match.text = group.text;
+                    }
+                    match.versions.push(...group.versions);
+                } else {
+                    merged.push({ text: group.text, versions: [...group.versions] });
+                }
+            });
+
+            return merged;
         }
 
         async function tryFetchJson(url) {
