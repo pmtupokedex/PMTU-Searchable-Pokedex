@@ -4566,7 +4566,10 @@
                 <p><strong>Artwork:</strong><br>Ken Sugimori (Official Pokémon Artwork)<br>isutton007 (Pokémon Tokens)<br>Darkprince909 (Pokédex Site Assets)</p>
                 <p><strong>Music:</strong><br>Junichi Masuda, Go Ichinose, Shota Kageyama (Original Tracks)<br>Zame, Pokestir, StevenMix, Blackasthesky (Remixed Tracks)</p>
                 <p>Special thanks to everyone in the Discord community for testing, feedback, and support!</p>
-		    <p class="rights-disclaimer">Pokémon Master Trainer: Ultimate Edition and this website are fanmade works based on Pokémon by The Pokémon Company (Nintendo, Game Freak, and Creatures Inc.). All rights to the characters and setting belong to The Pokémon Company. This website, PMTU, and their creators are not affiliated with The Pokémon Company.</p>
+		    <p class="rights-disclaimer">This site uses a text-matching method to combine Pokédex entries that are very similar into one unified entry as a means to reduce the amount of redundant information found in the Pokedex section. The entries shown here may not exactly match their source material.
+		    </p>
+		    <p class="rights-disclaimer">Pokémon Master Trainer: Ultimate Edition and this website are fanmade works based on Pokémon by The Pokémon Company (Nintendo, Game Freak, and Creatures Inc.). All rights to the characters and setting belong to The Pokémon Company. This website, PMTU, and their creators are not affiliated with The Pokémon Company.
+		    </p>
             </div>
           </div>
         </div>
@@ -8857,13 +8860,56 @@
             ));
         }
 
+        // Line-wrap artifacts: Gen 1/2 games (Red through Crystal) wrap
+        // long words across the Game Boy's fixed-width text box, and
+        // that wrap point survives into PokéAPI's transcription even
+        // after the actual line break is collapsed back into running
+        // prose -- leaving a stray gap (and sometimes a leftover
+        // wrap-point character) where the line used to break. Two of
+        // the three sub-cases below can be fixed generically, with no
+        // per-word list, because the games leave a distinct marker
+        // behind for each:
+        //
+        //   1. A word wrapped somewhere with no natural hyphen (e.g.
+        //      "vigorously") gets a genuine U+00AD SOFT HYPHEN -- the
+        //      standard invisible Unicode character that marks an
+        //      optional break point -- inserted at the break, followed
+        //      by the leftover space. Both are safe to strip everywhere:
+        //      a soft hyphen has no business appearing in rendered
+        //      flavor text at all, so any instance of one is the wrap
+        //      artifact, never a false positive.
+        //   2. A word that already contained a real hyphen (e.g.
+        //      "bluish-white") happened to wrap exactly at that hyphen,
+        //      leaving the hyphen in place but with the same stray
+        //      space after it. Collapsing "X-<space>Y" to "X-Y"
+        //      whenever the hyphen has no space *before* it distinguishes
+        //      this from an intentional dash-as-punctuation, which
+        //      would almost always have spaces on both sides ("fast -
+        //      almost too fast") rather than only the trailing one --
+        //      and from a genuine compound like "self-propels", which
+        //      has no space after the hyphen either.
+        //   3. A word wrapped with no marker left behind at all (e.g.
+        //      "be comes"). There's nothing here to safely detect in
+        //      general -- no invisible character, no hyphen, nothing
+        //      that would distinguish it from two ordinary adjacent
+        //      words -- so these still need a manual entry below.
+        function fixLineWrapArtifacts(text) {
+            return text
+                .replace(/\u00AD\s*/g, '')
+                .replace(/(\S)-\s+(\S)/g, '$1-$2');
+        }
+
         // Known punctuation/spelling variants PokéAPI carries over
         // verbatim from the source games -- normalized to one canonical
         // form so paired versions that only differ here don't render
         // as separate entries. This is a targeted fix for known quirks
         // (add to it as new pairs turn up), not a general spellchecker;
         // the edit-distance pass below in groupFlavorEntries catches
-        // the more general "minor typo" case this list doesn't.
+        // the more general "minor typo" case this list doesn't, and
+        // fixLineWrapArtifacts above catches the "rogue space" cases
+        // that carry their own marker. This list is now mostly reserved
+        // for the markerless split-word case (see case 3 above) plus
+        // anything else that isn't one of those two patterns.
         const FLAVOR_TEXT_SPELLING_FIXES = [
             [/\blower[- ]back\b/gi, 'lower-back'],
             // "Pokémon" itself needs its own fix rather than relying on
@@ -8878,10 +8924,27 @@
             // (POKEMON, POKéMON, PokéMon, Pokemon, ...) and normalizes
             // them all to the one correct spelling in one step.
             [/\bpok(?:e|é)mon\b/gi, 'Pokémon'],
+            // PokéAPI's transcription occasionally splits a word that
+            // should be closed up -- e.g. Venusaur's Crystal entry has
+            // "it self" where it means "itself". The (?!-) guard stops
+            // this from also mangling a legitimately hyphenated compound
+            // like "self-propels": there, "self" is immediately followed
+            // by a hyphen rather than a space, so the lookahead blocks
+            // the match instead of turning it into "itself-propels".
+            // Same pattern to reuse for any other split-word entries
+            // you find -- just add another [/\bWORD1 WORD2\b(?!-)/gi, 'WORD1WORD2'] line.
+            [/\bit self\b(?!-)/gi, 'itself'],
+            // Markerless line-wrap split (fixLineWrapArtifacts' case 3
+            // above) -- no hyphen, no soft hyphen, just a bare space
+            // where the line used to break. Nothing distinguishes this
+            // from two ordinary words in general, so it stays a
+            // one-off manual entry rather than a generic rule.
+            [/\bbe comes\b/gi, 'becomes'],
         ];
 
         function cleanFlavorText(text) {
             let cleaned = fixAllCapsWords(text);
+            cleaned = fixLineWrapArtifacts(cleaned);
             FLAVOR_TEXT_SPELLING_FIXES.forEach(([pattern, replacement]) => {
                 cleaned = cleaned.replace(pattern, replacement);
             });
@@ -8956,13 +9019,16 @@
         //      whose cleaned text is within a small edit distance of
         //      each other -- catching stray typos step 1's fixed list
         //      doesn't know about. The threshold scales with text
-        //      length (~4%, floored at 2 characters) so short entries
-        //      need a near-exact match while longer ones tolerate a
-        //      couple more differing characters. When two groups merge,
-        //      whichever wording belongs to the newer game is kept as
-        //      the one shown to the user; if both merging groups' newest
-        //      version is the same one, whichever wording more versions
-        //      agree on wins that tie instead.
+        //      length (~20%, floored at 2 characters) so short entries
+        //      need a fairly close match while longer ones tolerate
+        //      more differing characters -- wide enough to catch
+        //      "basically the same sentence, reworded a bit" pairs
+        //      across paired/remake versions, not just single-typo
+        //      differences. When two groups merge, whichever wording
+        //      belongs to the newer game is kept as the one shown to
+        //      the user; if both merging groups' newest version is the
+        //      same one, whichever wording more versions agree on wins
+        //      that tie instead.
         function groupFlavorEntries(entries) {
             const map = new Map(); // cleanedText -> [version names]
             entries.forEach(e => {
@@ -8977,7 +9043,7 @@
             const merged = [];
             groups.forEach(group => {
                 const match = merged.find(g => {
-                    const threshold = Math.max(2, Math.round(Math.max(g.text.length, group.text.length) * 0.04));
+                    const threshold = Math.max(2, Math.round(Math.max(g.text.length, group.text.length) * 0.25));
                     return levenshteinDistance(g.text, group.text) <= threshold;
                 });
                 if (match) {
