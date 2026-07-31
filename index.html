@@ -365,7 +365,8 @@
             box-shadow: 0 -4px 10px rgba(0,0,0,0.25);
             transform: translateY(100%);
             transition: transform 0.35s ease;
-            will-change: transform;
+            /* No longer a permanent will-change here -- see
+               .drawer-gpu-promoted further down for why. */
             z-index: 999;
             display: flex;
             flex-direction: column;
@@ -789,9 +790,19 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.25);
             transform: translateY(-100%);
             transition: transform 0.35s ease;
-            /* Same reasoning as #image-overlay's will-change above -- this
-               is the element whose transform actually slides on open. */
-            will-change: transform;
+            /* Was a permanent will-change here (same up-front-promotion
+               reasoning as #image-overlay's own). Made class-toggled
+               instead -- see .drawer-gpu-promoted further down -- once
+               this panel plus #sounds-panel/#discord-panel/#game-panel
+               all carried the same permanent promotion at once, that was
+               4 standing GPU layers reserved at all times regardless of
+               whether any of them were even open, eating into the budget
+               #image-overlay's own layers (including the viewer's corner
+               decor) need when the viewer opens. Unlike the nav panels,
+               none of these four are ever visible for more than the
+               moment they're actually open, so there's no reason for the
+               promotion to be permanent the way the nav panels' now has
+               to be. */
             z-index: 999;
             display: flex;
             flex-direction: column;
@@ -880,7 +891,8 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.25);
             transform: translateY(-100%);
             transition: transform 0.35s ease;
-            will-change: transform;
+            /* No longer a permanent will-change here -- see
+               .drawer-gpu-promoted further down for why. */
             z-index: 999;
             display: flex;
             flex-direction: column;
@@ -1103,7 +1115,8 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.25);
             transform: translateY(-100%);
             transition: transform 0.35s ease;
-            will-change: transform;
+            /* No longer a permanent will-change here -- see
+               .drawer-gpu-promoted further down for why. */
             z-index: 999;
             display: flex;
             flex-direction: column;
@@ -1139,6 +1152,29 @@
             body.game-open {
                 padding-right: calc(20px + min(480px, 90vw));
             }
+        }
+
+        /* Class-toggled will-change for the four drawer panels above
+           (#filter-panel, #sounds-panel, #discord-panel, #game-panel) --
+           applied by promoteDrawerPanel()/demoteDrawerPanel() in the
+           script, rather than baked permanently into each panel's own
+           rule. These four are mutually exclusive (opening one closes
+           the others) and every one of them sits off-screen the vast
+           majority of the time, so keeping all four permanently
+           GPU-promoted was reserving 4 standing compositing layers for
+           no benefit -- unlike the nav panels, which genuinely are
+           visible on mobile at all times now (see .nav-panel-gpu-paused
+           above for that tradeoff). That standing cost was eating into
+           the same compositing budget #image-overlay's own layers need
+           when the viewer opens, particularly its most deeply-nested
+           ones (the viewer's corner-decor divs) -- promoting a panel
+           only for the brief window it's actually opening or closing
+           frees that budget back up the rest of the time. */
+        #filter-panel.drawer-gpu-promoted,
+        #sounds-panel.drawer-gpu-promoted,
+        #discord-panel.drawer-gpu-promoted,
+        #game-panel.drawer-gpu-promoted {
+            will-change: transform;
         }
 
         #game-scroll {
@@ -6351,6 +6387,7 @@
 
         function openFilterPanel() {
             if (!panel.classList.contains('open')) {
+                promoteDrawerPanel(panel);
                 panel.classList.add('open');
                 closeImageViewer();
                 closeSoundsPanel();
@@ -6374,6 +6411,7 @@
         function closeFilterPanel() {
             if (panel.classList.contains('open')) {
                 panel.classList.remove('open');
+                demoteDrawerPanel(panel);
                 beginPanelAnim();
                 if (desktopFilterQuery.matches) {
                     document.body.classList.remove('filters-open');
@@ -6398,6 +6436,7 @@
         // sliding in over each other at once.
         function openSoundsPanel() {
             if (!soundsPanel.classList.contains('open')) {
+                promoteDrawerPanel(soundsPanel);
                 soundsPanel.classList.add('open');
                 closeImageViewer();
                 closeFilterPanel();
@@ -6416,6 +6455,7 @@
         function closeSoundsPanel() {
             if (soundsPanel.classList.contains('open')) {
                 soundsPanel.classList.remove('open');
+                demoteDrawerPanel(soundsPanel);
                 beginPanelAnim();
                 if (desktopFilterQuery.matches) {
                     document.body.classList.remove('sounds-open');
@@ -6441,6 +6481,7 @@
         // panels, same as they already are with each other.
         function openDiscordPanel() {
             if (!discordPanel.classList.contains('open')) {
+                promoteDrawerPanel(discordPanel);
                 discordPanel.classList.add('open');
                 closeImageViewer();
                 closeFilterPanel();
@@ -6459,6 +6500,7 @@
         function closeDiscordPanel() {
             if (discordPanel.classList.contains('open')) {
                 discordPanel.classList.remove('open');
+                demoteDrawerPanel(discordPanel);
                 beginPanelAnim();
                 if (desktopFilterQuery.matches) {
                     document.body.classList.remove('discord-open');
@@ -6484,6 +6526,7 @@
         // panels, same as they already are with each other.
         function openGamePanel() {
             if (!gamePanel.classList.contains('open')) {
+                promoteDrawerPanel(gamePanel);
                 gamePanel.classList.add('open');
                 closeImageViewer();
                 closeFilterPanel();
@@ -6502,6 +6545,7 @@
         function closeGamePanel() {
             if (gamePanel.classList.contains('open')) {
                 gamePanel.classList.remove('open');
+                demoteDrawerPanel(gamePanel);
                 beginPanelAnim();
                 if (desktopFilterQuery.matches) {
                     document.body.classList.remove('game-open');
@@ -8481,6 +8525,50 @@
         const PANEL_TRANSITION_MS = 500; // matches beginPanelAnim's own duration (0.35s base * 1.25, slowed 25%)
         const PULSE_MS = 600; // must match .image-card.gallery-pulse's animation-duration above
         const NAV_PANEL_TRANSITION_MS = 300; // matches #nav-panel-top/bottom's own transition: transform 0.3s ease
+        const DRAWER_PANEL_TRANSITION_MS = 350; // matches #filter-panel/#sounds-panel/#discord-panel/#game-panel's own transition: transform 0.35s ease
+
+        // Promotes/demotes the .drawer-gpu-promoted GPU layer (see that
+        // class's own comment in the CSS) for #filter-panel, #sounds-panel,
+        // #discord-panel, and #game-panel -- the four mutually-exclusive
+        // drawer panels that used to carry a permanent will-change instead.
+        //
+        // promoteDrawerPanel() is called synchronously, before the 'open'
+        // class goes on, so the layer exists up front rather than being
+        // promoted reactively once the transform animation has already
+        // started -- same up-front-promotion reasoning as #image-overlay's
+        // own will-change, just scoped to only the moments it's actually
+        // needed instead of permanently.
+        //
+        // demoteDrawerPanel() is called when a panel closes, but only
+        // *removes* the class after its own close transition has had time
+        // to finish (DRAWER_PANEL_TRANSITION_MS) -- pulling the layer out
+        // from under a still-animating panel would just re-introduce the
+        // "layer not ready" flash this promotion pattern exists to avoid,
+        // just on the way out instead of the way in. Tracks any pending
+        // demote timer per-element (a WeakMap rather than a single shared
+        // variable, since in principle more than one of these could be
+        // mid-close at once) so that rapidly closing and reopening the same
+        // panel cancels a stale demote instead of letting it fire late and
+        // strip the layer out from under the panel's new open animation.
+        const drawerDemoteTimers = new WeakMap();
+
+        function promoteDrawerPanel(el) {
+            const pending = drawerDemoteTimers.get(el);
+            if (pending) {
+                clearTimeout(pending);
+                drawerDemoteTimers.delete(el);
+            }
+            el.classList.add('drawer-gpu-promoted');
+        }
+
+        function demoteDrawerPanel(el) {
+            const pending = drawerDemoteTimers.get(el);
+            if (pending) clearTimeout(pending);
+            drawerDemoteTimers.set(el, setTimeout(() => {
+                el.classList.remove('drawer-gpu-promoted');
+                drawerDemoteTimers.delete(el);
+            }, DRAWER_PANEL_TRANSITION_MS));
+        }
 
         // Briefly pulses an image's card to draw the eye to its new
         // position after a scroll settles. Removing the class first and
@@ -8868,7 +8956,7 @@
         // (e.g. "UFO", used in some Unown/UFO-shaped Pokémon's entries)
         // that are *meant* to stay all-caps -- those are carved out via
         // ALL_CAPS_EXCEPTIONS below rather than title-cased like a name.
-        const ALL_CAPS_EXCEPTIONS = new Set(['UFO']);
+        const ALL_CAPS_EXCEPTIONS = new Set(['UFO', 'TV']);
 
         function fixAllCapsWords(text) {
             return text.replace(/\b[A-Z]{2,}\b/g, w => (
@@ -9035,7 +9123,7 @@
         //      whose cleaned text is within a small edit distance of
         //      each other -- catching stray typos step 1's fixed list
         //      doesn't know about. The threshold scales with text
-        //      length (~20%, floored at 2 characters) so short entries
+        //      length (~25%, floored at 2 characters) so short entries
         //      need a fairly close match while longer ones tolerate
         //      more differing characters -- wide enough to catch
         //      "basically the same sentence, reworded a bit" pairs
