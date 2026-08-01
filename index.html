@@ -9819,21 +9819,11 @@
         function closeImageViewer() {
             const wasOpen = document.body.classList.contains('viewer-open');
             const previouslyActive = activeGalleryImg;
+            activeGalleryImg = null;
 
-            // Un-pausing compositing right away (rather than waiting for
-            // the close transition to finish) gives the panels the whole
-            // ~350ms of #image-overlay sliding away, plus however long
-            // the recenter scroll below takes, to repaint before they're
-            // actually slid back into view -- see the nav-visible reveal
-            // further down, timed to land alongside the recenter pulse.
-            document.getElementById('nav-panel-top').classList.remove('nav-panel-gpu-paused');
-            document.getElementById('nav-panel-bottom').classList.remove('nav-panel-gpu-paused');
-
-            if (activeGalleryImg) {
-                activeGalleryImg.closest('.image-card')?.classList.remove('active-in-viewer');
-                activeGalleryImg = null;
-            }
-
+            // Starting the overlay's own slide-away transform first, on
+            // its own, before anything else below touches a layer of its
+            // own -- see the requestAnimationFrame further down for why.
             imageOverlay.classList.remove('visible');
             overlayImg.src = "";
             shinyShowing = false;
@@ -9857,6 +9847,28 @@
             viewerFrameTileShiny.classList.remove('tile-visible');
             beginPanelAnim();
             document.body.classList.remove('viewer-open');
+
+            // Un-pausing the nav panels' compositing and dropping the
+            // just-closed gallery card's .active-in-viewer (which is what
+            // actually demotes its will-change: filter layer -- see that
+            // class's own comment) each promote or demote a GPU layer of
+            // their own, same as the overlay's slide-away above. Doing
+            // that in the very same tick as kicking off the overlay's own
+            // transform was competing with it for the first frame of
+            // compositor work -- occasionally showing up as the gallery
+            // flickering right as the panel starts closing. A one-frame
+            // defer lets the overlay's transform claim that first frame
+            // uncontested; neither of these needs to land any sooner than
+            // that. The nav panels don't actually reveal until later in
+            // this function anyway (or on the branch below), and the
+            // gallery card stays hidden behind the overlay for most of
+            // its 0.35s slide regardless of exactly when its filter layer
+            // drops.
+            requestAnimationFrame(() => {
+                document.getElementById('nav-panel-top').classList.remove('nav-panel-gpu-paused');
+                document.getElementById('nav-panel-bottom').classList.remove('nav-panel-gpu-paused');
+                previouslyActive?.closest('.image-card')?.classList.remove('active-in-viewer');
+            });
 
             expandedPanel = null;
             imageOverlay.classList.remove('related-expanded', 'info-expanded');
