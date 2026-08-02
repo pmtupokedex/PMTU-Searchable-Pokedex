@@ -2230,47 +2230,6 @@
 		place-content: center;
         }
 
-        /* Sacrificial spacer occupying grid position 1 (top-left) AND the
-           first .image-card slot in DOM order at all times, regardless of
-           what's filtered/showing (see the HTML comment above this
-           element for the full data-tags/img/hit-zone reasoning).
-           Whatever real card would otherwise sit there absorbs a
-           mobile-only white-flash bug on viewer-close -- worked around
-           here rather than in the fix already in place for the rest of
-           the gallery's own flicker (see
-           .image-card.content-visibility-lock further down), since this
-           one held out despite that fix, and despite two narrower
-           follow-up tests: shifting the real first card down a full row
-           via grid-column alone (still flickered -- rules out screen
-           position), and separately making the spacer the first
-           content-visibility:auto element without the .image-card class
-           itself (also still flickered -- rules out content-visibility
-           ordering specifically). Confirmed that DOM/.image-card order is
-           the actual variable at fault by testing the middle of the
-           gallery (clean) against the original top-row cards moved
-           elsewhere (still flickered, wherever they ended up) -- so this
-           needs to actually occupy the first .image-card slot itself, not
-           just look like it does. */
-        .gallery-spacer {
-            grid-column: 1 / -1;
-            /* .image-card's own aspect-ratio: 1/1 would otherwise size
-               this as tall as the full row is wide, since width here
-               resolves to 100% of that full-row span -- this explicit
-               height overrides it (aspect-ratio only fills in whichever
-               of width/height is auto; with both definite, as here, it's
-               ignored). 168px matches the grid's own column-width floor
-               (see .gallery-container's minmax above) -- close to a real
-               card's own rendered height on the narrow mobile viewports
-               this is actually for. */
-            height: 168px;
-            visibility: hidden;
-            pointer-events: none;
-            /* Deliberately never given the .show class (see the HTML
-               comment above this element) -- .image-card is display:none
-               without it, so this forces display back on regardless. */
-            display: flex !important;
-        }
-
         .image-card {
             position: relative; /* positioning context for .hit-zone below */
             width: 100%;
@@ -4987,32 +4946,7 @@
         </div>
     </div>
 
-    <div class="gallery-container" id="gallery">
-        <!-- Permanently reserves grid position 1 (top-left) AND the first
-             .image-card slot in DOM order -- see .gallery-spacer's own CSS
-             comment for why it needs to be a real (structurally complete,
-             but inert) .image-card rather than just a differently-styled
-             div. Cards are only ever appendChild'd after this in JS (see
-             the pokemon-data.json fetch below), never inserted via
-             innerHTML, so this stays the first child regardless of
-             filtering or how many real cards end up showing.
-             data-tags="" so it can never match a search/filter term (and
-             so filterGallery doesn't throw reading .dataset.tags off it --
-             though filterGallery also explicitly skips this card by class
-             regardless, see its own comment). Carries the same img/
-             hit-zone structure a real card gets from the JS card-builder
-             below, since attachImageEvents (and anything else that walks
-             .image-card children) expects that shape -- deliberately
-             never given the .show class though, which is what actually
-             keeps it out of every .show-keyed selector elsewhere
-             (getVisibleGalleryImages/navigateImage, lockCardsInView,
-             etc.), and pointer-events: none plus visibility: hidden (see
-             CSS) keep the img/hit-zone permanently inert regardless. -->
-        <div class="gallery-spacer image-card" data-tags="" aria-hidden="true">
-            <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="" data-shinysrc="" data-dex="">
-            <div class="hit-zone"></div>
-        </div>
-    </div>
+    <div class="gallery-container" id="gallery"></div>
 
     <div id="image-overlay">
         <div id="viewer-edge-spacer-top" class="viewer-edge-spacer"></div>
@@ -5996,12 +5930,6 @@
         function filterGallery() {
             const cards = document.querySelectorAll('.image-card');
             cards.forEach(card => {
-                // Permanent, inert placeholder (see its own HTML/CSS
-                // comments) -- never a real result, and specifically must
-                // never gain .show, since that's what every .show-keyed
-                // selector elsewhere (getVisibleGalleryImages/
-                // navigateImage above all) uses to find real cards.
-                if (card.classList.contains('gallery-spacer')) return;
                 const tags = card.dataset.tags.toLowerCase().split(/\s+/);
                 const includeMatch =
                     includeFilters.length === 0 ||
@@ -8779,11 +8707,31 @@
             const currentPaddingTop = parseFloat(getComputedStyle(document.body).paddingTop) || 0;
             const panelHeight = Math.max(0, currentPaddingTop - BASE_PADDING_TOP);
             const targetCenterY = (vh + panelHeight) / 2;
-            const dy = (rect.top + rect.height / 2) - targetCenterY;
+            let dy = (rect.top + rect.height / 2) - targetCenterY;
 
             let dx = 0;
             if (rect.left < 0) dx = rect.left;
             else if (rect.right > vw) dx = rect.right - vw;
+
+            // Clamp both to what's actually scrollable. Centering a card
+            // near the very top or bottom of the page can ask for a
+            // scroll position outside [0, max] -- e.g. a card close to
+            // the top of the gallery, where "centered" would mean
+            // scrolling above the top of the document entirely, which
+            // isn't possible. Without this, trackImageIntoView's per-
+            // frame loop keeps recomputing that same out-of-range delta
+            // every single frame for the whole transition (the actual
+            // scroll position can never reach it, so getBoundingClientRect
+            // returns the same rect next frame too), forcing a fresh
+            // layout read on every one of those frames for nothing --
+            // right alongside #image-overlay's own close animation trying
+            // to use those same frames. Clamping means a card that's
+            // already as centered as it can possibly get resolves to
+            // dy = 0 (or dx = 0) right away instead.
+            const maxScrollY = Math.max(0, document.documentElement.scrollHeight - vh);
+            dy = Math.min(maxScrollY, Math.max(0, window.scrollY + dy)) - window.scrollY;
+            const maxScrollX = Math.max(0, document.documentElement.scrollWidth - vw);
+            dx = Math.min(maxScrollX, Math.max(0, window.scrollX + dx)) - window.scrollX;
 
             return { dx, dy };
         }
