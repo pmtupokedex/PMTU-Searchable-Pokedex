@@ -8585,6 +8585,27 @@
         const NAV_PANEL_TRANSITION_MS = 300; // matches #nav-panel-top/bottom's own transition: transform 0.3s ease
         const DRAWER_PANEL_TRANSITION_MS = 350; // matches #filter-panel/#sounds-panel/#discord-panel/#game-panel's own transition: transform 0.35s ease
         const VIEWER_TRANSITION_MS = 350; // matches #image-overlay's own transition: transform 0.35s ease
+        // How long to hold off un-pausing the nav panels' GPU layer (and
+        // demoting the closed card's .active-in-viewer layer) after a
+        // close starts. Originally a single requestAnimationFrame defer --
+        // enough to dodge the very first frame of compositor work, but the
+        // overlay's own will-change:transform layer is still actively
+        // forming for several frames beyond that, not just the first one.
+        // Asking the compositor to also promote nav-panel-top/bottom's
+        // heavier layer (will-change + filter: drop-shadow, previously
+        // fully torn down by visibility:hidden rather than just idling)
+        // while the overlay's layer is still settling is what let the
+        // still-covered content underneath flash through for a frame --
+        // landing specifically in row 0, the one row sitting flush against
+        // nav-panel-top's own overlap sliver (see body's own padding
+        // comment near the top of the stylesheet). Nothing here needs to
+        // land any sooner than this: the un-paused panels don't actually
+        // reveal until NAV_PANEL_TRANSITION_MS/PANEL_TRANSITION_MS later
+        // (or immediately on the no-previously-active branch below, which
+        // now waits for this same defer instead of racing it), and the
+        // overlay keeps the whole top strip covered for virtually all of
+        // its own VIEWER_TRANSITION_MS regardless.
+        const NAV_UNPAUSE_DEFER_MS = 120;
 
         // Reference-counted, same pattern as window.pageScrollLock further
         // up -- see .image-card.content-visibility-lock's own CSS comment
@@ -9989,22 +10010,21 @@
             // actually demotes its will-change: filter layer -- see that
             // class's own comment) each promote or demote a GPU layer of
             // their own, same as the overlay's slide-away above. Doing
-            // that in the very same tick as kicking off the overlay's own
-            // transform was competing with it for the first frame of
-            // compositor work -- occasionally showing up as the gallery
-            // flickering right as the panel starts closing. A one-frame
-            // defer lets the overlay's transform claim that first frame
-            // uncontested; neither of these needs to land any sooner than
-            // that. The nav panels don't actually reveal until later in
-            // this function anyway (or on the branch below), and the
-            // gallery card stays hidden behind the overlay for most of
-            // its 0.35s slide regardless of exactly when its filter layer
-            // drops.
-            requestAnimationFrame(() => {
+            // that too soon after kicking off the overlay's own transform
+            // competes with the overlay's still-forming layer for
+            // compositor work -- see NAV_UNPAUSE_DEFER_MS's own comment
+            // for why a single frame wasn't enough headroom. Neither of
+            // these needs to land any sooner than that. The nav panels
+            // don't actually reveal until later in this function anyway
+            // (or on the branch below, which now waits on this same
+            // timer), and the gallery card stays hidden behind the
+            // overlay for most of its 0.35s slide regardless of exactly
+            // when its filter layer drops.
+            setTimeout(() => {
                 document.getElementById('nav-panel-top').classList.remove('nav-panel-gpu-paused');
                 document.getElementById('nav-panel-bottom').classList.remove('nav-panel-gpu-paused');
                 previouslyActive?.closest('.image-card')?.classList.remove('active-in-viewer');
-            });
+            }, NAV_UNPAUSE_DEFER_MS);
 
             // Captured now (synchronously) rather than read fresh inside
             // the timeout below -- a rapid reopen before this timer fires
@@ -10104,9 +10124,17 @@
             } else if (wasOpen && !desktopFilterQuery.matches) {
                 // Viewer was open but there's no previously-active image to
                 // recenter/pulse on -- nothing to sync the reveal with, so
-                // just bring the panels back right away.
-                document.getElementById('nav-panel-top').classList.add('nav-visible');
-                document.getElementById('nav-panel-bottom').classList.add('nav-visible');
+                // just bring the panels back as soon as possible. That's
+                // NAV_UNPAUSE_DEFER_MS rather than truly immediately now --
+                // adding nav-visible any sooner would start the panel's
+                // transform transition while it's still .nav-panel-gpu-
+                // paused (visibility: hidden), so un-hiding it moments
+                // later would reveal it already partway through its
+                // slide-in instead of starting from the beginning.
+                setTimeout(() => {
+                    document.getElementById('nav-panel-top').classList.add('nav-visible');
+                    document.getElementById('nav-panel-bottom').classList.add('nav-visible');
+                }, NAV_UNPAUSE_DEFER_MS);
             }
             refreshBackButtonState();
         }
