@@ -2375,6 +2375,29 @@
             will-change: filter;
         }
 
+        /* Applied by JS (see openImageViewer/closeImageViewer) to
+           whichever cards are actually on-screen at the moment the viewer
+           opens -- not the whole gallery, and not just the one card that
+           was tapped. content-visibility: auto (see .image-card's own
+           rule above) is what keeps a long gallery cheap, but it also
+           means a card the browser has decided to skip-render can lose
+           its painted/decoded state while sitting covered under the
+           viewer's opaque overlay, even though it's still technically
+           intersecting the viewport the whole time. On mobile, where the
+           overlay covers every currently-visible card at once rather than
+           just the one that's open, that showed up as several cards
+           flashing white right as the overlay finished retracting on
+           close -- each one catching up on a decode/paint it had put off.
+           Locking just the handful of cards that were actually visible
+           when the viewer opened keeps them decoded and ready the whole
+           time they're covered, without forcing the browser to render
+           the rest of the (possibly very long) gallery it was never
+           going to show anyway -- that would trade one performance
+           problem for a worse one. */
+        .image-card.content-visibility-lock {
+            content-visibility: visible;
+        }
+
         /* On mobile the viewer opens fullscreen, so this card is never
            visible alongside the halo anyway -- except right during the
            brief pre-open pulse (see openImageViewer's fresh-open pulse),
@@ -8535,6 +8558,7 @@
         });
 
         let activeGalleryImg = null;
+        let lockedViewCards = []; // see lockCardsInView/unlockCards further down
         // Whether the viewer's magnified image (and the related-images
         // row) is currently showing shinysrc instead of src. Reset to
         // false only on a fresh open of the viewer (see openImageViewer);
@@ -8560,6 +8584,44 @@
         const PULSE_MS = 600; // must match .image-card.gallery-pulse's animation-duration above
         const NAV_PANEL_TRANSITION_MS = 300; // matches #nav-panel-top/bottom's own transition: transform 0.3s ease
         const DRAWER_PANEL_TRANSITION_MS = 350; // matches #filter-panel/#sounds-panel/#discord-panel/#game-panel's own transition: transform 0.35s ease
+        const VIEWER_TRANSITION_MS = 350; // matches #image-overlay's own transition: transform 0.35s ease
+
+        // Reference-counted, same pattern as window.pageScrollLock further
+        // up -- see .image-card.content-visibility-lock's own CSS comment
+        // for what this is protecting against. A plain "lock this batch of
+        // cards, unlock this batch of cards" pairing would break if a
+        // close's delayed cleanup (see closeImageViewer) fires after a
+        // rapid reopen has already re-locked some of the same cards for a
+        // new session -- the stale cleanup would strip the lock out from
+        // under the still-open new session. Counting per-card instead
+        // means a card only actually loses the class once every session
+        // that locked it has also released it.
+        const contentVisibilityLockCounts = new WeakMap();
+
+        function lockCardsInView() {
+            const locked = [];
+            document.querySelectorAll('.image-card.show').forEach(card => {
+                const rect = card.getBoundingClientRect();
+                if (rect.bottom >= 0 && rect.top <= window.innerHeight) {
+                    contentVisibilityLockCounts.set(card, (contentVisibilityLockCounts.get(card) || 0) + 1);
+                    card.classList.add('content-visibility-lock');
+                    locked.push(card);
+                }
+            });
+            return locked;
+        }
+
+        function unlockCards(cards) {
+            cards.forEach(card => {
+                const count = Math.max(0, (contentVisibilityLockCounts.get(card) || 0) - 1);
+                if (count === 0) {
+                    contentVisibilityLockCounts.delete(card);
+                    card.classList.remove('content-visibility-lock');
+                } else {
+                    contentVisibilityLockCounts.set(card, count);
+                }
+            });
+        }
 
         // Promotes/demotes the .drawer-gpu-promoted GPU layer (see that
         // class's own comment in the CSS) for #filter-panel, #sounds-panel,
@@ -9725,6 +9787,12 @@
                     navPanelTop.classList.add('nav-panel-gpu-paused');
                     navPanelBottom.classList.add('nav-panel-gpu-paused');
                 }, NAV_PANEL_TRANSITION_MS);
+
+                // See .image-card.content-visibility-lock's own comment
+                // for why. Only the cards actually on-screen right now --
+                // not the whole gallery -- so this can't turn into its own
+                // performance problem on a long gallery.
+                lockedViewCards = lockCardsInView();
             }
 
             if (activeGalleryImg) {
@@ -9917,6 +9985,24 @@
                 document.getElementById('nav-panel-bottom').classList.remove('nav-panel-gpu-paused');
                 previouslyActive?.closest('.image-card')?.classList.remove('active-in-viewer');
             });
+
+            // Captured now (synchronously) rather than read fresh inside
+            // the timeout below -- a rapid reopen before this timer fires
+            // would otherwise overwrite lockedViewCards with the new
+            // session's set before this cleanup had a chance to read it.
+            const cardsToUnlock = lockedViewCards;
+            lockedViewCards = [];
+
+            // Gives the reveal the full length of the overlay's own close
+            // transition to finish before letting these cards go back to
+            // being skip-render-eligible -- see
+            // .image-card.content-visibility-lock's own comment.
+            // unlockCards is reference-counted, so this is safe even if a
+            // reopen in the meantime has already re-locked some of the
+            // same cards for a new session -- see its own comment.
+            setTimeout(() => {
+                unlockCards(cardsToUnlock);
+            }, VIEWER_TRANSITION_MS);
 
             expandedPanel = null;
             imageOverlay.classList.remove('related-expanded', 'info-expanded');
