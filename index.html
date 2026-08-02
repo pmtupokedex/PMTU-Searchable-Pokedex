@@ -2230,6 +2230,47 @@
 		place-content: center;
         }
 
+        /* Sacrificial spacer occupying grid position 1 (top-left) AND the
+           first .image-card slot in DOM order at all times, regardless of
+           what's filtered/showing (see the HTML comment above this
+           element for the full data-tags/img/hit-zone reasoning).
+           Whatever real card would otherwise sit there absorbs a
+           mobile-only white-flash bug on viewer-close -- worked around
+           here rather than in the fix already in place for the rest of
+           the gallery's own flicker (see
+           .image-card.content-visibility-lock further down), since this
+           one held out despite that fix, and despite two narrower
+           follow-up tests: shifting the real first card down a full row
+           via grid-column alone (still flickered -- rules out screen
+           position), and separately making the spacer the first
+           content-visibility:auto element without the .image-card class
+           itself (also still flickered -- rules out content-visibility
+           ordering specifically). Confirmed that DOM/.image-card order is
+           the actual variable at fault by testing the middle of the
+           gallery (clean) against the original top-row cards moved
+           elsewhere (still flickered, wherever they ended up) -- so this
+           needs to actually occupy the first .image-card slot itself, not
+           just look like it does. */
+        .gallery-spacer {
+            grid-column: 1 / -1;
+            /* .image-card's own aspect-ratio: 1/1 would otherwise size
+               this as tall as the full row is wide, since width here
+               resolves to 100% of that full-row span -- this explicit
+               height overrides it (aspect-ratio only fills in whichever
+               of width/height is auto; with both definite, as here, it's
+               ignored). 168px matches the grid's own column-width floor
+               (see .gallery-container's minmax above) -- close to a real
+               card's own rendered height on the narrow mobile viewports
+               this is actually for. */
+            height: 168px;
+            visibility: hidden;
+            pointer-events: none;
+            /* Deliberately never given the .show class (see the HTML
+               comment above this element) -- .image-card is display:none
+               without it, so this forces display back on regardless. */
+            display: flex !important;
+        }
+
         .image-card {
             position: relative; /* positioning context for .hit-zone below */
             width: 100%;
@@ -4946,7 +4987,32 @@
         </div>
     </div>
 
-    <div class="gallery-container" id="gallery"></div>
+    <div class="gallery-container" id="gallery">
+        <!-- Permanently reserves grid position 1 (top-left) AND the first
+             .image-card slot in DOM order -- see .gallery-spacer's own CSS
+             comment for why it needs to be a real (structurally complete,
+             but inert) .image-card rather than just a differently-styled
+             div. Cards are only ever appendChild'd after this in JS (see
+             the pokemon-data.json fetch below), never inserted via
+             innerHTML, so this stays the first child regardless of
+             filtering or how many real cards end up showing.
+             data-tags="" so it can never match a search/filter term (and
+             so filterGallery doesn't throw reading .dataset.tags off it --
+             though filterGallery also explicitly skips this card by class
+             regardless, see its own comment). Carries the same img/
+             hit-zone structure a real card gets from the JS card-builder
+             below, since attachImageEvents (and anything else that walks
+             .image-card children) expects that shape -- deliberately
+             never given the .show class though, which is what actually
+             keeps it out of every .show-keyed selector elsewhere
+             (getVisibleGalleryImages/navigateImage, lockCardsInView,
+             etc.), and pointer-events: none plus visibility: hidden (see
+             CSS) keep the img/hit-zone permanently inert regardless. -->
+        <div class="gallery-spacer image-card" data-tags="" aria-hidden="true">
+            <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" alt="" data-shinysrc="" data-dex="">
+            <div class="hit-zone"></div>
+        </div>
+    </div>
 
     <div id="image-overlay">
         <div id="viewer-edge-spacer-top" class="viewer-edge-spacer"></div>
@@ -5930,6 +5996,12 @@
         function filterGallery() {
             const cards = document.querySelectorAll('.image-card');
             cards.forEach(card => {
+                // Permanent, inert placeholder (see its own HTML/CSS
+                // comments) -- never a real result, and specifically must
+                // never gain .show, since that's what every .show-keyed
+                // selector elsewhere (getVisibleGalleryImages/
+                // navigateImage above all) uses to find real cards.
+                if (card.classList.contains('gallery-spacer')) return;
                 const tags = card.dataset.tags.toLowerCase().split(/\s+/);
                 const includeMatch =
                     includeFilters.length === 0 ||
@@ -8856,23 +8928,10 @@
         // someone opens a Pokémon, that entry just falls back to
         // API-derived text as normal, so this fetch never blocks anything.
         let FLAVOR_TEXT_OVERRIDES = {};
-        // Full standalone data (types, height, weight, cry, flavor text --
-        // everything the info panel needs) for entries that have NO
-        // PokeAPI data to pull from at all, like MissingNo. and Pokéstar
-        // Studios "Pokémon" -- these aren't real species, so there's no
-        // dex number to fetch against. Keyed the same way as
-        // FLAVOR_TEXT_OVERRIDES (by exact display name), but reserved
-        // under this separate top-level key in the same JSON file rather
-        // than mixed into FLAVOR_TEXT_OVERRIDES's shape, so adding these
-        // can't accidentally collide with or affect how any real
-        // Pokémon's entry is built. See flavor-overrides.json for the
-        // expected shape of each entry.
-        let CUSTOM_POKEMON_DATA = {};
         fetch("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/flavor-overrides.json")
             .then(response => response.json())
             .then(data => {
                 FLAVOR_TEXT_OVERRIDES = data;
-                CUSTOM_POKEMON_DATA = data.__custom_entries__ || {};
                 // In case someone opened a Pokémon before this finished
                 // loading (unlikely, but possible on a very fast click),
                 // clear the cache so its info panel picks up the override
@@ -9311,22 +9370,6 @@
             return escapeHtml(str).replace(/\n/g, '<br>');
         }
 
-        // Builds the <div class="poke-info-flavor-section"> markup from a
-        // plain array of {version, text} entries -- the shared shape used
-        // by both FLAVOR_TEXT_OVERRIDES entries and __custom_entries__'
-        // flavorEntries, so both render identically without duplicating
-        // this template in two places.
-        function buildFlavorSectionHtml(entries) {
-            if (!entries || entries.length === 0) return '';
-            const entriesHtml = entries.map(e => `
-                <div class="poke-info-flavor-entry">
-                    <div class="poke-info-flavor-version">${escapeHtml(e.version)}</div>
-                    <div class="poke-info-flavor-text">${escapeHtmlWithLineBreaks(e.text)}</div>
-                </div>
-            `).join('');
-            return `<div class="poke-info-flavor-section">${entriesHtml}</div>`;
-        }
-
         // Tags that represent this board game's special "abilities" —
         // pulled straight from pokemon-data.json instead of PokeAPI, since
         // this variant's ability list doesn't match the main series games.
@@ -9344,38 +9387,8 @@
                 : 'No Ability';
 
             // "???" (MissingNo) and "PS#" (Pokéstar Studios) entries aren't
-            // real Pokédex numbers — nothing to look up via PokeAPI. If
-            // flavor-overrides.json's __custom_entries__ section has a
-            // full entry for this exact name, build the info panel from
-            // that instead; otherwise fall back to the "not available"
-            // message, same as before this existed.
+            // real Pokédex numbers — nothing to look up.
             if (dex === null) {
-                const custom = CUSTOM_POKEMON_DATA[name];
-                if (custom) {
-                    const typesHtml = (custom.types || [])
-                        .map(t => `<span class="poke-type-badge poke-type-${escapeHtml(t)}">${capitalize(t)}</span>`)
-                        .join(' ');
-                    const heightStr = (typeof custom.height === 'number') ? custom.height.toFixed(1) + ' m' : '';
-                    const weightStr = (typeof custom.weight === 'number') ? custom.weight.toFixed(1) + ' kg' : '';
-                    const cryUrl = custom.cry || '';
-                    const flavorSectionHtml = buildFlavorSectionHtml(custom.flavorEntries);
-
-                    return `
-                        <div class="poke-info-header">
-                            <span class="poke-info-name-group">
-                                <span class="poke-info-name">${escapeHtml(name)}</span>
-                                ${cryUrl ? `<button class="poke-info-cry-btn" data-cry-url="${escapeHtml(cryUrl)}" title="Play cry">▶ CRY</button>` : ''}
-                            </span>
-                            <span class="poke-info-dex">${escapeHtml(dexRaw)}</span>
-                        </div>
-                        ${custom.genus ? `<div class="poke-info-genus">${escapeHtml(custom.genus)}</div>` : ''}
-                        ${typesHtml ? `<div class="poke-info-row"><span class="poke-info-label">Type</span>${typesHtml}</div>` : ''}
-                        ${heightStr ? `<div class="poke-info-row"><span class="poke-info-label">Height</span>${heightStr}</div>` : ''}
-                        ${weightStr ? `<div class="poke-info-row"><span class="poke-info-label">Weight</span>${weightStr}</div>` : ''}
-                        ${abilitiesStr ? `<div class="poke-info-row"><span class="poke-info-label">Abilities</span>${abilitiesStr}</div>` : ''}
-                        ${flavorSectionHtml}
-                    `;
-                }
                 return `<div class="poke-info-unavailable"><strong>${escapeHtml(name)}</strong><br>`
                     + `This entry isn't part of the official Pokédex, so live data isn't available.</div>`;
             }
@@ -9404,7 +9417,13 @@
 
             const overrideEntries = FLAVOR_TEXT_OVERRIDES[name];
             if (overrideEntries && overrideEntries.length > 0) {
-                flavorSectionHtml = buildFlavorSectionHtml(overrideEntries);
+                const entriesHtml = overrideEntries.map(e => `
+                    <div class="poke-info-flavor-entry">
+                        <div class="poke-info-flavor-version">${escapeHtml(e.version)}</div>
+                        <div class="poke-info-flavor-text">${escapeHtmlWithLineBreaks(e.text)}</div>
+                    </div>
+                `).join('');
+                flavorSectionHtml = `<div class="poke-info-flavor-section">${entriesHtml}</div>`;
             }
 
             if (speciesData) {
