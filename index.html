@@ -2375,50 +2375,43 @@
             will-change: filter;
         }
 
-        /* Applied by JS (see openImageViewer/closeImageViewer) to
-           whichever cards are actually on-screen at the moment the viewer
-           opens -- not the whole gallery, and not just the one card that
-           was tapped. content-visibility: auto (see .image-card's own
-           rule above) is what keeps a long gallery cheap, but it also
-           means a card the browser has decided to skip-render can lose
-           its painted/decoded state while sitting covered under the
-           viewer's opaque overlay, even though it's still technically
-           intersecting the viewport the whole time. On mobile, where the
-           overlay covers every currently-visible card at once rather than
-           just the one that's open, that showed up as several cards
-           flashing white right as the overlay finished retracting on
-           close -- each one catching up on a decode/paint it had put off.
-           Locking just the handful of cards that were actually visible
-           when the viewer opened keeps them decoded and ready the whole
-           time they're covered, without forcing the browser to render
-           the rest of the (possibly very long) gallery it was never
-           going to show anyway -- that would trade one performance
-           problem for a worse one. */
         .image-card.content-visibility-lock {
             content-visibility: visible;
-            /* Added alongside content-visibility: visible above, after
-               tracking down a second, distinct symptom of the same
-               underlying gap: rather than a stale decode/paint catching
-               up (what content-visibility: visible alone fixes), whole
-               locked cards -- frame background-image and the <img> both
-               at once -- were briefly disappearing entirely for a frame
-               or two, well before the overlay finished its close
-               transform, showing the body's own background straight
-               through. .image-card has no transform/will-change of its
-               own (deliberately -- see the cost note on .active-in-viewer
-               above), so the grid has no compositing layer of its own
-               either; it shares whatever layer its ancestors happen to
-               be on. #image-overlay's own large will-change:transform
-               layer sweeping across the screen on top of that shared,
-               unpromoted layer was enough to occasionally invalidate/
-               re-rasterize the whole grid as a unit mid-animation,
-               producing exactly the multi-card, in-sync blank frames
-               this was catching. Same promote-up-front logic as
-               .active-in-viewer's will-change: filter just above --
-               scoped to this class (not the unconditional .image-card
-               rule) so it's only ever paid for by cards that are already
-               being force-rendered for this same reason, not the whole
-               gallery. */
+        }
+
+        /* Distinct from content-visibility-lock just above, and applied
+           to a narrower set of cards -- see lockCardsInView/unlockCards
+           in the script for exactly which. Tracking down a second, more
+           specific symptom than the stale-decode one content-visibility:
+           visible fixes on its own: whole locked cards -- frame
+           background-image and the <img> both at once -- were briefly
+           disappearing entirely for a frame or two during close, well
+           before the overlay finished its own transform, showing the
+           body's own background straight through. .image-card has no
+           transform/will-change of its own (deliberately -- see the cost
+           note on .active-in-viewer above), so the grid has no
+           compositing layer of its own either; it shares whatever layer
+           its ancestors happen to be on, and #image-overlay's own large
+           will-change:transform layer sweeping across the screen on top
+           of that shared, unpromoted layer was occasionally enough to
+           invalidate/re-rasterize the whole grid as a unit mid-animation.
+           Same promote-up-front logic as .active-in-viewer's
+           will-change: filter above -- but deliberately kept on its own
+           class rather than folded into content-visibility-lock, and
+           deliberately only applied by lockCardsInView (the handful of
+           cards actually on-screen), not lockAllCards (the whole
+           gallery, used for a separate freeze bug). An off-screen card
+           is never actually painted regardless of will-change, so
+           promoting hundreds of them at once bought nothing visually --
+           it just meant the close-time recenter/pulse on the
+           previously-active card (see trackImageIntoView/pulseAttention)
+           was competing with a much larger demote event than it needed
+           to, landing close enough afterward to visibly disrupt the
+           pulse's own transform animation. Scoping this to just the
+           on-screen set keeps the promote/demote event small enough that
+           the pulse, which starts shortly after, isn't fighting a
+           GPU backlog that has nothing to do with it. */
+        .image-card.gallery-layer-promoted {
             will-change: transform;
         }
 
@@ -8643,6 +8636,14 @@
         // that locked it has also released it.
         const contentVisibilityLockCounts = new WeakMap();
 
+        // Separate ref-counted map from contentVisibilityLockCounts above,
+        // gating .gallery-layer-promoted (will-change: transform) rather
+        // than .content-visibility-lock -- see that class's own CSS
+        // comment for why this needs to stay independent of, and narrower
+        // than, the content-visibility lock. Only lockCardsInView below
+        // touches this map; lockAllCards deliberately doesn't.
+        const layerPromotionCounts = new WeakMap();
+
         function lockCardsInView() {
             const locked = [];
             document.querySelectorAll('.image-card.show').forEach(card => {
@@ -8650,6 +8651,8 @@
                 if (rect.bottom >= 0 && rect.top <= window.innerHeight) {
                     contentVisibilityLockCounts.set(card, (contentVisibilityLockCounts.get(card) || 0) + 1);
                     card.classList.add('content-visibility-lock');
+                    layerPromotionCounts.set(card, (layerPromotionCounts.get(card) || 0) + 1);
+                    card.classList.add('gallery-layer-promoted');
                     locked.push(card);
                 }
             });
@@ -8662,7 +8665,12 @@
         // narrower on-screen-only lock used elsewhere. Same ref-counted
         // bookkeeping, so this composes safely with lockCardsInView: a
         // card that's covered by both calls just needs both to unlock
-        // before it's content-visibility:auto again.
+        // before it's content-visibility:auto again. Deliberately doesn't
+        // touch .gallery-layer-promoted/layerPromotionCounts -- see that
+        // class's own CSS comment for why bulk-promoting the whole
+        // gallery's worth of (mostly off-screen, never-painted) cards
+        // onto their own GPU layers bought nothing and caused its own
+        // problem.
         function lockAllCards() {
             const locked = [];
             document.querySelectorAll('.image-card').forEach(card => {
@@ -8681,6 +8689,21 @@
                     card.classList.remove('content-visibility-lock');
                 } else {
                     contentVisibilityLockCounts.set(card, count);
+                }
+            });
+        }
+
+        // Mirrors unlockCards above, but for .gallery-layer-promoted /
+        // layerPromotionCounts -- only ever called with a set that came
+        // from lockCardsInView, never lockAllCards's full-gallery set.
+        function unlockLayerPromotion(cards) {
+            cards.forEach(card => {
+                const count = Math.max(0, (layerPromotionCounts.get(card) || 0) - 1);
+                if (count === 0) {
+                    layerPromotionCounts.delete(card);
+                    card.classList.remove('gallery-layer-promoted');
+                } else {
+                    layerPromotionCounts.set(card, count);
                 }
             });
         }
@@ -10119,6 +10142,10 @@
             setTimeout(() => {
                 unlockCards(cardsToUnlock);
                 unlockCards(cardsLockedForClose);
+                // Only the on-screen set ever got .gallery-layer-promoted
+                // in the first place (see lockCardsInView) -- nothing to
+                // release here for cardsLockedForClose.
+                unlockLayerPromotion(cardsToUnlock);
             }, VIEWER_TRANSITION_MS + 100);
 
             expandedPanel = null;
