@@ -8632,6 +8632,23 @@
             return locked;
         }
 
+        // Locks every card in the gallery, not just the ones on-screen --
+        // see closeImageViewer's own comment for why this is needed on
+        // close specifically, on top of (not instead of) lockCardsInView's
+        // narrower on-screen-only lock used elsewhere. Same ref-counted
+        // bookkeeping, so this composes safely with lockCardsInView: a
+        // card that's covered by both calls just needs both to unlock
+        // before it's content-visibility:auto again.
+        function lockAllCards() {
+            const locked = [];
+            document.querySelectorAll('.image-card').forEach(card => {
+                contentVisibilityLockCounts.set(card, (contentVisibilityLockCounts.get(card) || 0) + 1);
+                card.classList.add('content-visibility-lock');
+                locked.push(card);
+            });
+            return locked;
+        }
+
         function unlockCards(cards) {
             cards.forEach(card => {
                 const count = Math.max(0, (contentVisibilityLockCounts.get(card) || 0) - 1);
@@ -9978,6 +9995,27 @@
             const previouslyActive = activeGalleryImg;
             activeGalleryImg = null;
 
+            // Locks the *entire* gallery -- not just the cards on-screen --
+            // for the duration of the close. filterGallery() a few lines
+            // down (and possibly other work in here) does a synchronous,
+            // whole-document pass over every .image-card; with hundreds of
+            // them sitting at content-visibility:auto, that pass can force
+            // the browser to reconcile all of their skipped layout/paint
+            // state in one synchronous burst, landing in the same tick the
+            // overlay's own close transform is kicking off below. That
+            // reconciliation is what was actually producing the
+            // multi-card, in-sync "flash white" -- confirmed by testing
+            // with content-visibility: auto removed entirely (fixes it,
+            // but costs the memory savings it's there for) and by
+            // force-locking the whole gallery for this same window (also
+            // fixes it, without giving up the memory savings the rest of
+            // the time). This is intentionally separate from -- and
+            // stacked on top of, via the ref-counted lock -- the
+            // narrower on-screen-only lock taken in openImageViewer, so
+            // it only costs the temporary memory hit during this one
+            // transition rather than for the whole time the viewer's open.
+            const cardsLockedForClose = lockAllCards();
+
             // Starting the overlay's own slide-away transform first, on
             // its own, before anything else below touches a layer of its
             // own -- see the requestAnimationFrame further down for why.
@@ -10056,6 +10094,7 @@
             // already had.
             setTimeout(() => {
                 unlockCards(cardsToUnlock);
+                unlockCards(cardsLockedForClose);
             }, VIEWER_TRANSITION_MS + 100);
 
             expandedPanel = null;
