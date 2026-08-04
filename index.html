@@ -8836,6 +8836,58 @@
             return { dx, dy };
         }
 
+        // Desktop-only, and deliberately separate from neededScrollDelta
+        // above (which stays exactly as it was, and keeps driving
+        // closeImageViewer's recenter on both mobile and desktop).
+        // This one backs switching images while the viewer's already open
+        // -- the next/prev buttons and clicking a related image -- which
+        // used to use a native scrollIntoView({block:'nearest'}). That
+        // only guarantees bare visibility with the smallest possible
+        // scroll, which often left the card sitting flush against the
+        // viewport's actual top or bottom edge with zero breathing room.
+        // This instead only corrects when the card falls outside the
+        // middle GALLERY_BAND_FRACTION of the usable viewport height, and
+        // even then only scrolls it to the nearest edge of that band --
+        // not all the way to dead center, keeping the "don't move it if
+        // it doesn't need to move" spirit scrollIntoView('nearest') had,
+        // just with a band instead of the raw viewport edges. Not used on
+        // mobile: the panel is fullscreen there, so the gallery is never
+        // visible behind it while switching images (see openImageViewer's
+        // alreadyOpen branch), and there's nothing for this to apply to.
+        const GALLERY_BAND_FRACTION = 0.7;
+
+        function bandScrollDelta(img) {
+            const rect = img.getBoundingClientRect();
+            const vh = window.innerHeight;
+            const vw = window.innerWidth;
+
+            const bandMargin = vh * (1 - GALLERY_BAND_FRACTION) / 2;
+            const bandTop = bandMargin;
+            const bandBottom = vh - bandMargin;
+            let dy;
+            if (rect.top < bandTop) {
+                dy = rect.top - bandTop;
+            } else if (rect.bottom > bandBottom) {
+                dy = rect.bottom - bandBottom;
+            } else {
+                dy = 0;
+            }
+
+            let dx = 0;
+            if (rect.left < 0) dx = rect.left;
+            else if (rect.right > vw) dx = rect.right - vw;
+
+            // Same clamping rationale as neededScrollDelta above -- keeps
+            // a card near the very top/bottom of the document from asking
+            // for an unreachable scroll position.
+            const maxScrollY = Math.max(0, document.documentElement.scrollHeight - vh);
+            dy = Math.min(maxScrollY, Math.max(0, window.scrollY + dy)) - window.scrollY;
+            const maxScrollX = Math.max(0, document.documentElement.scrollWidth - vw);
+            dx = Math.min(maxScrollX, Math.max(0, window.scrollX + dx)) - window.scrollX;
+
+            return { dx, dy };
+        }
+
         // Guards against exactly the bug that caused the mobile info-panel
         // flicker: trackImageIntoView() gets called twice back-to-back on
         // mobile open (once from openImageViewer itself, once more from
@@ -10019,8 +10071,21 @@
                     // reflowing, so there's no moving target to chase.
                     if (desktopFilterQuery.matches) {
                         // Desktop: panel docks left and never covers vertical
-                        // space, so an ordinary smooth scroll is enough.
-                        galleryImg.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+                        // space, so a single smooth scroll is enough -- no
+                        // need for trackImageIntoView's per-frame chasing,
+                        // which exists to handle a *moving* target. Used to
+                        // be a plain scrollIntoView({block:'nearest'}), which
+                        // only guarantees bare visibility with the smallest
+                        // possible scroll and often left the card sitting
+                        // flush against the viewport's actual top or bottom
+                        // edge. bandScrollDelta gives the same "don't move it
+                        // if it doesn't need to move" behavior but against a
+                        // middle band instead of the raw viewport edges --
+                        // see its own comment.
+                        const { dx, dy } = bandScrollDelta(galleryImg);
+                        if (dx !== 0 || dy !== 0) {
+                            window.scrollBy({ left: dx, top: dy, behavior: 'smooth' });
+                        }
                     }
                     // Mobile: the panel is fullscreen the whole time it's open,
                     // so the gallery is never visible behind it -- no need to
