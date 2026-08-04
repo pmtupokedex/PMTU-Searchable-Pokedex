@@ -8856,7 +8856,15 @@
         // the very end (using the same shared delta calculation, rather
         // than the browser's own native centering) cleans up whatever small
         // residual is left from chasing a moving target with partial steps.
-        function trackImageIntoView(img, duration, onSettled) {
+        // skipPulse: lets a caller recenter an image without the trailing
+        // .gallery-pulse -- currently only closeImageViewer's mobile path
+        // uses this (see its own comment for why: mobile always recenters
+        // straight to the middle of a screen with very few cards on it,
+        // so the pulse's job of drawing the eye stopped earning its keep
+        // there, unlike desktop's reflow-and-scroll close which still
+        // needs it). Every other caller leaves this at its default and
+        // behaves exactly as before.
+        function trackImageIntoView(img, duration, onSettled, skipPulse = false) {
             const myGeneration = ++trackingGeneration;
             const start = performance.now();
             const SMOOTHING = 0.25; // fraction of the remaining distance corrected per frame
@@ -8871,7 +8879,11 @@
                     requestAnimationFrame(step);
                 } else {
                     if (dx !== 0 || dy !== 0) window.scrollBy(dx, dy);
-                    pulseAttention(img, onSettled);
+                    if (skipPulse) {
+                        if (onSettled) onSettled();
+                    } else {
+                        pulseAttention(img, onSettled);
+                    }
                 }
             }
             requestAnimationFrame(step);
@@ -10139,25 +10151,18 @@
             // just for the one row the overlay reveals last. This buffer
             // gives row 0 the same kind of cushion the rest of the grid
             // already had.
-            // The card about to be recentered-and-pulsed (see further down)
-            // is deliberately excluded from the layer-promotion release
-            // below and kept promoted until its own pulse actually
-            // finishes -- see the pulse-settle callback further down for
-            // why. Every other on-screen card has no animation of its own
-            // to protect, so they release on the normal timer.
-            const pulseTargetCard = (!desktopFilterQuery.matches && previouslyActive)
-                ? previouslyActive.closest('.image-card')
-                : null;
 
             setTimeout(() => {
                 unlockCards(cardsToUnlock);
                 unlockCards(cardsLockedForClose);
                 // Only the on-screen set ever got .gallery-layer-promoted
                 // in the first place (see lockCardsInView) -- nothing to
-                // release here for cardsLockedForClose.
-                unlockLayerPromotion(
-                    pulseTargetCard ? cardsToUnlock.filter(card => card !== pulseTargetCard) : cardsToUnlock
-                );
+                // release here for cardsLockedForClose. No pulse-specific
+                // exclusion needed any more either -- mobile close no
+                // longer pulses at all (see the recenter call further
+                // down), so there's no animation left on any on-screen
+                // card that this release could land in the middle of.
+                unlockLayerPromotion(cardsToUnlock);
             }, VIEWER_TRANSITION_MS + 100);
 
             expandedPanel = null;
@@ -10201,60 +10206,40 @@
                 } else {
                     galleryClickLocked = true;
 
-                    // Guards releasePulseLayer against firing twice --
-                    // once from the pulse's own animationend (the normal
-                    // path) and once from the safety-net timeout below (if
-                    // animationend never fires, e.g. a filter change hides
-                    // the card mid-pulse -- see pulseAttention's own
-                    // comment). unlockLayerPromotion is ref-counted, so a
-                    // double release wouldn't go negative, but it could
-                    // incorrectly strip a promotion a *newer* session had
-                    // since re-added to the same card -- the same class of
-                    // race the ref-counting elsewhere in here exists to
-                    // prevent.
-                    let pulseLayerReleased = false;
-                    function releasePulseLayer() {
-                        if (pulseLayerReleased || !pulseTargetCard) return;
-                        pulseLayerReleased = true;
-                        unlockLayerPromotion([pulseTargetCard]);
-                    }
-
+                    // skipPulse: true here -- on mobile there are only ever
+                    // a handful of cards on screen, and closing always
+                    // recenters straight to the middle, so the pulse's job
+                    // of drawing the eye back to the right card wasn't
+                    // earning its keep any more; it was also the thing
+                    // behind an intermittent stutter that a card needing
+                    // little or no recentering scroll was especially prone
+                    // to (it sits fully idle for the whole recenter window,
+                    // with nothing else happening nearby to cover a
+                    // promote/demote race right as the pulse tried to
+                    // start). Desktop keeps the pulse -- see the branch
+                    // above and its own comment for why it's still needed
+                    // there.
                     setTimeout(() => {
                         trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS, () => {
                             galleryClickLocked = false;
-                            // Matches pulseTargetCard's exclusion from the
-                            // early layer-promotion release above -- this
-                            // card's GPU layer was deliberately kept alive
-                            // through its own pulse instead of being torn
-                            // down mid-idle on the fixed timer everything
-                            // else uses. Released here, once the pulse's
-                            // own animationend has actually fired (see
-                            // pulseAttention), rather than on any fixed
-                            // delay -- a card needing little or no
-                            // recentering scroll sits fully idle for the
-                            // whole wait otherwise, with nothing else
-                            // happening nearby to absorb a promote/demote
-                            // right as the pulse needs a fresh layer.
-                            releasePulseLayer();
-                        });
+                        }, true);
                     }, 350);
                     // Same safety net as openImageViewer's own lock above --
-                    // if trackImageIntoView's own pulse never settles for
-                    // some reason, this still releases the lock rather than
-                    // leaving gallery clicks stuck forever. Covers the
-                    // layer-promotion release too, via the same guard.
+                    // covers trackImageIntoView's step() loop returning
+                    // early without ever reaching onSettled, which happens
+                    // if a newer trackImageIntoView call supersedes this
+                    // one (see its own trackingGeneration check) before
+                    // this one finishes.
                     setTimeout(() => {
                         galleryClickLocked = false;
-                        releasePulseLayer();
-                    }, 350 + PANEL_TRANSITION_MS + PULSE_MS + 100);
+                    }, 350 + PANEL_TRANSITION_MS + 100);
 
                     // Nav panels slide back into view timed to land right
-                    // as the pulse above starts (the 350ms recenter delay
-                    // plus the PANEL_TRANSITION_MS scroll duration
-                    // trackImageIntoView takes before it calls
-                    // pulseAttention) -- so the reveal and the pulse read
-                    // as one connected motion instead of an instant pop
-                    // followed by a separate, later pulse.
+                    // as the recenter above finishes (the 350ms recenter
+                    // delay plus the PANEL_TRANSITION_MS scroll duration
+                    // trackImageIntoView takes) -- so the reveal reads as
+                    // the natural next beat after the image settles,
+                    // instead of an instant pop while it's still moving.
                     setTimeout(() => {
                         document.getElementById('nav-panel-top').classList.add('nav-visible');
                         document.getElementById('nav-panel-bottom').classList.add('nav-visible');
