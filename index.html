@@ -8623,6 +8623,21 @@
         // overlay keeps the whole top strip covered for virtually all of
         // its own VIEWER_TRANSITION_MS regardless.
         const NAV_UNPAUSE_DEFER_MS = 120;
+        // Deliberately the same expression as the full-gallery
+        // content-visibility-lock release in closeImageViewer
+        // (VIEWER_TRANSITION_MS + 100) -- not a coincidence, and not
+        // safe to change one without the other. lockAllCards() forces
+        // every card in the gallery to render fully (no skip-rendering)
+        // until that release fires; trackImageIntoView's recenter scroll
+        // does a real layout read + paint every single frame it runs.
+        // Starting the recenter any earlier than the lock's release means
+        // some of its frames land while the whole gallery is temporarily
+        // far more expensive to paint than normal, which was dropping
+        // frames and reading as stutter in the scroll itself. Tying this
+        // to the same expression (rather than just picking a close-enough
+        // number) means the two can't drift apart from each other again
+        // if either constant changes later.
+        const MOBILE_RECENTER_DELAY_MS = VIEWER_TRANSITION_MS + 100;
 
         // Reference-counted, same pattern as window.pageScrollLock further
         // up -- see .image-card.content-visibility-lock's own CSS comment
@@ -10182,24 +10197,33 @@
                 viewerHoldsScrollLock = false;
             }
 
-            // Always re-center on close, on both mobile and desktop — this
-            // is also what makes the pulse afterward land in a consistent,
-            // predictable spot rather than only sometimes appearing.
+            // Always re-center on close, on both mobile and desktop -- this
+            // is also what makes desktop's pulse afterward land in a
+            // consistent, predictable spot rather than only sometimes
+            // appearing.
             //
-            // On mobile this now runs after a short delay rather than at
-            // the same instant as everything above. The gallery no longer
-            // moves at all while the panel is open (see body.viewer-open's
-            // padding-top above), so this recenter is usually a short
-            // distance -- and a short scroll landing in the very same
-            // instant the panel starts sliding away reads as an abrupt
-            // little jerk, since there's nothing else happening yet to
-            // visually cover it. Waiting until roughly when the panel's
-            // own 0.35s slide-away has finished lets the scroll happen once
-            // the panel's mostly out of the way, rather than racing it.
+            // On mobile this now runs after a short delay (
+            // MOBILE_RECENTER_DELAY_MS) rather than at the same instant as
+            // everything above, for two independent reasons that happen to
+            // land on the same number: the gallery no longer moves at all
+            // while the panel is open (see body.viewer-open's padding-top
+            // above), so this recenter is usually a short distance -- and a
+            // short scroll landing in the very same instant the panel
+            // starts sliding away reads as an abrupt little jerk, since
+            // there's nothing else happening yet to visually cover it,
+            // whereas waiting until roughly when the panel's own 0.35s
+            // slide-away has finished lets the scroll happen once the
+            // panel's mostly out of the way. Separately, and just as
+            // important -- see MOBILE_RECENTER_DELAY_MS's own comment --
+            // starting any earlier would run part of the recenter's
+            // per-frame layout/paint work while lockAllCards() still has
+            // the whole gallery forced fully rendered, which was dropping
+            // frames in the scroll itself.
             // Desktop doesn't need this: the gallery is already visible
             // and reflowing the whole time (padding-left), so the recenter
             // reads as a continuation of motion that's already happening,
-            // not a sudden isolated jerk.
+            // not a sudden isolated jerk, and desktop's close never uses
+            // lockAllCards() in the first place.
             if (previouslyActive && wasOpen) {
                 if (desktopFilterQuery.matches) {
                     trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS);
@@ -10223,7 +10247,7 @@
                         trackImageIntoView(previouslyActive, PANEL_TRANSITION_MS, () => {
                             galleryClickLocked = false;
                         }, true);
-                    }, 350);
+                    }, MOBILE_RECENTER_DELAY_MS);
                     // Same safety net as openImageViewer's own lock above --
                     // covers trackImageIntoView's step() loop returning
                     // early without ever reaching onSettled, which happens
@@ -10232,18 +10256,18 @@
                     // this one finishes.
                     setTimeout(() => {
                         galleryClickLocked = false;
-                    }, 350 + PANEL_TRANSITION_MS + 100);
+                    }, MOBILE_RECENTER_DELAY_MS + PANEL_TRANSITION_MS + 100);
 
                     // Nav panels slide back into view timed to land right
-                    // as the recenter above finishes (the 350ms recenter
-                    // delay plus the PANEL_TRANSITION_MS scroll duration
+                    // as the recenter above finishes (MOBILE_RECENTER_
+                    // DELAY_MS plus the PANEL_TRANSITION_MS scroll duration
                     // trackImageIntoView takes) -- so the reveal reads as
                     // the natural next beat after the image settles,
                     // instead of an instant pop while it's still moving.
                     setTimeout(() => {
                         document.getElementById('nav-panel-top').classList.add('nav-visible');
                         document.getElementById('nav-panel-bottom').classList.add('nav-visible');
-                    }, 350 + PANEL_TRANSITION_MS);
+                    }, MOBILE_RECENTER_DELAY_MS + PANEL_TRANSITION_MS);
                 }
             } else if (wasOpen && !desktopFilterQuery.matches) {
                 // Viewer was open but there's no previously-active image to
