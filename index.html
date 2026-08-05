@@ -8931,14 +8931,22 @@
         // there, unlike desktop's reflow-and-scroll close which still
         // needs it). Every other caller leaves this at its default and
         // behaves exactly as before.
-        function trackImageIntoView(img, duration, onSettled, skipPulse = false) {
+        // computeDelta: which targeting function step() re-measures against
+        // every frame -- defaults to neededScrollDelta (exact center),
+        // unchanged for every pre-existing caller. openImageViewer's
+        // already-open/desktop branch passes bandScrollDelta instead, for
+        // a reason that isn't obvious from the name of either function:
+        // see that call site's own comment for why a *self-correcting*
+        // loop turned out to matter there specifically, not just which
+        // position it targets.
+        function trackImageIntoView(img, duration, onSettled, skipPulse = false, computeDelta = neededScrollDelta) {
             const myGeneration = ++trackingGeneration;
             const start = performance.now();
             const SMOOTHING = 0.25; // fraction of the remaining distance corrected per frame
 
             function step(now) {
                 if (myGeneration !== trackingGeneration) return; // superseded by a newer call
-                const { dx, dy } = neededScrollDelta(img);
+                const { dx, dy } = computeDelta(img);
                 if (now - start < duration) {
                     if (dx !== 0 || dy !== 0) {
                         window.scrollBy(dx * SMOOTHING, dy * SMOOTHING);
@@ -10067,25 +10075,43 @@
                 refreshBackButtonState();
 
                 if (alreadyOpen) {
-                    // Panel's already open, just switching images — nothing is
-                    // reflowing, so there's no moving target to chase.
                     if (desktopFilterQuery.matches) {
                         // Desktop: panel docks left and never covers vertical
-                        // space, so a single smooth scroll is enough -- no
-                        // need for trackImageIntoView's per-frame chasing,
-                        // which exists to handle a *moving* target. Used to
-                        // be a plain scrollIntoView({block:'nearest'}), which
-                        // only guarantees bare visibility with the smallest
-                        // possible scroll and often left the card sitting
-                        // flush against the viewport's actual top or bottom
-                        // edge. bandScrollDelta gives the same "don't move it
-                        // if it doesn't need to move" behavior but against a
-                        // middle band instead of the raw viewport edges --
-                        // see its own comment.
-                        const { dx, dy } = bandScrollDelta(galleryImg);
-                        if (dx !== 0 || dy !== 0) {
-                            window.scrollBy({ left: dx, top: dy, behavior: 'smooth' });
-                        }
+                        // space, so the gallery grid is visible and already
+                        // has real, on-screen dimensions for anything the
+                        // *previous* image's neighborhood ever rendered --
+                        // gives a false sense that "nothing is reflowing"
+                        // holds here the way the comment two calls down
+                        // (the actual moving-panel case) means it. It
+                        // doesn't hold for a large jump: related images can
+                        // link to a card hundreds of rows away that's never
+                        // been rendered at all, still sitting at
+                        // content-visibility:auto's contain-intrinsic-size
+                        // placeholder (see .image-card's own comment). A
+                        // one-shot scroll computed once, up front, targets a
+                        // position based on that placeholder guess for
+                        // every unrendered row between here and there --
+                        // and as the scroll actually passes through that
+                        // stretch, each of those cards gets promoted to its
+                        // real (on this grid, larger) size, growing the
+                        // document out from under a target that was already
+                        // fixed. That's what was producing the overshoot
+                        // some jumps had, but not others: a short hop
+                        // between two already-rendered cards had nothing to
+                        // grow, so the one-shot math was already correct by
+                        // construction, and a repeat of the same long jump
+                        // was correct too, since by then every card along
+                        // the path had already been promoted once and
+                        // contain-intrinsic-size's auto keyword remembers
+                        // real measured size after that. trackImageIntoView
+                        // re-measures every frame instead of once, so it
+                        // keeps correcting toward bandScrollDelta's actual,
+                        // current target as the document grows mid-scroll,
+                        // rather than committing to a stale one up front.
+                        // skipPulse: true -- this branch already fires its
+                        // own pulse unconditionally and immediately below,
+                        // same as it did with the old one-shot scroll.
+                        trackImageIntoView(galleryImg, PANEL_TRANSITION_MS, undefined, true, bandScrollDelta);
                     }
                     // Mobile: the panel is fullscreen the whole time it's open,
                     // so the gallery is never visible behind it -- no need to
