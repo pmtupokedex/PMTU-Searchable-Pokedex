@@ -5014,15 +5014,47 @@
         // To close that gap further, once a resize/scroll starts we also
         // poll visualViewport.height on every animation frame for a short
         // window, which tracks as close to the live animation as JS can get.
+        //
+        // That same live-tracking is also what made an on-screen keyboard
+        // visibly shrink the nav panels on mobile, once they became
+        // permanently visible instead of only appearing in the image
+        // viewer: a keyboard shrinks visualViewport.height exactly the way
+        // a real viewport resize does, since as far as this API is
+        // concerned "the visible area got smaller" either way. See
+        // KEYBOARD_GAP_THRESHOLD below for how that's told apart from an
+        // actual address-bar change.
         (() => {
             const root = document.documentElement;
             const POLL_WINDOW_MS = 600; // keep sampling this long after the last resize/scroll event
+            // window.innerHeight (the layout viewport) doesn't shrink for an
+            // on-screen keyboard -- only visualViewport.height does, which
+            // is the whole reason visualViewport exists as a separate API
+            // from plain viewport units in the first place. An address-bar
+            // show/hide, on the other hand, is a genuine layout viewport
+            // resize (see the comment above this IIFE), so innerHeight
+            // moves together with visualViewport.height for that case, just
+            // laggier -- which is why visualViewport is still preferred
+            // when the two agree. A large gap between them, then, reliably
+            // means "keyboard, not address bar": comfortably bigger than
+            // any mobile browser's address bar (on the order of 40-60px)
+            // and comfortably smaller than any on-screen keyboard (100px+).
+            // When that gap shows up, --real-vh holds at innerHeight
+            // instead of following visualViewport.height down, so
+            // --panel-h and the nav panels' reserved padding stay put
+            // while the keyboard is open rather than visibly shrinking.
+            const KEYBOARD_GAP_THRESHOLD = 80;
 
             let pollUntil = 0;
             let polling = false;
 
             function applyHeight() {
-                const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+                if (!window.visualViewport) {
+                    root.style.setProperty('--real-vh', `${window.innerHeight}px`);
+                    return;
+                }
+                const visualHeight = window.visualViewport.height;
+                const layoutHeight = window.innerHeight;
+                const height = (layoutHeight - visualHeight > KEYBOARD_GAP_THRESHOLD) ? layoutHeight : visualHeight;
                 root.style.setProperty('--real-vh', `${height}px`);
             }
 
