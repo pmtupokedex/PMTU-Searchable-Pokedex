@@ -1531,6 +1531,33 @@
             margin: 0 0 15px;
         }
 
+        /* Villain/Elite Four/Path of Legends/Starfall Street -- its own
+           rows below the main grid rather than reusing that grid's own
+           columns, since these can appear as a single centered box, a
+           two-across row, or several rows depending on the region (see
+           renderBadgeExtras() in the script for exactly which). Each
+           row's boxes are sized to match the main grid's own column
+           width (its 1fr columns with a 12px gap work out to roughly
+           half the row each), so both sections read as one continuous
+           grid even though they're technically separate elements. */
+        .game-badge-extras {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin: 0 0 15px;
+        }
+
+        .game-badge-extras-row {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .game-badge-extras-row .game-badge-box {
+            width: calc(50% - 6px);
+            flex-shrink: 0;
+        }
+
         /* Tier 1 (top-left) through Tier 8 (bottom-right) fall out of
            plain DOM order in a 2-column grid without needing explicit
            placement -- renderBadgeGrid() in the script just appends
@@ -1560,15 +1587,19 @@
             background: rgba(255, 255, 255, 0.85);
         }
 
-        /* Stand-in badge icon -- a plain colored circle with the Tier
-           number, hue spread evenly across the 8 tiers (0-315 in 45deg
-           steps -- see the inline --badge-tier-hue custom property set
-           per box in renderBadgeGrid()) so all 8 read as visually
-           distinct at a glance even with no real artwork yet. Sized as a
-           share of the box itself (see .game-badge-icon-img below, which
+        /* Stand-in badge icon -- a plain colored circle, hue spread
+           evenly across the 8 tiers (0-315 in 45deg steps -- see the
+           inline --badge-tier-hue custom property set per box in
+           buildBadgeBoxElement()) so all 8 read as visually distinct at
+           a glance even with no real artwork yet. Sized as a share of
+           the box itself (see .game-badge-icon-img below, which
            matches) rather than a fixed pixel size, so it's the box doing
            most of the work filling the grid, not empty padding around a
-           small icon. */
+           small icon. This base size (one large character) is only
+           actually used for badgeImageMarkup()'s own "?" fallback now --
+           .game-badge-icon-empty below overrides it for the empty-slot
+           label text, which needs to fit a couple of short lines instead
+           of one big glyph. */
         .game-badge-icon {
             width: 86%;
             aspect-ratio: 1 / 1;
@@ -1583,19 +1614,33 @@
             flex-shrink: 0;
         }
 
+        /* Empty/unavailable slots -- what used to be a separate label
+           below a bare Tier number (see buildBadgeBoxElement() in the
+           script) now lives inside the circle itself instead, at the
+           same font-size the plain Tier number used to be (see
+           .game-badge-icon above) -- tight line-height and minimal
+           padding so multi-word labels like "Path of Legends" still
+           wrap to fit at that size instead of needing to shrink. */
         .game-badge-icon-empty {
             background: rgba(0, 0, 0, 0.15);
-            color: rgba(0, 0, 0, 0.4);
+            color: rgba(0, 0, 0, 0.55);
+            flex-direction: column;
+            font-size: 28px;
+            line-height: 1.05;
+            text-align: center;
+            padding: 4%;
+            box-sizing: border-box;
         }
 
         /* Real badge artwork, once gym-badges.json actually has an
            imageUrl for a given option -- see badgeImageMarkup() in the
            script, which falls back to the plain .game-badge-icon circle
-           (with a "?" instead of the Tier number) for anything still
-           using that JSON's own "placeholder" string. Same 86% share of
-           the box as .game-badge-icon above, so collected and
-           empty/unavailable boxes read as the same size of "thing" at a
-           glance. */
+           (with a "?" instead of a label) for anything still using that
+           JSON's own "placeholder" string. Same 86% share of the box as
+           .game-badge-icon above, so collected and empty/unavailable
+           boxes read as the same size of "thing" at a glance. Nothing
+           else renders alongside this in a collected box -- see
+           buildBadgeBoxElement() -- so the artwork is the whole box. */
         .game-badge-icon-img {
             width: 86%;
             aspect-ratio: 1 / 1;
@@ -1607,22 +1652,6 @@
             opacity: 0.5;
             border-style: dotted;
             cursor: default;
-        }
-
-        .game-badge-name {
-            font-size: 11px;
-            font-weight: bold;
-            line-height: 1.2;
-            width: 100%;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .game-badge-tier-label {
-            font-size: 10px;
-            color: #666;
-            line-height: 1.2;
         }
 
         /* Live "N Badges (N pts) — Stage: X" readout under the grid --
@@ -4911,6 +4940,7 @@
                 </div>
                 <p class="game-badge-region-label" id="game-badge-region-label"></p>
                 <div class="game-badge-grid" id="game-badge-grid"></div>
+                <div class="game-badge-extras" id="game-badge-extras"></div>
                 <p class="game-badge-stage-readout" id="game-badge-stage-readout"></p>
             </div>
 
@@ -6743,7 +6773,7 @@
         // real difference between "saved" and "unsaved" and nothing to
         // ever nudge anyone about.
         function emptySaveScopedData() {
-            return { badges: { collected: {} }, team: {} };
+            return { badges: { collected: {}, collectedExtras: {} }, team: {} };
         }
         let unsavedSessionData = emptySaveScopedData();
         let unsavedSessionTouched = false; // true once it's actually held something worth losing
@@ -6938,16 +6968,109 @@
                 console.warn('Could not load gym badge data:', err);
             });
 
-        // Every option actually available at a given Region/Tier --
-        // usually one, sometimes more (see galar-fighting-badge/
-        // galar-ghost-badge, both Tier 4), occasionally none yet, for
-        // any Region/Tier this JSON hasn't been filled in for -- see the
-        // "Not Yet Available" box state in renderBadgeGrid() for that
-        // last case, rather than pretending something's there.
-        function getBadgeOptionsForTier(region, tier) {
+        // gym-badges.json's region/tier fields can each be either a
+        // single value or an array -- a single shared entry like
+        // "elite-four" applies to a whole list of regions at once, and
+        // Orange Islands' badges each cover 2 tiers at once. These two
+        // helpers normalize either shape to an array so the rest of this
+        // code never needs its own array-or-not branch.
+        function normalizeToArray(value) {
+            return Array.isArray(value) ? value : [value];
+        }
+
+        function entryAppliesToRegion(entry, region) {
+            return normalizeToArray(entry.region).includes(region);
+        }
+
+        // Display labels for the four non-scoring "extra" categories --
+        // see buildBadgeSlots()'s own comment for what these represent.
+        const EXTRA_CATEGORY_LABELS = {
+            villain: 'Villain',
+            'elite-four': 'Elite Four',
+            'path-of-legends': 'Path of Legends',
+            'starfall-street': 'Starfall Street',
+        };
+
+        // Every gym-badges.json entry matching (region, category),
+        // grouped into slots by shared Tier(s) -- multiple entries
+        // sharing the exact same Tier(s) are alternative options for
+        // that one slot (e.g. Galar's Fighting/Ghost Badge, both Tier 4
+        // -- collecting one makes the other permanently inaccessible,
+        // same as before), while an entry with an array Tier (e.g.
+        // Orange Islands' Coral-Eye Badge, Tiers 1+2) becomes its own
+        // slot spanning that many Tiers at once, worth all of their
+        // combined points the moment it's collected (see
+        // getBadgeTiersForOptionId()/computeBadgePoints() below).
+        // category is null for the main tiered badges, or one of
+        // 'villain' | 'elite-four' | 'path-of-legends' |
+        // 'starfall-street' for the non-scoring extras that go after
+        // them (see renderBadgeExtras()) -- those never touch Badge
+        // Points/Count regardless of Tier, since they represent an
+        // action (beating a villain, clearing the Elite Four) rather
+        // than a Gym win.
+        function buildBadgeSlots(region, category) {
+            const matches = gymBadges.filter(b =>
+                entryAppliesToRegion(b, region) &&
+                (category ? b.extra === category : !b.extra)
+            );
+            const bySlot = new Map();
+            matches.forEach(b => {
+                const tiers = normalizeToArray(b.tier);
+                const key = tiers.slice().sort((x, y) => x - y).join('-');
+                if (!bySlot.has(key)) bySlot.set(key, { slotKey: key, tiers, options: [] });
+                bySlot.get(key).options.push({ id: b.id, name: b.name, imageUrl: b.imageUrl });
+            });
+            return Array.from(bySlot.values()).sort((a, b) => a.tiers[0] - b.tiers[0]);
+        }
+
+        // The main grid's slots -- usually 8 (one per Tier), but
+        // whatever buildBadgeSlots() actually finds for the region (e.g.
+        // Orange Islands' 4 Tier-pairs). Falls back to 8 empty
+        // placeholder slots only if the region has NO main entries at
+        // all yet, so an entirely-unbuilt region still shows the
+        // expected grid shape rather than collapsing to nothing; a
+        // region with SOME entries shows exactly those, with no
+        // synthesized gaps for any Tier it's missing.
+        function mainBadgeSlots(region) {
+            const slots = buildBadgeSlots(region, null);
+            if (slots.length > 0) return slots;
+            return Array.from({ length: 8 }, (_, i) => ({ slotKey: String(i + 1), tiers: [i + 1], options: [] }));
+        }
+
+        // Categories where Tier doesn't actually fix which named badge
+        // goes in which position -- Path of Legends and Starfall Street
+        // can be collected in any order, so any of the 5 named badges in
+        // one of these sets can end up in any of its 5 slots, and a
+        // slot's position is really just "the Nth badge collected from
+        // this set" (see getExtraPool()/collectBadge() below), not tied
+        // to a specific badge's own Tier the way buildBadgeSlots() above
+        // assumes for everything else (main tiered badges, Villain,
+        // Elite Four). Tier still exists on these entries in
+        // gym-badges.json -- it's just inert now, unused by any of the
+        // rendering/collection logic below.
+        const POOL_BASED_EXTRA_CATEGORIES = new Set(['path-of-legends', 'starfall-street']);
+
+        // Every named badge available for (region, category), ignoring
+        // Tier entirely -- ordering here doesn't matter either, since
+        // renderBadgeExtras() below only ever uses this to know how many
+        // slots exist (pool.length) and, together with
+        // data.badges.collectedExtras[category] (an ordered array of ids
+        // for these two categories, not the tier-keyed object every
+        // other category uses), which named badges are still available
+        // to collect.
+        function getExtraPool(region, category) {
             return gymBadges
-                .filter(b => b.region === region && b.tier === tier)
+                .filter(b => entryAppliesToRegion(b, region) && b.extra === category)
                 .map(b => ({ id: b.id, name: b.name, imageUrl: b.imageUrl }));
+        }
+
+        // A collected option's own Tier(s), looked up live from
+        // gymBadges by id rather than duplicated into the save -- the
+        // single source of truth for "how many points/Tiers of count
+        // does this collected badge represent" stays the JSON itself.
+        function getBadgeTiersForOptionId(optionId) {
+            const b = gymBadges.find(x => x.id === optionId);
+            return b ? normalizeToArray(b.tier) : [];
         }
 
         // A real <img> where a badge actually has one, falling back to a
@@ -6974,19 +7097,70 @@
             return cachedRealRegionList[0] || 'kanto';
         }
 
+        // Only ever reads data.badges.collected (the main tiered
+        // badges) -- data.badges.collectedExtras (villain/Elite Four/
+        // Path of Legends/Starfall Street) is deliberately never
+        // touched here, since those don't count toward either total.
         function computeBadgeCount(data) {
-            return Object.keys(data.badges.collected || {}).length;
+            return Object.values(data.badges.collected || {})
+                .reduce((sum, optionId) => sum + getBadgeTiersForOptionId(optionId).length, 0);
         }
 
         function computeBadgePoints(data) {
-            return Object.keys(data.badges.collected || {})
-                .reduce((sum, tier) => sum + badgeTierPoints(Number(tier)), 0);
+            return Object.values(data.badges.collected || {})
+                .reduce((sum, optionId) => sum + getBadgeTiersForOptionId(optionId)
+                    .reduce((s, tier) => s + badgeTierPoints(tier), 0), 0);
         }
 
-        // Rebuilds all 8 boxes from scratch against whatever
-        // getActiveSaveData()/getActiveRegionForBadges() currently
-        // resolve to -- simplest way to guarantee the grid never shows a
-        // stale mix of two different saves' collected badges.
+        // Builds one <button class="game-badge-box"> for a given slot --
+        // shared by the main grid and the extras section below it, so
+        // both look and behave identically. hueSeed just needs to vary
+        // per box for --badge-tier-hue's rainbow spread; which number
+        // specifically doesn't matter beyond that.
+        function buildBadgeBoxElement(category, slot, collectedOption, hueSeed) {
+            const box = document.createElement('button');
+            box.type = 'button';
+            box.dataset.category = category || '';
+            box.dataset.slotKey = slot.slotKey;
+            box.style.setProperty('--badge-tier-hue', String((hueSeed * 45) % 360));
+
+            const tierText = slot.tiers.join('-');
+
+            if (slot.options.length === 0) {
+                // Nothing in gym-badges.json for this slot yet -- rather
+                // than pretending a badge is there, mark it unavailable
+                // and disabled (disabled buttons don't dispatch click at
+                // all, so no extra guard is needed in the click handler
+                // for this).
+                box.className = 'game-badge-box unavailable';
+                box.disabled = true;
+                box.setAttribute('aria-label', 'Badge slot, not yet available');
+                box.innerHTML = `<span class="game-badge-icon game-badge-icon-empty">Not Yet<br>Available</span>`;
+            } else if (collectedOption) {
+                // Collected -- just the artwork, no label under it.
+                box.className = 'game-badge-box collected';
+                box.setAttribute('aria-label', `${collectedOption.name}, collected`);
+                box.innerHTML = badgeImageMarkup(collectedOption, 'game-badge-icon-img');
+            } else {
+                // Empty -- what used to be a separate label below a bare
+                // Tier number now replaces that number inside the icon
+                // itself.
+                box.className = 'game-badge-box';
+                const emptyLabel = category
+                    ? EXTRA_CATEGORY_LABELS[category] || category
+                    : `Tier ${tierText}<br>${slot.tiers.reduce((s, t) => s + badgeTierPoints(t), 0)} Points`;
+                box.setAttribute('aria-label', 'Badge slot, empty');
+                box.innerHTML = `<span class="game-badge-icon game-badge-icon-empty">${emptyLabel}</span>`;
+            }
+
+            return box;
+        }
+
+        // Rebuilds the main grid and the extras section below it from
+        // scratch against whatever getActiveSaveData()/
+        // getActiveRegionForBadges() currently resolve to -- simplest
+        // way to guarantee neither ever shows a stale mix of two
+        // different saves' collected badges.
         function renderBadgeGrid() {
             const grid = document.getElementById('game-badge-grid');
             if (!grid) return;
@@ -6998,45 +7172,94 @@
             if (regionLabelEl) regionLabelEl.textContent = `Region: ${musicRegionLabel(region)}`;
 
             grid.innerHTML = '';
-            for (let tier = 1; tier <= 8; tier++) {
-                const options = getBadgeOptionsForTier(region, tier);
-                const collectedOption = options.find(o => o.id === collected[tier]) || null;
+            mainBadgeSlots(region).forEach((slot, i) => {
+                const collectedOption = slot.options.find(o => o.id === collected[slot.slotKey]) || null;
+                grid.appendChild(buildBadgeBoxElement(null, slot, collectedOption, i));
+            });
 
-                const box = document.createElement('button');
-                box.type = 'button';
-                box.dataset.tier = String(tier);
-                box.style.setProperty('--badge-tier-hue', String((tier - 1) * 45));
-
-                if (options.length === 0) {
-                    // Nothing in gym-badges.json for this Region/Tier yet
-                    // -- rather than pretending a badge is there, mark
-                    // the slot unavailable and disabled (disabled
-                    // buttons don't dispatch click at all, so no extra
-                    // guard is needed in the click handler for this).
-                    box.className = 'game-badge-box unavailable';
-                    box.disabled = true;
-                    box.setAttribute('aria-label', `Tier ${tier} Badge, not yet available`);
-                    box.innerHTML = `
-                        <span class="game-badge-icon game-badge-icon-empty">${tier}</span>
-                        <span class="game-badge-tier-label">Not Yet Available</span>`;
-                } else if (collectedOption) {
-                    box.className = 'game-badge-box collected';
-                    box.setAttribute('aria-label', `Tier ${tier}: ${collectedOption.name}, collected`);
-                    box.innerHTML = `
-                        ${badgeImageMarkup(collectedOption, 'game-badge-icon-img')}
-                        <span class="game-badge-name">${collectedOption.name}</span>`;
-                } else {
-                    box.className = 'game-badge-box';
-                    box.setAttribute('aria-label', `Tier ${tier} Badge slot, empty`);
-                    box.innerHTML = `
-                        <span class="game-badge-icon game-badge-icon-empty">${tier}</span>
-                        <span class="game-badge-tier-label">Tier ${tier} \u00b7 ${badgeTierPoints(tier)} pts</span>`;
-                }
-
-                grid.appendChild(box);
-            }
-
+            renderBadgeExtras(region, data);
             renderBadgeStageReadout(data);
+        }
+
+        // Villain/Elite Four/Path of Legends/Starfall Street, laid out
+        // per how each region actually combines them (only these two
+        // combinations exist in gym-badges.json right now):
+        //
+        //   - Villain + Elite Four (every region except Paldea so far):
+        //     one row, Elite Four on the left, Villain on the right.
+        //   - Elite Four + Path of Legends + Starfall Street (Paldea
+        //     only so far): Elite Four alone on its own centered row,
+        //     then Path of Legends and Starfall Street alternating in
+        //     rows of two (Path of Legends left, Starfall Street right).
+        //     Which named badge shows up in which row isn't fixed for
+        //     these two (see POOL_BASED_EXTRA_CATEGORIES) -- position 1
+        //     is just "whichever badge from this set was collected
+        //     first," and so on, so the pairing is by collection order,
+        //     not by any particular badge's own Tier.
+        //
+        // Falls back gracefully if a region only has one of a pair (or
+        // none at all) rather than assuming both are always present.
+        function renderBadgeExtras(region, data) {
+            const container = document.getElementById('game-badge-extras');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const collectedExtras = data.badges.collectedExtras || {};
+            const boxFor = (category, slot, hueSeed) => {
+                const collectedOption = slot.options.find(o => o.id === collectedExtras[`${category}:${slot.slotKey}`]) || null;
+                return buildBadgeBoxElement(category, slot, collectedOption, hueSeed);
+            };
+            // Pool-based equivalent of boxFor() above -- one box per
+            // pool position rather than per fixed Tier slot. Passing the
+            // full pool as the pseudo-slot's own "options" (rather than
+            // just whatever's left to collect) is deliberate:
+            // buildBadgeBoxElement() only checks options.length to tell
+            // "nothing here yet" (0) apart from "something's here"
+            // (>0), and the pool itself is never empty for a region that
+            // has this category at all, so this always reads as
+            // available regardless of how much of it is already
+            // collected.
+            const poolBoxesFor = (category, hueSeedStart) => {
+                const pool = getExtraPool(region, category);
+                const collectedIds = collectedExtras[category] || [];
+                return pool.map((_, i) => {
+                    const collectedId = collectedIds[i];
+                    const collectedOption = collectedId ? pool.find(o => o.id === collectedId) || null : null;
+                    const pseudoSlot = { slotKey: String(i), tiers: [], options: pool };
+                    return buildBadgeBoxElement(category, pseudoSlot, collectedOption, hueSeedStart + i);
+                });
+            };
+            const makeRow = (boxes, centered) => {
+                const row = document.createElement('div');
+                row.className = 'game-badge-extras-row' + (centered ? ' centered' : '');
+                boxes.forEach(b => row.appendChild(b));
+                return row;
+            };
+
+            const villainSlots = buildBadgeSlots(region, 'villain');
+            const eliteFourSlots = buildBadgeSlots(region, 'elite-four');
+            const pathPool = getExtraPool(region, 'path-of-legends');
+            const starfallPool = getExtraPool(region, 'starfall-street');
+
+            if (pathPool.length > 0 || starfallPool.length > 0) {
+                if (eliteFourSlots.length > 0) {
+                    container.appendChild(makeRow([boxFor('elite-four', eliteFourSlots[0], 0)], true));
+                }
+                const pathBoxes = poolBoxesFor('path-of-legends', 1);
+                const starfallBoxes = poolBoxesFor('starfall-street', 6);
+                const pairCount = Math.max(pathBoxes.length, starfallBoxes.length);
+                for (let i = 0; i < pairCount; i++) {
+                    const boxes = [];
+                    if (pathBoxes[i]) boxes.push(pathBoxes[i]);
+                    if (starfallBoxes[i]) boxes.push(starfallBoxes[i]);
+                    container.appendChild(makeRow(boxes, boxes.length < 2));
+                }
+            } else if (villainSlots.length > 0 || eliteFourSlots.length > 0) {
+                const boxes = [];
+                if (eliteFourSlots.length > 0) boxes.push(boxFor('elite-four', eliteFourSlots[0], 0));
+                if (villainSlots.length > 0) boxes.push(boxFor('villain', villainSlots[0], 1));
+                container.appendChild(makeRow(boxes, boxes.length < 2));
+            }
         }
 
         function renderBadgeStageReadout(data) {
@@ -7052,22 +7275,38 @@
             el.textContent = `${computeBadgeCount(data)} Badges (${computeBadgePoints(data)} pts) \u2014 Stage: ${GAME_STAGE_LABELS[stage]}`;
         }
 
-        // Which Tier the confirm/choice overlay is currently open for --
-        // null while it's closed. Set by openBadgeOverlay(), read by the
-        // overlay's own button handlers further down so they know what
-        // they're actually confirming/choosing/removing.
-        let pendingBadgeTier = null;
+        // Which slot the confirm/choice overlay is currently open for --
+        // null while it's closed. Set by openBadgeOverlay()/
+        // openPoolBadgeOverlay(), read by the overlay's own button
+        // handlers further down so they know what they're actually
+        // confirming/choosing/removing. category is null for a
+        // main-grid slot, matching buildBadgeSlots()'s own convention.
+        // slotKey is a Tier-derived key for most categories, but a pool
+        // *position* (0-based) for POOL_BASED_EXTRA_CATEGORIES.
+        let pendingBadgeCategory = null;
+        let pendingBadgeSlotKey = null;
 
-        function openBadgeOverlay(tier) {
-            const data = getActiveSaveData();
+        function openBadgeOverlay(category, slotKey) {
+            if (category && POOL_BASED_EXTRA_CATEGORIES.has(category)) {
+                openPoolBadgeOverlay(category, slotKey);
+                return;
+            }
+
             const region = getActiveRegionForBadges();
-            const collected = data.badges.collected || {};
-            const options = getBadgeOptionsForTier(region, tier);
-            const collectedOption = options.find(o => o.id === collected[tier]) || null;
+            const slots = buildBadgeSlots(region, category);
+            const slot = slots.find(s => s.slotKey === slotKey);
+            if (!slot) return;
 
-            pendingBadgeTier = tier;
+            const data = getActiveSaveData();
+            const collectedMap = category ? (data.badges.collectedExtras || {}) : (data.badges.collected || {});
+            const storageKey = category ? `${category}:${slotKey}` : slotKey;
+            const collectedOption = slot.options.find(o => o.id === collectedMap[storageKey]) || null;
+
+            pendingBadgeCategory = category;
+            pendingBadgeSlotKey = slotKey;
             const titleEl = document.getElementById('game-badge-confirm-title');
             const bodyEl = document.getElementById('game-badge-confirm-options');
+            const options = slot.options;
 
             if (collectedOption) {
                 // Already collected -- offer to undo it, since a wrong
@@ -7092,13 +7331,13 @@
                     </div>
                 `;
             } else if (options.length > 1) {
-                // Multiple options at this Tier -- picking one IS the
+                // Multiple options at this slot -- picking one IS the
                 // confirmation (a deliberate choice between named things,
                 // unlike a single easy-to-fat-finger box), so there's no
                 // second confirm step after this.
                 titleEl.textContent = 'Collect this Gym Badge?';
                 bodyEl.innerHTML = `
-                    <p class="game-badge-confirm-subtext">Multiple Badges are available at this Tier. Choose one -- the other becomes inaccessible.</p>
+                    <p class="game-badge-confirm-subtext">Multiple Badges are available here. Choose one -- the other becomes inaccessible.</p>
                     ${options.map(o => `
                         <button class="filter-btn game-badge-choose-btn" data-option="${o.id}">
                             ${badgeImageMarkup(o, 'game-badge-choose-img')}
@@ -7110,8 +7349,8 @@
                     </div>
                 `;
             } else {
-                // Nothing available at this Tier -- shouldn't be
-                // reachable, since renderBadgeGrid() disables the box
+                // Nothing available here -- shouldn't be reachable, since
+                // renderBadgeGrid()/renderBadgeExtras() disable the box
                 // entirely in this case, but guard rather than show a
                 // broken empty overlay if it somehow is.
                 return;
@@ -7120,21 +7359,123 @@
             document.getElementById('game-badge-confirm-overlay').classList.add('visible');
         }
 
-        function closeBadgeOverlay() {
-            document.getElementById('game-badge-confirm-overlay').classList.remove('visible');
-            pendingBadgeTier = null;
+        // Path of Legends/Starfall Street's own version of
+        // openBadgeOverlay() above -- slotKey here is a pool *position*
+        // (0-based index into data.badges.collectedExtras[category]'s
+        // array), not a Tier-derived key, and "which named badges are
+        // choosable" means "not already collected anywhere else in this
+        // set" rather than "assigned to this specific slot."
+        function openPoolBadgeOverlay(category, slotKey) {
+            const region = getActiveRegionForBadges();
+            const pool = getExtraPool(region, category);
+            if (pool.length === 0) return;
+
+            const data = getActiveSaveData();
+            const collectedIds = (data.badges.collectedExtras || {})[category] || [];
+            const index = Number(slotKey);
+            const collectedId = collectedIds[index];
+            const collectedOption = collectedId ? pool.find(o => o.id === collectedId) || null : null;
+            const remaining = pool.filter(o => !collectedIds.includes(o.id));
+
+            pendingBadgeCategory = category;
+            pendingBadgeSlotKey = slotKey;
+            const titleEl = document.getElementById('game-badge-confirm-title');
+            const bodyEl = document.getElementById('game-badge-confirm-options');
+
+            if (collectedOption) {
+                titleEl.textContent = 'Remove this Gym Badge?';
+                bodyEl.innerHTML = `
+                    ${badgeImageMarkup(collectedOption, 'game-badge-confirm-img')}
+                    <p class="game-badge-confirm-subtext">${collectedOption.name}</p>
+                    <div class="game-save-slot-actions">
+                        <button class="filter-btn game-badge-remove-btn">Remove</button>
+                        <button class="filter-btn game-badge-cancel-btn">Cancel</button>
+                    </div>
+                `;
+            } else if (remaining.length === 1) {
+                titleEl.textContent = 'Collect this Gym Badge?';
+                bodyEl.innerHTML = `
+                    ${badgeImageMarkup(remaining[0], 'game-badge-confirm-img')}
+                    <p class="game-badge-confirm-subtext">${remaining[0].name}</p>
+                    <div class="game-save-slot-actions">
+                        <button class="filter-btn game-badge-confirm-single-btn" data-option="${remaining[0].id}">Confirm</button>
+                        <button class="filter-btn game-badge-cancel-btn">Cancel</button>
+                    </div>
+                `;
+            } else if (remaining.length > 1) {
+                // Every empty slot in this set is interchangeable, so
+                // this shows every badge from the set that isn't already
+                // collected somewhere else in it -- not just "the one
+                // assigned to this slot," since none is. Whichever one
+                // gets picked fills the next open slot (see
+                // collectBadge()), which may or may not be this exact
+                // one depending on what else is already collected.
+                titleEl.textContent = 'Which Badge did you collect?';
+                bodyEl.innerHTML = `
+                    <p class="game-badge-confirm-subtext">${EXTRA_CATEGORY_LABELS[category] || category} Badges can be collected in any order -- choose which one this is.</p>
+                    ${remaining.map(o => `
+                        <button class="filter-btn game-badge-choose-btn" data-option="${o.id}">
+                            ${badgeImageMarkup(o, 'game-badge-choose-img')}
+                            <span>${o.name}</span>
+                        </button>
+                    `).join('')}
+                    <div class="game-save-slot-actions">
+                        <button class="filter-btn game-badge-cancel-btn">Cancel</button>
+                    </div>
+                `;
+            } else {
+                // Every badge in this set is already collected -- nothing
+                // left to offer here. Shouldn't be reachable since
+                // renderBadgeExtras() only ever renders as many pool
+                // positions as the pool has, but guard anyway rather than
+                // show a broken empty overlay if it somehow is.
+                return;
+            }
+
+            document.getElementById('game-badge-confirm-overlay').classList.add('visible');
         }
 
-        function collectBadge(tier, optionId) {
+        function closeBadgeOverlay() {
+            document.getElementById('game-badge-confirm-overlay').classList.remove('visible');
+            pendingBadgeCategory = null;
+            pendingBadgeSlotKey = null;
+        }
+
+        function collectBadge(category, slotKey, optionId) {
             const data = getActiveSaveData();
-            if (!data.badges.collected) data.badges.collected = {};
-            data.badges.collected[tier] = optionId;
+            if (category && POOL_BASED_EXTRA_CATEGORIES.has(category)) {
+                // slotKey is ignored here on purpose -- every empty
+                // position in a pool-based set is interchangeable, so
+                // the newly-collected badge always lands in the next
+                // open slot (the end of the array) rather than
+                // necessarily the exact position that was tapped.
+                if (!data.badges.collectedExtras) data.badges.collectedExtras = {};
+                if (!data.badges.collectedExtras[category]) data.badges.collectedExtras[category] = [];
+                data.badges.collectedExtras[category].push(optionId);
+            } else if (category) {
+                if (!data.badges.collectedExtras) data.badges.collectedExtras = {};
+                data.badges.collectedExtras[`${category}:${slotKey}`] = optionId;
+            } else {
+                if (!data.badges.collected) data.badges.collected = {};
+                data.badges.collected[slotKey] = optionId;
+            }
             afterBadgeChange();
         }
 
-        function removeBadge(tier) {
+        function removeBadge(category, slotKey) {
             const data = getActiveSaveData();
-            if (data.badges.collected) delete data.badges.collected[tier];
+            if (category && POOL_BASED_EXTRA_CATEGORIES.has(category)) {
+                // Removing a specific position shifts everything after
+                // it back by one, same as deleting an item from any
+                // ordered list -- later positions simply show whichever
+                // badge now falls there.
+                const arr = (data.badges.collectedExtras || {})[category];
+                if (arr) arr.splice(Number(slotKey), 1);
+            } else if (category) {
+                if (data.badges.collectedExtras) delete data.badges.collectedExtras[`${category}:${slotKey}`];
+            } else {
+                if (data.badges.collected) delete data.badges.collected[slotKey];
+            }
             afterBadgeChange();
         }
 
@@ -7143,6 +7484,10 @@
         // if not, and pushes the freshly-derived stage into the Sounds
         // panel either way (see setActiveGameStage()'s own comment on
         // being "the one call" a real Gameplay Companion needs to make).
+        // Villain/Elite Four/Path of Legends/Starfall Street changes
+        // still run through here too, since they're still progress worth
+        // saving even though computeBadgeCount()/computeBadgePoints()
+        // themselves ignore them.
         function afterBadgeChange() {
             if (activeSaveSlot !== null) {
                 gameSaves[activeSaveSlot].lastPlayed = new Date().toISOString();
@@ -7176,12 +7521,12 @@
             }
             const chooseBtn = e.target.closest('.game-badge-choose-btn, .game-badge-confirm-single-btn');
             if (chooseBtn) {
-                collectBadge(pendingBadgeTier, chooseBtn.dataset.option);
+                collectBadge(pendingBadgeCategory, pendingBadgeSlotKey, chooseBtn.dataset.option);
                 closeBadgeOverlay();
                 return;
             }
             if (e.target.closest('.game-badge-remove-btn')) {
-                removeBadge(pendingBadgeTier);
+                removeBadge(pendingBadgeCategory, pendingBadgeSlotKey);
                 closeBadgeOverlay();
                 return;
             }
@@ -7484,7 +7829,7 @@
             const badgeBox = e.target.closest('.game-badge-box');
             if (badgeBox) {
                 if (badgeBox.disabled) return;
-                openBadgeOverlay(Number(badgeBox.dataset.tier));
+                openBadgeOverlay(badgeBox.dataset.category || null, badgeBox.dataset.slotKey);
                 return;
             }
 
