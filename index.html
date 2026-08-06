@@ -9425,10 +9425,23 @@
         // someone opens a Pokémon, that entry just falls back to
         // API-derived text as normal, so this fetch never blocks anything.
         let FLAVOR_TEXT_OVERRIDES = {};
+        // Full standalone data (types, height, weight, cry, flavor text --
+        // everything the info panel needs) for entries that have NO
+        // PokeAPI data to pull from at all, like MissingNo. and Pokéstar
+        // Studios "Pokémon" -- these aren't real species, so there's no
+        // dex number to fetch against. Keyed the same way as
+        // FLAVOR_TEXT_OVERRIDES (by exact display name), but reserved
+        // under this separate top-level key in the same JSON file rather
+        // than mixed into FLAVOR_TEXT_OVERRIDES's shape, so adding these
+        // can't accidentally collide with or affect how any real
+        // Pokémon's entry is built. See flavor-overrides.json for the
+        // expected shape of each entry.
+        let CUSTOM_POKEMON_DATA = {};
         fetch("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/flavor-overrides.json")
             .then(response => response.json())
             .then(data => {
                 FLAVOR_TEXT_OVERRIDES = data;
+                CUSTOM_POKEMON_DATA = data.__custom_entries__ || {};
                 // In case someone opened a Pokémon before this finished
                 // loading (unlikely, but possible on a very fast click),
                 // clear the cache so its info panel picks up the override
@@ -9867,6 +9880,22 @@
             return escapeHtml(str).replace(/\n/g, '<br>');
         }
 
+        // Builds the <div class="poke-info-flavor-section"> markup from a
+        // plain array of {version, text} entries -- the shared shape used
+        // by both FLAVOR_TEXT_OVERRIDES entries and __custom_entries__'
+        // flavorEntries, so both render identically without duplicating
+        // this template in two places.
+        function buildFlavorSectionHtml(entries) {
+            if (!entries || entries.length === 0) return '';
+            const entriesHtml = entries.map(e => `
+                <div class="poke-info-flavor-entry">
+                    <div class="poke-info-flavor-version">${escapeHtml(e.version)}</div>
+                    <div class="poke-info-flavor-text">${escapeHtmlWithLineBreaks(e.text)}</div>
+                </div>
+            `).join('');
+            return `<div class="poke-info-flavor-section">${entriesHtml}</div>`;
+        }
+
         // Tags that represent this board game's special "abilities" —
         // pulled straight from pokemon-data.json instead of PokeAPI, since
         // this variant's ability list doesn't match the main series games.
@@ -9884,8 +9913,38 @@
                 : 'No Ability';
 
             // "???" (MissingNo) and "PS#" (Pokéstar Studios) entries aren't
-            // real Pokédex numbers — nothing to look up.
+            // real Pokédex numbers — nothing to look up via PokeAPI. If
+            // flavor-overrides.json's __custom_entries__ section has a
+            // full entry for this exact name, build the info panel from
+            // that instead; otherwise fall back to the "not available"
+            // message, same as before this existed.
             if (dex === null) {
+                const custom = CUSTOM_POKEMON_DATA[name];
+                if (custom) {
+                    const typesHtml = (custom.types || [])
+                        .map(t => `<span class="poke-type-badge poke-type-${escapeHtml(t)}">${capitalize(t)}</span>`)
+                        .join(' ');
+                    const heightStr = (typeof custom.height === 'number') ? custom.height.toFixed(1) + ' m' : '';
+                    const weightStr = (typeof custom.weight === 'number') ? custom.weight.toFixed(1) + ' kg' : '';
+                    const cryUrl = custom.cry || '';
+                    const flavorSectionHtml = buildFlavorSectionHtml(custom.flavorEntries);
+
+                    return `
+                        <div class="poke-info-header">
+                            <span class="poke-info-name-group">
+                                <span class="poke-info-name">${escapeHtml(name)}</span>
+                                ${cryUrl ? `<button class="poke-info-cry-btn" data-cry-url="${escapeHtml(cryUrl)}" title="Play cry">▶ CRY</button>` : ''}
+                            </span>
+                            <span class="poke-info-dex">${escapeHtml(dexRaw)}</span>
+                        </div>
+                        ${custom.genus ? `<div class="poke-info-genus">${escapeHtml(custom.genus)}</div>` : ''}
+                        ${typesHtml ? `<div class="poke-info-row"><span class="poke-info-label">Type</span>${typesHtml}</div>` : ''}
+                        ${heightStr ? `<div class="poke-info-row"><span class="poke-info-label">Height</span>${heightStr}</div>` : ''}
+                        ${weightStr ? `<div class="poke-info-row"><span class="poke-info-label">Weight</span>${weightStr}</div>` : ''}
+                        ${abilitiesStr ? `<div class="poke-info-row"><span class="poke-info-label">Abilities</span>${abilitiesStr}</div>` : ''}
+                        ${flavorSectionHtml}
+                    `;
+                }
                 return `<div class="poke-info-unavailable"><strong>${escapeHtml(name)}</strong><br>`
                     + `This entry isn't part of the official Pokédex, so live data isn't available.</div>`;
             }
