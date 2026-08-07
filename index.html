@@ -1579,6 +1579,15 @@
             color: #333;
             text-align: center;
             overflow: hidden;
+            /* Anchors .game-badge-corner-icon below to this box's own
+               corner. Also puts this box's other children (the main
+               icon/artwork, also position: relative -- see those rules)
+               into the same positioned-element stacking category as the
+               corner icon, so which one paints on top of the other is
+               controlled by DOM order (see buildBadgeBoxElement() in the
+               script) rather than the corner icon automatically winning
+               just for being position: absolute. */
+            position: relative;
         }
 
         .game-badge-box.collected {
@@ -1599,7 +1608,9 @@
            actually used for badgeImageMarkup()'s own "?" fallback now --
            .game-badge-icon-empty below overrides it for the empty-slot
            label text, which needs to fit a couple of short lines instead
-           of one big glyph. */
+           of one big glyph. position: relative here is just for
+           .game-badge-box's own stacking-order reasoning above, not for
+           any offset -- this doesn't move. */
         .game-badge-icon {
             width: 86%;
             aspect-ratio: 1 / 1;
@@ -1612,6 +1623,7 @@
             color: #fff;
             background: hsl(var(--badge-tier-hue, 0), 70%, 50%);
             flex-shrink: 0;
+            position: relative;
         }
 
         /* Empty/unavailable slots -- what used to be a separate label
@@ -1622,7 +1634,7 @@
            padding so multi-word labels like "Path of Legends" still
            wrap to fit at that size instead of needing to shrink. */
         .game-badge-icon-empty {
-            background: rgba(0, 0, 0, 0.15);
+            background: rgba(130, 130, 130, 1);
             color: rgba(0, 0, 0, 0.55);
             flex-direction: column;
             font-size: 28px;
@@ -1639,13 +1651,50 @@
            JSON's own "placeholder" string. Same 86% share of the box as
            .game-badge-icon above, so collected and empty/unavailable
            boxes read as the same size of "thing" at a glance. Nothing
-           else renders alongside this in a collected box -- see
-           buildBadgeBoxElement() -- so the artwork is the whole box. */
+           else renders alongside this in a collected box besides
+           .game-badge-corner-icon (see below) -- so the artwork is
+           essentially the whole box. position: relative here is the
+           same stacking-order reasoning as .game-badge-icon above. */
         .game-badge-icon-img {
-            width: 86%;
+            width: 80%;
             aspect-ratio: 1 / 1;
             object-fit: contain;
             flex-shrink: 0;
+            position: relative;
+        }
+
+        /* Reward/marker icon -- see badgeCornerIconKey() in the script
+           for which slots get one and which icon. The wrapper (sized to
+           ~33% of the main icon/artwork's own 86%-of-box footprint,
+           86% * ~0.33 ≈ 28%) is what's actually positioned/sized/
+           stacked; its plain gray circle matches .game-badge-icon-empty
+           and, unlike the icon image itself, stays put even once the
+           badge is collected -- a permanent frame the marker always
+           sits in, collected or not. Sits behind the artwork once a
+           badge is collected, or in front of the plain gray Tier
+           silhouette while it isn't -- purely a DOM-order effect (see
+           buildBadgeBoxElement() and .game-badge-box's own comment
+           above), not something this rule itself needs to control via
+           z-index. Decorative and shouldn't steal the tap meant for the
+           box underneath it, hence pointer-events: none. */
+        .game-badge-corner-icon-wrap {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 28%;
+            aspect-ratio: 1 / 1;
+            border-radius: 50%;
+            background: rgba(130, 130, 130, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+
+        .game-badge-corner-icon {
+            width: 95%;
+            height: 95%;
+            object-fit: contain;
         }
 
         .game-badge-box.unavailable {
@@ -7117,6 +7166,42 @@
         // both look and behave identically. hueSeed just needs to vary
         // per box for --badge-tier-hue's rainbow spread; which number
         // specifically doesn't matter beyond that.
+        // Reward/marker icon shown in a slot's upper-right corner, keyed
+        // by a short internal name rather than baked in as a literal URL
+        // per rule -- see BADGE_CORNER_ICON_URLS just below for what
+        // each currently points to. All four happen to point at the
+        // same placeholder image for now; swapping in real per-icon
+        // artwork later only ever touches that lookup, not this rule
+        // logic or anything that calls it.
+        function badgeCornerIconKey(category, slot) {
+            if (!category) {
+                // Main tiered badges -- a multi-Tier merge like Orange
+                // Islands' Sea Ruby Badge (Tiers 3+4) still counts as
+                // "Tier 3" for this, same as Spike Shell Badge (Tiers
+                // 5+6) still counts as "Tier 5" -- it's an *inclusion*
+                // check rather than requiring an exact single-Tier
+                // match, so a merged slot picks up whichever of its
+                // Tiers would've earned an icon on its own.
+                if (slot.tiers.includes(3)) return 'fly-ability';
+                if (slot.tiers.includes(5)) return 'surf-ability';
+                return null;
+            }
+            if (category === 'villain') return 'master-ball';
+            if (category === 'path-of-legends') return 'herba-mystica';
+            // Pool position 0 (see POOL_BASED_EXTRA_CATEGORIES) is "the
+            // first Starfall Street badge" regardless of which named
+            // badge a player's own collection order actually put there.
+            if (category === 'starfall-street' && slot.slotKey === '0') return 'master-ball';
+            return null;
+        }
+
+        const BADGE_CORNER_ICON_URLS = {
+            'fly-ability': 'https://dl.dropboxusercontent.com/scl/fi/rpc12m51s1ks188xcxopl/fly.png?rlkey=3sdgxy39850m3adu9y4m6kf7p&st=qdvzuxsk&dl=1',
+            'surf-ability': 'https://dl.dropboxusercontent.com/scl/fi/cuixicsirej6vvm2f560d/surf.png?rlkey=xgyehrpmsc394vivdsmjcxjcl&st=ileevrli&dl=1',
+            'master-ball': 'https://dl.dropboxusercontent.com/scl/fi/usfre34nyxe4gxzkwiwmp/master_ball.png?rlkey=wpwihvyklhffz53el4yg0xros&st=g6qna8k4&dl=1',
+            'herba-mystica': 'https://www.dropbox.com/scl/fi/en0fh5ifyv5zztja9wpw2/herba_mystica.png?rlkey=zu0ieb2tc5nz7u35x1awjszxh&st=2lv98280&dl=1',
+        };
+
         function buildBadgeBoxElement(category, slot, collectedOption, hueSeed) {
             const box = document.createElement('button');
             box.type = 'button';
@@ -7125,32 +7210,51 @@
             box.style.setProperty('--badge-tier-hue', String((hueSeed * 45) % 360));
 
             const tierText = slot.tiers.join('-');
+            const cornerIconKey = badgeCornerIconKey(category, slot);
+            const cornerIconUrl = cornerIconKey ? BADGE_CORNER_ICON_URLS[cornerIconKey] : null;
+            const cornerIconHtml = cornerIconUrl
+                ? `<span class="game-badge-corner-icon-wrap"><img class="game-badge-corner-icon" src="${cornerIconUrl}" alt=""></span>`
+                : '';
 
             if (slot.options.length === 0) {
                 // Nothing in gym-badges.json for this slot yet -- rather
                 // than pretending a badge is there, mark it unavailable
                 // and disabled (disabled buttons don't dispatch click at
                 // all, so no extra guard is needed in the click handler
-                // for this).
+                // for this). No corner icon either, for the same reason
+                // -- there's no real badge here to mark up yet.
                 box.className = 'game-badge-box unavailable';
                 box.disabled = true;
                 box.setAttribute('aria-label', 'Badge slot, not yet available');
                 box.innerHTML = `<span class="game-badge-icon game-badge-icon-empty">Not Yet<br>Available</span>`;
             } else if (collectedOption) {
-                // Collected -- just the artwork, no label under it.
+                // Collected -- just the artwork, no label under it. The
+                // corner icon (if this slot has one) goes in the markup
+                // BEFORE the artwork, so the artwork -- added after it --
+                // paints on top where they overlap: "behind the badge
+                // image" once collected, per .game-badge-box's own CSS
+                // comment on how DOM order controls this.
                 box.className = 'game-badge-box collected';
                 box.setAttribute('aria-label', `${collectedOption.name}, collected`);
-                box.innerHTML = badgeImageMarkup(collectedOption, 'game-badge-icon-img');
+                box.innerHTML = `
+                    ${cornerIconHtml}
+                    ${badgeImageMarkup(collectedOption, 'game-badge-icon-img')}`;
             } else {
                 // Empty -- what used to be a separate label below a bare
                 // Tier number now replaces that number inside the icon
-                // itself.
+                // itself. The corner icon goes in the markup AFTER the
+                // gray circle here, the reverse order from the collected
+                // case above, so it paints on top of the circle instead
+                // -- "ahead of the ... silhouette" while still
+                // uncollected.
                 box.className = 'game-badge-box';
                 const emptyLabel = category
                     ? EXTRA_CATEGORY_LABELS[category] || category
                     : `Tier ${tierText}<br>${slot.tiers.reduce((s, t) => s + badgeTierPoints(t), 0)} Points`;
                 box.setAttribute('aria-label', 'Badge slot, empty');
-                box.innerHTML = `<span class="game-badge-icon game-badge-icon-empty">${emptyLabel}</span>`;
+                box.innerHTML = `
+                    <span class="game-badge-icon game-badge-icon-empty">${emptyLabel}</span>
+                    ${cornerIconHtml}`;
             }
 
             return box;
