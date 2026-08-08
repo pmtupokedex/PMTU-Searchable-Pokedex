@@ -18,6 +18,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="PMTU Pokédex">
 
+    <!-- Multiplayer Lobby (Game panel) dependencies -- loaded up front
+         rather than injected on demand, since this is a single static
+         file with no build step and the two libraries are tiny. PeerJS
+         wraps WebRTC's signaling handshake behind its free hosted broker
+         (see GAME_PANEL_NOTES.md §3 for why that was chosen over raw
+         manual offer/answer exchange); qrcodejs turns a room code into a
+         scannable QR entirely client-side, no server round-trip. Both are
+         optional at runtime -- see requireLobbyLibs() in the Game panel
+         script, which checks for them rather than assuming they loaded. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
     <style>
         * { box-sizing: border-box; }
 
@@ -1256,6 +1268,235 @@
             text-align: center;
         }
 
+        /* ---- Multiplayer Lobby (connection layer -- see
+           GAME_PANEL_NOTES.md §3/§5 for what's deferred to later
+           phases). data-state on #game-lobby is the same one-attribute-
+           drives-visibility idea .game-save-slot's data-state uses;
+           data-role (set only once data-state is "active") is what
+           actually tells host and guest apart visually. ---- */
+
+        .game-lobby {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .game-lobby-active {
+            display: none;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .game-lobby[data-state="active"] .game-lobby-choice {
+            display: none;
+        }
+
+        .game-lobby[data-state="active"] .game-lobby-active {
+            display: flex;
+        }
+
+        /* Host's own room code/QR is meaningless on a guest's screen --
+           a guest's peer id isn't a room anyone else would ever join --
+           so it's hidden outright rather than shown empty. */
+        .game-lobby[data-role="guest"] .game-lobby-room-info {
+            display: none;
+        }
+
+        .game-lobby-choice {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+
+        /* Same rgba(0,0,0,0.08) card treatment as .game-save-slot, kept
+           as its own class rather than reused directly since a save
+           slot's data-state machinery (loaded/empty/creating) doesn't
+           apply here -- these two cards are just always both visible. */
+        .game-lobby-card {
+            flex: 1 1 220px;
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .game-lobby-card-title {
+            font-size: 17px;
+            font-weight: bold;
+            margin: 0 0 6px;
+        }
+
+        .game-lobby-card-blurb {
+            font-size: 13px;
+            color: #555;
+            margin: 0 0 12px;
+        }
+
+        .game-lobby-card label {
+            font-size: 13px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #555;
+            margin-bottom: 4px;
+        }
+
+        /* Shared input look for both the name/code fields here and the
+           save-creation form's own <select> (see .game-save-new-form
+           select) -- text inputs there never actually got this rule (see
+           GAME_PANEL_NOTES.md's note that an aesthetics pass was
+           explicitly deferred), so this is written as its own class
+           rather than assumed-shared, to avoid quietly changing that
+           form's current appearance as a side effect of this one. */
+        .game-lobby-input {
+            font-size: 15px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            font-family: inherit;
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 10px;
+        }
+
+        .game-lobby-join-code {
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: bold;
+        }
+
+        .game-lobby-card .filter-btn {
+            margin: 4px 0 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        /* Empty and taking up no room until setLobbyStatus() below has
+           something to say -- connecting/error text for either flow.
+           No dedicated "error" look beyond the color swap below; the
+           text itself carries the meaning, same as the save-progress
+           banner's plain-language approach. */
+        .game-lobby-status {
+            display: none;
+            font-size: 14px;
+            font-weight: bold;
+            text-align: center;
+            margin: 4px 0 0;
+        }
+
+        .game-lobby-status.visible {
+            display: block;
+        }
+
+        .game-lobby-status.error {
+            color: #b32d2d;
+        }
+
+        .game-lobby-status.pending {
+            color: #7a5200;
+        }
+
+        /* Host vs. guest banner -- deliberately different colors (blue
+           for "audio plays here", gray for "following the host") so the
+           distinction registers at a glance, not just from the text.
+           Classes are applied in JS (see renderLobbyRole()). */
+        .game-lobby-role-banner {
+            font-size: 15px;
+            font-weight: bold;
+            text-align: center;
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin: 0;
+        }
+
+        .game-lobby-role-banner.role-host {
+            background: rgba(0, 153, 255, 0.16);
+            border: 2px solid rgba(0, 153, 255, 0.45);
+            color: #005a94;
+        }
+
+        .game-lobby-role-banner.role-guest {
+            background: rgba(0, 0, 0, 0.08);
+            border: 2px solid rgba(0, 0, 0, 0.18);
+            color: #333;
+        }
+
+        .game-lobby-room-info {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .game-lobby-room-code-label {
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #666;
+            margin: 0 0 4px;
+        }
+
+        .game-lobby-room-code {
+            font-size: 32px;
+            font-weight: bold;
+            letter-spacing: 6px;
+            margin: 0 0 12px;
+        }
+
+        /* qrcodejs renders its own <img>/<canvas>/<table> into this div
+           (see generateLobbyQrCode() in the script) -- sized to match,
+           with a white backing since the library draws pure black-on-
+           white and this card's background isn't white. */
+        .game-lobby-qr {
+            background: #fff;
+            padding: 8px;
+            border-radius: 6px;
+            line-height: 0;
+        }
+
+        .game-lobby-room-hint {
+            font-size: 12px;
+            color: #666;
+            margin: 10px 0 0;
+        }
+
+        .game-lobby-players-heading {
+            font-size: 13px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #555;
+            margin: 0 0 6px;
+        }
+
+        .game-lobby-players {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .game-lobby-player-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(0, 0, 0, 0.06);
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 14px;
+        }
+
+        .game-lobby-player-row.is-host {
+            background: rgba(0, 153, 255, 0.12);
+        }
+
+        .game-lobby-player-tag {
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #005a94;
+        }
+
         /* Every screen except the save picker (the true root) gets one
            of these at the top -- the menu's goes back to the save
            picker, every tool/lobby screen's goes back to the menu. Each
@@ -1283,10 +1524,141 @@
             touch-action: manipulation;
         }
 
+        /* Every game panel screen's back button except the main/save-
+           picker screen (the true root, which has nowhere further back to
+           go) -- reuses the exact same decor-behind-icon pattern as the
+           viewer panel's own corner buttons (.viewer-corner-decor +
+           #image-close-btn/#shiny-toggle-btn, see those rules for the
+           source of this approach). --panel-h reproduced locally here for
+           the same reason #image-overlay reproduces it rather than
+           inheriting it (see that rule's own comment) -- both ultimately
+           read the same global --real-vh, so this renders at the exact
+           same on-screen size as a real nav button or viewer corner
+           button, regardless of which of the three separate places in the
+           document actually declares the local copy.
+
+           The negative margin is what gets "same proximity to the panel
+           border" as the viewer's corner buttons, which sit flush against
+           #image-overlay's own edges with zero inset. This header instead
+           lives inside #game-scroll, which reserves --panel-h of top
+           padding and 20px of left padding of its own (space meant for
+           the always-visible mobile navbar and general breathing room --
+           see #game-scroll's own rule) -- without correcting for that,
+           this would end up --panel-h + 20px further from the corner than
+           its viewer counterpart instead of matching it. The negative
+           margin cancels exactly that padding back out, in both
+           dimensions, so the decor's own edges land flush against
+           #game-panel's true corner despite being laid out several
+           containers deep inside that reserved space. Desktop's
+           #game-scroll padding-top drops to a flat 20px (see that rule's
+           own @media block) rather than staying --panel-h -- the override
+           below matches that so the two stay in sync at both breakpoints
+           instead of drifting apart at the desktop one. */
+        .game-screen-back-wrap {
+            --panel-h: calc(var(--real-vh, 100dvh) * 0.12);
+            position: relative;
+            flex: 0 0 auto;
+            width: var(--panel-h);
+            height: var(--panel-h);
+            margin: calc(-1 * var(--panel-h)) 0 0 -20px;
+            /* Hidden by default (mobile) -- the always-visible mobile
+               navbar's own back button already covers "leave the game
+               panel" while it's open (see .nav-panel-gpu-paused's own
+               comment on the navbar being permanently visible now), so
+               this would just be a redundant second way to do the same
+               thing on mobile specifically. Desktop has no such
+               always-visible navbar-level back control, so it still needs
+               its own -- see the @media override below. */
+            display: none;
+        }
+
+        @media (min-width: 664px) {
+            .game-screen-back-wrap {
+                display: inline-block;
+                margin-top: -20px;
+            }
+        }
+
+        /* One 320x320 quadrant of the same 640x640 Viewer-Buttons.png
+           sheet #viewer-corner-decor-tl uses -- background-size: 200%
+           200% on a square box renders the full sheet at 2x that box's
+           own size, so each quadrant (half the sheet's height/width)
+           lands at exactly the box's size; background-position: 0% 0%
+           picks the top-left one specifically, leaving the other three
+           off-screen rather than visible. Purely decorative, same as its
+           viewer counterpart -- pointer-events: none so it never
+           intercepts the tap meant for .game-screen-back-btn on top of it. */
+        .game-screen-back-decor {
+            position: absolute;
+            inset: 0;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/gr9y7ctat4n3e3jpz0fax/Viewer-Buttons.png?rlkey=zze42scgofd8jnsoux0ecb8yo&st=wdtl04mu&dl=1");
+            background-size: 200% 200%;
+            background-position: 0% 0%;
+            background-repeat: no-repeat;
+            pointer-events: none;
+        }
+
+        /* The real button, layered on top of .game-screen-back-decor above
+           within their shared .game-screen-back-wrap. Same icon
+           (Button_Back.png) and the exact same half-the-decor-size-plus-
+           0.07-inset proportions #image-close-btn uses against its own
+           decor (compare the two rules directly). Overrides
+           .game-back-btn's plain-text styling (background/border/padding,
+           and implicitly the text itself, since this button's now empty
+           -- see the HTML) rather than replacing that class outright, so
+           it stays wired into whatever .game-back-btn-level behavior (if
+           any) gets added later; every game-screen back button except
+           main's carries this second class, so main's own -- which
+           doesn't exist at all, see its comment above -- is unaffected
+           either way. */
+        .game-back-btn.game-screen-back-btn {
+            position: absolute;
+            top: calc(var(--panel-h) * 0.07);
+            left: calc(var(--panel-h) * 0.07);
+            height: calc(var(--panel-h) * 0.5);
+            aspect-ratio: 1 / 1;
+            background-color: transparent;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/9u5r1nmb6drlofnmr2za9/Button_Back.png?rlkey=m6naql8ixq5vadqp2837e5atm&st=deneysu1&dl=1");
+            background-size: contain;
+            background-position: center;
+            background-repeat: no-repeat;
+            border: none;
+            border-radius: 0;
+            padding: 0;
+            cursor: pointer;
+        }
+
+        /* Every game panel screen's title (except main, which has none).
+           Centered on its own full-width line below the header row
+           (rather than sitting inline next to the back button, now that
+           the back button itself lives as a corner decoration -- see
+           .game-screen-back-wrap's own comment), with the same
+           semi-transparent rounded-corner background as
+           .specific-region-header and the other page headers (background/
+           border-radius/padding copied directly from that rule), and the
+           same white-fill/black-outline text treatment. Originally a
+           second class layered only on the badge screen's title; folded
+           directly into this shared rule once every other game screen
+           adopted the exact same treatment, since keeping a separate
+           subclass around at that point was just an extra name to
+           remember for no remaining difference. */
         .game-screen-title {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
             font-size: 20px;
             font-weight: bold;
             text-transform: uppercase;
+            text-align: center;
+            color: white;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+            background: rgba(0, 0, 0, 0.25);
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin: 0 0 15px;
         }
 
         /* Save picker -- 3 fixed slots (see GAME_SAVE_SLOT_COUNT). Each
@@ -4345,6 +4717,7 @@
             .poke-type-badge,
             .game-badge-region-label,
             .game-badge-stage-readout,
+            .game-screen-title,
             .game-badge-icon-empty {
                 text-shadow: none;
                 -webkit-text-stroke: 3px black;
@@ -5012,9 +5385,12 @@
 
             <div class="game-screen" id="game-screen-badges">
                 <div class="game-screen-header">
-                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
-                    <span class="game-screen-title">Badge Tracker</span>
+                    <span class="game-screen-back-wrap">
+                        <span class="game-screen-back-decor"></span>
+                        <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
+                    </span>
                 </div>
+                <p class="game-screen-title">Badge Tracker</p>
                 <div class="game-save-progress-banner" id="game-save-progress-banner-badges">
                     <span>You have unsaved progress.</span>
                     <button class="filter-btn game-save-progress-btn">Save This Progress</button>
@@ -5029,25 +5405,34 @@
 
             <div class="game-screen" id="game-screen-calc">
                 <div class="game-screen-header">
-                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
-                    <span class="game-screen-title">Attack Calculator</span>
+                    <span class="game-screen-back-wrap">
+                        <span class="game-screen-back-decor"></span>
+                        <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
+                    </span>
                 </div>
+                <p class="game-screen-title">Attack Calculator</p>
                 <p class="game-placeholder-text">Under Construction</p>
             </div>
 
             <div class="game-screen" id="game-screen-matchup">
                 <div class="game-screen-header">
-                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
-                    <span class="game-screen-title">Type Matchup</span>
+                    <span class="game-screen-back-wrap">
+                        <span class="game-screen-back-decor"></span>
+                        <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
+                    </span>
                 </div>
+                <p class="game-screen-title">Type Matchup</p>
                 <p class="game-placeholder-text">Under Construction</p>
             </div>
 
             <div class="game-screen" id="game-screen-team">
                 <div class="game-screen-header">
-                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
-                    <span class="game-screen-title">Team Tracker</span>
+                    <span class="game-screen-back-wrap">
+                        <span class="game-screen-back-decor"></span>
+                        <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
+                    </span>
                 </div>
+                <p class="game-screen-title">Team Tracker</p>
                 <div class="game-save-progress-banner" id="game-save-progress-banner-team">
                     <span>You have unsaved progress.</span>
                     <button class="filter-btn game-save-progress-btn">Save This Progress</button>
@@ -5060,10 +5445,79 @@
 
             <div class="game-screen" id="game-screen-lobby">
                 <div class="game-screen-header">
-                    <button class="game-back-btn" data-target="main">&#8249; Back</button>
-                    <span class="game-screen-title">Multiplayer Lobby</span>
+                    <span class="game-screen-back-wrap">
+                        <span class="game-screen-back-decor"></span>
+                        <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
+                    </span>
                 </div>
-                <p class="game-placeholder-text">Under Construction</p>
+                <p class="game-screen-title">Multiplayer Lobby</p>
+
+                <!-- Connection layer only for now (see
+                     GAME_PANEL_NOTES.md §3/§5 -- playlist sync and
+                     leading-player stage derivation are later phases,
+                     built on top of this once it's solid). data-state
+                     toggles between "choice" (host/join) and "active"
+                     (connected, either role) -- same one-attribute-drives-
+                     visibility pattern as .game-save-slot's data-state. -->
+                <div class="game-lobby" id="game-lobby" data-state="choice">
+
+                    <!-- Host and Join both ask for a display name up
+                         front rather than as a separate step, since
+                         that's the only piece of info either flow needs
+                         before it can actually do anything. -->
+                    <div class="game-lobby-choice">
+                        <div class="game-lobby-card">
+                            <p class="game-lobby-card-title">Host a Lobby</p>
+                            <p class="game-lobby-card-blurb">Your device plays the music. Everyone else joins with a room code and can change the playlist from their own devices.</p>
+                            <label>Your Name</label>
+                            <input type="text" class="game-lobby-input game-lobby-host-name" placeholder="Trainer" maxlength="20">
+                            <button class="filter-btn game-lobby-host-btn">Host a Lobby</button>
+                        </div>
+                        <div class="game-lobby-card">
+                            <p class="game-lobby-card-title">Join a Lobby</p>
+                            <p class="game-lobby-card-blurb">Enter the room code from the host's device, or scan their QR code, to join.</p>
+                            <label>Your Name</label>
+                            <input type="text" class="game-lobby-input game-lobby-join-name" placeholder="Trainer" maxlength="20">
+                            <label>Room Code</label>
+                            <input type="text" class="game-lobby-input game-lobby-join-code" placeholder="ABCDE" maxlength="5" autocapitalize="characters" autocomplete="off" spellcheck="false">
+                            <button class="filter-btn game-lobby-join-btn">Join Lobby</button>
+                        </div>
+                    </div>
+
+                    <!-- Empty/hidden (see .game-lobby-status CSS) until
+                         setLobbyStatus() below has something to say --
+                         connecting/error text for either flow, same "say
+                         it inline rather than alert()" pattern used
+                         everywhere else in this panel. -->
+                    <p class="game-lobby-status" id="game-lobby-status"></p>
+
+                    <!-- Shown once hosting or connected as a guest (see
+                         .game-lobby[data-state="active"] CSS). Host vs.
+                         guest get a visibly different role banner --
+                         only the host's device actually plays music (see
+                         GAME_PANEL_NOTES.md §3), so that distinction
+                         matters here even before playlist sync exists. -->
+                    <div class="game-lobby-active">
+                        <p class="game-lobby-role-banner" id="game-lobby-role-banner"></p>
+
+                        <!-- Host-only (hidden for guests via
+                             .game-lobby[data-role="guest"] below) -- a
+                             guest's own peer id isn't a room anyone would
+                             join, so there's nothing useful to show here
+                             on that side. -->
+                        <div class="game-lobby-room-info" id="game-lobby-room-info">
+                            <p class="game-lobby-room-code-label">Room Code</p>
+                            <p class="game-lobby-room-code" id="game-lobby-room-code"></p>
+                            <div class="game-lobby-qr" id="game-lobby-qr"></div>
+                            <p class="game-lobby-room-hint">Others can scan this, or enter the code above under "Join a Lobby."</p>
+                        </div>
+
+                        <p class="game-lobby-players-heading">Connected Players</p>
+                        <div class="game-lobby-players" id="game-lobby-players"></div>
+
+                        <button class="filter-btn exclude game-lobby-leave-btn" id="game-lobby-leave-btn">Leave Lobby</button>
+                    </div>
+                </div>
             </div>
 
         </div>
@@ -7926,6 +8380,303 @@
         // are hoisted and fine to define here regardless -- it's only
         // actually calling them this early that would hit the TDZ.
 
+        // ---- Multiplayer Lobby (connection layer -- see
+        // GAME_PANEL_NOTES.md §3 for the full plan, §5 for phasing).
+        // This first pass only covers hosting/joining a room over PeerJS
+        // and keeping a shared player list in sync -- no playlist sync
+        // and no leading-player stage derivation yet, since both of
+        // those need this connection layer to exist first. Deliberately
+        // a "free" tool like Attack Calculator/Type Matchup rather than
+        // save-scoped: nothing here reads or writes gameSaves/
+        // unsavedSessionData at all.
+        //
+        // A PMTU-specific prefix keeps room codes out of the same
+        // namespace as every other app using PeerJS's shared public
+        // broker -- without it, someone else's unrelated 5-character
+        // peer id could collide with a room code here.
+        const LOBBY_ROOM_PREFIX = 'pmtu-lobby-';
+        const LOBBY_CODE_LENGTH = 5;
+        // 0/O and 1/I deliberately excluded -- easy to mix up when a
+        // code's read off a screen and typed in by hand rather than
+        // pasted.
+        const LOBBY_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+        const LOBBY_HOST_RETRY_LIMIT = 5;
+
+        // Single mutable bag for the whole feature, same "one object,
+        // reached into rather than duplicated" spirit as gameSaves
+        // above. connections is host-only (peer id -> {conn, name});
+        // hostConn is guest-only (this device's one connection to the
+        // host). Both are left null/empty on the other role rather than
+        // union-typed away, since which fields are meaningful always
+        // follows directly from `role`.
+        let lobbyState = {
+            role: null,          // null | 'host' | 'guest'
+            peer: null,          // this device's own Peer instance
+            code: null,          // the 5-char room code, either role
+            hostName: null,      // host's display name (known immediately if hosting, filled in from the first roster broadcast if joining)
+            connections: new Map(), // host-only: peer id -> { conn, name }
+            hostConn: null,      // guest-only: this device's DataConnection to the host
+            players: [],         // shared roster shape: [{ id, name, isHost }]
+        };
+
+        // PeerJS/qrcodejs are loaded from CDN <script> tags in <head> --
+        // this checks for them rather than assuming they succeeded,
+        // since a blocked/offline network would otherwise leave every
+        // click here silently doing nothing.
+        function requireLobbyLibs() {
+            if (typeof Peer === 'undefined' || typeof QRCode === 'undefined') {
+                setLobbyStatus('Multiplayer needs an internet connection to load its libraries. Check your connection and reload.', 'error');
+                return false;
+            }
+            return true;
+        }
+
+        function setLobbyStatus(message, kind) {
+            const el = document.getElementById('game-lobby-status');
+            el.textContent = message;
+            el.classList.toggle('visible', Boolean(message));
+            el.classList.toggle('error', kind === 'error');
+            el.classList.toggle('pending', kind === 'pending');
+        }
+
+        function generateLobbyRoomCode() {
+            let code = '';
+            for (let i = 0; i < LOBBY_CODE_LENGTH; i++) {
+                code += LOBBY_CODE_CHARS[Math.floor(Math.random() * LOBBY_CODE_CHARS.length)];
+            }
+            return code;
+        }
+
+        // Tears down whatever connection/peer this device currently has
+        // (either role, safe to call from either) and puts the screen
+        // back to the host/join choice. Called both for an explicit
+        // "Leave Lobby" tap and for the various failure paths below, so
+        // there's exactly one place that actually resets the state.
+        function resetLobbyState() {
+            if (lobbyState.peer && !lobbyState.peer.destroyed) {
+                lobbyState.peer.destroy();
+            }
+            lobbyState = {
+                role: null, peer: null, code: null, hostName: null,
+                connections: new Map(), hostConn: null, players: [],
+            };
+            const lobbyEl = document.getElementById('game-lobby');
+            lobbyEl.dataset.state = 'choice';
+            delete lobbyEl.dataset.role;
+            document.getElementById('game-lobby-qr').innerHTML = '';
+            document.getElementById('game-lobby-players').innerHTML = '';
+        }
+
+        function enterActiveLobbyState() {
+            const lobbyEl = document.getElementById('game-lobby');
+            lobbyEl.dataset.state = 'active';
+            lobbyEl.dataset.role = lobbyState.role;
+            renderLobbyRole();
+            renderLobbyPlayers();
+            if (lobbyState.role === 'host') {
+                document.getElementById('game-lobby-room-code').textContent = lobbyState.code;
+                generateLobbyQrCode(lobbyJoinUrl(lobbyState.code));
+            }
+        }
+
+        // Encodes a URL back to this same page with the room code as a
+        // query param (see GAME_PANEL_NOTES.md §3's QR idea) rather than
+        // just the bare code, so scanning it both opens the site AND
+        // pre-fills the Join card below -- see the prefillLobbyFromUrl()
+        // IIFE at the very end of the script for the other half of this.
+        function lobbyJoinUrl(code) {
+            const url = new URL(window.location.href);
+            url.search = '';
+            url.hash = '';
+            url.searchParams.set('join', code);
+            return url.toString();
+        }
+
+        // qrcodejs renders directly into the element it's given and has
+        // no "update text" method of its own -- clearing the container
+        // first is what makes this safe to call again (e.g. Host a
+        // Lobby -> Leave -> Host a Lobby again, generating a new code
+        // each time).
+        function generateLobbyQrCode(text) {
+            const qrEl = document.getElementById('game-lobby-qr');
+            qrEl.innerHTML = '';
+            new QRCode(qrEl, {
+                text,
+                width: 160,
+                height: 160,
+                colorDark: '#000000',
+                colorLight: '#ffffff',
+                correctLevel: QRCode.CorrectLevel.M,
+            });
+        }
+
+        function renderLobbyRole() {
+            const banner = document.getElementById('game-lobby-role-banner');
+            banner.classList.remove('role-host', 'role-guest');
+            if (lobbyState.role === 'host') {
+                banner.classList.add('role-host');
+                banner.textContent = 'Hosting \u2014 music plays on this device';
+            } else if (lobbyState.role === 'guest') {
+                banner.classList.add('role-guest');
+                banner.textContent = lobbyState.hostName
+                    ? `Joined ${lobbyState.hostName}'s lobby \u2014 following their audio`
+                    : 'Joined lobby \u2014 following the host\u2019s audio';
+            }
+        }
+
+        function renderLobbyPlayers() {
+            const listEl = document.getElementById('game-lobby-players');
+            listEl.innerHTML = lobbyState.players.map(p => `
+                <div class="game-lobby-player-row${p.isHost ? ' is-host' : ''}">
+                    <span>${escapeHtml(p.name)}</span>
+                    ${p.isHost ? '<span class="game-lobby-player-tag">Host</span>' : ''}
+                </div>
+            `).join('');
+        }
+
+        // ---- Host side ----
+
+        function startHostingLobby(name) {
+            if (!requireLobbyLibs()) return;
+            resetLobbyState();
+            lobbyState.role = 'host';
+            lobbyState.hostName = (name || '').trim() || 'Trainer';
+            setLobbyStatus('Creating room\u2026', 'pending');
+            attemptHostPeerCreation(0);
+        }
+
+        function attemptHostPeerCreation(attempt) {
+            const code = generateLobbyRoomCode();
+            const peer = new Peer(LOBBY_ROOM_PREFIX + code);
+            lobbyState.peer = peer;
+            lobbyState.code = code;
+
+            peer.on('open', () => {
+                setLobbyStatus('', '');
+                lobbyState.players = [{ id: 'host', name: lobbyState.hostName, isHost: true }];
+                enterActiveLobbyState();
+            });
+
+            peer.on('connection', (conn) => wireHostConnection(conn));
+
+            peer.on('error', (err) => {
+                if (err && err.type === 'unavailable-id' && attempt < LOBBY_HOST_RETRY_LIMIT) {
+                    // Vanishingly unlikely with a 5-character code, but
+                    // cheap to just mint a fresh one and retry rather
+                    // than surface a broker-level collision as a real
+                    // error to the user.
+                    peer.destroy();
+                    attemptHostPeerCreation(attempt + 1);
+                    return;
+                }
+                setLobbyStatus('Could not start hosting \u2014 check your connection and try again.', 'error');
+                resetLobbyState();
+            });
+        }
+
+        function wireHostConnection(conn) {
+            conn.on('open', () => {
+                const name = (conn.metadata && conn.metadata.name) || 'Trainer';
+                lobbyState.connections.set(conn.peer, { conn, name });
+                refreshLobbyRosterFromHostState();
+            });
+            conn.on('close', () => {
+                lobbyState.connections.delete(conn.peer);
+                refreshLobbyRosterFromHostState();
+            });
+            conn.on('error', () => {
+                lobbyState.connections.delete(conn.peer);
+                refreshLobbyRosterFromHostState();
+            });
+        }
+
+        // Host's single source of truth for the roster -- rebuilt
+        // from lobbyState.connections (plus the host itself) any time a
+        // connection opens or closes, then pushed out to every connected
+        // guest and re-rendered locally, so host and guests never have
+        // to separately reconcile their own copies of "who's here."
+        function refreshLobbyRosterFromHostState() {
+            lobbyState.players = [
+                { id: 'host', name: lobbyState.hostName, isHost: true },
+                ...Array.from(lobbyState.connections.entries()).map(([id, entry]) => ({ id, name: entry.name, isHost: false })),
+            ];
+            broadcastLobbyRoster();
+            renderLobbyPlayers();
+        }
+
+        function broadcastLobbyRoster() {
+            lobbyState.connections.forEach(({ conn }) => {
+                if (conn.open) conn.send({ type: 'roster', players: lobbyState.players });
+            });
+        }
+
+        // ---- Guest side ----
+
+        function joinLobbyByCode(code, name) {
+            if (!requireLobbyLibs()) return;
+            const cleanCode = (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (cleanCode.length !== LOBBY_CODE_LENGTH) {
+                setLobbyStatus('Enter the full room code.', 'error');
+                return;
+            }
+            resetLobbyState();
+            lobbyState.role = 'guest';
+            lobbyState.code = cleanCode;
+            setLobbyStatus('Connecting\u2026', 'pending');
+
+            const peer = new Peer();
+            lobbyState.peer = peer;
+
+            peer.on('open', () => {
+                const conn = peer.connect(LOBBY_ROOM_PREFIX + cleanCode, {
+                    metadata: { name: (name || '').trim() || 'Trainer' },
+                    reliable: true,
+                });
+                lobbyState.hostConn = conn;
+                wireGuestConnection(conn);
+            });
+
+            peer.on('error', (err) => {
+                if (err && err.type === 'peer-unavailable') {
+                    setLobbyStatus('Room not found \u2014 check the code and try again.', 'error');
+                } else {
+                    setLobbyStatus('Could not connect \u2014 check your connection and try again.', 'error');
+                }
+                resetLobbyState();
+            });
+        }
+
+        function wireGuestConnection(conn) {
+            conn.on('open', () => {
+                setLobbyStatus('', '');
+                lobbyState.players = [{ id: 'host', name: 'Host', isHost: true }];
+                enterActiveLobbyState();
+            });
+            conn.on('data', (data) => {
+                if (data && data.type === 'roster' && Array.isArray(data.players)) {
+                    lobbyState.players = data.players;
+                    const hostEntry = data.players.find(p => p.isHost);
+                    if (hostEntry) lobbyState.hostName = hostEntry.name;
+                    renderLobbyRole();
+                    renderLobbyPlayers();
+                }
+            });
+            conn.on('close', () => {
+                setLobbyStatus('The host ended the lobby.', 'error');
+                resetLobbyState();
+            });
+            conn.on('error', () => {
+                setLobbyStatus('Connection to the host was lost.', 'error');
+                resetLobbyState();
+            });
+        }
+
+        function leaveLobby() {
+            const wasActive = lobbyState.role !== null;
+            resetLobbyState();
+            if (wasActive) setLobbyStatus('', '');
+        }
+
         // Single delegated listener covers every interactive element in
         // the panel -- back buttons and menu tiles (both just carry a
         // data-target to jump to), the Saves header itself, the save
@@ -8031,6 +8782,44 @@
                 if (activeSaveSlot !== null) persistGameSaves();
                 markUnsavedProgressChanged();
                 return;
+            }
+
+            const lobbyHostBtn = e.target.closest('.game-lobby-host-btn');
+            if (lobbyHostBtn) {
+                const card = lobbyHostBtn.closest('.game-lobby-card');
+                startHostingLobby(card.querySelector('.game-lobby-host-name').value);
+                return;
+            }
+
+            const lobbyJoinBtn = e.target.closest('.game-lobby-join-btn');
+            if (lobbyJoinBtn) {
+                const card = lobbyJoinBtn.closest('.game-lobby-card');
+                joinLobbyByCode(
+                    card.querySelector('.game-lobby-join-code').value,
+                    card.querySelector('.game-lobby-join-name').value
+                );
+                return;
+            }
+
+            const lobbyLeaveBtn = e.target.closest('.game-lobby-leave-btn');
+            if (lobbyLeaveBtn) {
+                leaveLobby();
+                return;
+            }
+        });
+
+        // Uppercases the room code field as it's typed, same idea as
+        // .game-lobby-join-code's own CSS text-transform (that's purely
+        // visual -- this is what makes the actual stored value match,
+        // since joinLobbyByCode() re-normalizes anyway but keeping the
+        // field itself in sync avoids it visibly changing case out from
+        // under the person mid-type on paste).
+        document.getElementById('game-scroll').addEventListener('input', (e) => {
+            if (e.target.classList.contains('game-lobby-join-code')) {
+                const start = e.target.selectionStart;
+                const end = e.target.selectionEnd;
+                e.target.value = e.target.value.toUpperCase();
+                e.target.setSelectionRange(start, end);
             }
         });
 
@@ -11325,6 +12114,27 @@
         // (nothing new to decide); otherwise start open so there's
         // something to pick/create right away.
         setSavesSectionCollapsed(activeSaveSlot !== null);
+
+        // Other half of the Multiplayer Lobby's QR idea (see
+        // lobbyJoinUrl() and GAME_PANEL_NOTES.md §3) -- scanning the
+        // host's code should open straight to a pre-filled Join card,
+        // not silently connect on its own. resetGameScreen() above
+        // always lands on 'main' first; this runs after it specifically
+        // so the override sticks.
+        (function prefillLobbyFromUrl() {
+            let params;
+            try {
+                params = new URLSearchParams(window.location.search);
+            } catch (err) {
+                return;
+            }
+            const code = (params.get('join') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, LOBBY_CODE_LENGTH);
+            if (!code) return;
+            const codeInput = document.querySelector('.game-lobby-join-code');
+            if (codeInput) codeInput.value = code;
+            openGamePanel();
+            setGameScreen('lobby');
+        })();
 
     </script>
 </body>
