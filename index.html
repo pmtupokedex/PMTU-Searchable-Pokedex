@@ -8127,6 +8127,18 @@
         // still run through here too, since they're still progress worth
         // saving even though computeBadgeCount()/computeBadgePoints()
         // themselves ignore them.
+        //
+        // Lobby-aware (see GAME_PANEL_NOTES.md's Leading-Player Stage
+        // notes): solo play (no lobbyState.role) behaves exactly as
+        // before -- this device's own progress decides its own stage,
+        // full stop. Connected to a Lobby, only the host's device is the
+        // one actually playing music, so only the host's device still
+        // calls setActiveGameStage() directly -- via
+        // recomputeLobbyLeadingStage(), using the *whole lobby's*
+        // progress rather than just its own. A guest instead reports its
+        // own progress up to the host (reportLobbyProgress()) and leaves
+        // its own local Game Stage alone entirely until it disconnects
+        // (see restoreSoloGameStage() in resetLobbyState()).
         function afterBadgeChange() {
             if (activeSaveSlot !== null) {
                 gameSaves[activeSaveSlot].lastPlayed = new Date().toISOString();
@@ -8135,12 +8147,24 @@
             markUnsavedProgressChanged();
             renderBadgeGrid();
             const data = getActiveSaveData();
+            const badgeCount = computeBadgeCount(data);
+            const badgePoints = computeBadgePoints(data);
+
+            if (lobbyState.role === 'guest') {
+                reportLobbyProgress(badgeCount, badgePoints);
+                return;
+            }
+            if (lobbyState.role === 'host') {
+                lobbyState.playerProgress.host = { badgeCount, badgePoints };
+                recomputeLobbyLeadingStage();
+                return;
+            }
             const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
             setActiveGameStage(deriveGameStage(
                 save ? save.gameLength : 'medium',
                 save ? save.stageRule : 'count',
-                computeBadgeCount(data),
-                computeBadgePoints(data)
+                badgeCount,
+                badgePoints
             ));
         }
 
@@ -8417,6 +8441,11 @@
             connections: new Map(), // host-only: peer id -> { conn, name }
             hostConn: null,      // guest-only: this device's DataConnection to the host
             players: [],         // shared roster shape: [{ id, name, isHost }]
+            // Host-only: peer id -> { badgeCount, badgePoints }, keyed
+            // the same way `connections` is, plus a synthetic 'host' key
+            // for the host's own progress. See reportLobbyProgress()/
+            // recomputeLobbyLeadingStage() below (Leading-Player Stage).
+            playerProgress: {},
         };
 
         // PeerJS/qrcodejs are loaded from CDN <script> tags in <head> --
@@ -8459,12 +8488,20 @@
             lobbyState = {
                 role: null, peer: null, code: null, hostName: null,
                 connections: new Map(), hostConn: null, players: [],
+                playerProgress: {},
             };
             const lobbyEl = document.getElementById('game-lobby');
             lobbyEl.dataset.state = 'choice';
             delete lobbyEl.dataset.role;
             document.getElementById('game-lobby-qr').innerHTML = '';
             document.getElementById('game-lobby-players').innerHTML = '';
+            // Hands the Sounds panel's transport controls and Game Stage
+            // back to this device's own local solo state -- while
+            // connected, both were driven by the lobby (see Playlist
+            // Sync/Leading-Player Stage notes below); leaving needs to
+            // undo both, not just reset the Lobby screen itself.
+            syncMusicUIForLobbyRole();
+            restoreSoloGameStage();
         }
 
         function enterActiveLobbyState() {
@@ -8477,6 +8514,7 @@
                 document.getElementById('game-lobby-room-code').textContent = lobbyState.code;
                 generateLobbyQrCode(lobbyJoinUrl(lobbyState.code));
             }
+            syncMusicUIForLobbyRole();
         }
 
         // Encodes a URL back to this same page with the room code as a
@@ -8554,7 +8592,19 @@
             peer.on('open', () => {
                 setLobbyStatus('', '');
                 lobbyState.players = [{ id: 'host', name: lobbyState.hostName, isHost: true }];
+                // Seeds the host's own entry in the leading-player
+                // comparison immediately, using this device's currently
+                // active save/session -- so the Sounds panel already has
+                // a correct (if single-player-for-now) Game Stage the
+                // instant hosting starts, rather than waiting on a badge
+                // change or a guest to join. See recomputeLobbyLeadingStage().
+                const hostData = getActiveSaveData();
+                lobbyState.playerProgress.host = {
+                    badgeCount: computeBadgeCount(hostData),
+                    badgePoints: computeBadgePoints(hostData),
+                };
                 enterActiveLobbyState();
+                recomputeLobbyLeadingStage();
             });
 
             peer.on('connection', (conn) => wireHostConnection(conn));
@@ -8580,13 +8630,31 @@
                 lobbyState.connections.set(conn.peer, { conn, name });
                 refreshLobbyRosterFromHostState();
             });
+            conn.on('data', (data) => {
+                if (!data || typeof data.type !== 'string') return;
+                if (data.type === 'request-category' && typeof data.category === 'string') {
+                    // Applies for real on this (the host's) device --
+                    // renderMusicPlayerUI() runs as part of that and
+                    // broadcasts the result back out to every guest,
+                    // this requester included, so there's no separate
+                    // "reply" needed here. See requestMusicCategoryChange().
+                    setActiveMusicCategory(data.category);
+                } else if (data.type === 'progress' && typeof data.badgeCount === 'number' && typeof data.badgePoints === 'number') {
+                    lobbyState.playerProgress[conn.peer] = { badgeCount: data.badgeCount, badgePoints: data.badgePoints };
+                    recomputeLobbyLeadingStage();
+                }
+            });
             conn.on('close', () => {
                 lobbyState.connections.delete(conn.peer);
+                delete lobbyState.playerProgress[conn.peer];
                 refreshLobbyRosterFromHostState();
+                recomputeLobbyLeadingStage();
             });
             conn.on('error', () => {
                 lobbyState.connections.delete(conn.peer);
+                delete lobbyState.playerProgress[conn.peer];
                 refreshLobbyRosterFromHostState();
+                recomputeLobbyLeadingStage();
             });
         }
 
@@ -8608,6 +8676,66 @@
             lobbyState.connections.forEach(({ conn }) => {
                 if (conn.open) conn.send({ type: 'roster', players: lobbyState.players });
             });
+        }
+
+        // ---- Leading-Player Stage (see GAME_PANEL_NOTES.md §3) ----
+        //
+        // Host-only: recomputes which connected player -- including the
+        // host itself -- is furthest along, using whichever metric this
+        // save's own stageRule actually cares about (badges or points),
+        // and pushes the result into the Sounds panel via
+        // setActiveGameStage() -- the same "one call" hook
+        // deriveGameStage() has always fed (see afterBadgeChange()
+        // below), just now driven by the whole lobby's progress instead
+        // of only this device's own. The ruleset itself (gameLength/
+        // stageRule) still comes from the *host's* own active save --
+        // there's only one Sounds panel actually playing music, and it's
+        // the host's, so it's the host's rules that decide when it
+        // changes stage. A guest's own local Game Stage is deliberately
+        // left alone while connected (see afterBadgeChange()) since only
+        // the host's device is the one actually playing anything.
+        function recomputeLobbyLeadingStage() {
+            if (lobbyState.role !== 'host') return;
+            const progressList = Object.values(lobbyState.playerProgress);
+            if (progressList.length === 0) return;
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            const leadingBadgeCount = Math.max(...progressList.map(p => p.badgeCount || 0));
+            const leadingBadgePoints = Math.max(...progressList.map(p => p.badgePoints || 0));
+            setActiveGameStage(deriveGameStage(
+                save ? save.gameLength : 'medium',
+                save ? save.stageRule : 'count',
+                leadingBadgeCount,
+                leadingBadgePoints
+            ));
+        }
+
+        // Guest-only: sends this device's own current badge progress up
+        // to the host. Called once as soon as the connection to the host
+        // opens (so the host has a starting figure even before anything
+        // changes) and again from afterBadgeChange() any time it does.
+        function reportLobbyProgress(badgeCount, badgePoints) {
+            if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
+                lobbyState.hostConn.send({ type: 'progress', badgeCount, badgePoints });
+            }
+        }
+
+        // Restores this device's own Game Stage from only its own local
+        // save/session -- exactly the pre-Lobby solo behavior. Called
+        // whenever a Lobby connection ends (see resetLobbyState()), since
+        // an active connection may have been driving the Sounds panel
+        // from a leading-player figure (hosting) or not touching it at
+        // all (guesting) up to that point -- either way, once
+        // disconnected this device needs to go back to deciding its own
+        // stage by itself.
+        function restoreSoloGameStage() {
+            const data = getActiveSaveData();
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            setActiveGameStage(deriveGameStage(
+                save ? save.gameLength : 'medium',
+                save ? save.stageRule : 'count',
+                computeBadgeCount(data),
+                computeBadgePoints(data)
+            ));
         }
 
         // ---- Guest side ----
@@ -8651,14 +8779,23 @@
                 setLobbyStatus('', '');
                 lobbyState.players = [{ id: 'host', name: 'Host', isHost: true }];
                 enterActiveLobbyState();
+                // Gives the host a starting figure for this player right
+                // away, rather than waiting for the first badge change
+                // after joining -- see reportLobbyProgress()/
+                // recomputeLobbyLeadingStage().
+                const data = getActiveSaveData();
+                reportLobbyProgress(computeBadgeCount(data), computeBadgePoints(data));
             });
             conn.on('data', (data) => {
-                if (data && data.type === 'roster' && Array.isArray(data.players)) {
+                if (!data || typeof data.type !== 'string') return;
+                if (data.type === 'roster' && Array.isArray(data.players)) {
                     lobbyState.players = data.players;
                     const hostEntry = data.players.find(p => p.isHost);
                     if (hostEntry) lobbyState.hostName = hostEntry.name;
                     renderLobbyRole();
                     renderLobbyPlayers();
+                } else if (data.type === 'music') {
+                    applyGuestMusicMirror(data);
                 }
             });
             conn.on('close', () => {
@@ -9309,6 +9446,93 @@
             rebuildMusicQueue({ keepCurrentTrack: false });
         }
 
+        // Entry point the Master Playlist buttons actually call (see
+        // populateMusicControls below) -- routes around setActiveMusicCategory
+        // itself while this device is a connected Lobby guest, since only
+        // the host's device should ever touch its own real playback (see
+        // GAME_PANEL_NOTES.md's Playlist Sync notes). A guest's tap just
+        // asks the host to make the change instead; the guest's own UI
+        // then updates once that change comes back through the normal
+        // roster/music broadcast (see applyGuestMusicMirror below), not
+        // from this call directly. Hosting or solo play (no lobby at
+        // all) both fall straight through to the real function, same as
+        // before this existed.
+        function requestMusicCategoryChange(category) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'request-category', category });
+                }
+                return;
+            }
+            setActiveMusicCategory(category);
+        }
+
+        // Host-only -- pushes the current Master Playlist selection, now-
+        // playing track title, and play/pause state out to every
+        // connected guest. Called from the tail of renderMusicPlayerUI
+        // below rather than scattered across every place playback state
+        // can change (category switch, auto-advance, shuffle, manual
+        // Next/Prev, Play/Pause) -- that function already runs after all
+        // of those, so hooking it once here covers every case for free.
+        // No-ops immediately whenever this device isn't hosting an active
+        // lobby, so it's always safe to call unconditionally.
+        function broadcastLobbyMusicState() {
+            if (lobbyState.role !== 'host' || !lobbyState.peer) return;
+            const track = musicQueueIndex >= 0 ? musicQueue[musicQueueIndex] : null;
+            const payload = {
+                type: 'music',
+                category: musicState.activeCategory,
+                trackTitle: track ? track.title : null,
+                isPlaying: !musicAudio.paused,
+            };
+            lobbyState.connections.forEach(({ conn }) => {
+                if (conn.open) conn.send(payload);
+            });
+        }
+
+        // Guest-only -- applies a broadcast from the host as a pure
+        // visual mirror: which playlist button reads as active, and what
+        // the Now Playing line/Play-Pause icon show. Deliberately never
+        // touches musicAudio/musicQueue here -- this device isn't the one
+        // playing anything while it's a guest (see syncMusicUIForLobbyRole
+        // below, which is what actually locks the transport controls),
+        // so there's no real playback state on this end to keep in sync,
+        // only the display of the host's.
+        function applyGuestMusicMirror(data) {
+            musicState.activeCategory = data.category;
+            musicPlaylistButtons.querySelectorAll('.music-playlist-btn').forEach(btn => {
+                btn.classList.toggle('include', btn.dataset.category === data.category);
+            });
+            musicNowPlayingEl.textContent = data.trackTitle
+                || (data.category ? 'No tracks match this filter' : 'Choose a playlist to begin');
+            musicPlayPauseIcon.src = data.isPlaying ? MUSIC_ICON_PAUSE : MUSIC_ICON_PLAY;
+            musicPlayPauseIcon.alt = data.isPlaying ? 'Pause' : 'Play';
+        }
+
+        // Called any time this device's Lobby role actually changes
+        // (entering hosting/guesting, or leaving back to solo) -- not on
+        // every render, since it's only the role itself that flips
+        // whether these controls are locked. A guest's transport buttons
+        // (Play/Pause/Prev/Next/Shuffle/Repeat) are disabled outright:
+        // only the host's device actually plays audio, so a guest
+        // "pressing play" would have nothing real to do. Master Playlist
+        // buttons stay tappable regardless of this device's own Region/
+        // Game Stage filters -- only the host's filters decide what's
+        // actually playable, so refreshMusicPlaylistButtons()'s normal
+        // per-device disabling is deliberately skipped while guesting.
+        function syncMusicUIForLobbyRole() {
+            const remote = lobbyState.role === 'guest';
+            [musicPrevBtn, musicNextBtn, musicPlayPauseBtn, musicShuffleBtn, musicRepeatBtn].forEach(btn => {
+                btn.disabled = remote;
+            });
+            if (remote) {
+                musicPlaylistButtons.querySelectorAll('.music-playlist-btn').forEach(btn => { btn.disabled = false; });
+            } else {
+                refreshMusicPlaylistButtons();
+                renderMusicPlayerUI();
+            }
+        }
+
         // Recomputes musicQueue from musicTracks + the current
         // category/region. Keeps playing the same track if it's still in
         // the rebuilt queue (e.g. a region change that happens not to
@@ -9574,6 +9798,12 @@
             musicRepeatIcon.alt = repeatOne ? 'Repeat: Current track' : 'Repeat: Whole playlist';
             musicRepeatBtn.classList.toggle('include', repeatOne);
             musicRepeatBtn.title = repeatOne ? 'Repeat: Current track' : 'Repeat: Whole playlist';
+
+            // No-ops unless this device is actually hosting an active
+            // Lobby -- see broadcastLobbyMusicState()'s own comment for
+            // why it's hooked here instead of at each individual call
+            // site that can change playback state.
+            broadcastLobbyMusicState();
         }
 
         // Builds the two remaining dropdowns (categories/regions still come
@@ -9609,7 +9839,7 @@
             }).join('');
 
             musicPlaylistButtons.querySelectorAll('.music-playlist-btn').forEach(btn => {
-                btn.addEventListener('click', () => setActiveMusicCategory(btn.dataset.category));
+                btn.addEventListener('click', () => requestMusicCategoryChange(btn.dataset.category));
             });
 
             // "All Regions" plus one button per region, in the order
