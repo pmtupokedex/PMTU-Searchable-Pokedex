@@ -1286,6 +1286,33 @@
             gap: 14px;
         }
 
+        /* Naming step -- shown only for a brand-new guest connection
+           (see handleLobbyWelcome() in the script); a returning guest
+           with an existing Guest Save skips it entirely. Same card look
+           as .game-lobby-card, just standalone rather than side-by-side
+           with another. */
+        .game-lobby-naming {
+            display: none;
+            flex-direction: column;
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .game-lobby-naming .filter-btn {
+            margin: 4px 0 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .game-lobby[data-state="naming"] .game-lobby-choice {
+            display: none;
+        }
+
+        .game-lobby[data-state="naming"] .game-lobby-naming {
+            display: flex;
+        }
+
         .game-lobby[data-state="active"] .game-lobby-choice {
             display: none;
         }
@@ -1872,6 +1899,76 @@
             animation: game-save-progress-pulse 0.5s ease 2;
         }
 
+        /* ---- Guest Saves (see GAME_PANEL_NOTES.md's Guest Saves notes)
+           ---- */
+
+        /* Unbounded, unlike the 3 fixed .game-save-slot rows above --
+           capped to roughly 3 rows tall and scrollable past that, rather
+           than letting the Saves screen grow arbitrarily long as someone
+           joins more and more games. */
+        .game-guest-save-list {
+            max-height: 330px;
+            overflow-y: auto;
+        }
+
+        .game-guest-save-empty-text {
+            font-size: 13px;
+            color: #666;
+            margin: 0 0 15px;
+        }
+
+        .game-guest-save-host-label {
+            font-weight: normal;
+            color: #666;
+        }
+
+        /* Only set while this exact save is the one a live Lobby
+           connection has authority over (see renderGuestSavePicker()) --
+           distinct from simply being the *active* (loaded/viewed) save,
+           which doesn't necessarily mean connected. */
+        .game-guest-save-live-tag {
+            color: #005a94;
+            font-weight: bold;
+        }
+
+        /* Read-only lock -- see applyReadOnlyIndicators()/
+           isActiveSaveReadOnly() in the script. Same amber-adjacent
+           "needs attention" register as .game-save-progress-banner, but
+           its own blue tone since this isn't something to fix, just
+           something to be aware of; hidden entirely unless the screen's
+           own data-readonly attribute says otherwise. The grid/button
+           dimming is separate from this banner -- both driven by the
+           same attribute, but the banner explains why while the dimming
+           is what actually blocks the taps (see the delegated click
+           listener's own isActiveSaveReadOnly() guards for the real
+           lock; this dimming alone wouldn't stop a stale click already
+           in flight). */
+        .game-readonly-banner {
+            display: none;
+            font-size: 14px;
+            font-weight: bold;
+            text-align: center;
+            color: #005a94;
+            background: rgba(0, 153, 255, 0.12);
+            border: 2px solid rgba(0, 153, 255, 0.35);
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin: 0 0 15px;
+        }
+
+        #game-screen-badges[data-readonly="true"] .game-readonly-banner,
+        #game-screen-team[data-readonly="true"] .game-readonly-banner {
+            display: block;
+        }
+
+        #game-screen-badges[data-readonly="true"] .game-badge-grid,
+        #game-screen-badges[data-readonly="true"] .game-badge-extras,
+        #game-screen-team[data-readonly="true"] #game-team-test-btn {
+            opacity: 0.55;
+            pointer-events: none;
+        }
+
+
         /* Temporary -- lives next to the Team Tracker's own Test button
            (see the script) and goes away with it once that tool is real.
            Badge Tracker had the same setup until it got its real UI (see
@@ -2133,6 +2230,28 @@
         }
 
         #game-badge-confirm-overlay.visible {
+            display: flex;
+        }
+
+        /* "Discard unsaved changes and join lobby?" -- identical
+           positioning/backdrop rules to #game-badge-confirm-overlay
+           above (duplicated rather than shared, so the two overlays'
+           show/hide logic stays fully independent -- they can in
+           principle be relevant at overlapping times, however unlikely
+           in practice). */
+        #game-lobby-join-confirm-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-lobby-join-confirm-overlay.visible {
             display: flex;
         }
 
@@ -5198,7 +5317,7 @@
                     <button class="filter-btn game-save-progress-btn">Save This Progress</button>
                 </div>
 
-                <div class="game-section-header game-collapsible-header" id="game-saves-header">Saves</div>
+                <div class="game-section-header game-collapsible-header" id="game-saves-header">Your Saves</div>
 
                 <div id="game-saves-section">
                 <div class="game-save-slot" data-slot="0" data-state="empty">
@@ -5370,6 +5489,21 @@
                 </div>
                 </div>
 
+                <!-- Unbounded, unlike the 3 fixed slots above -- see
+                     renderGuestSavePicker()/loadGuestSave()/
+                     deleteGuestSave() in the script. One entry per
+                     hosted game this device has ever joined (keyed by
+                     the host's own hostSaveId, not room code -- see
+                     GAME_PANEL_NOTES.md's Guest Saves notes), read-only
+                     unless it's the one a live Lobby connection
+                     currently has authority over. -->
+                <div class="game-section-header game-collapsible-header" id="game-guest-saves-header">Joined Games</div>
+
+                <div id="game-guest-saves-section">
+                    <div class="game-guest-save-list" id="game-guest-save-list"></div>
+                    <p class="game-guest-save-empty-text" id="game-guest-save-empty-text">Games you join from Multiplayer Lobby will show up here.</p>
+                </div>
+
                 <p class="game-active-save-label" id="game-menu-active-save-name"></p>
 
                 <div class="game-section-header">Tools</div>
@@ -5395,6 +5529,11 @@
                     <span>You have unsaved progress.</span>
                     <button class="filter-btn game-save-progress-btn">Save This Progress</button>
                 </div>
+                <!-- Shown via #game-screen-badges[data-readonly="true"] --
+                     see applyReadOnlyIndicators()/isActiveSaveReadOnly()
+                     in the script. Viewing a Guest Save that isn't this
+                     device's own live Lobby connection. -->
+                <p class="game-readonly-banner">Read-Only — connect to this game's Lobby to make changes.</p>
                 <div class="game-badge-header-row">
                     <p class="game-badge-region-label" id="game-badge-region-label"></p>
                     <p class="game-badge-stage-readout" id="game-badge-stage-readout"></p>
@@ -5437,6 +5576,7 @@
                     <span>You have unsaved progress.</span>
                     <button class="filter-btn game-save-progress-btn">Save This Progress</button>
                 </div>
+                <p class="game-readonly-banner">Read-Only — connect to this game's Lobby to make changes.</p>
                 <p class="game-placeholder-text">Under Construction</p>
                 <!-- Same temporary test hook as Badge Tracker above. -->
                 <p class="game-debug-readout" id="game-team-debug-readout"></p>
@@ -5452,19 +5592,22 @@
                 </div>
                 <p class="game-screen-title">Multiplayer Lobby</p>
 
-                <!-- Connection layer only for now (see
-                     GAME_PANEL_NOTES.md §3/§5 -- playlist sync and
-                     leading-player stage derivation are later phases,
-                     built on top of this once it's solid). data-state
-                     toggles between "choice" (host/join) and "active"
-                     (connected, either role) -- same one-attribute-drives-
-                     visibility pattern as .game-save-slot's data-state. -->
+                <!-- data-state cycles through "choice" (host/join) ->
+                     "naming" (brand-new guest connection only -- see
+                     handleLobbyWelcome() in the script) -> "active"
+                     (connected, either role) -- same one-attribute-
+                     drives-visibility pattern as .game-save-slot's
+                     data-state. See GAME_PANEL_NOTES.md §3 for the full
+                     Multiplayer Lobby plan. -->
                 <div class="game-lobby" id="game-lobby" data-state="choice">
 
-                    <!-- Host and Join both ask for a display name up
-                         front rather than as a separate step, since
-                         that's the only piece of info either flow needs
-                         before it can actually do anything. -->
+                    <!-- Host still asks for a display name up front --
+                         Join no longer does (see the naming step below):
+                         a guest doesn't know its own name for *this*
+                         particular game until it's actually connected and
+                         the host's hostSaveId is known, so asking here
+                         would either ask twice or ask before it's
+                         possible to know the right default. -->
                     <div class="game-lobby-choice">
                         <div class="game-lobby-card">
                             <p class="game-lobby-card-title">Host a Lobby</p>
@@ -5476,8 +5619,6 @@
                         <div class="game-lobby-card">
                             <p class="game-lobby-card-title">Join a Lobby</p>
                             <p class="game-lobby-card-blurb">Enter the room code from the host's device, or scan their QR code, to join.</p>
-                            <label>Your Name</label>
-                            <input type="text" class="game-lobby-input game-lobby-join-name" placeholder="Trainer" maxlength="20">
                             <label>Room Code</label>
                             <input type="text" class="game-lobby-input game-lobby-join-code" placeholder="ABCDE" maxlength="5" autocapitalize="characters" autocomplete="off" spellcheck="false">
                             <button class="filter-btn game-lobby-join-btn">Join Lobby</button>
@@ -5490,6 +5631,21 @@
                          it inline rather than alert()" pattern used
                          everywhere else in this panel. -->
                     <p class="game-lobby-status" id="game-lobby-status"></p>
+
+                    <!-- Shown only once per host save this device
+                         connects to for the first time (see
+                         handleLobbyWelcome()/finalizeGuestJoin() in the
+                         script) -- a returning guest with an existing
+                         Guest Save for this host skips straight past
+                         this to "active" instead. -->
+                    <div class="game-lobby-naming">
+                        <p class="game-lobby-card-title">Welcome!</p>
+                        <p class="game-lobby-card-blurb">First time joining this host's game. What should other players call you?</p>
+                        <label>Your Name</label>
+                        <input type="text" class="game-lobby-input game-lobby-naming-name" placeholder="Trainer" maxlength="20">
+                        <button class="filter-btn game-lobby-naming-confirm-btn">Join Lobby</button>
+                        <button class="filter-btn exclude game-lobby-naming-cancel-btn">Cancel</button>
+                    </div>
 
                     <!-- Shown once hosting or connected as a guest (see
                          .game-lobby[data-state="active"] CSS). Host vs.
@@ -5526,6 +5682,24 @@
             <div class="game-badge-confirm-card">
                 <p class="game-badge-confirm-title" id="game-badge-confirm-title">Collect this Gym Badge?</p>
                 <div id="game-badge-confirm-options"></div>
+            </div>
+        </div>
+
+        <!-- "Discard unsaved changes and join lobby?" -- see
+             attemptJoinLobby()/closeLobbyJoinConfirmOverlay() in the
+             script. Reuses the badge confirm overlay's own visual
+             classes (.game-badge-confirm-card/-title) rather than
+             duplicating that styling, since it's the exact same kind of
+             homegrown yes/no confirmation, just triggered from a
+             different place. -->
+        <div id="game-lobby-join-confirm-overlay">
+            <div class="game-badge-confirm-card">
+                <p class="game-badge-confirm-title">Discard unsaved changes and join lobby?</p>
+                <p class="game-badge-confirm-subtext">Joining will switch to that game's own save. Your current unsaved progress will be lost.</p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-lobby-join-confirm-discard-btn">Discard &amp; Join</button>
+                    <button class="filter-btn game-lobby-join-confirm-cancel-btn">Cancel</button>
+                </div>
             </div>
         </div>
     </div>
@@ -7299,6 +7473,21 @@
         }
 
         let gameSaves = loadGameSaves();
+        // Backfills hostSaveId onto any save created before Guest Saves
+        // existed -- without this, an upgrade would leave old saves
+        // unable to ever host a lobby (see startHostingLobby()'s own
+        // requirement further down), since there'd be nothing durable
+        // for a guest to link to.
+        (function migrateHostSaveIds() {
+            let changed = false;
+            gameSaves.forEach(save => {
+                if (save && !save.hostSaveId) {
+                    save.hostSaveId = generateHostSaveId();
+                    changed = true;
+                }
+            });
+            if (changed) persistGameSaves();
+        })();
         let activeSaveSlot = loadActiveSaveSlot(gameSaves);
 
         // In-memory-only "unsaved session" -- what Badge Tracker/Team
@@ -7321,6 +7510,7 @@
         // "whatever's active," and gets a direct reference it can
         // mutate in place either way.
         function getActiveSaveData() {
+            if (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) return gameGuestSaves[activeGuestSaveId];
             return activeSaveSlot !== null ? gameSaves[activeSaveSlot] : unsavedSessionData;
         }
 
@@ -7339,6 +7529,13 @@
                 name: options.name || `Save ${slotIndex + 1}`,
                 createdAt: now,
                 lastPlayed: now,
+                // Minted once, here, and never touched again -- this is
+                // what lets a guest's own save find its way back to this
+                // exact host save across sessions (see Guest Saves notes
+                // below), even though the Lobby's room *code* changes
+                // every time hosting starts. A room code identifies a
+                // session; this identifies the save.
+                hostSaveId: generateHostSaveId(),
                 region: options.region, // one of the ids populateGameRegionOptions() pulled from music-tracks.json
                 stageRule: options.stageRule, // 'count' | 'points'
                 gameLength: options.gameLength, // 'short' | 'medium' | 'long' -- see GAME_LENGTH_STAGE_THRESHOLDS
@@ -7356,6 +7553,8 @@
                 team: seed.team,
             };
             persistGameSaves();
+            activeGuestSaveId = null;
+            persistActiveGuestSaveId();
             activeSaveSlot = slotIndex;
             persistActiveSaveSlot();
             if (pendingUnsavedCommit) {
@@ -7379,6 +7578,8 @@
             if (!gameSaves[slotIndex]) return;
             gameSaves[slotIndex].lastPlayed = new Date().toISOString();
             persistGameSaves();
+            activeGuestSaveId = null;
+            persistActiveGuestSaveId();
             activeSaveSlot = slotIndex;
             persistActiveSaveSlot();
             setSavesSectionCollapsed(true);
@@ -7387,6 +7588,7 @@
         }
 
         function deleteSaveSlot(slotIndex) {
+            const deletedSave = gameSaves[slotIndex];
             gameSaves[slotIndex] = null;
             persistGameSaves();
             if (activeSaveSlot === slotIndex) {
@@ -7397,6 +7599,132 @@
                 // collapsed with nothing obviously loaded.
                 setSavesSectionCollapsed(false);
             }
+            // A live Lobby depends on its host save's hostSaveId staying
+            // valid -- every connected guest is linked to it (see Guest
+            // Saves notes below). Deleting the save currently being
+            // hosted leaves nothing for that identity to point at, so
+            // the lobby can't meaningfully continue.
+            if (lobbyState.role === 'host' && deletedSave && deletedSave.hostSaveId === lobbyState.hostSaveId) {
+                leaveLobby();
+            }
+            refreshGameUI();
+        }
+
+        // ---- Guest Saves (see GAME_PANEL_NOTES.md's Guest Saves notes)
+        // ----
+        //
+        // A second, structurally different save bank alongside the 3
+        // fixed host slots above: unbounded rather than fixed-count, keyed
+        // by the *host's* hostSaveId rather than a small integer index
+        // (which is what actually gives "one save per hosted game" for
+        // free -- a plain object can't hold two entries under the same
+        // key), and editable in exactly one respect (playerName) rather
+        // than carrying the host save's full rule-setting form. Everything
+        // else on a guest save (region/stageRule/gameLength/
+        // typeEffectivenessRule/hpRule) is a cached copy of the host's own
+        // values, refreshed on every successful connection (see
+        // finalizeGuestJoin()) purely so this save can still be viewed
+        // read-only while offline -- never guest-editable, and never the
+        // source of truth for anything while actually connected (the
+        // host's live save is that, same as Playlist Sync/Leading-Player
+        // Stage's "ask the host" pattern).
+        const GAME_GUEST_SAVES_KEY = 'pmtuGameGuestSaves';
+        const ACTIVE_GUEST_SAVE_KEY = 'pmtuActiveGuestSaveId';
+
+        function generateHostSaveId() {
+            return 'host-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+        }
+
+        function loadGameGuestSaves() {
+            let stored = null;
+            try {
+                stored = JSON.parse(localStorage.getItem(GAME_GUEST_SAVES_KEY));
+            } catch (err) {
+                stored = null;
+            }
+            return (stored && typeof stored === 'object' && !Array.isArray(stored)) ? stored : {};
+        }
+
+        function persistGameGuestSaves() {
+            try {
+                localStorage.setItem(GAME_GUEST_SAVES_KEY, JSON.stringify(gameGuestSaves));
+            } catch (err) {
+                console.warn('Could not save guest saves:', err);
+            }
+        }
+
+        function loadActiveGuestSaveId(saves) {
+            let stored = null;
+            try {
+                stored = JSON.parse(localStorage.getItem(ACTIVE_GUEST_SAVE_KEY));
+            } catch (err) {
+                stored = null;
+            }
+            return (typeof stored === 'string' && saves[stored]) ? stored : null;
+        }
+
+        function persistActiveGuestSaveId() {
+            try {
+                if (activeGuestSaveId === null) {
+                    localStorage.removeItem(ACTIVE_GUEST_SAVE_KEY);
+                } else {
+                    localStorage.setItem(ACTIVE_GUEST_SAVE_KEY, JSON.stringify(activeGuestSaveId));
+                }
+            } catch (err) {
+                console.warn('Could not save active guest save id:', err);
+            }
+        }
+
+        let gameGuestSaves = loadGameGuestSaves();
+        let activeGuestSaveId = loadActiveGuestSaveId(gameGuestSaves);
+        // Both can't be genuinely active at once -- if somehow both got
+        // persisted (shouldn't happen going forward, every mutator below
+        // clears the other), the guest save wins arbitrarily rather than
+        // leaving things ambiguous.
+        if (activeGuestSaveId !== null) activeSaveSlot = null;
+
+        // A guest save is only ever actually editable while this device
+        // is live-connected to the specific lobby it's linked to --
+        // otherwise it's a read-only look at where things stood last time
+        // (see the Team Tracker/Badge Tracker read-only locks further
+        // down, both gated on this). Viewing a *host* save is always
+        // editable; there's no read-only concept on that side.
+        function isActiveSaveReadOnly() {
+            if (activeGuestSaveId === null) return false;
+            return !(lobbyState.role === 'guest' && lobbyState.linkedGuestSaveId === activeGuestSaveId);
+        }
+
+        function loadGuestSave(hostSaveId) {
+            if (!gameGuestSaves[hostSaveId]) return;
+            activeSaveSlot = null;
+            persistActiveSaveSlot();
+            activeGuestSaveId = hostSaveId;
+            persistActiveGuestSaveId();
+            setSavesSectionCollapsed(true);
+            // Skipped if this is the save a live connection already has
+            // locked to the host's Region (see syncMusicUIForLobbyRole) --
+            // touching it manually here would just fight that lock.
+            if (!(lobbyState.role === 'guest' && lobbyState.linkedGuestSaveId === hostSaveId)) {
+                const region = gameGuestSaves[hostSaveId].region;
+                if (region) setActiveMusicRegion(region);
+            }
+            setGameScreen('main');
+            refreshGameUI();
+        }
+
+        function deleteGuestSave(hostSaveId) {
+            const wasLinked = lobbyState.role === 'guest' && lobbyState.linkedGuestSaveId === hostSaveId;
+            delete gameGuestSaves[hostSaveId];
+            persistGameGuestSaves();
+            if (activeGuestSaveId === hostSaveId) {
+                activeGuestSaveId = null;
+                persistActiveGuestSaveId();
+                setGuestSavesSectionCollapsed(false);
+            }
+            // Nothing left for a live connection's progress to write
+            // into -- end it rather than leaving it connected to a save
+            // that no longer exists.
+            if (wasLinked) leaveLobby();
             refreshGameUI();
         }
 
@@ -8081,6 +8409,7 @@
         }
 
         function collectBadge(category, slotKey, optionId) {
+            if (isActiveSaveReadOnly()) return;
             const data = getActiveSaveData();
             if (category && POOL_BASED_EXTRA_CATEGORIES.has(category)) {
                 // slotKey is ignored here on purpose -- every empty
@@ -8102,6 +8431,7 @@
         }
 
         function removeBadge(category, slotKey) {
+            if (isActiveSaveReadOnly()) return;
             const data = getActiveSaveData();
             if (category && POOL_BASED_EXTRA_CATEGORIES.has(category)) {
                 // Removing a specific position shifts everything after
@@ -8119,14 +8449,15 @@
         }
 
         // Common tail end for collecting/removing a badge -- persists for
-        // real if a save is active, feeds the unsaved-progress safety net
-        // if not, and pushes the freshly-derived stage into the Sounds
-        // panel either way (see setActiveGameStage()'s own comment on
-        // being "the one call" a real Gameplay Companion needs to make).
-        // Villain/Elite Four/Path of Legends/Starfall Street changes
-        // still run through here too, since they're still progress worth
-        // saving even though computeBadgeCount()/computeBadgePoints()
-        // themselves ignore them.
+        // real if a save is active (host or guest, see below), feeds the
+        // unsaved-progress safety net if not, and pushes the freshly-
+        // derived stage into the Sounds panel either way (see
+        // setActiveGameStage()'s own comment on being "the one call" a
+        // real Gameplay Companion needs to make). Villain/Elite Four/Path
+        // of Legends/Starfall Street changes still run through here too,
+        // since they're still progress worth saving even though
+        // computeBadgeCount()/computeBadgePoints() themselves ignore
+        // them.
         //
         // Lobby-aware (see GAME_PANEL_NOTES.md's Leading-Player Stage
         // notes): solo play (no lobbyState.role) behaves exactly as
@@ -8143,6 +8474,9 @@
             if (activeSaveSlot !== null) {
                 gameSaves[activeSaveSlot].lastPlayed = new Date().toISOString();
                 persistGameSaves();
+            } else if (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) {
+                gameGuestSaves[activeGuestSaveId].lastPlayed = new Date().toISOString();
+                persistGameGuestSaves();
             }
             markUnsavedProgressChanged();
             renderBadgeGrid();
@@ -8214,18 +8548,58 @@
             }
         }
 
+        // Unbounded, unlike renderSavePicker() above -- rebuilds the
+        // whole "Joined Games" list from scratch each time rather than
+        // targeting fixed slots, since there's no fixed slot count to
+        // target. Most-recently-played first, so a game someone's
+        // actively bouncing between host saves for surfaces at the top
+        // without having to scroll for it.
+        function renderGuestSavePicker() {
+            const listEl = document.getElementById('game-guest-save-list');
+            const emptyEl = document.getElementById('game-guest-save-empty-text');
+            if (!listEl || !emptyEl) return;
+            const entries = Object.values(gameGuestSaves).sort((a, b) => (b.lastPlayed || '').localeCompare(a.lastPlayed || ''));
+            emptyEl.style.display = entries.length === 0 ? '' : 'none';
+            listEl.innerHTML = entries.map(save => {
+                const isLive = lobbyState.role === 'guest' && lobbyState.linkedGuestSaveId === save.hostSaveId;
+                const regionText = save.region ? musicRegionLabel(save.region) : 'Unknown Region';
+                const hostLabel = save.hostNameCache || 'Unknown Host';
+                return `
+                    <div class="game-save-slot game-guest-save-slot" data-guest-id="${escapeHtml(save.hostSaveId)}">
+                        <div class="game-save-slot-loaded">
+                            <p class="game-save-slot-name">${escapeHtml(save.playerName)} <span class="game-guest-save-host-label">\u2014 ${escapeHtml(hostLabel)}'s Game</span></p>
+                            <p class="game-save-slot-meta">${regionText} \u2014 Last played ${formatSaveTimestamp(save.lastPlayed)}${isLive ? ' \u2014 <span class="game-guest-save-live-tag">Connected</span>' : ''}</p>
+                            <div class="game-save-slot-actions">
+                                <button class="filter-btn game-guest-load-btn" data-guest-id="${escapeHtml(save.hostSaveId)}">Load</button>
+                                <button class="filter-btn game-delete-btn" data-guest-id="${escapeHtml(save.hostSaveId)}">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
         function renderActiveSaveLabel() {
-            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
-            document.getElementById('game-menu-active-save-name').textContent = save ? `Playing: ${save.name}` : '';
+            const el = document.getElementById('game-menu-active-save-name');
+            if (activeSaveSlot !== null) {
+                el.textContent = `Playing: ${gameSaves[activeSaveSlot].name}`;
+            } else if (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) {
+                const save = gameGuestSaves[activeGuestSaveId];
+                el.textContent = `Playing: ${save.playerName} \u2014 ${save.hostNameCache || 'Host'}'s Game${isActiveSaveReadOnly() ? ' (Read-Only)' : ''}`;
+            } else {
+                el.textContent = '';
+            }
         }
 
         // Shown/hidden together on the main screen and inside whichever
         // save-scoped tool screens exist (Badge/Team Tracker for now) --
         // see .game-save-progress-banner in CSS. Visible any time there's
         // unsaved progress sitting in memory, regardless of which of
-        // those screens happens to be showing.
+        // those screens happens to be showing. Guest saves count as "a
+        // real save" here too, same as host saves -- there's nothing
+        // unsaved to nudge about once either kind is active.
         function renderSaveProgressPrompt() {
-            const show = activeSaveSlot === null && unsavedSessionTouched;
+            const show = activeSaveSlot === null && activeGuestSaveId === null && unsavedSessionTouched;
             document.querySelectorAll('.game-save-progress-banner').forEach(el => {
                 el.classList.toggle('visible', show);
             });
@@ -8245,12 +8619,36 @@
         // before that tool has real UI of its own. Badge Tracker used to
         // share this too, before it got real UI (see renderBadgeGrid()/
         // renderBadgeStageReadout() above) -- goes away entirely once
-        // Team Tracker is real as well.
+        // Team Tracker is real as well. Also disables the Test button
+        // itself while the active save is read-only (see
+        // isActiveSaveReadOnly()) -- same lock applied to Badge Tracker's
+        // own boxes, see the delegated click listener below.
         function renderDebugReadouts() {
             const data = getActiveSaveData();
-            const label = activeSaveSlot !== null ? gameSaves[activeSaveSlot].name : 'unsaved';
+            const label = activeSaveSlot !== null ? gameSaves[activeSaveSlot].name
+                : (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) ? gameGuestSaves[activeGuestSaveId].playerName
+                : 'unsaved';
             const teamEl = document.getElementById('game-team-debug-readout');
             if (teamEl) teamEl.textContent = `Team Members: ${data.team.count || 0} (${label})`;
+            const teamTestBtn = document.getElementById('game-team-test-btn');
+            if (teamTestBtn) teamTestBtn.disabled = isActiveSaveReadOnly();
+        }
+
+        // Dims Badge Tracker's grid and Team Tracker's Test button, and
+        // shows the small "Read-Only" banner on each screen, any time
+        // getActiveSaveData() currently resolves to a guest save that
+        // isn't this device's own live connection (see
+        // isActiveSaveReadOnly()). Purely visual/CSS-driven (see
+        // .game-screen[data-readonly] rules) -- the actual mutation
+        // guards live separately, at the top of collectBadge()/
+        // removeBadge() and in the delegated click listener below, since
+        // this alone wouldn't stop a stale click already in flight.
+        function applyReadOnlyIndicators() {
+            const readOnly = isActiveSaveReadOnly();
+            const badgeScreen = document.getElementById('game-screen-badges');
+            const teamScreen = document.getElementById('game-screen-team');
+            if (badgeScreen) badgeScreen.dataset.readonly = readOnly ? 'true' : 'false';
+            if (teamScreen) teamScreen.dataset.readonly = readOnly ? 'true' : 'false';
         }
 
         // Collapses/expands the Saves section -- starts open (see the
@@ -8271,11 +8669,27 @@
             section.style.display = collapsed ? 'none' : '';
         }
 
+        // Same idea as setSavesSectionCollapsed() above, just for the
+        // "Joined Games" section -- kept as an entirely separate toggle
+        // (rather than one shared function) since the two sections'
+        // collapsed states are independent: loading/creating a host save
+        // says nothing about whether there's a guest save worth picking,
+        // and vice versa.
+        function setGuestSavesSectionCollapsed(collapsed) {
+            const header = document.getElementById('game-guest-saves-header');
+            const section = document.getElementById('game-guest-saves-section');
+            if (!header || !section) return;
+            header.classList.toggle('collapsed', collapsed);
+            section.style.display = collapsed ? 'none' : '';
+        }
+
         function refreshGameUI() {
             renderSavePicker();
+            renderGuestSavePicker();
             renderActiveSaveLabel();
             renderSaveProgressPrompt();
             renderDebugReadouts();
+            applyReadOnlyIndicators();
             renderBadgeGrid();
         }
 
@@ -8284,11 +8698,12 @@
         // persistent "Save This Progress" banner and, the first time
         // only, pulses it once so it's not just something to stumble
         // across on the way back to the main screen. A no-op once a real
-        // save is active, so tool code can call this unconditionally
-        // after every change without checking activeSaveSlot itself.
+        // save is active (host OR guest), so tool code can call this
+        // unconditionally after every change without checking
+        // activeSaveSlot/activeGuestSaveId itself.
         function markUnsavedProgressChanged() {
             renderDebugReadouts();
-            if (activeSaveSlot !== null) return;
+            if (activeSaveSlot !== null || activeGuestSaveId !== null) return;
             const alreadyTouched = unsavedSessionTouched;
             unsavedSessionTouched = true;
             renderSaveProgressPrompt();
@@ -8437,7 +8852,21 @@
             role: null,          // null | 'host' | 'guest'
             peer: null,          // this device's own Peer instance
             code: null,          // the 5-char room code, either role
-            hostName: null,      // host's display name (known immediately if hosting, filled in from the first roster broadcast if joining)
+            hostName: null,      // host's display name (known immediately if hosting, filled in from the host's own 'welcome' message if joining)
+            // Host-only: this device's own active save's hostSaveId --
+            // set once hosting actually starts. Guest-only: the host's
+            // hostSaveId, learned from the 'welcome' message (see
+            // handleLobbyWelcome() below) -- what Guest Saves are keyed
+            // by, and what lets a returning guest auto-load without ever
+            // re-entering a name (see GAME_PANEL_NOTES.md's Guest Saves
+            // notes).
+            hostSaveId: null,
+            // Guest-only: a cached copy of the host's save's own rule
+            // fields, learned from the same 'welcome' message -- what a
+            // brand-new guest save gets seeded from (see
+            // finalizeGuestJoin()), and what an existing one gets
+            // refreshed from on every reconnect.
+            hostRuleset: null,
             connections: new Map(), // host-only: peer id -> { conn, name }
             hostConn: null,      // guest-only: this device's DataConnection to the host
             players: [],         // shared roster shape: [{ id, name, isHost }]
@@ -8446,6 +8875,11 @@
             // for the host's own progress. See reportLobbyProgress()/
             // recomputeLobbyLeadingStage() below (Leading-Player Stage).
             playerProgress: {},
+            // Guest-only: which gameGuestSaves entry (if any) this
+            // specific live connection has authority over -- the one
+            // thing isActiveSaveReadOnly() checks to tell "my own save,
+            // connected" apart from "a guest save I'm just looking at."
+            linkedGuestSaveId: null,
         };
 
         // PeerJS/qrcodejs are loaded from CDN <script> tags in <head> --
@@ -8487,8 +8921,9 @@
             }
             lobbyState = {
                 role: null, peer: null, code: null, hostName: null,
+                hostSaveId: null, hostRuleset: null,
                 connections: new Map(), hostConn: null, players: [],
-                playerProgress: {},
+                playerProgress: {}, linkedGuestSaveId: null,
             };
             const lobbyEl = document.getElementById('game-lobby');
             lobbyEl.dataset.state = 'choice';
@@ -8499,9 +8934,16 @@
             // back to this device's own local solo state -- while
             // connected, both were driven by the lobby (see Playlist
             // Sync/Leading-Player Stage notes below); leaving needs to
-            // undo both, not just reset the Lobby screen itself.
+            // undo both, not just reset the Lobby screen itself. A guest
+            // save that was live stays active (just no longer editable --
+            // see isActiveSaveReadOnly(), which now has no matching
+            // linkedGuestSaveId to compare against), so
+            // restoreSoloGameStage() below correctly starts deriving
+            // from that guest save's own progress rather than needing a
+            // separate "no save at all" case.
             syncMusicUIForLobbyRole();
             restoreSoloGameStage();
+            refreshGameUI();
         }
 
         function enterActiveLobbyState() {
@@ -8574,11 +9016,28 @@
 
         // ---- Host side ----
 
+        // Requires an active *host* save before hosting can actually
+        // start -- a lobby's identity (hostSaveId) has to live somewhere
+        // durable for a returning guest to find again next time (see
+        // Guest Saves notes above), and there's no such thing as a
+        // durable identity for progress that only lives in
+        // unsavedSessionData. If nothing's loaded, this opens the Saves
+        // section's creation form on the spot instead of starting to
+        // host -- tapping "Host a Lobby" again once a save exists picks
+        // up from here normally.
         function startHostingLobby(name) {
             if (!requireLobbyLibs()) return;
+            if (activeSaveSlot === null) {
+                setLobbyStatus('Create or load a save first, then tap Host a Lobby again.', 'error');
+                setSavesSectionCollapsed(false);
+                const emptyIndex = gameSaves.findIndex(save => !save);
+                if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
+                return;
+            }
             resetLobbyState();
             lobbyState.role = 'host';
             lobbyState.hostName = (name || '').trim() || 'Trainer';
+            lobbyState.hostSaveId = gameSaves[activeSaveSlot].hostSaveId;
             setLobbyStatus('Creating room\u2026', 'pending');
             attemptHostPeerCreation(0);
         }
@@ -8626,8 +9085,27 @@
 
         function wireHostConnection(conn) {
             conn.on('open', () => {
-                const name = (conn.metadata && conn.metadata.name) || 'Trainer';
-                lobbyState.connections.set(conn.peer, { conn, name });
+                // Placeholder until the real 'identify' message below --
+                // a guest no longer sends its name at connect time (it
+                // usually doesn't know it yet: see handleLobbyWelcome()),
+                // so this briefly shows "Trainer" in the roster for
+                // every new connection regardless of role.
+                const placeholderName = (conn.metadata && conn.metadata.name) || 'Trainer';
+                lobbyState.connections.set(conn.peer, { conn, name: placeholderName });
+                // Hosting requires an active host save (see
+                // startHostingLobby()), so gameSaves[activeSaveSlot] is
+                // guaranteed to exist here.
+                const hostSave = gameSaves[activeSaveSlot];
+                conn.send({
+                    type: 'welcome',
+                    hostSaveId: hostSave.hostSaveId,
+                    hostName: lobbyState.hostName,
+                    region: hostSave.region,
+                    stageRule: hostSave.stageRule,
+                    gameLength: hostSave.gameLength,
+                    typeEffectivenessRule: hostSave.typeEffectivenessRule,
+                    hpRule: hostSave.hpRule,
+                });
                 refreshLobbyRosterFromHostState();
             });
             conn.on('data', (data) => {
@@ -8642,6 +9120,15 @@
                 } else if (data.type === 'progress' && typeof data.badgeCount === 'number' && typeof data.badgePoints === 'number') {
                     lobbyState.playerProgress[conn.peer] = { badgeCount: data.badgeCount, badgePoints: data.badgePoints };
                     recomputeLobbyLeadingStage();
+                } else if (data.type === 'identify' && typeof data.name === 'string') {
+                    // The real name, now that the guest has resolved who
+                    // it is (see finalizeGuestJoin()) -- replaces the
+                    // 'Trainer' placeholder set on conn.on('open') above.
+                    const entry = lobbyState.connections.get(conn.peer);
+                    if (entry) {
+                        entry.name = data.name.trim() || 'Trainer';
+                        refreshLobbyRosterFromHostState();
+                    }
                 }
             });
             conn.on('close', () => {
@@ -8710,9 +9197,10 @@
         }
 
         // Guest-only: sends this device's own current badge progress up
-        // to the host. Called once as soon as the connection to the host
-        // opens (so the host has a starting figure even before anything
-        // changes) and again from afterBadgeChange() any time it does.
+        // to the host. Called once as soon as this device's identity is
+        // resolved (see finalizeGuestJoin() -- not simply on connection
+        // open, since which save's progress to report isn't known until
+        // then) and again from afterBadgeChange() any time it changes.
         function reportLobbyProgress(badgeCount, badgePoints) {
             if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
                 lobbyState.hostConn.send({ type: 'progress', badgeCount, badgePoints });
@@ -8726,7 +9214,9 @@
         // from a leading-player figure (hosting) or not touching it at
         // all (guesting) up to that point -- either way, once
         // disconnected this device needs to go back to deciding its own
-        // stage by itself.
+        // stage by itself, from whatever getActiveSaveData() now
+        // resolves to (which may still be a guest save -- see
+        // resetLobbyState()'s own comment on why that's correct).
         function restoreSoloGameStage() {
             const data = getActiveSaveData();
             const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
@@ -8740,7 +9230,36 @@
 
         // ---- Guest side ----
 
-        function joinLobbyByCode(code, name) {
+        // Set right before joinLobbyByCode() actually connects, whenever
+        // that's gated behind the unsaved-progress confirm overlay (see
+        // attemptJoinLobby()/closeLobbyJoinConfirmOverlay() below) --
+        // holds the code between "show the overlay" and "the person
+        // actually confirmed," since the click that confirms doesn't
+        // otherwise have the code in hand.
+        let pendingLobbyJoinCode = null;
+
+        // The Join button's real entry point -- checks for in-memory
+        // unsaved progress that joining would silently strand (see
+        // finalizeGuestJoin(), which switches getActiveSaveData() over to
+        // a guest save the same way loading any other save would) and
+        // asks first if so, same "don't silently discard" instinct as
+        // the "Save This Progress" banner elsewhere in this panel.
+        // Otherwise connects immediately.
+        function attemptJoinLobby(code) {
+            if (unsavedSessionTouched && activeSaveSlot === null && activeGuestSaveId === null) {
+                pendingLobbyJoinCode = code;
+                document.getElementById('game-lobby-join-confirm-overlay').classList.add('visible');
+                return;
+            }
+            joinLobbyByCode(code);
+        }
+
+        function closeLobbyJoinConfirmOverlay() {
+            pendingLobbyJoinCode = null;
+            document.getElementById('game-lobby-join-confirm-overlay').classList.remove('visible');
+        }
+
+        function joinLobbyByCode(code) {
             if (!requireLobbyLibs()) return;
             const cleanCode = (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
             if (cleanCode.length !== LOBBY_CODE_LENGTH) {
@@ -8756,10 +9275,13 @@
             lobbyState.peer = peer;
 
             peer.on('open', () => {
-                const conn = peer.connect(LOBBY_ROOM_PREFIX + cleanCode, {
-                    metadata: { name: (name || '').trim() || 'Trainer' },
-                    reliable: true,
-                });
+                // No name in the connection metadata anymore -- this
+                // device doesn't know its name for *this* game yet (that
+                // depends on whether a guest save already exists for
+                // whatever host it's about to meet, which it won't know
+                // until the host's 'welcome' message arrives). See
+                // handleLobbyWelcome()/finalizeGuestJoin() below.
+                const conn = peer.connect(LOBBY_ROOM_PREFIX + cleanCode, { reliable: true });
                 lobbyState.hostConn = conn;
                 wireGuestConnection(conn);
             });
@@ -8776,19 +9298,16 @@
 
         function wireGuestConnection(conn) {
             conn.on('open', () => {
-                setLobbyStatus('', '');
-                lobbyState.players = [{ id: 'host', name: 'Host', isHost: true }];
-                enterActiveLobbyState();
-                // Gives the host a starting figure for this player right
-                // away, rather than waiting for the first badge change
-                // after joining -- see reportLobbyProgress()/
-                // recomputeLobbyLeadingStage().
-                const data = getActiveSaveData();
-                reportLobbyProgress(computeBadgeCount(data), computeBadgePoints(data));
+                // Still waiting on the host's 'welcome' before this
+                // device knows who it even is in this particular game --
+                // see handleLobbyWelcome() below.
+                setLobbyStatus('Connecting\u2026', 'pending');
             });
             conn.on('data', (data) => {
                 if (!data || typeof data.type !== 'string') return;
-                if (data.type === 'roster' && Array.isArray(data.players)) {
+                if (data.type === 'welcome') {
+                    handleLobbyWelcome(data);
+                } else if (data.type === 'roster' && Array.isArray(data.players)) {
                     lobbyState.players = data.players;
                     const hostEntry = data.players.find(p => p.isHost);
                     if (hostEntry) lobbyState.hostName = hostEntry.name;
@@ -8808,11 +9327,119 @@
             });
         }
 
+        // First real step of the handshake, once connected: the host's
+        // hostSaveId is what a returning guest is actually recognized
+        // by, not the room code (which is different every session -- see
+        // GAME_PANEL_NOTES.md's Guest Saves notes on why a durable id was
+        // needed at all). A guest save already on file for this exact
+        // host save means this device has played this specific game
+        // before -- skip straight to rejoining with the name already on
+        // record. Otherwise this is a genuinely new connection, so ask
+        // once via the .game-lobby-naming step (see
+        // .game-lobby[data-state="naming"] in the CSS) before finalizing
+        // anything.
+        function handleLobbyWelcome(data) {
+            lobbyState.hostSaveId = data.hostSaveId;
+            lobbyState.hostName = data.hostName;
+            lobbyState.hostRuleset = {
+                region: data.region,
+                stageRule: data.stageRule,
+                gameLength: data.gameLength,
+                typeEffectivenessRule: data.typeEffectivenessRule,
+                hpRule: data.hpRule,
+            };
+            const existing = data.hostSaveId ? gameGuestSaves[data.hostSaveId] : null;
+            if (existing) {
+                finalizeGuestJoin(existing.playerName);
+                return;
+            }
+            setLobbyStatus('', '');
+            const lobbyEl = document.getElementById('game-lobby');
+            lobbyEl.dataset.state = 'naming';
+            const nameInput = document.querySelector('.game-lobby-naming-name');
+            if (nameInput) {
+                nameInput.value = '';
+                nameInput.focus();
+            }
+        }
+
+        // Second (and, for a returning guest, only) real step: creates or
+        // updates this device's Guest Save for lobbyState.hostSaveId,
+        // makes it the active save (read-write, since this IS the live
+        // connection for it -- see isActiveSaveReadOnly()), sends the
+        // resolved name back to the host (see wireHostConnection's
+        // 'identify' handling -- this is the real name, correcting the
+        // placeholder the host briefly showed), and only then actually
+        // enters the active Lobby view. Called either immediately (an
+        // existing guest save, from handleLobbyWelcome() above) or from
+        // the naming step's Confirm button (a brand-new one).
+        function finalizeGuestJoin(name) {
+            const hostSaveId = lobbyState.hostSaveId;
+            if (!hostSaveId) {
+                setLobbyStatus('This host hasn\u2019t loaded a save yet \u2014 try again shortly.', 'error');
+                return;
+            }
+            const cleanName = (name || '').trim() || 'Trainer';
+            const ruleset = lobbyState.hostRuleset || {};
+            const now = new Date().toISOString();
+            const existing = gameGuestSaves[hostSaveId];
+            if (existing) {
+                existing.playerName = cleanName;
+                existing.hostNameCache = lobbyState.hostName;
+                existing.lastPlayed = now;
+                existing.region = ruleset.region;
+                existing.stageRule = ruleset.stageRule;
+                existing.gameLength = ruleset.gameLength;
+                existing.typeEffectivenessRule = ruleset.typeEffectivenessRule;
+                existing.hpRule = ruleset.hpRule;
+            } else {
+                gameGuestSaves[hostSaveId] = {
+                    hostSaveId,
+                    playerName: cleanName,
+                    hostNameCache: lobbyState.hostName,
+                    createdAt: now,
+                    lastPlayed: now,
+                    region: ruleset.region,
+                    stageRule: ruleset.stageRule,
+                    gameLength: ruleset.gameLength,
+                    typeEffectivenessRule: ruleset.typeEffectivenessRule,
+                    hpRule: ruleset.hpRule,
+                    badges: { collected: {}, collectedExtras: {} },
+                    team: {},
+                };
+            }
+            persistGameGuestSaves();
+
+            activeSaveSlot = null;
+            persistActiveSaveSlot();
+            activeGuestSaveId = hostSaveId;
+            persistActiveGuestSaveId();
+            lobbyState.linkedGuestSaveId = hostSaveId;
+
+            if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                lobbyState.hostConn.send({ type: 'identify', name: cleanName });
+            }
+
+            lobbyState.players = [{ id: 'host', name: lobbyState.hostName || 'Host', isHost: true }];
+            setLobbyStatus('', '');
+            enterActiveLobbyState();
+            syncMusicUIForLobbyRole();
+            setGuestSavesSectionCollapsed(true);
+            refreshGameUI();
+
+            // Gives the host a starting figure for this player right
+            // away, rather than waiting for the first badge change after
+            // joining.
+            const data = getActiveSaveData();
+            reportLobbyProgress(computeBadgeCount(data), computeBadgePoints(data));
+        }
+
         function leaveLobby() {
             const wasActive = lobbyState.role !== null;
             resetLobbyState();
             if (wasActive) setLobbyStatus('', '');
         }
+
 
         // Single delegated listener covers every interactive element in
         // the panel -- back buttons and menu tiles (both just carry a
@@ -8830,6 +9457,12 @@
             const savesHeader = e.target.closest('#game-saves-header');
             if (savesHeader) {
                 setSavesSectionCollapsed(!savesHeader.classList.contains('collapsed'));
+                return;
+            }
+
+            const guestSavesHeader = e.target.closest('#game-guest-saves-header');
+            if (guestSavesHeader) {
+                setGuestSavesSectionCollapsed(!guestSavesHeader.classList.contains('collapsed'));
                 return;
             }
 
@@ -8887,12 +9520,27 @@
                 return;
             }
 
+            const guestLoadBtn = e.target.closest('.game-guest-load-btn');
+            if (guestLoadBtn) {
+                loadGuestSave(guestLoadBtn.dataset.guestId);
+                return;
+            }
+
+            // Shared by both host and guest saves -- a guest save's
+            // delete button carries data-guestId instead of data-slot
+            // (see renderGuestSavePicker()), which is what tells the two
+            // apart here; the tap-again-to-confirm state machine itself
+            // (armDeleteConfirm/disarmDeleteConfirm) doesn't care which
+            // kind of button it's holding.
             const deleteBtn = e.target.closest('.game-delete-btn');
             if (deleteBtn) {
                 if (armedDeleteBtn === deleteBtn) {
-                    const slotIndex = Number(deleteBtn.dataset.slot);
                     disarmDeleteConfirm();
-                    deleteSaveSlot(slotIndex);
+                    if (deleteBtn.dataset.guestId) {
+                        deleteGuestSave(deleteBtn.dataset.guestId);
+                    } else {
+                        deleteSaveSlot(Number(deleteBtn.dataset.slot));
+                    }
                 } else {
                     armDeleteConfirm(deleteBtn);
                 }
@@ -8901,7 +9549,7 @@
 
             const badgeBox = e.target.closest('.game-badge-box');
             if (badgeBox) {
-                if (badgeBox.disabled) return;
+                if (badgeBox.disabled || isActiveSaveReadOnly()) return;
                 openBadgeOverlay(badgeBox.dataset.category || null, badgeBox.dataset.slotKey);
                 return;
             }
@@ -8914,9 +9562,11 @@
             // grid/overlay above replaced it.
             const teamTestBtn = e.target.closest('#game-team-test-btn');
             if (teamTestBtn) {
+                if (isActiveSaveReadOnly()) return;
                 const data = getActiveSaveData();
                 data.team.count = (data.team.count || 0) + 1;
                 if (activeSaveSlot !== null) persistGameSaves();
+                else if (activeGuestSaveId !== null) persistGameGuestSaves();
                 markUnsavedProgressChanged();
                 return;
             }
@@ -8931,16 +9581,45 @@
             const lobbyJoinBtn = e.target.closest('.game-lobby-join-btn');
             if (lobbyJoinBtn) {
                 const card = lobbyJoinBtn.closest('.game-lobby-card');
-                joinLobbyByCode(
-                    card.querySelector('.game-lobby-join-code').value,
-                    card.querySelector('.game-lobby-join-name').value
-                );
+                attemptJoinLobby(card.querySelector('.game-lobby-join-code').value);
+                return;
+            }
+
+            const lobbyNamingConfirmBtn = e.target.closest('.game-lobby-naming-confirm-btn');
+            if (lobbyNamingConfirmBtn) {
+                finalizeGuestJoin(document.querySelector('.game-lobby-naming-name').value);
+                return;
+            }
+
+            const lobbyNamingCancelBtn = e.target.closest('.game-lobby-naming-cancel-btn');
+            if (lobbyNamingCancelBtn) {
+                leaveLobby();
                 return;
             }
 
             const lobbyLeaveBtn = e.target.closest('.game-lobby-leave-btn');
             if (lobbyLeaveBtn) {
                 leaveLobby();
+                return;
+            }
+        });
+
+        // Separate listener from #game-scroll's own, same reasoning as
+        // the badge confirm overlay's listener above -- this overlay is
+        // a sibling of #game-scroll, not a descendant, so it needs to
+        // catch its own clicks rather than relying on the delegated one.
+        document.getElementById('game-lobby-join-confirm-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-lobby-join-confirm-overlay' || e.target.closest('.game-lobby-join-confirm-cancel-btn')) {
+                closeLobbyJoinConfirmOverlay();
+                return;
+            }
+            if (e.target.closest('.game-lobby-join-confirm-discard-btn')) {
+                unsavedSessionData = emptySaveScopedData();
+                unsavedSessionTouched = false;
+                renderSaveProgressPrompt();
+                const code = pendingLobbyJoinCode;
+                closeLobbyJoinConfirmOverlay();
+                joinLobbyByCode(code);
                 return;
             }
         });
@@ -9467,21 +10146,33 @@
             setActiveMusicCategory(category);
         }
 
-        // Host-only -- pushes the current Master Playlist selection, now-
-        // playing track title, and play/pause state out to every
-        // connected guest. Called from the tail of renderMusicPlayerUI
-        // below rather than scattered across every place playback state
-        // can change (category switch, auto-advance, shuffle, manual
-        // Next/Prev, Play/Pause) -- that function already runs after all
-        // of those, so hooking it once here covers every case for free.
-        // No-ops immediately whenever this device isn't hosting an active
-        // lobby, so it's always safe to call unconditionally.
+        // Host-only -- pushes the current Master Playlist selection,
+        // Region, Game Stage, now-playing track title, and play/pause
+        // state out to every connected guest. Called from the tail of
+        // renderMusicPlayerUI below rather than scattered across every
+        // place playback state can change (category switch, auto-
+        // advance, shuffle, manual Next/Prev, Play/Pause) -- that
+        // function already runs after all of those, so hooking it once
+        // here covers every case for free. No-ops immediately whenever
+        // this device isn't hosting an active lobby, so it's always safe
+        // to call unconditionally.
+        //
+        // Region/Game Stage are included here (not just category) because
+        // a guest's own filters were found to silently disagree with the
+        // host's -- letting a guest move their own slider re-ran their
+        // *local* refreshMusicPlaylistButtons() against their own
+        // (unsynced) filters, wrongly disabling buttons that were
+        // actually fine on the host's end. Locking these to the host's
+        // values (see applyGuestMusicMirror/syncMusicUIForLobbyRole
+        // below) is what actually fixes that, not just broadcasting them.
         function broadcastLobbyMusicState() {
             if (lobbyState.role !== 'host' || !lobbyState.peer) return;
             const track = musicQueueIndex >= 0 ? musicQueue[musicQueueIndex] : null;
             const payload = {
                 type: 'music',
                 category: musicState.activeCategory,
+                region: musicState.activeRegion,
+                gameStage: musicState.activeGameStage,
                 trackTitle: track ? track.title : null,
                 isPlaying: !musicAudio.paused,
             };
@@ -9491,18 +10182,31 @@
         }
 
         // Guest-only -- applies a broadcast from the host as a pure
-        // visual mirror: which playlist button reads as active, and what
-        // the Now Playing line/Play-Pause icon show. Deliberately never
-        // touches musicAudio/musicQueue here -- this device isn't the one
-        // playing anything while it's a guest (see syncMusicUIForLobbyRole
-        // below, which is what actually locks the transport controls),
-        // so there's no real playback state on this end to keep in sync,
-        // only the display of the host's.
+        // visual mirror: which playlist button reads as active, which
+        // region button reads as active, where the Game Stage slider
+        // sits, and what the Now Playing line/Play-Pause icon show.
+        // Deliberately never touches musicAudio/musicQueue here -- this
+        // device isn't the one playing anything while it's a guest (see
+        // syncMusicUIForLobbyRole below, which is what actually locks
+        // these controls so a guest can't drift out of sync by touching
+        // them), so there's no real playback state on this end to keep
+        // in sync, only the display of the host's. musicState.activeRegion/
+        // activeGameStage ARE actually updated here (not just their on-
+        // screen display) so anything else that happens to read
+        // musicState directly -- renderMusicRegionUI's header text, for
+        // instance -- stays correct too.
         function applyGuestMusicMirror(data) {
             musicState.activeCategory = data.category;
+            musicState.activeRegion = data.region;
+            musicState.activeGameStage = data.gameStage;
+
             musicPlaylistButtons.querySelectorAll('.music-playlist-btn').forEach(btn => {
                 btn.classList.toggle('include', btn.dataset.category === data.category);
             });
+            renderMusicRegionUI();
+            musicGameStageSelect.value = GAME_STAGE_STEPS.indexOf(data.gameStage);
+            updateGameStageValueDisplay();
+
             musicNowPlayingEl.textContent = data.trackTitle
                 || (data.category ? 'No tracks match this filter' : 'Choose a playlist to begin');
             musicPlayPauseIcon.src = data.isPlaying ? MUSIC_ICON_PAUSE : MUSIC_ICON_PLAY;
@@ -9513,21 +10217,29 @@
         // (entering hosting/guesting, or leaving back to solo) -- not on
         // every render, since it's only the role itself that flips
         // whether these controls are locked. A guest's transport buttons
-        // (Play/Pause/Prev/Next/Shuffle/Repeat) are disabled outright:
-        // only the host's device actually plays audio, so a guest
-        // "pressing play" would have nothing real to do. Master Playlist
-        // buttons stay tappable regardless of this device's own Region/
-        // Game Stage filters -- only the host's filters decide what's
-        // actually playable, so refreshMusicPlaylistButtons()'s normal
-        // per-device disabling is deliberately skipped while guesting.
+        // (Play/Pause/Prev/Next/Shuffle/Repeat) AND its Region buttons/
+        // Game Stage slider are all disabled outright: only the host's
+        // device actually plays audio or decides what's filtered, so a
+        // guest touching any of those locally would just drift out of
+        // sync with what applyGuestMusicMirror() just set (this is
+        // exactly the bug that motivated locking these rather than just
+        // broadcasting them). Master Playlist buttons are the one thing
+        // that DO stay tappable while guesting -- that's how a guest
+        // actually requests a change (see requestMusicCategoryChange) --
+        // and they ignore this device's own Region/Game Stage entirely
+        // while locked, so refreshMusicPlaylistButtons()'s normal per-
+        // device disabling logic is skipped for them here too.
         function syncMusicUIForLobbyRole() {
             const remote = lobbyState.role === 'guest';
             [musicPrevBtn, musicNextBtn, musicPlayPauseBtn, musicShuffleBtn, musicRepeatBtn].forEach(btn => {
                 btn.disabled = remote;
             });
+            musicGameStageSelect.disabled = remote;
             if (remote) {
                 musicPlaylistButtons.querySelectorAll('.music-playlist-btn').forEach(btn => { btn.disabled = false; });
+                musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => { btn.disabled = true; });
             } else {
+                musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => { btn.disabled = false; });
                 refreshMusicPlaylistButtons();
                 renderMusicPlayerUI();
             }
@@ -12342,8 +13054,11 @@
         resetGameScreen();
         // A save loaded from a previous session should start collapsed
         // (nothing new to decide); otherwise start open so there's
-        // something to pick/create right away.
+        // something to pick/create right away. The two sections'
+        // collapsed state is independent (see setGuestSavesSectionCollapsed()'s
+        // own comment) so each checks only its own kind of active save.
         setSavesSectionCollapsed(activeSaveSlot !== null);
+        setGuestSavesSectionCollapsed(activeGuestSaveId !== null);
 
         // Other half of the Multiplayer Lobby's QR idea (see
         // lobbyJoinUrl() and GAME_PANEL_NOTES.md §3) -- scanning the
