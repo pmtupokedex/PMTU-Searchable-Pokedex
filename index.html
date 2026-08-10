@@ -29,6 +29,14 @@
          script, which checks for them rather than assuming they loaded. -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- In-app QR scanning fallback for the Lobby's "Scan QR Code" button
+         (see openLobbyScanOverlay() in the script) -- most Android/Chrome
+         devices have a native BarcodeDetector and never actually load this
+         path, but Safari/iOS and older browsers don't implement that API
+         at all, so jsQR (pure JS, decodes from raw canvas pixel data) is
+         what backs the fallback. Same "optional at runtime, checked rather
+         than assumed" treatment as the two libraries above. -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
     <style>
         * { box-sizing: border-box; }
@@ -2253,6 +2261,65 @@
 
         #game-lobby-join-confirm-overlay.visible {
             display: flex;
+        }
+
+        /* In-app QR scanner -- same positioning/backdrop rules as the two
+           overlays above, duplicated for the same independence reason. */
+        #game-lobby-scan-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-lobby-scan-overlay.visible {
+            display: flex;
+        }
+
+        .game-lobby-scan-card {
+            background: #fff;
+            border-radius: 14px;
+            padding: 20px;
+            width: 100%;
+            max-width: 340px;
+            box-sizing: border-box;
+            text-align: center;
+        }
+
+        /* Cropped to a square and mirrored via object-fit: cover rather
+           than stretched to the video's native aspect ratio -- keeps the
+           frame a predictable shape to aim a QR code at regardless of
+           the camera's actual resolution. */
+        #game-lobby-scan-video {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            object-fit: cover;
+            border-radius: 10px;
+            background: #000;
+            margin: 10px 0;
+        }
+
+        /* Scratch space only -- see the HTML comment next to this
+           element for why it's never actually shown. */
+        #game-lobby-scan-canvas {
+            display: none;
+        }
+
+        .game-lobby-scan-status {
+            font-size: 13px;
+            color: #555;
+            margin: 0 0 14px;
+            min-height: 1.2em;
+        }
+
+        .game-lobby-scan-card .filter-btn {
+            width: 100%;
+            box-sizing: border-box;
         }
 
         .game-badge-confirm-card {
@@ -5622,6 +5689,16 @@
                             <label>Room Code</label>
                             <input type="text" class="game-lobby-input game-lobby-join-code" placeholder="ABCDE" maxlength="5" autocapitalize="characters" autocomplete="off" spellcheck="false">
                             <button class="filter-btn game-lobby-join-btn">Join Lobby</button>
+                            <!-- In-app camera scan, rather than relying on
+                                 the phone's own Camera/QR shortcut -- see
+                                 openLobbyScanOverlay() in the script for
+                                 why: several stock Android camera/QR
+                                 flows hand a matched link straight to the
+                                 browser regardless of any installed-app
+                                 link handling, so scanning from inside the
+                                 app itself is the one path that's fully
+                                 within our control. -->
+                            <button class="filter-btn exclude game-lobby-scan-btn" type="button">Scan QR Code</button>
                         </div>
                     </div>
 
@@ -5700,6 +5777,24 @@
                     <button class="filter-btn exclude game-lobby-join-confirm-discard-btn">Discard &amp; Join</button>
                     <button class="filter-btn game-lobby-join-confirm-cancel-btn">Cancel</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- In-app QR scanner -- see openLobbyScanOverlay()/
+             closeLobbyScanOverlay()/runLobbyScanDetection() in the
+             script. #game-lobby-scan-canvas is never actually shown
+             (display:none in CSS) -- it exists purely as scratch space
+             to pull pixel data off the live video frame for the jsQR
+             fallback path; the native BarcodeDetector path (used
+             whenever it's available) reads the <video> element
+             directly and never touches the canvas at all. -->
+        <div id="game-lobby-scan-overlay">
+            <div class="game-lobby-scan-card">
+                <p class="game-badge-confirm-title">Scan Host's QR Code</p>
+                <video id="game-lobby-scan-video" playsinline muted autoplay></video>
+                <canvas id="game-lobby-scan-canvas"></canvas>
+                <p class="game-lobby-scan-status" id="game-lobby-scan-status">Point your camera at the host's QR code.</p>
+                <button class="filter-btn exclude game-lobby-scan-cancel-btn">Cancel</button>
             </div>
         </div>
     </div>
@@ -7400,6 +7495,14 @@
                     window.pageScrollLock.unlock();
                 }
             }
+            // A live camera stream (see openLobbyScanOverlay()) has no
+            // business staying open once the whole panel closes -- the
+            // scan overlay's own Cancel button and a successful scan
+            // both already handle this, but the panel can close out from
+            // under it via other paths too (tapping the backdrop, the
+            // top-level nav, etc.), so this is the one place that
+            // guarantees it regardless of how the panel actually closed.
+            closeLobbyScanOverlay();
             resetGameScreen();
             refreshBackButtonState();
         }
@@ -9136,6 +9239,159 @@
             });
         }
 
+        // Shared by the URL-based prefill (prefillLobbyFromUrl() at the
+        // very end of the script, for a QR code opened via a normal page
+        // navigation) and the in-app scanner below (for a QR code read
+        // directly off the camera, no navigation involved at all) --
+        // both need to pull a room code out of whatever text was
+        // decoded. Accepts either a full lobbyJoinUrl()-style URL or a
+        // bare code on its own, in case a QR code ever ends up encoding
+        // just the code itself rather than a full link.
+        function extractLobbyJoinCode(text) {
+            if (!text) return '';
+            let candidate = text;
+            try {
+                candidate = new URL(text).searchParams.get('join') || '';
+            } catch (err) {
+                // Not a URL -- fall through and treat the raw decoded
+                // text itself as a possible bare code instead.
+            }
+            return candidate.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, LOBBY_CODE_LENGTH);
+        }
+
+        // ---- In-app QR scanner (see the "Scan QR Code" button on the
+        // Join card) -- built as a fallback to the phone's own Camera/QR
+        // shortcut, several stock Android flows for which hand a matched
+        // link straight to the browser regardless of any installed-app
+        // link handling (see GAME_PANEL_NOTES.md's notes on this).
+        // Scanning from inside the app itself sidesteps that entirely --
+        // there's no cross-app hand-off left to get intercepted, since
+        // the code is read and acted on right here.
+        let lobbyScanStream = null;
+        let lobbyScanDetector = null; // native BarcodeDetector instance, when available
+        let lobbyScanIntervalId = null;
+        // Guards against overlapping detection ticks -- a slow jsQR pass
+        // on a large frame could in principle still be running when the
+        // next interval tick fires; this also doubles as the single flag
+        // checked/cleared to actually stop scanning.
+        let lobbyScanActive = false;
+
+        async function openLobbyScanOverlay() {
+            const overlay = document.getElementById('game-lobby-scan-overlay');
+            const statusEl = document.getElementById('game-lobby-scan-status');
+            const video = document.getElementById('game-lobby-scan-video');
+            statusEl.textContent = 'Point your camera at the host\u2019s QR code.';
+            overlay.classList.add('visible');
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                statusEl.textContent = 'Camera access isn\u2019t available on this device or browser.';
+                return;
+            }
+
+            try {
+                lobbyScanStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment' },
+                    audio: false,
+                });
+            } catch (err) {
+                statusEl.textContent = 'Couldn\u2019t access the camera \u2014 check your browser\u2019s camera permission and try again.';
+                return;
+            }
+
+            // The overlay could have been closed already while the
+            // getUserMedia prompt was up (e.g. a fast Cancel tap) --
+            // don't hand a live stream to a video element nobody's
+            // going to stop.
+            if (!overlay.classList.contains('visible')) {
+                lobbyScanStream.getTracks().forEach(track => track.stop());
+                lobbyScanStream = null;
+                return;
+            }
+
+            video.srcObject = lobbyScanStream;
+            try {
+                await video.play();
+            } catch (err) {
+                // Autoplay can be blocked in odd cases -- the video
+                // element still has a live stream attached regardless,
+                // and detection below reads frames off it either way, so
+                // this isn't fatal on its own.
+            }
+
+            // Prefer the native API when it exists -- faster and lighter
+            // than sampling frames into a canvas for jsQR to decode by
+            // hand. Neither Safari nor Firefox implement it as of
+            // writing, which is exactly what the jsQR fallback covers.
+            lobbyScanDetector = null;
+            if (typeof BarcodeDetector !== 'undefined') {
+                try {
+                    lobbyScanDetector = new BarcodeDetector({ formats: ['qr_code'] });
+                } catch (err) {
+                    lobbyScanDetector = null;
+                }
+            }
+
+            lobbyScanActive = true;
+            lobbyScanIntervalId = setInterval(runLobbyScanDetectionTick, 300);
+        }
+
+        function closeLobbyScanOverlay() {
+            document.getElementById('game-lobby-scan-overlay').classList.remove('visible');
+            lobbyScanActive = false;
+            if (lobbyScanIntervalId) {
+                clearInterval(lobbyScanIntervalId);
+                lobbyScanIntervalId = null;
+            }
+            if (lobbyScanStream) {
+                lobbyScanStream.getTracks().forEach(track => track.stop());
+                lobbyScanStream = null;
+            }
+            document.getElementById('game-lobby-scan-video').srcObject = null;
+            lobbyScanDetector = null;
+        }
+
+        async function runLobbyScanDetectionTick() {
+            if (!lobbyScanActive) return;
+            const video = document.getElementById('game-lobby-scan-video');
+            if (!video.videoWidth || !video.videoHeight) return; // stream not actually producing frames yet
+
+            let decodedText = null;
+
+            if (lobbyScanDetector) {
+                try {
+                    const results = await lobbyScanDetector.detect(video);
+                    if (results.length > 0) decodedText = results[0].rawValue;
+                } catch (err) {
+                    // A transient decode failure on one frame isn't worth
+                    // surfacing -- just try again on the next tick.
+                }
+            } else if (typeof jsQR === 'function') {
+                const canvas = document.getElementById('game-lobby-scan-canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const result = jsQR(imageData.data, imageData.width, imageData.height);
+                if (result) decodedText = result.data;
+            }
+
+            if (!decodedText) return;
+            const code = extractLobbyJoinCode(decodedText);
+            if (code.length !== LOBBY_CODE_LENGTH) {
+                // Scanned *something*, but it wasn't a recognizable room
+                // code (a random unrelated QR code, say) -- keep
+                // scanning rather than treating this as a hard failure.
+                return;
+            }
+
+            lobbyScanActive = false; // stop further ticks immediately, before the async join flow below gets a chance to run
+            closeLobbyScanOverlay();
+            const codeInput = document.querySelector('.game-lobby-join-code');
+            if (codeInput) codeInput.value = code;
+            attemptJoinLobby(code);
+        }
+
         function renderLobbyRole() {
             const banner = document.getElementById('game-lobby-role-banner');
             banner.classList.remove('role-host', 'role-guest');
@@ -9858,6 +10114,12 @@
                 return;
             }
 
+            const lobbyScanBtn = e.target.closest('.game-lobby-scan-btn');
+            if (lobbyScanBtn) {
+                openLobbyScanOverlay();
+                return;
+            }
+
             const lobbyNamingConfirmBtn = e.target.closest('.game-lobby-naming-confirm-btn');
             if (lobbyNamingConfirmBtn) {
                 finalizeGuestJoin(document.querySelector('.game-lobby-naming-name').value);
@@ -9894,6 +10156,17 @@
                 closeLobbyJoinConfirmOverlay();
                 joinLobbyByCode(code);
                 return;
+            }
+        });
+
+        // Same reasoning again -- Cancel is the only manual exit path
+        // (a successful scan closes itself via runLobbyScanDetectionTick()).
+        // Deliberately does NOT close on a backdrop tap the way the other
+        // two overlays do -- an accidental tap while lining up a QR code
+        // shouldn't silently kill the camera stream and lose the attempt.
+        document.getElementById('game-lobby-scan-overlay').addEventListener('click', (e) => {
+            if (e.target.closest('.game-lobby-scan-cancel-btn')) {
+                closeLobbyScanOverlay();
             }
         });
 
