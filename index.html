@@ -7571,6 +7571,11 @@
             // (queue, dropdown, keeping playback going if it still
             // qualifies) happens from there automatically.
             setActiveMusicRegion(options.region);
+            // If this device is actively hosting right now, switching to
+            // a brand-new save mid-session needs the same re-handshake
+            // treatment loadSaveSlot() below gives an existing save --
+            // see resyncLobbyForNewHostSave()'s own comment for why.
+            resyncLobbyForNewHostSave();
             refreshGameUI();
         }
 
@@ -7584,6 +7589,7 @@
             persistActiveSaveSlot();
             setSavesSectionCollapsed(true);
             setActiveMusicRegion(gameSaves[slotIndex].region);
+            resyncLobbyForNewHostSave();
             refreshGameUI();
         }
 
@@ -7956,7 +7962,29 @@
         // "always allow unsaved use" reasoning as the rest of this
         // panel. The real region chosen at save time takes over the
         // moment "Save This Progress" actually commits one.
+        // Which region's badges to actually show right now. Host saves
+        // are simple (the save's own region, full stop); Guest Saves are
+        // not, and this used to get that wrong -- it predates Guest
+        // Saves entirely and only ever checked activeSaveSlot, so a
+        // connected guest silently fell through to
+        // cachedRealRegionList[0] ('kanto' in practice) instead of the
+        // host's actual region. Fixed to check activeGuestSaveId too,
+        // and -- per the user's explicit ask -- to prefer the *live*
+        // musicState.activeRegion over the guest save's own cached
+        // region field while an actual connection is active, since the
+        // host's region can change mid-session (see Playlist Sync) and
+        // the cached field only refreshes at connect time (see
+        // finalizeGuestJoin()). Viewing a guest save offline (not the
+        // live connection for it) falls back to that cached copy, which
+        // is the best information available at that point.
         function getActiveRegionForBadges() {
+            if (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) {
+                const guestSave = gameGuestSaves[activeGuestSaveId];
+                if (lobbyState.role === 'guest' && lobbyState.linkedGuestSaveId === activeGuestSaveId) {
+                    return musicState.activeRegion || guestSave.region || 'kanto';
+                }
+                return guestSave.region || 'kanto';
+            }
             const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
             if (save) return save.region;
             return cachedRealRegionList[0] || 'kanto';
@@ -8798,6 +8826,22 @@
             // showing before shouldn't carry over to the new one.
             const scrollEl = document.getElementById('game-scroll');
             if (scrollEl) scrollEl.scrollTop = 0;
+            if (screenId === 'lobby') prefillLobbyHostName();
+        }
+
+        // Auto-fills the Host card's name field from whatever this
+        // device called itself the last time it hosted *this* save (see
+        // startHostingLobby(), which is what actually records
+        // hostDisplayName onto the save) -- so continuing a game the
+        // next day doesn't require re-typing a name that's already on
+        // file. Only touches the field if it's currently empty, so it
+        // never clobbers something already typed (e.g. navigating away
+        // from the Lobby screen and back mid-edit).
+        function prefillLobbyHostName() {
+            const input = document.querySelector('.game-lobby-host-name');
+            if (!input || input.value) return;
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            if (save && save.hostDisplayName) input.value = save.hostDisplayName;
         }
 
         // Called on load and every time the panel closes, so it's always
@@ -9038,6 +9082,12 @@
             lobbyState.role = 'host';
             lobbyState.hostName = (name || '').trim() || 'Trainer';
             lobbyState.hostSaveId = gameSaves[activeSaveSlot].hostSaveId;
+            // Remembered per-save (not globally) so re-loading a
+            // *different* save later doesn't carry over a name that
+            // belonged to a different game -- see prefillLobbyHostName(),
+            // which is what reads this back.
+            gameSaves[activeSaveSlot].hostDisplayName = lobbyState.hostName;
+            persistGameSaves();
             setLobbyStatus('Creating room\u2026', 'pending');
             attemptHostPeerCreation(0);
         }
@@ -9083,6 +9133,62 @@
             });
         }
 
+        // Shared by wireHostConnection's initial handshake and
+        // resyncLobbyForNewHostSave()'s re-handshake below -- both need
+        // the exact same message shape, just at different moments.
+        function buildLobbyWelcomePayload(hostSave) {
+            return {
+                type: 'welcome',
+                hostSaveId: hostSave.hostSaveId,
+                hostName: lobbyState.hostName,
+                region: hostSave.region,
+                stageRule: hostSave.stageRule,
+                gameLength: hostSave.gameLength,
+                typeEffectivenessRule: hostSave.typeEffectivenessRule,
+                hpRule: hostSave.hpRule,
+            };
+        }
+
+        // Called from createSave()/loadSaveSlot() above whenever this
+        // device is actively hosting and the active save changes out
+        // from under that session -- without this, every connected
+        // guest would silently keep transacting against their OLD guest
+        // save (still linked to the previous hostSaveId) while this
+        // device's own Sounds panel/leading-player figures started
+        // reflecting a completely different save underneath them. That
+        // was a real bug: a guest's progress on an old save could end up
+        // feeding the leading-player comparison for a *new* save that
+        // save had nothing to do with, because lobbyState.playerProgress
+        // and every guest's own activeGuestSaveId both just... never
+        // found out anything had changed.
+        //
+        // The fix re-runs the exact same 'welcome' handshake a brand-new
+        // connection gets (see wireHostConnection/buildLobbyWelcomePayload
+        // above) against every *already*-connected guest. Each one re-
+        // resolves its own identity for *this specific* save through the
+        // normal handleLobbyWelcome()/finalizeGuestJoin() path -- an
+        // existing guest save for it means a silent rejoin; never having
+        // played this particular save before means the naming step
+        // again, exactly like a fresh connection would. Stale progress
+        // numbers from the old save are dropped outright rather than
+        // carried forward.
+        function resyncLobbyForNewHostSave() {
+            if (lobbyState.role !== 'host' || activeSaveSlot === null) return;
+            const hostSave = gameSaves[activeSaveSlot];
+            lobbyState.hostSaveId = hostSave.hostSaveId;
+            lobbyState.playerProgress = {};
+            const hostData = getActiveSaveData();
+            lobbyState.playerProgress.host = {
+                badgeCount: computeBadgeCount(hostData),
+                badgePoints: computeBadgePoints(hostData),
+            };
+            recomputeLobbyLeadingStage();
+            const payload = buildLobbyWelcomePayload(hostSave);
+            lobbyState.connections.forEach(({ conn }) => {
+                if (conn.open) conn.send(payload);
+            });
+        }
+
         function wireHostConnection(conn) {
             conn.on('open', () => {
                 // Placeholder until the real 'identify' message below --
@@ -9095,18 +9201,17 @@
                 // Hosting requires an active host save (see
                 // startHostingLobby()), so gameSaves[activeSaveSlot] is
                 // guaranteed to exist here.
-                const hostSave = gameSaves[activeSaveSlot];
-                conn.send({
-                    type: 'welcome',
-                    hostSaveId: hostSave.hostSaveId,
-                    hostName: lobbyState.hostName,
-                    region: hostSave.region,
-                    stageRule: hostSave.stageRule,
-                    gameLength: hostSave.gameLength,
-                    typeEffectivenessRule: hostSave.typeEffectivenessRule,
-                    hpRule: hostSave.hpRule,
-                });
+                conn.send(buildLobbyWelcomePayload(gameSaves[activeSaveSlot]));
                 refreshLobbyRosterFromHostState();
+                // Also gives this brand-new connection (redundantly, but
+                // harmlessly, to everyone else already connected) the
+                // host's *current* Playlist Sync state right away --
+                // without this, a guest wouldn't see the correct region/
+                // category/now-playing info until the host happened to
+                // touch something that would normally trigger a
+                // broadcast (see broadcastLobbyMusicState()'s own hook in
+                // renderMusicPlayerUI()).
+                broadcastLobbyMusicState();
             });
             conn.on('data', (data) => {
                 if (!data || typeof data.type !== 'string') return;
@@ -9117,6 +9222,13 @@
                     // this requester included, so there's no separate
                     // "reply" needed here. See requestMusicCategoryChange().
                     setActiveMusicCategory(data.category);
+                } else if (data.type === 'request-transport' && typeof data.action === 'string') {
+                    // Same shape as request-category above -- applies
+                    // for real here, and toggleMusicPlayPause()/musicNext()/
+                    // etc. all end up back at renderMusicPlayerUI(),
+                    // which broadcasts the result the same way. See
+                    // requestMusicTransportAction()/applyMusicTransportAction().
+                    applyMusicTransportAction(data.action);
                 } else if (data.type === 'progress' && typeof data.badgeCount === 'number' && typeof data.badgePoints === 'number') {
                     lobbyState.playerProgress[conn.peer] = { badgeCount: data.badgeCount, badgePoints: data.badgePoints };
                     recomputeLobbyLeadingStage();
@@ -9353,7 +9465,27 @@
                 finalizeGuestJoin(existing.playerName);
                 return;
             }
+            // A resync mid-session (see resyncLobbyForNewHostSave()) can
+            // land here with a still-active connection whose previously-
+            // linked guest save now belongs to a different game than the
+            // one this device is about to resolve an identity for --
+            // clearing the link immediately (rather than waiting for
+            // finalizeGuestJoin() to do it once the naming step is
+            // actually submitted) is what makes isActiveSaveReadOnly()
+            // correctly treat that old save as read-only for the
+            // duration of this prompt, instead of leaving it briefly
+            // editable by a stale reference.
+            lobbyState.linkedGuestSaveId = null;
+            refreshGameUI();
             setLobbyStatus('', '');
+            // A resync can happen while this device is looking at some
+            // other screen entirely (Badge Tracker, the Pokédex itself,
+            // whatever) -- jumping to the Lobby screen is what actually
+            // surfaces the naming prompt rather than leaving it to be
+            // discovered later. Only switches which .game-screen is
+            // active; doesn't force the Game panel itself open if it's
+            // currently closed.
+            setGameScreen('lobby');
             const lobbyEl = document.getElementById('game-lobby');
             lobbyEl.dataset.state = 'naming';
             const nameInput = document.querySelector('.game-lobby-naming-name');
@@ -9415,6 +9547,16 @@
             activeGuestSaveId = hostSaveId;
             persistActiveGuestSaveId();
             lobbyState.linkedGuestSaveId = hostSaveId;
+
+            // Seeds musicState.activeRegion immediately from the same
+            // ruleset just cached above, rather than waiting on the
+            // host's follow-up broadcastLobbyMusicState() call to arrive
+            // -- without this, refreshGameUI() below (specifically
+            // getActiveRegionForBadges(), which prefers this live value)
+            // would briefly render the Badge Tracker grid against
+            // whatever region this device was last showing solo, before
+            // immediately correcting itself a moment later.
+            if (ruleset.region) musicState.activeRegion = ruleset.region;
 
             if (lobbyState.hostConn && lobbyState.hostConn.open) {
                 lobbyState.hostConn.send({ type: 'identify', name: cleanName });
@@ -10146,6 +10288,40 @@
             setActiveMusicCategory(category);
         }
 
+        // Same "ask the host, don't touch local state yourself" shape as
+        // requestMusicCategoryChange() above, just for the transport
+        // buttons (Play/Pause/Prev/Next/Shuffle/Repeat) -- these used to
+        // be locked out entirely for a guest (see syncMusicUIForLobbyRole,
+        // which no longer disables them). action is one of 'play-pause',
+        // 'next', 'prev', 'prev-first' (the held-Prev jump-to-first
+        // gesture), 'shuffle-toggle', 'repeat-toggle' -- see
+        // applyMusicTransportAction() below for what each actually calls.
+        function requestMusicTransportAction(action) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'request-transport', action });
+                }
+                return;
+            }
+            applyMusicTransportAction(action);
+        }
+
+        // Where a transport action actually happens -- always on
+        // whichever device is either hosting or playing solo, since a
+        // guest's own tap gets routed here via the host's
+        // 'request-transport' handler (see wireHostConnection) rather
+        // than ever calling this locally on a guest's own device.
+        function applyMusicTransportAction(action) {
+            switch (action) {
+                case 'play-pause': toggleMusicPlayPause(); break;
+                case 'next': musicNext(); break;
+                case 'prev': musicPrev(); break;
+                case 'prev-first': jumpToFirstTrackInQueue(); break;
+                case 'shuffle-toggle': setShuffle(!musicState.shuffle); break;
+                case 'repeat-toggle': toggleRepeatOne(); break;
+            }
+        }
+
         // Host-only -- pushes the current Master Playlist selection,
         // Region, Game Stage, now-playing track title, and play/pause
         // state out to every connected guest. Called from the tail of
@@ -10196,6 +10372,7 @@
         // musicState directly -- renderMusicRegionUI's header text, for
         // instance -- stays correct too.
         function applyGuestMusicMirror(data) {
+            const regionChanged = musicState.activeRegion !== data.region;
             musicState.activeCategory = data.category;
             musicState.activeRegion = data.region;
             musicState.activeGameStage = data.gameStage;
@@ -10211,33 +10388,56 @@
                 || (data.category ? 'No tracks match this filter' : 'Choose a playlist to begin');
             musicPlayPauseIcon.src = data.isPlaying ? MUSIC_ICON_PAUSE : MUSIC_ICON_PLAY;
             musicPlayPauseIcon.alt = data.isPlaying ? 'Pause' : 'Play';
+
+            // Badge Tracker's own region comes from getActiveRegionForBadges(),
+            // which prefers this same musicState.activeRegion while
+            // connected -- but its grid isn't re-rendered just from that
+            // value changing, so this is what actually updates it live if
+            // the host switches region mid-session (rather than only
+            // catching up the next time something else happens to
+            // re-render, like collecting a badge). Also keeps the Guest
+            // Save's own cached region field current for whenever this
+            // is next viewed offline (see finalizeGuestJoin(), which only
+            // otherwise refreshes it at connect time).
+            if (regionChanged) {
+                if (lobbyState.linkedGuestSaveId && gameGuestSaves[lobbyState.linkedGuestSaveId]) {
+                    gameGuestSaves[lobbyState.linkedGuestSaveId].region = data.region;
+                    persistGameGuestSaves();
+                }
+                renderBadgeGrid();
+            }
         }
 
         // Called any time this device's Lobby role actually changes
         // (entering hosting/guesting, or leaving back to solo) -- not on
         // every render, since it's only the role itself that flips
-        // whether these controls are locked. A guest's transport buttons
-        // (Play/Pause/Prev/Next/Shuffle/Repeat) AND its Region buttons/
-        // Game Stage slider are all disabled outright: only the host's
-        // device actually plays audio or decides what's filtered, so a
-        // guest touching any of those locally would just drift out of
-        // sync with what applyGuestMusicMirror() just set (this is
-        // exactly the bug that motivated locking these rather than just
-        // broadcasting them). Master Playlist buttons are the one thing
-        // that DO stay tappable while guesting -- that's how a guest
-        // actually requests a change (see requestMusicCategoryChange) --
-        // and they ignore this device's own Region/Game Stage entirely
-        // while locked, so refreshMusicPlaylistButtons()'s normal per-
-        // device disabling logic is skipped for them here too.
+        // whether these controls are locked. Only Region buttons and the
+        // Game Stage slider are actually disabled for a guest: only the
+        // host's device decides what's filtered, and letting a guest's
+        // own copies of those move independently was the exact bug that
+        // motivated locking them (see GAME_PANEL_NOTES.md's Playlist
+        // Sync notes). Transport (Play/Pause/Prev/Next/Shuffle/Repeat)
+        // and Master Playlist buttons both stay tappable while guesting
+        // -- both route through a request to the host rather than
+        // touching this device's own (nonexistent) playback state
+        // directly (see requestMusicTransportAction()/
+        // requestMusicCategoryChange()), so there's nothing for a guest
+        // to drift out of sync with by tapping them.
         function syncMusicUIForLobbyRole() {
             const remote = lobbyState.role === 'guest';
-            [musicPrevBtn, musicNextBtn, musicPlayPauseBtn, musicShuffleBtn, musicRepeatBtn].forEach(btn => {
-                btn.disabled = remote;
-            });
             musicGameStageSelect.disabled = remote;
             if (remote) {
-                musicPlaylistButtons.querySelectorAll('.music-playlist-btn').forEach(btn => { btn.disabled = false; });
                 musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => { btn.disabled = true; });
+                // A leftover `disabled` from browsing solo before joining
+                // (e.g. no track loaded, or none matching this device's
+                // own region filter) would otherwise block a request
+                // that's actually fine on the host's end -- these all
+                // route through a request now (see
+                // requestMusicTransportAction()/requestMusicCategoryChange()),
+                // so this device's own local playback/filter state is
+                // irrelevant to whether they should be tappable.
+                [musicPrevBtn, musicNextBtn, musicPlayPauseBtn, musicShuffleBtn, musicRepeatBtn].forEach(btn => { btn.disabled = false; });
+                musicPlaylistButtons.querySelectorAll('.music-playlist-btn').forEach(btn => { btn.disabled = false; });
             } else {
                 musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => { btn.disabled = false; });
                 refreshMusicPlaylistButtons();
@@ -10603,7 +10803,7 @@
         }
 
         musicGameStageSelect.addEventListener('input', (e) => setActiveGameStage(GAME_STAGE_STEPS[Number(e.target.value)]));
-        musicPlayPauseBtn.addEventListener('click', toggleMusicPlayPause);
+        musicPlayPauseBtn.addEventListener('click', () => requestMusicTransportAction('play-pause'));
         // A held Prev press (see jumpToFirstTrackInQueue above) is
         // distinguished from a normal tap/click via a plain pointerdown
         // timer: if it fires before the pointer comes back up/away, the
@@ -10619,7 +10819,7 @@
             clearTimeout(musicPrevHoldTimer);
             musicPrevHoldTimer = setTimeout(() => {
                 musicPrevHoldFired = true;
-                jumpToFirstTrackInQueue();
+                requestMusicTransportAction('prev-first');
             }, MUSIC_PREV_HOLD_MS);
         }
 
@@ -10638,11 +10838,11 @@
                 musicPrevHoldFired = false;
                 return;
             }
-            musicPrev();
+            requestMusicTransportAction('prev');
         });
-        musicNextBtn.addEventListener('click', musicNext);
-        musicShuffleBtn.addEventListener('click', () => setShuffle(!musicState.shuffle));
-        musicRepeatBtn.addEventListener('click', toggleRepeatOne);
+        musicNextBtn.addEventListener('click', () => requestMusicTransportAction('next'));
+        musicShuffleBtn.addEventListener('click', () => requestMusicTransportAction('shuffle-toggle'));
+        musicRepeatBtn.addEventListener('click', () => requestMusicTransportAction('repeat-toggle'));
 
         fetch(MUSIC_TRACKS_URL)
             .then(res => res.json())
