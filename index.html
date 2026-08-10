@@ -8884,6 +8884,17 @@
         // pasted.
         const LOBBY_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
         const LOBBY_HOST_RETRY_LIMIT = 5;
+        // How often each side pings the other (see startLobbyHeartbeat()
+        // below), and how long without hearing anything at all before a
+        // connection is treated as dropped -- roughly 3 missed beats'
+        // worth of slack so an ordinary momentary hiccup doesn't trip it.
+        const LOBBY_HEARTBEAT_INTERVAL_MS = 15000;
+        const LOBBY_HEARTBEAT_TIMEOUT_MS = 45000;
+        // How often the timeout check itself runs -- doesn't need to
+        // match the ping interval, just needs to be frequent enough that
+        // the timeout is caught reasonably close to when it's actually
+        // crossed.
+        const LOBBY_HEARTBEAT_CHECK_INTERVAL_MS = 10000;
 
         // Single mutable bag for the whole feature, same "one object,
         // reached into rather than duplicated" spirit as gameSaves
@@ -8924,6 +8935,18 @@
             // thing isActiveSaveReadOnly() checks to tell "my own save,
             // connected" apart from "a guest save I'm just looking at."
             linkedGuestSaveId: null,
+            // Both roles: interval ids for the application-level
+            // keepalive (see startLobbyHeartbeat()/stopLobbyHeartbeat()
+            // below) -- WebRTC's own disconnect detection can take a
+            // long time, or in practice sometimes never cleanly fire at
+            // all (e.g. a PWA force-quit rather than a normal tab
+            // close), to notice a dropped connection on its own.
+            heartbeatSendTimer: null,
+            heartbeatCheckTimer: null,
+            // Guest-only: timestamp of the last message (ping or
+            // otherwise) received from the host -- what the guest side
+            // of the heartbeat check compares against.
+            hostConnLastSeen: null,
         };
 
         // PeerJS/qrcodejs are loaded from CDN <script> tags in <head> --
@@ -8960,6 +8983,7 @@
         // "Leave Lobby" tap and for the various failure paths below, so
         // there's exactly one place that actually resets the state.
         function resetLobbyState() {
+            stopLobbyHeartbeat();
             if (lobbyState.peer && !lobbyState.peer.destroyed) {
                 lobbyState.peer.destroy();
             }
@@ -8968,6 +8992,8 @@
                 hostSaveId: null, hostRuleset: null,
                 connections: new Map(), hostConn: null, players: [],
                 playerProgress: {}, linkedGuestSaveId: null,
+                heartbeatSendTimer: null, heartbeatCheckTimer: null,
+                hostConnLastSeen: null,
             };
             const lobbyEl = document.getElementById('game-lobby');
             lobbyEl.dataset.state = 'choice';
@@ -9001,7 +9027,83 @@
                 generateLobbyQrCode(lobbyJoinUrl(lobbyState.code));
             }
             syncMusicUIForLobbyRole();
+            startLobbyHeartbeat();
         }
+
+        // ---- Connection keepalive (see the user's report of a stale
+        // session surviving a PWA close/reopen) ----
+        //
+        // WebRTC's own disconnect detection (what wireHostConnection's
+        // 'close'/'error' handlers and wireGuestConnection's own react
+        // to) is not a reliable guarantee on its own -- it can take a
+        // long time, and for an abrupt app close (force-quit, OS killing
+        // a backgrounded PWA, losing network entirely) it may never
+        // cleanly fire at all. This is the actual backstop: both sides
+        // ping each other on a fixed interval, and if a connection goes
+        // quiet for LOBBY_HEARTBEAT_TIMEOUT_MS with no message of any
+        // kind (ping or otherwise -- see the `lastSeen`/`hostConnLastSeen`
+        // updates in wireHostConnection/wireGuestConnection's own data
+        // handlers), it's dropped exactly as if a 'close' event had
+        // fired.
+        //
+        // Started once from enterActiveLobbyState() above (covers both
+        // "hosting just started" and "a guest just joined"), stopped
+        // from resetLobbyState() so every teardown path -- explicit
+        // Leave Lobby, the other side actually closing, a heartbeat
+        // timeout on either end -- cleans its own timers up the same
+        // way.
+        function startLobbyHeartbeat() {
+            stopLobbyHeartbeat();
+            lobbyState.heartbeatSendTimer = setInterval(() => {
+                if (lobbyState.role === 'host') {
+                    lobbyState.connections.forEach(({ conn }) => {
+                        if (conn.open) conn.send({ type: 'ping' });
+                    });
+                } else if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'ping' });
+                }
+            }, LOBBY_HEARTBEAT_INTERVAL_MS);
+
+            lobbyState.heartbeatCheckTimer = setInterval(() => {
+                const now = Date.now();
+                if (lobbyState.role === 'host') {
+                    // Snapshot first -- handleHostConnectionDrop() mutates
+                    // lobbyState.connections, which would otherwise be
+                    // unsafe to iterate directly while dropping more than
+                    // one stale connection in the same sweep.
+                    Array.from(lobbyState.connections.entries()).forEach(([peerId, entry]) => {
+                        if (now - entry.lastSeen > LOBBY_HEARTBEAT_TIMEOUT_MS) {
+                            handleHostConnectionDrop(peerId, entry.conn);
+                        }
+                    });
+                } else if (lobbyState.role === 'guest') {
+                    if (lobbyState.hostConnLastSeen && now - lobbyState.hostConnLastSeen > LOBBY_HEARTBEAT_TIMEOUT_MS) {
+                        setLobbyStatus('Lost contact with the host.', 'error');
+                        resetLobbyState();
+                    }
+                }
+            }, LOBBY_HEARTBEAT_CHECK_INTERVAL_MS);
+        }
+
+        function stopLobbyHeartbeat() {
+            if (lobbyState.heartbeatSendTimer) clearInterval(lobbyState.heartbeatSendTimer);
+            if (lobbyState.heartbeatCheckTimer) clearInterval(lobbyState.heartbeatCheckTimer);
+            lobbyState.heartbeatSendTimer = null;
+            lobbyState.heartbeatCheckTimer = null;
+        }
+
+        // Best-effort fast path, complementing the heartbeat above rather
+        // than replacing it: on an ordinary tab close/navigate-away,
+        // this notices immediately instead of waiting out the full
+        // timeout. Not a guarantee on its own -- pagehide can still be
+        // skipped entirely by a force-quit or the OS abruptly killing a
+        // backgrounded PWA, which is exactly the case the heartbeat
+        // timeout above exists to actually cover.
+        window.addEventListener('pagehide', () => {
+            if (lobbyState.peer && !lobbyState.peer.destroyed) {
+                lobbyState.peer.destroy();
+            }
+        });
 
         // Encodes a URL back to this same page with the room code as a
         // query param (see GAME_PANEL_NOTES.md §3's QR idea) rather than
@@ -9197,7 +9299,7 @@
                 // so this briefly shows "Trainer" in the roster for
                 // every new connection regardless of role.
                 const placeholderName = (conn.metadata && conn.metadata.name) || 'Trainer';
-                lobbyState.connections.set(conn.peer, { conn, name: placeholderName });
+                lobbyState.connections.set(conn.peer, { conn, name: placeholderName, lastSeen: Date.now() });
                 // Hosting requires an active host save (see
                 // startHostingLobby()), so gameSaves[activeSaveSlot] is
                 // guaranteed to exist here.
@@ -9215,6 +9317,15 @@
             });
             conn.on('data', (data) => {
                 if (!data || typeof data.type !== 'string') return;
+                // Any message at all counts as "still there" -- not just
+                // the dedicated 'ping' type -- so an actively-playing
+                // guest (sending progress/category/transport requests
+                // regularly) never risks a spurious timeout just because
+                // its next scheduled ping hasn't come around yet. See
+                // startLobbyHeartbeat()'s own comment for why this exists.
+                const entry = lobbyState.connections.get(conn.peer);
+                if (entry) entry.lastSeen = Date.now();
+                if (data.type === 'ping') return;
                 if (data.type === 'request-category' && typeof data.category === 'string') {
                     // Applies for real on this (the host's) device --
                     // renderMusicPlayerUI() runs as part of that and
@@ -9236,25 +9347,31 @@
                     // The real name, now that the guest has resolved who
                     // it is (see finalizeGuestJoin()) -- replaces the
                     // 'Trainer' placeholder set on conn.on('open') above.
-                    const entry = lobbyState.connections.get(conn.peer);
                     if (entry) {
                         entry.name = data.name.trim() || 'Trainer';
                         refreshLobbyRosterFromHostState();
                     }
                 }
             });
-            conn.on('close', () => {
-                lobbyState.connections.delete(conn.peer);
-                delete lobbyState.playerProgress[conn.peer];
-                refreshLobbyRosterFromHostState();
-                recomputeLobbyLeadingStage();
-            });
-            conn.on('error', () => {
-                lobbyState.connections.delete(conn.peer);
-                delete lobbyState.playerProgress[conn.peer];
-                refreshLobbyRosterFromHostState();
-                recomputeLobbyLeadingStage();
-            });
+            conn.on('close', () => handleHostConnectionDrop(conn.peer, conn));
+            conn.on('error', () => handleHostConnectionDrop(conn.peer, conn));
+        }
+
+        // Shared teardown for a single connection going away, whichever
+        // of the three ways that can happen: a clean 'close' event, an
+        // 'error' event, or the heartbeat check above deciding it's gone
+        // quiet for too long. All three should have the exact same
+        // effect on the roster/progress/stage, so there's exactly one
+        // place that actually does it.
+        function handleHostConnectionDrop(peerId, conn) {
+            if (!lobbyState.connections.has(peerId)) return; // already handled by another of the three paths above
+            lobbyState.connections.delete(peerId);
+            delete lobbyState.playerProgress[peerId];
+            if (conn && conn.open) {
+                try { conn.close(); } catch (err) { /* already gone -- nothing to clean up */ }
+            }
+            refreshLobbyRosterFromHostState();
+            recomputeLobbyLeadingStage();
         }
 
         // Host's single source of truth for the roster -- rebuilt
@@ -9414,9 +9531,23 @@
                 // device knows who it even is in this particular game --
                 // see handleLobbyWelcome() below.
                 setLobbyStatus('Connecting\u2026', 'pending');
+                lobbyState.hostConnLastSeen = Date.now();
+                // Started here rather than waiting for
+                // enterActiveLobbyState() (which doesn't run until AFTER
+                // the naming step, if there is one) -- otherwise a guest
+                // sitting on that prompt for a while would stop pinging
+                // during exactly the window the host's own heartbeat
+                // check is still watching this connection, and could get
+                // dropped as "gone quiet" despite being mid-interaction,
+                // not actually disconnected.
+                startLobbyHeartbeat();
             });
             conn.on('data', (data) => {
                 if (!data || typeof data.type !== 'string') return;
+                // Any message counts as "still there," same reasoning as
+                // the host side's own lastSeen update in wireHostConnection.
+                lobbyState.hostConnLastSeen = Date.now();
+                if (data.type === 'ping') return;
                 if (data.type === 'welcome') {
                     handleLobbyWelcome(data);
                 } else if (data.type === 'roster' && Array.isArray(data.players)) {
