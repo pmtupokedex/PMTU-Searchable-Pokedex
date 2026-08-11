@@ -1794,7 +1794,8 @@
             flex-direction: column;
             gap: 10px;
         }
-        .game-save-new-form select {
+        .game-save-new-form select,
+        .game-save-defaults-card select {
             font-size: 15px;
             padding: 8px 10px;
             border-radius: 8px;
@@ -1804,11 +1805,37 @@
             box-sizing: border-box;
         }
 
-        .game-save-new-form label {
+        .game-save-new-form label,
+        .game-save-defaults-card label {
             font-size: 13px;
             font-weight: bold;
             text-transform: uppercase;
             color: #FFF;
+        }
+
+        /* Not a save slot -- a standing preference for what the "+ New
+           Save" form above should start on (see
+           applyGameSaveDefaultsToForm() in the script). Same rgba(0,0,0,0.08)
+           card treatment as .game-save-slot for visual consistency, but
+           kept as its own class rather than reused directly since none
+           of that class's data-state machinery (loaded/empty/creating)
+           applies here -- this card is just always shown as-is. */
+        .game-save-defaults-card {
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            padding: 14px;
+            margin-bottom: 15px;
+        }
+
+        #game-save-defaults-body {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .game-save-defaults-card .game-save-slot-meta {
+            margin: 0 0 6px;
         }
 
         /* Tool menu -- stacked full-width buttons for now (see
@@ -2410,6 +2437,501 @@
 
         #game-badge-confirm-options .game-save-slot-actions {
             margin-top: 4px;
+        }
+
+        /* Type Matchup -- replicates a spreadsheet-based calculator the
+           user built separately (type effectiveness stacking rules +
+           a custom bonus scale layered on top -- see computeTypeMatchup()
+           in the script for the full mapping). */
+        .game-matchup-toggles {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 0 0 15px;
+        }
+
+        .game-matchup-toggle-btn {
+            margin: 0;
+            flex: 1 1 auto;
+        }
+
+        /* Reuses .filter-btn.include's exact blue rather than inventing a
+           new "on" color -- this is the same "toggle is active" meaning
+           that color already carries everywhere else on the page (see
+           .filter-btn.include's own rule), just triggered by a plain
+           on/off button here instead of the 3-state include/exclude/off
+           cycle the gallery filters use. */
+        .game-matchup-toggle-btn.active {
+            background-color: rgba(0, 153, 255, 0.70);
+        }
+
+        /* Locked to the active save's own typeEffectivenessRule -- see
+           renderMatchupPanel()'s own comment for why. Dimmed rather than
+           hidden so it's still clear at a glance whether dual types/
+           immunities are in effect, just not changeable right now; the
+           title attribute set alongside this explains why on hover/
+           long-press. */
+        .game-matchup-toggle-btn:disabled {
+            opacity: 0.6;
+            cursor: default;
+        }
+
+        /* Move Type (left) / Defending Type(s) (right), side by side.
+           Each .game-matchup-column is just a plain flex child -- when
+           Dual Defending Types is on, Defending Type 2's whole block
+           (label + select) stacks below Defending Type 1's inside the
+           same right-hand column rather than needing a third column, via
+           ordinary block flow (see #game-matchup-def2-wrap in the HTML,
+           which lives inside the right column already). min-width: 0
+           overrides flex's own default min-width: auto, which otherwise
+           refuses to let a flex child (and the full-width <select> inside
+           it) shrink narrower than its content would naturally want. */
+        .game-matchup-columns {
+            display: flex;
+            gap: 12px;
+        }
+
+        .game-matchup-column {
+            flex: 1 1 0;
+            min-width: 0;
+        }
+
+        .game-matchup-section-label {
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+            margin: 0 0 6px;
+        }
+
+        /* Matches .game-save-new-form select's own convention (font-size/
+           padding/border-radius/border) for a plain, unselected dropdown.
+           .has-selection below is what actually carries the per-type
+           branding once something's chosen. */
+        .game-matchup-select {
+            display: block;
+            width: 100%;
+            font-size: 15px;
+            font-weight: bold;
+            padding: 10px 34px 10px 15px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            font-family: inherit;
+            box-sizing: border-box;
+            margin: 0 0 15px;
+            background-color: #fff;
+            color: #333;
+            /* Native arrows aren't stylable (not text, so text-shadow's
+               outline trick doesn't reach them, and browsers don't expose
+               their color/shape to CSS at all) -- removed here so the
+               inline <svg>.game-matchup-arrow below (see its own comment)
+               can draw a custom one with a real, thicker-at-high-DPI
+               outline instead. Extra right padding above makes room for
+               it so long option text doesn't run underneath. */
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+        }
+
+        /* Tinted with the exact same .poke-type-<name> background used on
+           every Pokemon's own info panel (see that rule) -- toggled onto
+           this select alongside .poke-type-<name> itself by JS whenever
+           the selection changes, rather than a second color system just
+           for this calculator (see renderMatchupPanel()). White text +
+           black outline rather than the plain-select #333 above once
+           tinted, since several type colors (Dark, Ghost, Steel...) are
+           too dark for #333 to stay readable against.
+
+           A <select>'s own displayed text clips right at the glyph's own
+           bounding box, ignoring any surrounding padding -- and since
+           text-shadow/-webkit-text-stroke (see the @media block further
+           down) both draw outward from that box, the outline was getting
+           clipped on both sides no matter how much padding surrounded the
+           select. An overlay <span> showing the text instead of the
+           select's own was tried next, but that just moved the same
+           clipping onto the overlay's own box (its own overflow: hidden,
+           added as an unrelated truncation safeguard, was doing the
+           clipping there) without actually fixing anything, at the cost
+           of real added complexity. Simplest fix, and the one that
+           actually worked: buildMatchupSelects() now pads each option's
+           own display text with a leading/trailing \u00A0 (see that
+           function's own comment) -- that gives the native clip boundary
+           a little slack on both sides before it ever reaches the real
+           glyphs, which was all that was actually needed. */
+        .game-matchup-select.has-selection {
+            color: #fff;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+            border-color: rgba(0, 0, 0, 0.35);
+        }
+
+        /* The open dropdown list, not the closed select -- .has-selection
+           above only tints the closed control, but browsers otherwise let
+           that same background/color bleed into the option list once it's
+           opened too. Explicit reset here keeps every option plain and
+           legible regardless of which type's color the select itself is
+           currently wearing. */
+        .game-matchup-select option {
+            background-color: #fff;
+            color: #000;
+            text-shadow: none;
+            font-weight: normal;
+        }
+
+        .game-matchup-select-wrap {
+            position: relative;
+        }
+
+        /* Replaces the native dropdown arrow .game-matchup-select's own
+           appearance: none above just removed. An inline <svg> (see the
+           HTML) rather than a CSS border-triangle -- a border-triangle's
+           only way to get an outline is stacking drop-shadow() copies of
+           itself (the same trick text-shadow uses for text), but that
+           approximates a stroke rather than drawing a real one: offsets
+           are diagonal-uneven (a 1px corner offset is ~1.4px along the
+           actual diagonal) and there's no way to key it into the same
+           min-resolution swap .filter-section-header/etc. use to go
+           thicker at high DPI (see the @media block below), since
+           -webkit-text-stroke only exists for text, not arbitrary shapes.
+           An SVG polygon can use a real stroke-width instead, which is a
+           true uniform-width stroke regardless of size, and -- being a
+           real CSS property -- can have that width swapped the exact
+           same way text-stroke's width does.
+           pointer-events: none so clicks land on the real <select>
+           beneath this purely decorative layer, same reasoning as the
+           border-triangle version had. */
+        .game-matchup-arrow {
+            position: absolute;
+            top: 50%;
+            right: 14px;
+            width: 12px;
+            height: 8px;
+            transform: translateY(-50%);
+            pointer-events: none;
+            overflow: visible;
+        }
+
+        /* vector-effect: non-scaling-stroke keeps stroke-width in real
+           screen pixels regardless of how .game-matchup-arrow above
+           scales the viewBox -- without it, the stroke would scale along
+           with the polygon instead of staying a fixed width, the same way
+           -webkit-text-stroke's width doesn't grow with font-size.
+           paint-order: stroke fill matters more here than it looks --
+           SVG (like text-stroke) centers a stroke ON the path by default,
+           so half of it bleeds inward into the fill; barely visible at
+           stroke-width: 1, but a real 1.5px bite out of the white fill at
+           the high-DPI stroke-width: 3 below, reading as the border
+           sitting inside the shape instead of outside it. Painting fill
+           on top covers that inward half, leaving only the outward half
+           visible -- same fix, same property, same reason
+           .filter-section-header/etc. already use it for their own
+           text-stroke. */
+        .game-matchup-arrow-shape {
+            fill: white;
+            stroke: black;
+            stroke-width: 1;
+            stroke-linejoin: round;
+            vector-effect: non-scaling-stroke;
+            paint-order: stroke fill;
+        }
+
+        /* No real per-type icon images exist yet -- see TYPE_ICON_URLS in
+           the script, which is what actually decides whether this shows
+           for a given selection at all (empty today, same "falls back to
+           nothing until a real URL exists" pattern as
+           .game-badge-icon-img's own imageUrl fallback elsewhere in this
+           panel). Layered on top of the plain <select> rather than
+           anything embedded inside it -- native <option>s are text-only,
+           an <img> can't actually live inside one. Only ever shown for
+           whichever single type is currently selected in the closed
+           control, never per-option in the open list (not achievable
+           with a real <select> at all, and not what was asked for either
+           -- see the chat this was set up in). */
+        .game-matchup-select-icon {
+            position: absolute;
+            top: 50%;
+            left: 6px;
+            transform: translateY(-50%);
+            width: 30px;
+            height: 30px;
+            object-fit: contain;
+            pointer-events: none;
+        }
+
+        /* Only applied once a real icon is actually showing (see
+           renderMatchupPanel()) -- makes room on the left so the text
+           doesn't render underneath .game-matchup-select-icon above. */
+        .game-matchup-select.has-icon {
+            padding-left: 45px;
+        }
+
+        .game-matchup-result {
+            text-align: center;
+            background: rgba(0, 0, 0, 0.25);
+            border-radius: 10px;
+            padding: 14px;
+            margin-top: 5px;
+        }
+
+        .game-matchup-result-label {
+            font-size: 20px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: white;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+            margin: 0 0 6px;
+        }
+
+        /* Color keyed to the same six labels computeTypeMatchup() can
+           return (see the script) -- kept in sync manually rather than
+           computed, since there are only six and they never change. */
+        .game-matchup-result-label.effect-immune          { color: #8B0000; }
+        .game-matchup-result-label.effect-super-effective { color: #4CAF50; }
+        .game-matchup-result-label.effect-effective       { color: #8BC34A; }
+        .game-matchup-result-label.effect-neutral         { color: white; }
+        .game-matchup-result-label.effect-weak            { color: #FF9800; }
+        .game-matchup-result-label.effect-very-weak       { color: #F44336; }
+
+        .game-matchup-result-bonus {
+            font-size: 16px;
+            font-weight: bold;
+            color: #ccc;
+            margin: 0;
+        }
+
+        /* Full Type Chart -- every cell of TYPE_CHART laid out as a real
+           18x18 reference table (including the many that hit neutrally,
+           left blank rather than omitted -- see buildMatchupChartTable()
+           in the script), rather than the calculator above, which only
+           ever needs one cell at a time. Collapsed by default (see
+           #game-matchup-chart-header/setMatchupChartCollapsed(), mirroring
+           #game-saves-header's own collapsible pattern) since this is a
+           large secondary reference, not the primary tool on this screen.
+
+           The three custom properties below are the only numbers that
+           actually drive the table's geometry -- change one here rather
+           than hunting through every rule that uses it. --matchup-cell-
+           size is shared by data cells AND (for width) column headers AND
+           (for height) row headers, so the whole grid stays aligned; only
+           --matchup-row-header-width and --matchup-col-header-height
+           differ from it, since those two need real room for icon + type
+           name that a single data cell doesn't. */
+        .game-matchup-chart-table {
+            --matchup-cell-size: 42px;
+            --matchup-row-header-width: 105px;
+            --matchup-col-header-height: 112px;
+            border-collapse: separate;
+            border-spacing: 0;
+            background: #fff;
+            /* Not border-collapse: collapse -- a well-known combination
+               with position: sticky that drops or misrenders cell borders
+               in several browsers once a cell actually becomes stuck.
+               separate + border-spacing: 0 gets the same visual seam
+               between cells without that risk. */
+        }
+
+        .game-matchup-chart-scroll {
+            overflow: auto;
+            max-height: 60vh;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            margin-top: 5px;
+        }
+
+        .game-matchup-chart-table th,
+        .game-matchup-chart-table td {
+            box-sizing: border-box;
+            border-right: 1px solid #ddd;
+            border-bottom: 1px solid #ddd;
+            padding: 0;
+            text-align: center;
+        }
+
+        .game-matchup-chart-table td {
+            width: var(--matchup-cell-size);
+            height: var(--matchup-cell-size);
+        }
+
+        /* Frozen to the left edge unconditionally -- this is the one
+           column that's always pinned (see the chat this was built in:
+           "have the Move Type pinned to the left"), unlike
+           .game-matchup-chart-col-header below, where only up to two are
+           pinned at a time and only by choice. Own fixed width (not
+           --matchup-cell-size) since it needs real room for an icon plus
+           the longest type names ("Fighting"/"Electric"/"Psychic"); own
+           height still matches --matchup-cell-size so rows stay grid-
+           aligned with the data columns' own width. background: #fff is
+           required, not decorative -- sticky cells need an opaque
+           background or whatever scrolls underneath shows straight
+           through them. */
+        .game-matchup-chart-row-header {
+            position: sticky;
+            left: 0;
+            z-index: 1;
+            width: var(--matchup-row-header-width);
+            height: var(--matchup-cell-size);
+            background: #fff;
+        }
+
+        .game-matchup-chart-row-header-inner {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            height: 100%;
+            padding: 0 6px;
+            box-sizing: border-box;
+        }
+
+        /* Not display: flex directly on the <th> above -- that would
+           change its outer display type away from table-cell, pulling it
+           out of the table's own column-width algorithm and breaking grid
+           alignment with the rest of the table. An ordinary block <th>
+           containing this flex <div> gets the same icon-then-text layout
+           without that risk. Same reasoning applies to every other
+           header cell in this table. */
+        .game-matchup-chart-row-header-icon {
+            width: 18px;
+            height: 18px;
+            object-fit: contain;
+            flex-shrink: 0;
+        }
+
+        .game-matchup-chart-row-header-text {
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #333;
+            white-space: nowrap;
+        }
+
+        /* Frozen to both edges at once -- the one cell that has to stay
+           put regardless of which direction the table's scrolled, since
+           it's where the sticky row-header column and sticky header row
+           actually overlap. Highest z-index in the table for the same
+           reason: every other sticky cell (including a pinned column
+           header, which is also sticky on both axes) needs to slide
+           underneath this one, not over it. */
+        .game-matchup-chart-corner {
+            position: sticky;
+            top: 0;
+            left: 0;
+            z-index: 3;
+            width: var(--matchup-row-header-width);
+            height: var(--matchup-col-header-height);
+            background: #fff;
+        }
+
+        /* Frozen to the top edge unconditionally, same as the row header
+           column is frozen left unconditionally -- .pinned below adds
+           freezing to the left edge too, for up to two of these at a
+           time, chosen by tapping (see toggleMatchupChartPin() in the
+           script). Width matches --matchup-cell-size (not its own fixed
+           value) so each column header lines up directly above its own
+           data column. */
+        .game-matchup-chart-col-header {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            width: var(--matchup-cell-size);
+            height: var(--matchup-col-header-height);
+            background: #fff;
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: manipulation;
+        }
+
+        .game-matchup-chart-col-header:hover {
+            background: #f5f5f5;
+        }
+
+        /* left itself is set inline by applyMatchupChartPins() (a
+           genuinely per-column, dynamic value depending on pin order --
+           see that function's own comment for why it can't just be a
+           fixed number here), but position: sticky for that axis is
+           already inherited from the base rule above (top: 0 needed it
+           regardless of pin state), so this only has to add the glow and
+           bump z-index above an ordinary column header/row header
+           scrolling underneath it. */
+        .game-matchup-chart-col-header.pinned {
+            z-index: 2;
+            box-shadow: 0 0 8px 2px gold;
+        }
+
+        .game-matchup-chart-col-header-inner {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            height: 100%;
+            gap: 4px;
+            padding: 6px 2px;
+            box-sizing: border-box;
+        }
+
+        .game-matchup-chart-col-header-icon {
+            width: 20px;
+            height: 20px;
+            object-fit: contain;
+            flex-shrink: 0;
+        }
+
+        /* writing-mode + a 180deg flip, rather than a plain transform:
+           rotate(-90deg) on ordinary horizontal text -- transform is a
+           paint-time-only operation that doesn't affect layout, so a
+           rotated block still occupies its original (wide, short)
+           bounding box for sizing purposes, mismatched against how it
+           actually paints (narrow, tall) -- overlapping neighboring cells
+           or leaving odd gaps depending on content length. writing-mode:
+           vertical-rl properly re-flows the element as vertical text
+           (tall, narrow), so .game-matchup-chart-col-header-inner's own
+           height above sizes correctly around it. vertical-rl alone reads
+           top-to-bottom (a 90deg *clockwise* turn from horizontal); the
+           180deg flip mirrors that into bottom-to-top (90deg counter-
+           clockwise, as asked for) without disturbing the already-correct
+           layout sizing, since a 180deg turn doesn't change an element's
+           bounding box the way a 90deg one would. sideways-lr would get
+           the same result more directly, but has real gaps in browser
+           support (notably Chrome/Edge) that this combination doesn't. */
+        .game-matchup-chart-col-header-text {
+            writing-mode: vertical-rl;
+            transform: rotate(180deg);
+            white-space: nowrap;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #333;
+        }
+
+        /* Blank (no icon markup at all -- see matchupChartCellHtml() in
+           the script) for any pairing that hits neutrally, rather than
+           some placeholder dash -- but still the full --matchup-cell-size
+           box regardless, so neutral cells don't visually shrink relative
+           to ones with an icon in them. */
+        .game-matchup-chart-effect-icon {
+            width: 22px;
+            height: 22px;
+            object-fit: contain;
+        }
+
+        /* Only added by applyMatchupChartPins() to cells in a currently-
+           pinned column -- position: sticky here (unlike
+           .game-matchup-chart-col-header above) isn't inherited from
+           anywhere, since an ordinary data cell has no sticky behavior of
+           its own to begin with. Same soft gold tint as the pinned
+           header's own glow, applied to the whole column's cells instead
+           of just its header, so it's clear at a glance which column is
+           actually frozen while scrolled, not just which header is
+           glowing. */
+        .game-matchup-chart-cell.pinned {
+            position: sticky;
+            z-index: 1;
+            background: #fffbe0;
         }
 
         #filter-top {
@@ -4943,6 +5465,8 @@
             .game-badge-region-label,
             .game-badge-stage-readout,
             .game-screen-title,
+            .game-matchup-select.has-selection,
+            .game-matchup-result-label,
             .game-badge-icon-empty {
                 text-shadow: none;
                 -webkit-text-stroke: 3px black;
@@ -4960,6 +5484,20 @@
                 text-stroke: 3px black;
                 paint-order: stroke fill;
             }
+        }
+
+        /* Same min-resolution threshold and same 1px -> 3px thickness
+           jump as the text-stroke swap right above, for the same reason
+           (crisper on genuinely high-DPI screens) -- but deliberately
+           outside that rule's own @supports block, since stroke-width on
+           an SVG shape doesn't depend on -webkit-text-stroke support at
+           all; gating it on that would just be an unrelated, overly
+           narrow restriction borrowed from a different feature. See
+           .game-matchup-arrow-shape's own comment for why an SVG stroke
+           was used here instead of the drop-shadow approximation
+           everything else on the page relies on. */
+        .game-matchup-arrow-shape {
+            stroke-width: 3;
         }
         }
 
@@ -5593,6 +6131,50 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Not a save itself -- a standing preference for what
+                     the "+ New Save" form above starts on. See
+                     applyGameSaveDefaultsToForm()/renderGameSaveDefaultsForm()
+                     in the script. Region is deliberately not covered
+                     here; see gameSaveDefaults' own comment for why.
+                     Collapsible via the same header/body pattern as
+                     #game-saves-header/#game-guest-saves-header (see
+                     setGameSaveDefaultsCollapsed() in the script) --
+                     starts closed, same as those two now do. -->
+                <div class="game-save-defaults-card">
+                    <div class="game-section-header game-collapsible-header" id="game-save-defaults-header">Default Save Settings</div>
+                    <div id="game-save-defaults-body">
+                        <p class="game-save-slot-meta">Applied automatically to new saves below &mdash; still changeable per-save at creation time.</p>
+
+                        <label for="game-save-default-rule">Badge Rule</label>
+                        <select id="game-save-default-rule" class="game-save-default-rule-select">
+                            <option value="count">Badge Count</option>
+                            <option value="points">Badge Points</option>
+                        </select>
+
+                        <label for="game-save-default-length">Game Length</label>
+                        <select id="game-save-default-length" class="game-save-default-length-select">
+                            <option value="short">Short</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="long">Long</option>
+                        </select>
+
+                        <label for="game-save-default-type-rule">Type Effectiveness Rule</label>
+                        <select id="game-save-default-type-rule" class="game-save-default-type-rule-select">
+                            <option value="main">Main Type Only</option>
+                            <option value="main-immunities">Main Type + Immunities</option>
+                            <option value="all">All Types</option>
+                            <option value="all-immunities">All Types + Immunities</option>
+                        </select>
+
+                        <label for="game-save-default-hp-rule">Hit Points Rule</label>
+                        <select id="game-save-default-hp-rule" class="game-save-default-hp-rule-select">
+                            <option value="standard">Standard Hit Points</option>
+                            <option value="alt1">Alternate Hit Points 1</option>
+                            <option value="alt2">Alternate Hit Points 2</option>
+                        </select>
+                    </div>
+                </div>
                 </div>
 
                 <!-- Unbounded, unlike the 3 fixed slots above -- see
@@ -5667,7 +6249,51 @@
                     </span>
                 </div>
                 <p class="game-screen-title">Type Matchup</p>
-                <p class="game-placeholder-text">Under Construction</p>
+
+                <div class="game-matchup-toggles">
+                    <button class="filter-btn game-matchup-toggle-btn" id="game-matchup-dual-toggle" data-toggle="dual" aria-pressed="false">Dual Defending Types</button>
+                    <button class="filter-btn game-matchup-toggle-btn" id="game-matchup-immunity-toggle" data-toggle="immunity" aria-pressed="false">Use Immunities</button>
+                </div>
+
+                <div class="game-matchup-columns">
+                    <div class="game-matchup-column">
+                        <p class="game-matchup-section-label"><label for="game-matchup-select-move">Move Type</label></p>
+                        <div class="game-matchup-select-wrap">
+                            <img class="game-matchup-select-icon" id="game-matchup-icon-move" alt="" style="display: none;">
+                            <select class="game-matchup-select" id="game-matchup-select-move" data-role="move"></select>
+                            <svg class="game-matchup-arrow" viewBox="0 0 12 8" aria-hidden="true"><polygon class="game-matchup-arrow-shape" points="1,1 11,1 6,7" /></svg>
+                        </div>
+                    </div>
+                    <div class="game-matchup-column">
+                        <p class="game-matchup-section-label"><label for="game-matchup-select-def1">Defending Type<span id="game-matchup-def1-count">&nbsp;1</span></label></p>
+                        <div class="game-matchup-select-wrap">
+                            <img class="game-matchup-select-icon" id="game-matchup-icon-def1" alt="" style="display: none;">
+                            <select class="game-matchup-select" id="game-matchup-select-def1" data-role="def1"></select>
+                            <svg class="game-matchup-arrow" viewBox="0 0 12 8" aria-hidden="true"><polygon class="game-matchup-arrow-shape" points="1,1 11,1 6,7" /></svg>
+                        </div>
+
+                        <div id="game-matchup-def2-wrap" style="display: none;">
+                            <p class="game-matchup-section-label"><label for="game-matchup-select-def2">Defending Type 2</label></p>
+                            <div class="game-matchup-select-wrap">
+                                <img class="game-matchup-select-icon" id="game-matchup-icon-def2" alt="" style="display: none;">
+                                <select class="game-matchup-select" id="game-matchup-select-def2" data-role="def2"></select>
+                                <svg class="game-matchup-arrow" viewBox="0 0 12 8" aria-hidden="true"><polygon class="game-matchup-arrow-shape" points="1,1 11,1 6,7" /></svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="game-matchup-result" id="game-matchup-result">
+                    <p class="game-matchup-result-label" id="game-matchup-result-label">SELECT TYPES ABOVE</p>
+                    <p class="game-matchup-result-bonus" id="game-matchup-result-bonus"></p>
+                </div>
+
+                <div class="game-section-header game-collapsible-header collapsed" id="game-matchup-chart-header">Full Type Chart</div>
+                <div id="game-matchup-chart-section" style="display: none;">
+                    <div class="game-matchup-chart-scroll" id="game-matchup-chart-scroll">
+                        <table class="game-matchup-chart-table" id="game-matchup-chart-table"></table>
+                    </div>
+                </div>
             </div>
 
             <div class="game-screen" id="game-screen-team">
@@ -7831,6 +8457,90 @@
         // leaving things ambiguous.
         if (activeGuestSaveId !== null) activeSaveSlot = null;
 
+        // ---- Default Save Settings ----
+        //
+        // A small, separate preference (not tied to any one save) for
+        // what the "+ New Save" form's own rule selects should start
+        // on -- added after the fact because someone who always plays,
+        // say, a short game with all-types-plus-immunities kept having
+        // to re-pick the same four values by hand every single time.
+        // Deliberately doesn't cover Region: unlike the other four
+        // fields (which tend to be a fixed personal preference across
+        // every game someone starts), region is usually the whole point
+        // of starting a *new* save in the first place, so defaulting it
+        // seemed more likely to be wrong than helpful. Easy to add if
+        // that assumption turns out wrong in practice.
+        //
+        // Shape: { stageRule?, gameLength?, typeEffectivenessRule?,
+        // hpRule? } -- any field can simply be absent, which
+        // applyGameSaveDefaultsToForm() below treats as "leave that
+        // select on whatever its own HTML `selected` default already
+        // is." In practice every field always has a value once the
+        // Default Save Settings selects have been touched at all (see
+        // their 'change' handler), since there's no "no default" option
+        // in that UI -- the shape just stays open to a field being
+        // unset for a save created before this feature existed.
+        const GAME_SAVE_DEFAULTS_KEY = 'pmtuGameSaveDefaults';
+
+        function loadGameSaveDefaults() {
+            let stored = null;
+            try {
+                stored = JSON.parse(localStorage.getItem(GAME_SAVE_DEFAULTS_KEY));
+            } catch (err) {
+                stored = null;
+            }
+            return (stored && typeof stored === 'object' && !Array.isArray(stored)) ? stored : {};
+        }
+
+        function persistGameSaveDefaults() {
+            try {
+                localStorage.setItem(GAME_SAVE_DEFAULTS_KEY, JSON.stringify(gameSaveDefaults));
+            } catch (err) {
+                console.warn('Could not save default save settings:', err);
+            }
+        }
+
+        let gameSaveDefaults = loadGameSaveDefaults();
+
+        // Applies whatever's in gameSaveDefaults to a save-creation
+        // form's own selects -- called from beginCreatingSave() below,
+        // right as that form opens. A field simply left unset in
+        // gameSaveDefaults is skipped entirely, leaving that select on
+        // its own built-in HTML default (e.g. Game Length's `selected`
+        // option) rather than forcing a value.
+        function applyGameSaveDefaultsToForm(slotEl) {
+            const fieldMap = {
+                stageRule: '.game-new-rule-select',
+                gameLength: '.game-new-length-select',
+                typeEffectivenessRule: '.game-new-type-rule-select',
+                hpRule: '.game-new-hp-rule-select',
+            };
+            Object.entries(fieldMap).forEach(([key, selector]) => {
+                if (!gameSaveDefaults[key]) return;
+                const select = slotEl.querySelector(selector);
+                if (select) select.value = gameSaveDefaults[key];
+            });
+        }
+
+        // Populates the Default Save Settings card's own selects from
+        // gameSaveDefaults, falling back to each select's first/`selected`
+        // HTML option (i.e. leaving it alone) for any field that's never
+        // actually been set -- called once at page load (see the
+        // initial-calls block at the very end of the script).
+        function renderGameSaveDefaultsForm() {
+            const fieldMap = {
+                stageRule: '#game-save-default-rule',
+                gameLength: '#game-save-default-length',
+                typeEffectivenessRule: '#game-save-default-type-rule',
+                hpRule: '#game-save-default-hp-rule',
+            };
+            Object.entries(fieldMap).forEach(([key, selector]) => {
+                if (!gameSaveDefaults[key]) return;
+                const select = document.querySelector(selector);
+                if (select) select.value = gameSaveDefaults[key];
+            });
+        }
+
         // A guest save is only ever actually editable while this device
         // is live-connected to the specific lobby it's linked to --
         // otherwise it's a read-only look at where things stood last time
@@ -8839,6 +9549,486 @@
             section.style.display = collapsed ? 'none' : '';
         }
 
+        // Type Matchup -- replicates a spreadsheet the user built
+        // separately (Type_Effectiveness_Bonus_Calculator.xlsx) rather
+        // than anything invented here. TYPE_CHART below is a direct,
+        // cell-by-cell transcription of that workbook's Lookup tab
+        // (verified against vanilla Pokemon type effectiveness while
+        // transcribing -- every entry matches, including all 8 immunity
+        // pairs, so this isn't a house-ruled chart underneath, just the
+        // standard one). computeTypeMatchup() below mirrors that same
+        // workbook's O21:O24/S21 formula chain exactly -- see the
+        // conversation this was derived in for the full cell-by-cell
+        // derivation and truth table if this ever needs re-verifying
+        // against a future version of that sheet.
+        //
+        // moveType -> { defendingType: '+' | '-' | 'x' }. A key missing
+        // entirely (not just falsy) means neutral -- matches a blank
+        // Lookup cell exactly, rather than needing a third explicit value
+        // for "no bonus, no penalty."
+        const TYPE_CHART = {
+            bug:      { dark:'+', fairy:'-', fighting:'-', fire:'-', flying:'-', ghost:'-', grass:'+', poison:'-', psychic:'+', steel:'-' },
+            dark:     { dark:'-', fairy:'-', fighting:'-', ghost:'+', psychic:'+' },
+            dragon:   { dragon:'+', fairy:'x', steel:'-' },
+            electric: { dragon:'-', electric:'-', flying:'+', grass:'-', ground:'x', water:'+' },
+            fairy:    { dark:'+', dragon:'+', fighting:'+', fire:'-', poison:'-', steel:'-' },
+            fighting: { bug:'-', dark:'+', fairy:'-', flying:'-', ghost:'x', ice:'+', normal:'+', poison:'-', psychic:'-', rock:'+', steel:'+' },
+            fire:     { bug:'+', dragon:'-', fire:'-', grass:'+', ice:'+', rock:'-', steel:'+', water:'-' },
+            flying:   { bug:'+', electric:'-', fighting:'+', grass:'+', rock:'-', steel:'-' },
+            ghost:    { dark:'-', ghost:'+', normal:'x', psychic:'+' },
+            grass:    { bug:'-', dragon:'-', fire:'-', flying:'-', grass:'-', ground:'+', poison:'-', rock:'+', steel:'-', water:'+' },
+            ground:   { bug:'-', electric:'+', fire:'+', flying:'x', grass:'-', poison:'+', rock:'+', steel:'+' },
+            ice:      { dragon:'+', fire:'-', flying:'+', grass:'+', ground:'+', ice:'-', steel:'-', water:'-' },
+            normal:   { ghost:'x', rock:'-', steel:'-' },
+            poison:   { fairy:'+', ghost:'-', grass:'+', ground:'-', poison:'-', rock:'-', steel:'x' },
+            psychic:  { dark:'x', fighting:'+', poison:'+', psychic:'-', steel:'-' },
+            rock:     { bug:'+', fighting:'-', fire:'+', flying:'+', ground:'-', ice:'+', steel:'-' },
+            steel:    { electric:'-', fairy:'+', fire:'-', ice:'+', rock:'+', steel:'-', water:'-' },
+            water:    { dragon:'-', fire:'+', grass:'-', ground:'+', rock:'+', water:'-' },
+        };
+
+        const TYPE_LIST = Object.keys(TYPE_CHART).sort();
+
+        // Not populated yet -- add a real URL for a type here and its
+        // icon starts showing immediately (see renderMatchupPanel()),
+        // no other code changes needed. Same "falls back to nothing until
+        // a real asset exists" pattern as .game-badge-icon-img's own
+        // imageUrl fallback elsewhere in this panel, just a plain object
+        // here instead of a JSON field, since there's no per-type data
+        // source for this the way gym-badges.json is for badge artwork.
+        // e.g. once ready: bug: 'https://.../bug-icon.png'
+        const TYPE_ICON_URLS = {
+	  bug: 'https://dl.dropboxusercontent.com/scl/fi/5rc1rxngyslhtb7c42kov/bug.png?rlkey=50lbe7jcxek1mnrtr31i678e5&st=xy0u104t&dl=1',
+	  dark: 'https://dl.dropboxusercontent.com/scl/fi/qskotsf8c01a6h7zku986/dark.png?rlkey=ajvpiknqs09szes7iah2gjufw&st=0p5nn8ki&dl=1',
+	  dragon: 'https://dl.dropboxusercontent.com/scl/fi/7351ogtd1n35y7ojsegf5/dragon.png?rlkey=7phnxmsqh366v1mq9q060n1cj&st=hhdp8dp6&dl=1',
+	  electric: 'https://dl.dropboxusercontent.com/scl/fi/u25ogenhqg5fmsjrh6amg/electric.png?rlkey=i80bu43164fbtj0jej1tz4ewf&st=916xyazw&dl=1',
+	  fairy: 'https://dl.dropboxusercontent.com/scl/fi/n14gz4kdpf44az7fkifhi/fairy.png?rlkey=jt6lqxgel6l3dnbvk8ukzcbz4&st=4hqgntpf&dl=1',
+	  fighting: 'https://dl.dropboxusercontent.com/scl/fi/7nv8j673t6rashzuqo9rl/fighting.png?rlkey=vaohukif9cgh8s8sk0asnot0a&st=g9mgaczu&dl=1',
+	  fire: 'https://dl.dropboxusercontent.com/scl/fi/x4v6cdnm12lgpzza2tunr/fire.png?rlkey=runc2lth3298ybg6lrlxnypjr&st=s68diguw&dl=1',
+	  flying: 'https://dl.dropboxusercontent.com/scl/fi/4otwuvuli4nxdr4qyc0gc/flying.png?rlkey=yo0765d1mw7bnvru02nsceswv&st=7xcht4s7&dl=1',
+	  ghost: 'https://dl.dropboxusercontent.com/scl/fi/lddq97j1vff93wce5e63i/ghost.png?rlkey=e3lt0gy4rtrs8s06qrm8fwi2k&st=thjjo7lo&dl=1',
+	  grass: 'https://dl.dropboxusercontent.com/scl/fi/blq7lkg1o0prl3saw4vka/grass.png?rlkey=upwmmeawg4zzdp8ji4j2rg71k&st=a3o6117e&dl=1',
+	  ground: 'https://dl.dropboxusercontent.com/scl/fi/2unho1x7px69enc9gnzdi/ground.png?rlkey=xi3jfcnzxd3bfucx9uu6nywav&st=4myprsqf&dl=1',
+	  ice: 'https://dl.dropboxusercontent.com/scl/fi/nekwlv712d8qupfrwitll/ice.png?rlkey=fybgo4ndix0p0k6rpkxddl1ig&st=vhinukfd&dl=1',
+	  normal: 'https://dl.dropboxusercontent.com/scl/fi/8lfqmkqevzi8p9zx7men1/normal.png?rlkey=983ua0le6vo3g5nx954uf58vw&st=umuz0pgj&dl=1',
+	  poison: 'https://dl.dropboxusercontent.com/scl/fi/kxbjlirgo8ubr5k37tm21/poison.png?rlkey=9eu8otiqbwxearvupp19v7aq7&st=kfh8qd6i&dl=1',
+	  psychic: 'https://dl.dropboxusercontent.com/scl/fi/lz2294zrbiajvtgrvytmf/psychic.png?rlkey=xatmitba28s5lgpwl8u9x0tee&st=djqj8ykj&dl=1',
+	  rock: 'https://dl.dropboxusercontent.com/scl/fi/lhnwkmherebsgdd0nmpyh/rock.png?rlkey=7of5jvjavxk4ma5v3341kh0wr&st=ypmz6zjv&dl=1',
+	  steel: 'https://dl.dropboxusercontent.com/scl/fi/6okrt8387fohe6cj7lgky/steel.png?rlkey=98kezghw37caztw5049qo7pwl&st=z1jq9zz2&dl=1',
+	  water: 'https://dl.dropboxusercontent.com/scl/fi/v0qr7stgrzymadkne0sy8/water.png?rlkey=1dofyws730hv9rbz4hmhz0jrp&st=dx136jzh&dl=1'
+	  };
+
+        // Matches Lookup!S21's own IF chain exactly, including its exact
+        // wording for the IMMUNE case.
+        const MATCHUP_BONUS_MAP = {
+            'IMMUNE': '-3, IGNORE ALL MOVE EFFECTS',
+            'SUPER-EFFECTIVE': '+3',
+            'EFFECTIVE': '+2',
+            'NEUTRAL': '+0',
+            'WEAK': '-2',
+            'VERY WEAK': '-3',
+        };
+
+        // Maps a save's typeEffectivenessRule (see createSave()'s own
+        // comment -- this field has existed since before this tool had
+        // real UI, specifically for this) onto the same two toggles the
+        // source spreadsheet exposes as checkboxes.
+        const TYPE_RULE_TOGGLE_STATE = {
+            main: { dual: false, immunities: false },
+            'main-immunities': { dual: false, immunities: true },
+            all: { dual: true, immunities: false },
+            'all-immunities': { dual: true, immunities: true },
+        };
+
+        let matchupMoveType = null;
+        let matchupDefType1 = null;
+        let matchupDefType2 = null;
+        let matchupUseDualTypes = false;
+        let matchupUseImmunities = false;
+
+        function typeEffectivenessSymbol(moveType, defType) {
+            return (TYPE_CHART[moveType] && TYPE_CHART[moveType][defType]) || null;
+        }
+
+        // Mirrors Lookup!O21 (immune check) through O24 (final label) --
+        // see this function's own outer comment for where that mapping
+        // was derived from. Returns null only when there's not yet enough
+        // selected to show a result at all (no move type, or no first
+        // defending type); every other state maps to a real { label,
+        // bonus } pair, immune included.
+        function computeTypeMatchup(moveType, defType1, defType2, useDualTypes, useImmunities) {
+            if (!moveType || !defType1) return null;
+
+            let k1 = typeEffectivenessSymbol(moveType, defType1);
+            let k2 = (useDualTypes && defType2) ? typeEffectivenessSymbol(moveType, defType2) : null;
+
+            // "Using Immunities?" off (Calculator!E7 = FALSE in the
+            // source sheet) downgrades every 'x' to a plain '-' instead --
+            // see the dynamic IF() on each immune cell in Lookup for the
+            // sheet's own version of this same rule.
+            if (!useImmunities) {
+                if (k1 === 'x') k1 = '-';
+                if (k2 === 'x') k2 = '-';
+            }
+
+            if (k1 === 'x' || k2 === 'x') {
+                return { label: 'IMMUNE', bonus: MATCHUP_BONUS_MAP.IMMUNE };
+            }
+
+            const superCount = [k1, k2].filter(k => k === '+').length;
+            const weakCount = [k1, k2].filter(k => k === '-').length;
+
+            let label;
+            if (superCount === 2) label = 'SUPER-EFFECTIVE';
+            else if (weakCount === 2) label = 'VERY WEAK';
+            else if (superCount === 1 && weakCount === 1) label = 'NEUTRAL'; // one of each cancels out
+            else if (superCount === 1) label = 'EFFECTIVE';
+            else if (weakCount === 1) label = 'WEAK';
+            else label = 'NEUTRAL'; // neither type reacted at all
+
+            return { label, bonus: MATCHUP_BONUS_MAP[label] };
+        }
+
+        // Populates each of the three <select>s once -- their contents
+        // (which 18 types exist) never change, so this only needs to run
+        // at page load, not on every render. Selection state and the
+        // result readout are handled separately by renderMatchupPanel()
+        // below, called far more often.
+        //
+        // Each option's own text is padded with a leading/trailing \u00A0
+        // (a non-breaking space -- a plain space would get collapsed away
+        // by normal HTML whitespace handling, since it'd sit at the very
+        // start/end of the text node). Not decorative: a <select>'s own
+        // displayed text clips right at the glyph's own bounding box,
+        // ignoring any padding around the *element*, and .has-selection's
+        // text-shadow/-webkit-text-stroke (see that rule and the @media
+        // block further down) both draw outward from that box -- so the
+        // outline itself was getting clipped on both sides. The padding
+        // characters become part of the text run the browser measures,
+        // giving the native clip boundary a little slack on both sides
+        // before it ever reaches the real glyphs.
+        function buildMatchupSelects() {
+            const PAD = '\u00A0';
+            const optionsHtml = `<option value="">${PAD}- Select -${PAD}</option>` +
+                TYPE_LIST.map(type => `<option value="${type}">${PAD}${capitalize(type)}${PAD}</option>`).join('');
+            ['move', 'def1', 'def2'].forEach(role => {
+                const select = document.getElementById(`game-matchup-select-${role}`);
+                if (select) select.innerHTML = optionsHtml;
+            });
+        }
+
+        // Reads a <select>'s own value directly rather than tracking
+        // clicks -- "" (the "- Select -" option) maps back to null the
+        // same as nothing chosen ever did with the old button-grid UI.
+        function setMatchupTypeFromSelect(role, value) {
+            const type = value || null;
+            if (role === 'move') matchupMoveType = type;
+            else if (role === 'def1') matchupDefType1 = type;
+            else if (role === 'def2') matchupDefType2 = type;
+            renderMatchupPanel();
+        }
+
+        // Only reachable at all while the toggles are unlocked (see
+        // renderMatchupPanel()'s own comment) -- the buttons are
+        // disabled otherwise, and the delegated click handler checks that
+        // disabled state too before ever calling this.
+        function toggleMatchupOption(which) {
+            if (which === 'dual') {
+                matchupUseDualTypes = !matchupUseDualTypes;
+                // A second defending type picked earlier shouldn't keep
+                // silently factoring into the result once dual types are
+                // switched back off and that section's hidden again.
+                if (!matchupUseDualTypes) matchupDefType2 = null;
+            } else if (which === 'immunity') {
+                matchupUseImmunities = !matchupUseImmunities;
+            }
+            renderMatchupPanel();
+        }
+
+        // The one function that keeps the whole panel in sync -- called
+        // after every selection/toggle change above, and from
+        // refreshGameUI() so loading, switching, or deleting a save
+        // re-syncs it too. Cheap enough (a handful of classList/text
+        // writes over a fixed, small set of elements) not to need
+        // splitting into more targeted pieces.
+        function renderMatchupPanel() {
+            const dualBtn = document.getElementById('game-matchup-dual-toggle');
+            const immunityBtn = document.getElementById('game-matchup-immunity-toggle');
+            const def2Wrap = document.getElementById('game-matchup-def2-wrap');
+            const def1CountEl = document.getElementById('game-matchup-def1-count');
+            const labelEl = document.getElementById('game-matchup-result-label');
+            const bonusEl = document.getElementById('game-matchup-result-bonus');
+            if (!dualBtn || !immunityBtn || !labelEl || !bonusEl) return;
+
+            // Locked to the active save's own typeEffectivenessRule
+            // whenever one's active -- chosen deliberately when that save
+            // was created, so this tool shouldn't let it be silently
+            // overridden per-lookup the way the two toggles can be with no
+            // save active (e.g. to try a hypothetical before committing to
+            // it on a real save, or to use the tool at all before a save
+            // exists yet to lock to). See the chat where this was decided
+            // if that trade-off ever needs revisiting.
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            const locked = !!save;
+            if (locked) {
+                const ruleState = TYPE_RULE_TOGGLE_STATE[save.typeEffectivenessRule] || TYPE_RULE_TOGGLE_STATE.main;
+                matchupUseDualTypes = ruleState.dual;
+                matchupUseImmunities = ruleState.immunities;
+                if (!matchupUseDualTypes) matchupDefType2 = null;
+            }
+
+            dualBtn.disabled = locked;
+            immunityBtn.disabled = locked;
+            dualBtn.title = locked ? "Locked to this save's Type Effectiveness Rule" : '';
+            immunityBtn.title = locked ? "Locked to this save's Type Effectiveness Rule" : '';
+            dualBtn.classList.toggle('active', matchupUseDualTypes);
+            dualBtn.setAttribute('aria-pressed', String(matchupUseDualTypes));
+            immunityBtn.classList.toggle('active', matchupUseImmunities);
+            immunityBtn.setAttribute('aria-pressed', String(matchupUseImmunities));
+
+            if (def2Wrap) def2Wrap.style.display = matchupUseDualTypes ? '' : 'none';
+            if (def1CountEl) def1CountEl.textContent = matchupUseDualTypes ? ' 1' : '';
+
+            ['move', 'def1', 'def2'].forEach(role => {
+                const selected = role === 'move' ? matchupMoveType : (role === 'def1' ? matchupDefType1 : matchupDefType2);
+                const select = document.getElementById(`game-matchup-select-${role}`);
+                const iconEl = document.getElementById(`game-matchup-icon-${role}`);
+                if (!select) return;
+                select.value = selected || '';
+                // Can't just toggle one fixed class the way the old
+                // button grid's .selected could -- which poke-type-*
+                // class applies changes with the selection itself, not
+                // just whether one's present, so the previous one has to
+                // come off before (maybe) adding a new one back on.
+                Array.from(select.classList)
+                    .filter(c => c.startsWith('poke-type-'))
+                    .forEach(c => select.classList.remove(c));
+                select.classList.toggle('has-selection', !!selected);
+                if (selected) select.classList.add(`poke-type-${selected}`);
+
+                // Only shows once TYPE_ICON_URLS actually has an entry
+                // for the selected type -- empty today (see that
+                // constant's own comment), so this is a no-op everywhere
+                // until real icons exist.
+                const iconUrl = selected ? TYPE_ICON_URLS[selected] : null;
+                if (iconEl) {
+                    if (iconUrl) {
+                        iconEl.src = iconUrl;
+                        iconEl.alt = capitalize(selected);
+                        iconEl.style.display = '';
+                    } else {
+                        iconEl.removeAttribute('src');
+                        iconEl.alt = '';
+                        iconEl.style.display = 'none';
+                    }
+                }
+                select.classList.toggle('has-icon', !!iconUrl);
+            });
+
+            // Independent of anything selected above -- the reference
+            // chart's immune-pair cells only depend on the immunities
+            // toggle, not on any current move/defending-type selection,
+            // so this runs unconditionally rather than being skipped by
+            // the early return just below when nothing's selected yet.
+            syncMatchupChartImmunityCells();
+
+            const result = computeTypeMatchup(
+                matchupMoveType, matchupDefType1, matchupDefType2,
+                matchupUseDualTypes, matchupUseImmunities
+            );
+            labelEl.className = 'game-matchup-result-label';
+            if (!result) {
+                labelEl.textContent = 'SELECT TYPES ABOVE';
+                bonusEl.textContent = '';
+                return;
+            }
+            labelEl.textContent = result.label;
+            labelEl.classList.add('effect-' + result.label.toLowerCase().replace(/\s+/g, '-'));
+            bonusEl.textContent = `Bonus: ${result.bonus}`;
+        }
+
+        // Full Type Chart -- every cell of TYPE_CHART as a real reference
+        // table, rather than the calculator above's one-cell-at-a-time
+        // lookup. See the CSS section this table's own rules live in for
+        // the geometry/sticky-positioning reasoning; this is the data and
+        // interaction side of the same feature.
+
+        // Maps TYPE_CHART's own '+'/'-'/'x' symbols onto semantic keys for
+        // EFFECTIVENESS_ICON_URLS below, rather than keying that map by
+        // the bare symbol directly -- purely for readability at the
+        // definition site once real URLs go in there.
+        const EFFECTIVENESS_ICON_KEYS = { '+': 'superEffective', '-': 'notVeryEffective', 'x': 'immune' };
+
+        // Not populated yet -- same "falls back to nothing until a real
+        // asset exists" pattern as TYPE_ICON_URLS above (a neutral/no-
+        // match cell already renders blank on purpose -- see
+        // matchupChartCellHtml() below -- so an unpopulated effectiveness
+        // icon just reads the same way for now, rather than looking
+        // broken). Add a real URL for a key here and every cell using it
+        // starts showing that icon immediately, no other code changes
+        // needed. e.g. once ready: superEffective: 'https://.../up.png'
+        const EFFECTIVENESS_ICON_URLS = {
+	  superEffective: 'https://dl.dropboxusercontent.com/scl/fi/5ud8lr2pu5fli0exzuhoe/type_effective.png?rlkey=b1w3qrgq9x305khkct8vj6677&st=ivcisdz2&dl=1',
+	  notVeryEffective: 'https://dl.dropboxusercontent.com/scl/fi/hy5wyfcgk96imqawaqu1e/type_noteffective.png?rlkey=rgbf0llfdk6nw9ej4uqk7dt90&st=nxq33a6z&dl=1',
+	  immune: 'https://dl.dropboxusercontent.com/scl/fi/r6sv704g63tugzpoffalp/type_immune.png?rlkey=s04cu25k0t5sn9rt8vr8fuq4l&st=mwv0afu4&dl=1'
+	  };
+
+        // The 8 canonical immunity pairs TYPE_CHART encodes as 'x' (see
+        // that constant's own comment -- transcribed directly from the
+        // source spreadsheet, and confirmed to match vanilla Pokemon
+        // mechanics exactly). Listed explicitly here, rather than scanned
+        // for on demand, since there are only ever these 8 and they never
+        // change -- cheap enough to touch directly on every
+        // renderMatchupPanel() call without rebuilding the whole 18x18
+        // table just because the immunities toggle flipped.
+        const TYPE_CHART_IMMUNE_PAIRS = [
+            ['dragon', 'fairy'], ['electric', 'ground'], ['fighting', 'ghost'],
+            ['ghost', 'normal'], ['ground', 'flying'], ['normal', 'ghost'],
+            ['poison', 'steel'], ['psychic', 'dark'],
+        ];
+
+        // Up to two type keys, in the order they were tapped -- see
+        // toggleMatchupChartPin()/applyMatchupChartPins() below for how
+        // this turns into actual sticky columns.
+        let matchupChartPinnedTypes = [];
+
+        // Mirrors computeTypeMatchup()'s own immunity downgrade (see that
+        // function's comment) -- 'x' only reads as immune here when the
+        // toggle's on; otherwise it's shown identically to a plain '-'.
+        function matchupChartSymbol(moveType, defType) {
+            const raw = typeEffectivenessSymbol(moveType, defType);
+            return (raw === 'x' && !matchupUseImmunities) ? '-' : raw;
+        }
+
+        // Blank (no markup at all) for a neutral pairing or an
+        // unpopulated EFFECTIVENESS_ICON_URLS entry -- .game-matchup-
+        // chart-cell's own fixed --matchup-cell-size (see the CSS) is
+        // what keeps a blank cell the same footprint as one with an icon,
+        // not anything here.
+        function matchupChartCellHtml(moveType, defType) {
+            const symbol = matchupChartSymbol(moveType, defType);
+            const iconKey = EFFECTIVENESS_ICON_KEYS[symbol];
+            const iconUrl = iconKey ? EFFECTIVENESS_ICON_URLS[iconKey] : null;
+            return iconUrl ? `<img class="game-matchup-chart-effect-icon" src="${iconUrl}" alt="${symbol}">` : '';
+        }
+
+        function matchupChartRowHeaderHtml(type) {
+            const iconUrl = TYPE_ICON_URLS[type];
+            const icon = iconUrl ? `<img class="game-matchup-chart-row-header-icon" src="${iconUrl}" alt="">` : '';
+            return `<div class="game-matchup-chart-row-header-inner">${icon}<span class="game-matchup-chart-row-header-text">${capitalize(type)}</span></div>`;
+        }
+
+        function matchupChartColHeaderHtml(type) {
+            const iconUrl = TYPE_ICON_URLS[type];
+            const icon = iconUrl ? `<img class="game-matchup-chart-col-header-icon" src="${iconUrl}" alt="">` : '';
+            return `<div class="game-matchup-chart-col-header-inner">${icon}<span class="game-matchup-chart-col-header-text">${capitalize(type)}</span></div>`;
+        }
+
+        // Built once at load (see the bottom of this script) -- the
+        // chart's contents (which 18 types exist, and every pairing's
+        // base effectiveness) never change; only the 8 immune-pair cells'
+        // *display* depends on anything that changes afterward (the
+        // immunities toggle -- see syncMatchupChartImmunityCells()), and
+        // pin state (see applyMatchupChartPins()), neither of which need
+        // a full rebuild to handle.
+        function buildMatchupChartTable() {
+            const table = document.getElementById('game-matchup-chart-table');
+            if (!table) return;
+
+            const headCells = TYPE_LIST.map(defType =>
+                `<th class="game-matchup-chart-col-header" data-type="${defType}" scope="col">${matchupChartColHeaderHtml(defType)}</th>`
+            ).join('');
+            const thead = `<thead><tr><th class="game-matchup-chart-corner" id="game-matchup-chart-corner"></th>${headCells}</tr></thead>`;
+
+            const bodyRows = TYPE_LIST.map(moveType => {
+                const cells = TYPE_LIST.map(defType =>
+                    `<td class="game-matchup-chart-cell" data-move="${moveType}" data-def="${defType}">${matchupChartCellHtml(moveType, defType)}</td>`
+                ).join('');
+                return `<tr><th class="game-matchup-chart-row-header" data-type="${moveType}" scope="row">${matchupChartRowHeaderHtml(moveType)}</th>${cells}</tr>`;
+            }).join('');
+
+            table.innerHTML = `${thead}<tbody>${bodyRows}</tbody>`;
+            applyMatchupChartPins();
+        }
+
+        // Only ever touches the 8 cells TYPE_CHART_IMMUNE_PAIRS names --
+        // see that constant's own comment for why a full table rebuild
+        // isn't needed just for this.
+        function syncMatchupChartImmunityCells() {
+            TYPE_CHART_IMMUNE_PAIRS.forEach(([moveType, defType]) => {
+                const cell = document.querySelector(
+                    `.game-matchup-chart-cell[data-move="${moveType}"][data-def="${defType}"]`
+                );
+                if (cell) cell.innerHTML = matchupChartCellHtml(moveType, defType);
+            });
+        }
+
+        // Capped at two -- pinning a third bumps whichever was pinned
+        // first, rather than blocking the tap outright, so the control
+        // never needs a disabled state of its own to explain.
+        function toggleMatchupChartPin(type) {
+            const idx = matchupChartPinnedTypes.indexOf(type);
+            if (idx !== -1) {
+                matchupChartPinnedTypes.splice(idx, 1);
+            } else {
+                if (matchupChartPinnedTypes.length >= 2) matchupChartPinnedTypes.shift();
+                matchupChartPinnedTypes.push(type);
+            }
+            applyMatchupChartPins();
+        }
+
+        // Re-derives every column's sticky left offset (and the .pinned
+        // class driving the glow/tint) from matchupChartPinnedTypes,
+        // called after that array changes.
+        //
+        // Pinned columns are re-sorted into TYPE_LIST's own order here
+        // rather than kept in click order -- their sticky offsets have to
+        // stack in the order they actually appear left-to-right in the
+        // table for the freeze effect to look right (a column pinned
+        // second but sitting earlier in the table still needs to end up
+        // closer to the row-header column, not further from it just
+        // because it was tapped later). Offset for the Nth pinned column
+        // (0-indexed, in that table order) is the row-header column's own
+        // width plus N cell-widths -- i.e. it lines up immediately after
+        // the row headers plus however many already-pinned columns sit to
+        // its left.
+        function applyMatchupChartPins() {
+            const table = document.getElementById('game-matchup-chart-table');
+            if (!table) return;
+            const orderedPins = TYPE_LIST.filter(t => matchupChartPinnedTypes.includes(t));
+
+            TYPE_LIST.forEach(type => {
+                const pinIndex = orderedPins.indexOf(type);
+                const isPinned = pinIndex !== -1;
+                const offset = isPinned
+                    ? `calc(var(--matchup-row-header-width) + ${pinIndex} * var(--matchup-cell-size))`
+                    : '';
+
+                const headerCell = table.querySelector(`.game-matchup-chart-col-header[data-type="${type}"]`);
+                if (headerCell) {
+                    headerCell.classList.toggle('pinned', isPinned);
+                    headerCell.style.left = offset;
+                }
+                table.querySelectorAll(`.game-matchup-chart-cell[data-def="${type}"]`).forEach(cell => {
+                    cell.classList.toggle('pinned', isPinned);
+                    cell.style.left = offset;
+                });
+            });
+        }
+
+        // Mirrors setSavesSectionCollapsed()'s own pattern -- see that
+        // function. Defaults collapsed (see the init calls at the bottom
+        // of this script) rather than starting open the way Saves does,
+        // since this is a large secondary reference table, not the
+        // primary tool on this screen.
+        function setMatchupChartCollapsed(collapsed) {
+            const header = document.getElementById('game-matchup-chart-header');
+            const section = document.getElementById('game-matchup-chart-section');
+            if (!header || !section) return;
+            header.classList.toggle('collapsed', collapsed);
+            section.style.display = collapsed ? 'none' : '';
+        }
+
         // Same idea as setSavesSectionCollapsed() above, just for the
         // "Joined Games" section -- kept as an entirely separate toggle
         // (rather than one shared function) since the two sections'
@@ -8853,6 +10043,19 @@
             section.style.display = collapsed ? 'none' : '';
         }
 
+        // Same pattern again, for the Default Save Settings card nested
+        // inside "Your Saves" -- independent of the other two (it isn't
+        // tied to any save being created/loaded/deleted at all, just a
+        // plain manual toggle), so it gets its own state rather than
+        // riding along with setSavesSectionCollapsed()'s own triggers.
+        function setGameSaveDefaultsCollapsed(collapsed) {
+            const header = document.getElementById('game-save-defaults-header');
+            const body = document.getElementById('game-save-defaults-body');
+            if (!header || !body) return;
+            header.classList.toggle('collapsed', collapsed);
+            body.style.display = collapsed ? 'none' : '';
+        }
+
         function refreshGameUI() {
             renderSavePicker();
             renderGuestSavePicker();
@@ -8861,6 +10064,7 @@
             renderDebugReadouts();
             applyReadOnlyIndicators();
             renderBadgeGrid();
+            renderMatchupPanel();
         }
 
         // Called by any save-scoped tool whenever it mutates badges/team
@@ -8917,6 +10121,7 @@
             if (!slotEl) return;
             disarmDeleteConfirm();
             slotEl.dataset.state = 'creating';
+            applyGameSaveDefaultsToForm(slotEl);
             const nameInput = slotEl.querySelector('.game-new-name-input');
             if (nameInput) nameInput.focus();
         }
@@ -10022,6 +11227,31 @@
                 return;
             }
 
+            const matchupToggleBtn = e.target.closest('.game-matchup-toggle-btn');
+            if (matchupToggleBtn) {
+                // Disabled while locked to an active save's own rule --
+                // see renderMatchupPanel()'s own comment. The disabled
+                // attribute already blocks real user clicks from reaching
+                // here, but double-guarding costs nothing and protects
+                // against anything else that might ever dispatch a
+                // synthetic click at this button.
+                if (matchupToggleBtn.disabled) return;
+                toggleMatchupOption(matchupToggleBtn.dataset.toggle);
+                return;
+            }
+
+            const matchupChartHeader = e.target.closest('#game-matchup-chart-header');
+            if (matchupChartHeader) {
+                setMatchupChartCollapsed(!matchupChartHeader.classList.contains('collapsed'));
+                return;
+            }
+
+            const matchupChartColHeader = e.target.closest('.game-matchup-chart-col-header');
+            if (matchupChartColHeader) {
+                toggleMatchupChartPin(matchupChartColHeader.dataset.type);
+                return;
+            }
+
             const savesHeader = e.target.closest('#game-saves-header');
             if (savesHeader) {
                 setSavesSectionCollapsed(!savesHeader.classList.contains('collapsed'));
@@ -10031,6 +11261,12 @@
             const guestSavesHeader = e.target.closest('#game-guest-saves-header');
             if (guestSavesHeader) {
                 setGuestSavesSectionCollapsed(!guestSavesHeader.classList.contains('collapsed'));
+                return;
+            }
+
+            const saveDefaultsHeader = e.target.closest('#game-save-defaults-header');
+            if (saveDefaultsHeader) {
+                setGameSaveDefaultsCollapsed(!saveDefaultsHeader.classList.contains('collapsed'));
                 return;
             }
 
@@ -10222,6 +11458,33 @@
                 e.target.value = e.target.value.toUpperCase();
                 e.target.setSelectionRange(start, end);
             }
+        });
+
+        // Separate from the click listener above since <select> reports
+        // choices via 'change', not 'click' -- delegated the same way
+        // regardless, for the same reason everything else in this panel
+        // is (one listener per event type, rather than one per element).
+        document.getElementById('game-scroll').addEventListener('change', (e) => {
+            const matchupSelect = e.target.closest('.game-matchup-select');
+            if (matchupSelect) {
+                setMatchupTypeFromSelect(matchupSelect.dataset.role, matchupSelect.value);
+            }
+        });
+
+        // Default Save Settings applies itself immediately on change --
+        // no separate "Save" button, same as most other standing
+        // preferences in this app (audio settings, filters, etc.).
+        document.getElementById('game-scroll').addEventListener('change', (e) => {
+            const defaultFieldMap = {
+                'game-save-default-rule': 'stageRule',
+                'game-save-default-length': 'gameLength',
+                'game-save-default-type-rule': 'typeEffectivenessRule',
+                'game-save-default-hp-rule': 'hpRule',
+            };
+            const key = defaultFieldMap[e.target.id];
+            if (!key) return;
+            gameSaveDefaults[key] = e.target.value;
+            persistGameSaveDefaults();
         });
 
         // ---- Audio settings (global + per-category mute & volume) ------
@@ -13693,15 +14956,34 @@
         // this same file. Everything this file declares is guaranteed
         // initialized by this point, so it's safe here regardless of
         // which section originally defined it.
+        // buildMatchupSelects() has no such dependency and could run
+        // earlier, but has to run before this refreshGameUI() call
+        // regardless -- renderMatchupPanel() (called from inside it)
+        // queries the <select>s this populates, and finds nothing to
+        // update if they don't exist yet. buildMatchupChartTable() is
+        // here for the exact same reason: renderMatchupPanel() also
+        // calls syncMatchupChartImmunityCells(), which queries this
+        // table's own cells.
+        buildMatchupSelects();
+        buildMatchupChartTable();
         refreshGameUI();
+        renderGameSaveDefaultsForm();
         resetGameScreen();
-        // A save loaded from a previous session should start collapsed
-        // (nothing new to decide); otherwise start open so there's
-        // something to pick/create right away. The two sections'
-        // collapsed state is independent (see setGuestSavesSectionCollapsed()'s
-        // own comment) so each checks only its own kind of active save.
-        setSavesSectionCollapsed(activeSaveSlot !== null);
-        setGuestSavesSectionCollapsed(activeGuestSaveId !== null);
+        // Both start closed on load now regardless of whether a save is
+        // active -- previously "Your Saves"/"Your Joined Games" opened
+        // automatically when nothing was loaded yet, but that got in the
+        // way more than it helped once there could be several saves
+        // between the two sections. Manual toggling (see the header
+        // click handlers below) and the existing auto-collapse-on-
+        // create/load and auto-reopen-on-delete behavior elsewhere in
+        // the script are unaffected -- this only changes the very first
+        // paint.
+        setSavesSectionCollapsed(true);
+        setGuestSavesSectionCollapsed(true);
+        setGameSaveDefaultsCollapsed(true);
+        // Always collapsed on load, unlike Saves above -- this is a large
+        // secondary reference table, not the primary tool on this screen.
+        setMatchupChartCollapsed(true);
 
         // Other half of the Multiplayer Lobby's QR idea (see
         // lobbyJoinUrl() and GAME_PANEL_NOTES.md §3) -- scanning the
