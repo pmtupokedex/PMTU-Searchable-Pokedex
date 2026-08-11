@@ -14,6 +14,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#000000">
     <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/page_visuals/PWA%20Icon.png">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="PMTU Pokédex">
@@ -7004,9 +7005,24 @@
                     // host to actually send CORS headers; see the catch
                     // block further down for the fallback if it doesn't.
                     img.crossOrigin = 'anonymous';
+                    // A plain, no-crossorigin request for this exact URL
+                    // already happened (or will happen) for the panel's own
+                    // CSS background-image -- and separately, the service
+                    // worker (see ./sw.js) caches image responses by URL for
+                    // offline use. Either one can hand this crossorigin-mode
+                    // request back the earlier no-cors request's *opaque*
+                    // response instead of doing a real CORS-checked fetch --
+                    // and the browser refuses to load an opaque response
+                    // through a crossorigin="anonymous" <img>, failing with
+                    // exactly the load error this function's caller already
+                    // has a console.warn for. A throwaway query param makes
+                    // this a distinct cache key from the CSS load, so it
+                    // always goes through a fresh, properly CORS-checked
+                    // request instead of risking a stale opaque one.
+                    const bustUrl = url + (url.includes('?') ? '&' : '?') + 'navClickThrough=1';
                     img.onload = () => resolve(img);
                     img.onerror = reject;
-                    img.src = url;
+                    img.src = bustUrl;
                 });
             }
 
