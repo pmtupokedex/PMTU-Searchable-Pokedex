@@ -2714,18 +2714,19 @@
            #game-saves-header's own collapsible pattern) since this is a
            large secondary reference, not the primary tool on this screen.
 
-           The three custom properties below are the only numbers that
+           The two custom properties below are the only numbers that
            actually drive the table's geometry -- change one here rather
            than hunting through every rule that uses it. --matchup-cell-
-           size is shared by data cells AND (for width) column headers AND
-           (for height) row headers, so the whole grid stays aligned; only
-           --matchup-row-header-width and --matchup-col-header-height
-           differ from it, since those two need real room for icon + type
-           name that a single data cell doesn't. */
+           size is shared by data cells, column headers (icon-only, so
+           they need no more room than a data cell does), and row header
+           height, so the whole grid stays aligned; only --matchup-row-
+           header-width differs from it, since row headers keep their
+           type name (see the chat this was decided in) and need real
+           room for icon + text that a single square cell doesn't. */
         .game-matchup-chart-table {
-            --matchup-cell-size: 42px;
+            --matchup-cell-size: 30px;
             --matchup-row-header-width: 105px;
-            --matchup-col-header-height: 112px;
+            table-layout: fixed;
             border-collapse: separate;
             border-spacing: 0;
             background: #fff;
@@ -2733,12 +2734,28 @@
                with position: sticky that drops or misrenders cell borders
                in several browsers once a cell actually becomes stuck.
                separate + border-spacing: 0 gets the same visual seam
-               between cells without that risk. */
+               between cells without that risk.
+
+               table-layout: fixed matters more than it looks: HTML tables
+               default to table-layout: auto, which sizes every column
+               off its *content*, treating a cell's own width/height CSS
+               as a hint rather than a rule -- so --matchup-cell-size was
+               never actually being enforced, just usually landing close
+               to it by coincidence. That's what let cells drift off
+               square, and more importantly, it's what broke pin offsets
+               under any real adjustment: applyMatchupChartPins()'s left
+               offsets (see the script) assume every data column is
+               exactly --matchup-cell-size wide, which auto layout doesn't
+               actually guarantee. Fixed layout takes column widths
+               straight from the header row's own cells and holds every
+               other row to those same widths, which is what makes both
+               problems go away together rather than needing two separate
+               fixes. */
         }
 
         .game-matchup-chart-scroll {
             overflow: auto;
-            max-height: 60vh;
+            max-height: 70vh;
             border: 1px solid #ccc;
             border-radius: 8px;
             margin-top: 5px;
@@ -2751,6 +2768,7 @@
             border-bottom: 1px solid #ddd;
             padding: 0;
             text-align: center;
+            vertical-align: middle;
         }
 
         .game-matchup-chart-table td {
@@ -2796,8 +2814,8 @@
            without that risk. Same reasoning applies to every other
            header cell in this table. */
         .game-matchup-chart-row-header-icon {
-            width: 18px;
-            height: 18px;
+            width: 30px;
+            height: 30px;
             object-fit: contain;
             flex-shrink: 0;
         }
@@ -2823,7 +2841,7 @@
             left: 0;
             z-index: 3;
             width: var(--matchup-row-header-width);
-            height: var(--matchup-col-header-height);
+            height: var(--matchup-cell-size);
             background: #fff;
         }
 
@@ -2831,15 +2849,18 @@
            column is frozen left unconditionally -- .pinned below adds
            freezing to the left edge too, for up to two of these at a
            time, chosen by tapping (see toggleMatchupChartPin() in the
-           script). Width matches --matchup-cell-size (not its own fixed
-           value) so each column header lines up directly above its own
-           data column. */
+           script). Width AND height both match --matchup-cell-size (not
+           its own fixed value) -- icon-only (see the chat this was
+           decided in: row headers keep their type name, column headers
+           don't), so it needs no more room than an ordinary data cell,
+           and matching that size directly is what keeps a header lined
+           up with its own data column both ways. */
         .game-matchup-chart-col-header {
             position: sticky;
             top: 0;
             z-index: 1;
             width: var(--matchup-cell-size);
-            height: var(--matchup-col-header-height);
+            height: var(--matchup-cell-size);
             background: #fff;
             cursor: pointer;
             user-select: none;
@@ -2865,49 +2886,22 @@
             box-shadow: 0 0 8px 2px gold;
         }
 
+        /* Icon-only -- see .game-matchup-chart-col-header's own comment.
+           Just centers it; no longer needs the column/row-flow layout its
+           previous icon+rotated-text version did. */
         .game-matchup-chart-col-header-inner {
             display: flex;
-            flex-direction: column;
             align-items: center;
-            justify-content: flex-end;
+            justify-content: center;
             height: 100%;
-            gap: 4px;
-            padding: 6px 2px;
             box-sizing: border-box;
         }
 
         .game-matchup-chart-col-header-icon {
-            width: 20px;
-            height: 20px;
+            width: 30px;
+            height: 30px;
             object-fit: contain;
             flex-shrink: 0;
-        }
-
-        /* writing-mode + a 180deg flip, rather than a plain transform:
-           rotate(-90deg) on ordinary horizontal text -- transform is a
-           paint-time-only operation that doesn't affect layout, so a
-           rotated block still occupies its original (wide, short)
-           bounding box for sizing purposes, mismatched against how it
-           actually paints (narrow, tall) -- overlapping neighboring cells
-           or leaving odd gaps depending on content length. writing-mode:
-           vertical-rl properly re-flows the element as vertical text
-           (tall, narrow), so .game-matchup-chart-col-header-inner's own
-           height above sizes correctly around it. vertical-rl alone reads
-           top-to-bottom (a 90deg *clockwise* turn from horizontal); the
-           180deg flip mirrors that into bottom-to-top (90deg counter-
-           clockwise, as asked for) without disturbing the already-correct
-           layout sizing, since a 180deg turn doesn't change an element's
-           bounding box the way a 90deg one would. sideways-lr would get
-           the same result more directly, but has real gaps in browser
-           support (notably Chrome/Edge) that this combination doesn't. */
-        .game-matchup-chart-col-header-text {
-            writing-mode: vertical-rl;
-            transform: rotate(180deg);
-            white-space: nowrap;
-            font-size: 11px;
-            font-weight: bold;
-            text-transform: uppercase;
-            color: #333;
         }
 
         /* Blank (no icon markup at all -- see matchupChartCellHtml() in
@@ -2916,9 +2910,10 @@
            box regardless, so neutral cells don't visually shrink relative
            to ones with an icon in them. */
         .game-matchup-chart-effect-icon {
-            width: 22px;
-            height: 22px;
+            width: 26px;
+            height: 26px;
             object-fit: contain;
+		vertical-align: middle;
         }
 
         /* Only added by applyMatchupChartPins() to cells in a currently-
@@ -6290,7 +6285,7 @@
                     <p class="game-matchup-result-bonus" id="game-matchup-result-bonus"></p>
                 </div>
 
-                <div class="game-section-header game-collapsible-header collapsed" id="game-matchup-chart-header">Full Type Chart</div>
+                <div class="game-section-header game-collapsible-header collapsed" id="game-matchup-chart-header">Full Type Chart (Under Construction)</div>
                 <div id="game-matchup-chart-section" style="display: none;">
                     <div class="game-matchup-chart-scroll" id="game-matchup-chart-scroll">
                         <table class="game-matchup-chart-table" id="game-matchup-chart-table"></table>
@@ -9833,6 +9828,14 @@
                         iconEl.src = iconUrl;
                         iconEl.alt = capitalize(selected);
                         iconEl.style.display = '';
+                        // If the URL 404s/times out (Dropbox hotlink
+                        // limits, offline, etc.), the browser's own
+                        // fallback is a broken-image glyph plus the alt
+                        // text rendered right on top of the select's own
+                        // text above -- re-hide the element in that case
+                        // so a failed load just quietly shows no icon
+                        // (same as the no-selection state) instead.
+                        iconEl.onerror = () => { iconEl.style.display = 'none'; };
                     } else {
                         iconEl.removeAttribute('src');
                         iconEl.alt = '';
@@ -9876,19 +9879,11 @@
         // definition site once real URLs go in there.
         const EFFECTIVENESS_ICON_KEYS = { '+': 'superEffective', '-': 'notVeryEffective', 'x': 'immune' };
 
-        // Not populated yet -- same "falls back to nothing until a real
-        // asset exists" pattern as TYPE_ICON_URLS above (a neutral/no-
-        // match cell already renders blank on purpose -- see
-        // matchupChartCellHtml() below -- so an unpopulated effectiveness
-        // icon just reads the same way for now, rather than looking
-        // broken). Add a real URL for a key here and every cell using it
-        // starts showing that icon immediately, no other code changes
-        // needed. e.g. once ready: superEffective: 'https://.../up.png'
         const EFFECTIVENESS_ICON_URLS = {
-	  superEffective: 'https://dl.dropboxusercontent.com/scl/fi/5ud8lr2pu5fli0exzuhoe/type_effective.png?rlkey=b1w3qrgq9x305khkct8vj6677&st=ivcisdz2&dl=1',
-	  notVeryEffective: 'https://dl.dropboxusercontent.com/scl/fi/hy5wyfcgk96imqawaqu1e/type_noteffective.png?rlkey=rgbf0llfdk6nw9ej4uqk7dt90&st=nxq33a6z&dl=1',
-	  immune: 'https://dl.dropboxusercontent.com/scl/fi/r6sv704g63tugzpoffalp/type_immune.png?rlkey=s04cu25k0t5sn9rt8vr8fuq4l&st=mwv0afu4&dl=1'
-	  };
+            superEffective: 'https://dl.dropboxusercontent.com/scl/fi/5ud8lr2pu5fli0exzuhoe/type_effective.png?rlkey=b1w3qrgq9x305khkct8vj6677&st=ivcisdz2&dl=1',
+            notVeryEffective: 'https://dl.dropboxusercontent.com/scl/fi/hy5wyfcgk96imqawaqu1e/type_noteffective.png?rlkey=rgbf0llfdk6nw9ej4uqk7dt90&st=nxq33a6z&dl=1',
+            immune: 'https://dl.dropboxusercontent.com/scl/fi/r6sv704g63tugzpoffalp/type_immune.png?rlkey=s04cu25k0t5sn9rt8vr8fuq4l&st=mwv0afu4&dl=1',
+        };
 
         // The 8 canonical immunity pairs TYPE_CHART encodes as 'x' (see
         // that constant's own comment -- transcribed directly from the
@@ -9922,23 +9917,44 @@
         // chart-cell's own fixed --matchup-cell-size (see the CSS) is
         // what keeps a blank cell the same footprint as one with an icon,
         // not anything here.
+        // onerror="this.style.display='none'" on every <img> below:
+        // if the URL 404s/times out, the browser's own fallback is a
+        // broken-image glyph plus (wherever alt text is set) the alt
+        // text rendered right in the cell -- both look like a rendering
+        // bug rather than data. Hiding the element instead just leaves
+        // that one cell blank, which the table already treats as a
+        // normal, styled state (see matchupChartCellHtml()'s own comment
+        // on neutral pairings), so a failed load degrades quietly
+        // instead of visibly breaking the grid.
         function matchupChartCellHtml(moveType, defType) {
             const symbol = matchupChartSymbol(moveType, defType);
             const iconKey = EFFECTIVENESS_ICON_KEYS[symbol];
             const iconUrl = iconKey ? EFFECTIVENESS_ICON_URLS[iconKey] : null;
-            return iconUrl ? `<img class="game-matchup-chart-effect-icon" src="${iconUrl}" alt="${symbol}">` : '';
+            return iconUrl ? `<img class="game-matchup-chart-effect-icon" src="${iconUrl}" alt="${symbol}" onerror="this.style.display='none'">` : '';
         }
 
         function matchupChartRowHeaderHtml(type) {
             const iconUrl = TYPE_ICON_URLS[type];
-            const icon = iconUrl ? `<img class="game-matchup-chart-row-header-icon" src="${iconUrl}" alt="">` : '';
+            const icon = iconUrl ? `<img class="game-matchup-chart-row-header-icon" src="${iconUrl}" alt="" onerror="this.style.display='none'">` : '';
             return `<div class="game-matchup-chart-row-header-inner">${icon}<span class="game-matchup-chart-row-header-text">${capitalize(type)}</span></div>`;
         }
 
+        // Icon-only -- see .game-matchup-chart-col-header's own CSS
+        // comment for why (row headers keep matchupChartRowHeaderHtml()'s
+        // text, this doesn't). Unlike the row header/cell icons above,
+        // a failed load here can't just fall back to hiding the <img>:
+        // there's no visible text sitting next to it to fall back on,
+        // and the column is only --matchup-cell-size (30px) wide, too
+        // narrow to hold a type name without overflowing into the next
+        // column -- which is exactly what the bare alt-text fallback
+        // used to do. title on the <th> (see buildMatchupChartTable())
+        // now carries the accessible/on-hover name instead, so the alt
+        // here can stay empty and this can safely just go blank like
+        // the other two icon spots.
         function matchupChartColHeaderHtml(type) {
             const iconUrl = TYPE_ICON_URLS[type];
-            const icon = iconUrl ? `<img class="game-matchup-chart-col-header-icon" src="${iconUrl}" alt="">` : '';
-            return `<div class="game-matchup-chart-col-header-inner">${icon}<span class="game-matchup-chart-col-header-text">${capitalize(type)}</span></div>`;
+            const icon = iconUrl ? `<img class="game-matchup-chart-col-header-icon" src="${iconUrl}" alt="" onerror="this.style.display='none'">` : '';
+            return `<div class="game-matchup-chart-col-header-inner">${icon}</div>`;
         }
 
         // Built once at load (see the bottom of this script) -- the
@@ -9953,7 +9969,7 @@
             if (!table) return;
 
             const headCells = TYPE_LIST.map(defType =>
-                `<th class="game-matchup-chart-col-header" data-type="${defType}" scope="col">${matchupChartColHeaderHtml(defType)}</th>`
+                `<th class="game-matchup-chart-col-header" data-type="${defType}" scope="col" title="${capitalize(defType)}">${matchupChartColHeaderHtml(defType)}</th>`
             ).join('');
             const thead = `<thead><tr><th class="game-matchup-chart-corner" id="game-matchup-chart-corner"></th>${headCells}</tr></thead>`;
 
@@ -9965,6 +9981,19 @@
             }).join('');
 
             table.innerHTML = `${thead}<tbody>${bodyRows}</tbody>`;
+            // table-layout: fixed still needs the table's own width to
+            // be a real, definite value to hold columns at their exact
+            // CSS sizes (see .game-matchup-chart-table's own comment) --
+            // left as the default auto, Chromium falls back to sizing
+            // the table off how much space the header row's cells
+            // actually need, which shrinks (taking every column's real
+            // rendered width down with it) the moment any of those
+            // cells' content is smaller than --matchup-cell-size, e.g.
+            // an icon that fails to load and hides itself. An explicit
+            // width computed straight from TYPE_LIST's own length keeps
+            // the grid's geometry fixed no matter what any individual
+            // cell ends up rendering.
+            table.style.width = `calc(var(--matchup-row-header-width) + ${TYPE_LIST.length} * var(--matchup-cell-size))`;
             applyMatchupChartPins();
         }
 
@@ -10009,10 +10038,53 @@
         // width plus N cell-widths -- i.e. it lines up immediately after
         // the row headers plus however many already-pinned columns sit to
         // its left.
+        //
+        // Reorders the actual <th>/<td> cells for pinned columns to sit
+        // immediately after the row-header column, rather than leaving
+        // them in their original TYPE_LIST position and relying on
+        // position: sticky alone to pull them into view once scrolled.
+        // Sticky only takes effect once the page has scrolled past a
+        // column's own resting position -- fine for a column already
+        // near the left (e.g. Bug), but for one far to the right (e.g.
+        // Water), that resting position doesn't reach the sticky offset
+        // until the user has scrolled nearly the full table width past
+        // it. At every scroll position before that, the row header is
+        // already pinned on the left, ordinary columns have already
+        // scrolled out of the way, and the not-yet-stuck pinned column
+        // is still sitting wherever it started -- that gap between them
+        // is exactly the empty space where it hasn't caught up yet.
+        // Moving the cells themselves means a pinned column's resting
+        // position already IS its sticky position, so there's nothing
+        // left to catch up to and no gap at any scroll offset.
         function applyMatchupChartPins() {
             const table = document.getElementById('game-matchup-chart-table');
             if (!table) return;
             const orderedPins = TYPE_LIST.filter(t => matchupChartPinnedTypes.includes(t));
+
+            const headerRow = table.tHead && table.tHead.rows[0];
+            const cornerCell = document.getElementById('game-matchup-chart-corner');
+            if (headerRow && cornerCell) {
+                let anchor = cornerCell;
+                orderedPins.forEach(type => {
+                    const cell = headerRow.querySelector(`.game-matchup-chart-col-header[data-type="${type}"]`);
+                    if (cell) {
+                        anchor.after(cell);
+                        anchor = cell;
+                    }
+                });
+            }
+            Array.from(table.tBodies[0].rows).forEach(row => {
+                const rowHeaderCell = row.querySelector('.game-matchup-chart-row-header');
+                if (!rowHeaderCell) return;
+                let anchor = rowHeaderCell;
+                orderedPins.forEach(type => {
+                    const cell = row.querySelector(`.game-matchup-chart-cell[data-def="${type}"]`);
+                    if (cell) {
+                        anchor.after(cell);
+                        anchor = cell;
+                    }
+                });
+            });
 
             TYPE_LIST.forEach(type => {
                 const pinIndex = orderedPins.indexOf(type);
