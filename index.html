@@ -2726,6 +2726,19 @@
         .game-matchup-chart-table {
             --matchup-cell-size: 30px;
             --matchup-row-header-width: 105px;
+            /* Mirrors the two-layer multiply-blend background pattern
+               used elsewhere in the doc (see .game-panel-bg above, whose
+               URLs these default to, since that's the panel this table
+               actually lives inside) rather than a single flat image --
+               an -a layer (the big textured image) and a -b layer (the
+               240px repeating pattern) combined with background-blend-
+               mode: multiply. Swap any of the four to a different url()
+               independently to give the cells and the headers their own
+               art instead of reusing .game-panel-bg's. */
+            --matchup-cell-bg-image-a: url("https://dl.dropboxusercontent.com/scl/fi/wgzpjhghreerhmmum0ii3/Pokedex-Background-6.png?rlkey=sia0nfiyy8s40njo3djcx1ddo&st=ltggri53&dl=1");
+            --matchup-cell-bg-image-b: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
+            --matchup-header-bg-image-a: url("https://dl.dropboxusercontent.com/scl/fi/i5ailfuuue0yvimiunlmg/Pokedex-Background-4.png?rlkey=rf6sl73lckbwdvhxv2tr5hpim&st=qjjrmunt&dl=1");
+            --matchup-header-bg-image-b: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
             table-layout: fixed;
             border-collapse: separate;
             border-spacing: 0;
@@ -2755,10 +2768,31 @@
 
         .game-matchup-chart-scroll {
             overflow: auto;
-            max-height: 75vh;
+            max-height: 70vh;
             border: 1px solid #ccc;
             border-radius: 8px;
             margin-top: 5px;
+        }
+
+        /* Same two-layer multiply-blend treatment as .game-panel-bg
+           elsewhere, just applied directly to tbody instead of a separate
+           absolutely-positioned div behind it -- tbody's own box is
+           exactly (table width) x (row count * --matchup-cell-size) once
+           buildMatchupChartTable() sets an explicit table width, so this
+           still reads as one shared background across the whole grid, not
+           tiled per cell. No windowing math needed here the way the
+           sticky headers below require -- tbody isn't sticky, so it just
+           scrolls normally along with the rest of the table in both
+           directions, same as .game-panel-bg's own background does with
+           its panel. The row-header column's own opaque background sits
+           on top and simply covers the leftmost --matchup-row-header-
+           width slice of this. */
+        .game-matchup-chart-table tbody {
+            background-image: var(--matchup-cell-bg-image-a), var(--matchup-cell-bg-image-b);
+            background-size: cover, 240px 240px;
+            background-position: center, center;
+            background-repeat: no-repeat, repeat;
+            background-blend-mode: multiply;
         }
 
         .game-matchup-chart-table th,
@@ -2794,7 +2828,27 @@
             z-index: 1;
             width: var(--matchup-row-header-width);
             height: var(--matchup-cell-size);
-            background: #fff;
+            background-color: #fff;
+            background-image: var(--matchup-header-bg-image-a), var(--matchup-header-bg-image-b);
+            /* -a is treated as a single tall strip covering every row
+               header stacked together (--matchup-type-count is set by
+               buildMatchupChartTable(), since that's the one place that
+               already knows TYPE_LIST's length), same windowing idea as
+               .game-matchup-chart-table's own tbody comment describes for
+               the non-sticky case -- except here it actually matters,
+               since each row header is sticky and paints this background
+               itself rather than inheriting it from some non-sticky
+               ancestor, which would just scroll out from underneath it.
+               -b keeps its real 240px tile size rather than being
+               stretched into that same strip -- it's meant to repeat, not
+               window, and 240 divides evenly by --matchup-cell-size (30),
+               so using the same per-row offset as -a (set inline in
+               buildMatchupChartTable()) keeps its repeat phase lined up
+               from row to row with no visible seam, the same as -a's
+               slices adjoin cleanly. */
+            background-size: var(--matchup-row-header-width) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)), 240px 240px;
+            background-repeat: no-repeat, repeat;
+            background-blend-mode: multiply;
         }
 
         .game-matchup-chart-row-header-inner {
@@ -2842,7 +2896,38 @@
             z-index: 3;
             width: var(--matchup-row-header-width);
             height: var(--matchup-cell-size);
-            background: #fff;
+            background-color: #fff;
+            background-image: var(--matchup-header-bg-image-b);
+            background-size: 240px 240px;
+            background-position: center;
+            background-repeat: repeat;
+        }
+
+        /* -a used to live directly on .game-matchup-chart-corner's own
+           background-image list, multiplied against -b there via
+           background-blend-mode -- moved to its own pseudo-element so it
+           can be flipped independently of -b (background-blend-mode
+           blends layers within ONE element's own list; there's no way to
+           transform just one of them, so giving -a a separate element of
+           its own via mix-blend-mode -- which blends an element against
+           whatever's behind it, i.e. .game-matchup-chart-corner's own
+           background set above -- is what makes an independent flip
+           possible at all). See .game-matchup-chart-col-header-inner's own
+           comment for why this needs z-index: 1 there but not here --
+           corner has no content of its own to protect. */
+        .game-matchup-chart-corner::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            background-image: var(--matchup-header-bg-image-a);
+            background-size: calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)) var(--matchup-cell-size);
+            background-position-x: var(--matchup-col-offset, 0);
+            background-position-y: center;
+            background-repeat: no-repeat;
+            transform: scaleY(-1);
+            mix-blend-mode: multiply;
+            pointer-events: none;
         }
 
         /* Frozen to the top edge unconditionally, same as the row header
@@ -2861,7 +2946,19 @@
             z-index: 1;
             width: var(--matchup-cell-size);
             height: var(--matchup-cell-size);
-            background: #fff;
+            background-color: #fff;
+            background-image: var(--matchup-header-bg-image-b);
+            /* --matchup-col-offset is the one thing set inline per cell
+               (both in buildMatchupChartTable() and, after reordering, in
+               applyMatchupChartPins() -- see its own comment), rather than
+               background-position-x directly, since ::before below needs
+               that identical offset for its own windowed -a layer and a
+               shared custom property is a single source of truth for both
+               instead of two inline styles that could drift out of sync. */
+            background-size: 240px 240px;
+            background-position-x: var(--matchup-col-offset, 0);
+            background-position-y: center;
+            background-repeat: repeat;
             cursor: pointer;
             user-select: none;
             -webkit-user-select: none;
@@ -2869,8 +2966,37 @@
             touch-action: manipulation;
         }
 
+        /* -a used to live directly on .game-matchup-chart-col-header's own
+           background-image list -- moved to its own pseudo-element for the
+           same reason as .game-matchup-chart-corner::before (see its
+           comment): flipping just one of two blended layers isn't possible
+           within a single element's own background-image list, only across
+           two elements via mix-blend-mode. Still windowed the same way -a
+           always has been here (one shared strip across every column
+           header, sliced via --matchup-col-offset), just flipped. z-index:
+           0 here plus z-index: 1 on .game-matchup-chart-col-header-inner
+           below is what keeps the actual icon painting above this pseudo-
+           element instead of underneath it -- without that, an absolutely
+           positioned ::before with no z-index of its own still stacks
+           above the inner div's static, non-positioned content by
+           default. */
+        .game-matchup-chart-col-header::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            background-image: var(--matchup-header-bg-image-a);
+            background-size: calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)) var(--matchup-cell-size);
+            background-position-x: var(--matchup-col-offset, 0);
+            background-position-y: center;
+            background-repeat: no-repeat;
+            transform: scaleY(-1);
+            mix-blend-mode: multiply;
+            pointer-events: none;
+        }
+
         .game-matchup-chart-col-header:hover {
-            background: #f5f5f5;
+            background-color: #f5f5f5;
         }
 
         /* left itself is set inline by applyMatchupChartPins() (a
@@ -2890,6 +3016,8 @@
            Just centers it; no longer needs the column/row-flow layout its
            previous icon+rotated-text version did. */
         .game-matchup-chart-col-header-inner {
+            position: relative;
+            z-index: 1;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -6285,7 +6413,7 @@
                     <p class="game-matchup-result-bonus" id="game-matchup-result-bonus"></p>
                 </div>
 
-                <div class="game-section-header game-collapsible-header collapsed" id="game-matchup-chart-header">Full Type Chart (WIP)</div>
+                <div class="game-section-header game-collapsible-header collapsed" id="game-matchup-chart-header">Full Type Chart</div>
                 <div id="game-matchup-chart-section" style="display: none;">
                     <div class="game-matchup-chart-scroll" id="game-matchup-chart-scroll">
                         <table class="game-matchup-chart-table" id="game-matchup-chart-table"></table>
@@ -9973,11 +10101,23 @@
             ).join('');
             const thead = `<thead><tr><th class="game-matchup-chart-corner" id="game-matchup-chart-corner"></th>${headCells}</tr></thead>`;
 
-            const bodyRows = TYPE_LIST.map(moveType => {
+            const bodyRows = TYPE_LIST.map((moveType, rowIndex) => {
                 const cells = TYPE_LIST.map(defType =>
                     `<td class="game-matchup-chart-cell" data-move="${moveType}" data-def="${defType}">${matchupChartCellHtml(moveType, defType)}</td>`
                 ).join('');
-                return `<tr><th class="game-matchup-chart-row-header" data-type="${moveType}" scope="row">${matchupChartRowHeaderHtml(moveType)}</th>${cells}</tr>`;
+                // background-position-y here is what turns the header
+                // background layers into one continuous strip down the
+                // row-header column instead of 18 separate copies -- see
+                // that rule's own comment. Same offset repeated for both
+                // layers (comma-separated, one value per layer) keeps -b's
+                // repeat phase-aligned with -a's slice at every row. Rows
+                // are never reordered (there's no row-pinning feature,
+                // unlike columns), so this is fixed once here rather than
+                // needing the recalculation applyMatchupChartPins() does
+                // for column headers.
+                const rowOffset = `calc(var(--matchup-cell-size) * -${rowIndex})`;
+                const rowBgPosition = `background-position-y: ${rowOffset}, ${rowOffset};`;
+                return `<tr><th class="game-matchup-chart-row-header" data-type="${moveType}" scope="row" style="${rowBgPosition}">${matchupChartRowHeaderHtml(moveType)}</th>${cells}</tr>`;
             }).join('');
 
             table.innerHTML = `${thead}<tbody>${bodyRows}</tbody>`;
@@ -9994,6 +10134,10 @@
             // the grid's geometry fixed no matter what any individual
             // cell ends up rendering.
             table.style.width = `calc(var(--matchup-row-header-width) + ${TYPE_LIST.length} * var(--matchup-cell-size))`;
+            // Feeds the row/column header background-size calc()s (see
+            // their own CSS) -- both axes reuse this one count since
+            // TYPE_LIST doubles as the row list and the column list.
+            table.style.setProperty('--matchup-type-count', TYPE_LIST.length);
             applyMatchupChartPins();
         }
 
@@ -10056,20 +10200,45 @@
         // Moving the cells themselves means a pinned column's resting
         // position already IS its sticky position, so there's nothing
         // left to catch up to and no gap at any scroll offset.
+        //
+        // finalOrder below always covers every column, not just the
+        // pinned ones -- reordering pinned columns alone moves them
+        // forward but leaves no instruction for an unpinned column to
+        // ever move back, so a column deselected after being pinned
+        // would simply stay wherever it was dragged to. Rebuilding the
+        // full order (pins first, then everyone else in normal TYPE_LIST
+        // order) every call means an unpinned column always has an
+        // explicit destination -- its normal spot -- instead of just an
+        // absence of instructions to move it.
         function applyMatchupChartPins() {
             const table = document.getElementById('game-matchup-chart-table');
             if (!table) return;
             const orderedPins = TYPE_LIST.filter(t => matchupChartPinnedTypes.includes(t));
+            const finalOrder = orderedPins.concat(TYPE_LIST.filter(t => !orderedPins.includes(t)));
 
             const headerRow = table.tHead && table.tHead.rows[0];
             const cornerCell = document.getElementById('game-matchup-chart-corner');
             if (headerRow && cornerCell) {
                 let anchor = cornerCell;
-                orderedPins.forEach(type => {
+                finalOrder.forEach((type, i) => {
                     const cell = headerRow.querySelector(`.game-matchup-chart-col-header[data-type="${type}"]`);
                     if (cell) {
                         anchor.after(cell);
                         anchor = cell;
+                        // Keeps both header background layers reading as
+                        // one unbroken strip across the column headers
+                        // (see that rule's own CSS comment, and .game-
+                        // matchup-chart-col-header::before's) by re-
+                        // pointing each header at the position matching
+                        // where it actually sits now, rather than the
+                        // position matching its permanent TYPE_LIST
+                        // identity. A pinned column's own slice/tile phase
+                        // can change as a result -- fine, since this image
+                        // is decorative background, not a stable per-type
+                        // marker -- but the whole strip never gets a
+                        // visible seam at the point where a pinned column
+                        // was spliced in.
+                        cell.style.setProperty('--matchup-col-offset', `calc(var(--matchup-cell-size) * -${i})`);
                     }
                 });
             }
@@ -10077,7 +10246,7 @@
                 const rowHeaderCell = row.querySelector('.game-matchup-chart-row-header');
                 if (!rowHeaderCell) return;
                 let anchor = rowHeaderCell;
-                orderedPins.forEach(type => {
+                finalOrder.forEach(type => {
                     const cell = row.querySelector(`.game-matchup-chart-cell[data-def="${type}"]`);
                     if (cell) {
                         anchor.after(cell);
