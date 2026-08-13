@@ -2821,6 +2821,7 @@
                art instead of reusing .game-panel-bg's. */
             --matchup-cell-bg-image-a: url("https://dl.dropboxusercontent.com/scl/fi/wgzpjhghreerhmmum0ii3/Pokedex-Background-6.png?rlkey=sia0nfiyy8s40njo3djcx1ddo&st=ltggri53&dl=1");
             --matchup-cell-bg-image-b: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
+		--matchup-cell-bg-image-c: url("https://dl.dropboxusercontent.com/scl/fi/ofvdv0ay6z4wufs1nrspd/Pokedex-Background-3.png?rlkey=kwi0c2v6iypgmvryqebwm2cgx&st=bddxb3ed&dl=1");
             --matchup-header-bg-image-a: url("https://dl.dropboxusercontent.com/scl/fi/i5ailfuuue0yvimiunlmg/Pokedex-Background-4.png?rlkey=rf6sl73lckbwdvhxv2tr5hpim&st=qjjrmunt&dl=1");
             --matchup-header-bg-image-b: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
             table-layout: fixed;
@@ -2930,7 +2931,34 @@
             background-size: var(--matchup-row-header-width) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)), 240px 240px;
             background-repeat: no-repeat, repeat;
             background-blend-mode: multiply;
+            /* Tappable to pick Move Type -- see
+               selectMatchupChartMoveType() in the script. Same touch/
+               select handling as .game-matchup-chart-col-header for the
+               same reason: this is a real interactive control, not just
+               a label, even though it's a <th>. */
+            cursor: pointer;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: manipulation;
 		box-shadow: 2px 2px 5px black;
+        }
+
+        .game-matchup-chart-row-header:hover {
+            background-color: #f5f5f5;
+        }
+
+        /* Move Type is a single value, not a capped multi-select the way
+           Def1/Def2 are (see selectMatchupChartMoveType()'s own
+           comment) -- so unlike .game-matchup-chart-col-header.pinned,
+           at most one row ever carries this at a time, applied/cleared
+           together in applyMatchupChartPins()' per-row loop rather than
+           needing any reordering logic of its own. Same glow as the
+           column version for the same reason: both mean "this is
+           currently feeding the calculator above." */
+        .game-matchup-chart-row-header.selected {
+            z-index: 2;
+            background-color: rgba(100, 180, 240, 0.90);
         }
 
         .game-matchup-chart-row-header-inner {
@@ -3134,12 +3162,20 @@
            header's own glow, applied to the whole column's cells instead
            of just its header, so it's clear at a glance which column is
            actually frozen while scrolled, not just which header is
-           glowing. */
+           glowing.
+           background-position-y reads --matchup-row-offset -- set once
+           per row in buildMatchupChartTable(), same value the row header
+           column already carries -- so a pinned column's cells read as
+           one continuous strip top-to-bottom instead of each cell just
+           showing the same unshifted slice 18 times over. Same offset
+           for both layers for the same phase-alignment reason as the
+           row header's own version of this. */
         .game-matchup-chart-cell.pinned {
             position: sticky;
             z-index: 0;
-		background-image: var(--matchup-cell-bg-image-a), var(--matchup-cell-bg-image-b);
+		background-image: var(--matchup-cell-bg-image-c), var(--matchup-cell-bg-image-b);
 		background-size: var(--matchup-cell-size) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)), 240px 240px;
+		background-position-y: var(--matchup-row-offset, 0), var(--matchup-row-offset, 0);
 		background-repeat: no-repeat, repeat;
 		background-blend-mode: multiply;
         }
@@ -10139,6 +10175,17 @@
                 if (!matchupUseDualTypes) matchupDefType2 = null;
             }
 
+            // Keeps the table's pinned columns/highlighted row in sync
+            // with matchupMoveType/matchupDefType1/matchupDefType2 no
+            // matter which of the three ways they just changed --
+            // tapping the table itself (toggleMatchupChartPin()/
+            // selectMatchupChartMoveType()), picking from a dropdown
+            // (setMatchupTypeFromSelect()), or (Def2 only) just now
+            // being cleared above by a save that locks Dual Defending
+            // Types off. Safe to call unconditionally -- it no-ops on
+            // its own if the table isn't in the DOM.
+            applyMatchupChartPins();
+
             dualBtn.disabled = locked;
             immunityBtn.disabled = locked;
             dualBtn.title = locked ? "Locked to this save's Type Effectiveness Rule" : '';
@@ -10249,10 +10296,15 @@
             ['poison', 'steel'], ['psychic', 'dark'],
         ];
 
-        // Up to two type keys, in the order they were tapped -- see
-        // toggleMatchupChartPin()/applyMatchupChartPins() below for how
-        // this turns into actual sticky columns.
-        let matchupChartPinnedTypes = [];
+        // Column header taps now double as picking a defending type for
+        // the calculator above (see toggleMatchupChartPin() below) --
+        // matchupDefType1/matchupDefType2 themselves are the source of
+        // truth for which columns end up pinned, rather than a
+        // separately-tracked list that could drift out of sync with
+        // what the dropdowns above actually show. See
+        // applyMatchupChartPins()'s own comment for how that list gets
+        // derived back out when it's needed for the table's own
+        // reordering/sticky-offset math.
 
         // Mirrors computeTypeMatchup()'s own immunity downgrade (see that
         // function's comment) -- 'x' only reads as immune here when the
@@ -10324,8 +10376,19 @@
             const thead = `<thead><tr><th class="game-matchup-chart-corner" id="game-matchup-chart-corner"></th>${headCells}</tr></thead>`;
 
             const bodyRows = TYPE_LIST.map((moveType, rowIndex) => {
+                // Same per-row offset the row header gets below, just
+                // carried as a custom property instead of inline
+                // background-position-y directly -- an ordinary cell has
+                // no background-image of its own to position (only
+                // .game-matchup-chart-cell.pinned does, once a column's
+                // actually frozen), so setting the property here and
+                // letting that CSS rule consume it keeps this in sync
+                // automatically no matter which column ends up pinned,
+                // rather than needing applyMatchupChartPins() to go
+                // recompute a per-row value it doesn't otherwise track.
+                const rowOffset = `calc(var(--matchup-cell-size) * -${rowIndex})`;
                 const cells = TYPE_LIST.map(defType =>
-                    `<td class="game-matchup-chart-cell" data-move="${moveType}" data-def="${defType}">${matchupChartCellHtml(moveType, defType)}</td>`
+                    `<td class="game-matchup-chart-cell" data-move="${moveType}" data-def="${defType}" style="--matchup-row-offset: ${rowOffset};">${matchupChartCellHtml(moveType, defType)}</td>`
                 ).join('');
                 // background-position-y here is what turns the header
                 // background layers into one continuous strip down the
@@ -10337,7 +10400,6 @@
                 // unlike columns), so this is fixed once here rather than
                 // needing the recalculation applyMatchupChartPins() does
                 // for column headers.
-                const rowOffset = `calc(var(--matchup-cell-size) * -${rowIndex})`;
                 const rowBgPosition = `background-position-y: ${rowOffset}, ${rowOffset};`;
                 return `<tr><th class="game-matchup-chart-row-header" data-type="${moveType}" scope="row" style="${rowBgPosition}">${matchupChartRowHeaderHtml(moveType)}</th>${cells}</tr>`;
             }).join('');
@@ -10375,18 +10437,49 @@
             });
         }
 
-        // Capped at two -- pinning a third bumps whichever was pinned
-        // first, rather than blocking the tap outright, so the control
-        // never needs a disabled state of its own to explain.
+        // Tapping a column header now both freezes it in place (the
+        // original pinning behavior) AND selects it as one of the
+        // calculator's own defending types above -- the two dropdowns
+        // and the table's pinned columns are the same selection viewed
+        // two ways, not two separate features, so there's only ever one
+        // place (matchupDefType1/matchupDefType2) actually holding it.
+        //
+        // Capped at how many defending types a Pokémon can actually
+        // have right now -- 2 with Dual Defending Types on, 1 without
+        // (whether that's locked in by the active save's Type
+        // Effectiveness Rule or just the unlocked toggle's own current
+        // state -- see renderMatchupPanel()'s own comment on
+        // matchupUseDualTypes). Tapping a type that's already selected
+        // clears it instead (any second selection shifts down to fill
+        // the gap, same order it was picked in); tapping past the cap
+        // bumps whichever was picked least recently rather than
+        // blocking the tap outright, so this never needs a disabled
+        // state of its own the way the rule toggles do.
         function toggleMatchupChartPin(type) {
-            const idx = matchupChartPinnedTypes.indexOf(type);
+            const selected = [matchupDefType1, matchupDefType2].filter(Boolean);
+            const idx = selected.indexOf(type);
             if (idx !== -1) {
-                matchupChartPinnedTypes.splice(idx, 1);
+                selected.splice(idx, 1);
             } else {
-                if (matchupChartPinnedTypes.length >= 2) matchupChartPinnedTypes.shift();
-                matchupChartPinnedTypes.push(type);
+                const cap = matchupUseDualTypes ? 2 : 1;
+                while (selected.length >= cap) selected.shift();
+                selected.push(type);
             }
-            applyMatchupChartPins();
+            matchupDefType1 = selected[0] || null;
+            matchupDefType2 = selected[1] || null;
+            renderMatchupPanel();
+        }
+
+        // Row headers have no pinning/freezing counterpart (see
+        // buildMatchupChartTable()'s own comment on why rows never
+        // reorder) -- tapping one just selects it as the calculator's
+        // Move Type, mirroring toggleMatchupChartPin() above for the
+        // one column-side behavior that does carry over: picking a
+        // type. Always a single value, so there's no cap/FIFO to manage
+        // here the way defending types need.
+        function selectMatchupChartMoveType(type) {
+            matchupMoveType = type;
+            renderMatchupPanel();
         }
 
         // Re-derives every column's sticky left offset (and the .pinned
@@ -10435,7 +10528,15 @@
         function applyMatchupChartPins() {
             const table = document.getElementById('game-matchup-chart-table');
             if (!table) return;
-            const orderedPins = TYPE_LIST.filter(t => matchupChartPinnedTypes.includes(t));
+            // Derived fresh from the calculator's own selection every
+            // call, rather than tracked separately -- see the comment
+            // above matchupChartPinnedTypes' old declaration (now
+            // removed) for why. Order here (Def1 before Def2) is what
+            // decides which pinned column sits closer to the row-header
+            // column below, same as it always determined pin order back
+            // when this was tracked as its own click-order array.
+            const pinnedTypes = [matchupDefType1, matchupDefType2].filter(Boolean);
+            const orderedPins = TYPE_LIST.filter(t => pinnedTypes.includes(t));
             const finalOrder = orderedPins.concat(TYPE_LIST.filter(t => !orderedPins.includes(t)));
 
             const headerRow = table.tHead && table.tHead.rows[0];
@@ -10475,6 +10576,11 @@
                         anchor = cell;
                     }
                 });
+                // Move Type has no pinning/reordering of its own (see
+                // selectMatchupChartMoveType()'s own comment), just this
+                // highlight -- glued onto the same per-row loop above
+                // since it's already walking every row header anyway.
+                rowHeaderCell.classList.toggle('selected', rowHeaderCell.dataset.type === matchupMoveType);
             });
 
             TYPE_LIST.forEach(type => {
@@ -11877,6 +11983,12 @@
             const matchupChartColHeader = e.target.closest('.game-matchup-chart-col-header');
             if (matchupChartColHeader) {
                 toggleMatchupChartPin(matchupChartColHeader.dataset.type);
+                return;
+            }
+
+            const matchupChartRowHeader = e.target.closest('.game-matchup-chart-row-header');
+            if (matchupChartRowHeader) {
+                selectMatchupChartMoveType(matchupChartRowHeader.dataset.type);
                 return;
             }
 
