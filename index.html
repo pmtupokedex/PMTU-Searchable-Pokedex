@@ -2084,16 +2084,20 @@
         /* Overlaid on top of the icon (both value and input come after
            it in the DOM, so they already paint above it in the shared
            stacking context without needing an explicit z-index) rather
-           than sitting beside it. left:50% pins its own left edge -- not
-           its center -- to the halfway mark, and right:0 stretches it the
-           rest of the way to .game-pokecoins-counter's own right edge so
-           it has a real width to left-align text-align:left within,
-           instead of shrink-wrapping around the text the way a plain
-           left offset with no right would. The [data-digits] rules below
-           (kept via applyPokeCoinsDigitSizing() in the script, since
-           0-999 only ever needs one of three fixed tiers rather than a
-           live measure-and-shrink loop) keep three digits legible rather
-           than clipped inside that fixed half-width box. */
+           than sitting beside it. right:0 with no left/width set means
+           this shrink-wraps to its actual text content and anchors by
+           its right edge to .game-pokecoins-counter's own right edge --
+           an absolutely positioned box left with left:auto and
+           width:auto falls back to shrink-to-fit sizing based on its
+           content, so the box always matches however wide the number
+           actually renders rather than a guessed fixed size. The
+           [data-digits] rules below (kept via
+           applyPokeCoinsDigitSizing() in the script, since 0-999 only
+           ever needs one of three fixed tiers rather than a live
+           measure-and-shrink loop) keep three digits legible as the
+           number grows; see .game-pokecoins-input's own comment further
+           down for why it needs explicit per-tier widths to match this
+           same footprint instead of shrink-wrapping the same way. */
         .game-pokecoins-value {
             position: absolute;
             top: 50%;
@@ -2144,15 +2148,29 @@
             cursor: not-allowed;
         }
 
-        /* Same overlay positioning as .game-pokecoins-value just above --
-           this swaps in for that span in place (see
-           beginEditingPokeCoins()), so it needs to land in exactly the
-           same box rather than its own layout. */
+        /* Positioned and sized to match .game-pokecoins-value's own
+           footprint, not its own layout -- this swaps in for that span
+           in place (see beginEditingPokeCoins()), so a mismatch here is
+           immediately visible as a jump when entering/leaving edit mode.
+           The value span gets to shrink-wrap its box to the actual
+           rendered text automatically: with left:auto/right:0/width:auto,
+           an absolutely positioned box with no explicit width falls back
+           to shrink-to-fit sizing based on its content, per how
+           browsers resolve that combination. An <input> can't do that --
+           without an explicit width, a text input's intrinsic size comes
+           from its default rendering width (roughly a 20-character-wide
+           UA default), not from how many characters are actually typed
+           into it. So instead of shrink-to-fit, the three [data-digits]
+           tiers below give it an explicit width approximating how wide
+           the value text renders at that digit count and font-size, and
+           right:0 (no left) anchors it the same way the value is
+           anchored, so the two line up rather than the input's edge
+           landing wherever an unstyled default width happens to put it. */
         .game-pokecoins-input {
             position: absolute;
             top: 50%;
-            left: 40%;
             right: 0;
+            width: 55px;
             transform: translateY(-50%);
             font-size: 60pt;
             font-weight: bold;
@@ -2167,10 +2185,12 @@
 
         .game-pokecoins-input[data-digits="2"] {
             font-size: 60pt;
+            width: 95px;
         }
 
         .game-pokecoins-input[data-digits="3"] {
             font-size: 45pt;
+            width: 105px;
         }
 
         /* ---- Guest Saves (see GAME_PANEL_NOTES.md's Guest Saves notes)
