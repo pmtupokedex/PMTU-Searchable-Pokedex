@@ -2912,6 +2912,23 @@
             height: var(--matchup-cell-size);
             background-color: #fff;
             background-image: var(--matchup-header-bg-image-a), var(--matchup-header-bg-image-b);
+            /* Own compositor layer -- same reasoning as body::before's
+               will-change further up: a sticky element with a multi-
+               layer blended background otherwise gets left to composite
+               reactively as it scrolls back into its stuck position,
+               which is what showed up as a brief white flicker on mobile
+               right at the edge of a horizontal scroll (see
+               .game-matchup-chart-cell.pinned's own copy of this same
+               fix, and toggleMatchupChartPin()'s comment on why up to
+               two data columns can end up sticky alongside this one).
+               Permanent rather than class-toggled the way the four
+               drawer panels' own will-change is (see .drawer-gpu-
+               promoted) -- unlike those, every row header here is
+               display:none (and so entirely un-rendered, costing
+               nothing) whenever the Full Type Chart section itself is
+               collapsed, so there's no standing cost this needs to be
+               toggled around. */
+            will-change: transform;
             /* -a is treated as a single tall strip covering every row
                header stacked together (--matchup-type-count is set by
                buildMatchupChartTable(), since that's the one place that
@@ -3010,6 +3027,11 @@
             background-image: var(--matchup-header-bg-image-b);
             background-size: 240px 240px;
             background-repeat: repeat;
+            /* Same reasoning as .game-matchup-chart-row-header's own
+               will-change further up -- sticky on both axes at once, so
+               if anything in this table is going to show a repaint
+               flicker during scroll, this is a likely candidate too. */
+            will-change: transform;
         }
 
         /* -a used to live directly on .game-matchup-chart-corner's own
@@ -3068,6 +3090,12 @@
             background-position-x: var(--matchup-col-offset, 0);
             background-position-y: center;
             background-repeat: repeat;
+            /* Same reasoning as .game-matchup-chart-row-header's own
+               will-change -- sticky to the top edge, so this is what's
+               actually crossing the viewport during a *horizontal*
+               scroll specifically (the row header/corner are only ever
+               tested by a vertical one). */
+            will-change: transform;
             cursor: pointer;
             user-select: none;
             -webkit-user-select: none;
@@ -3169,12 +3197,32 @@
            one continuous strip top-to-bottom instead of each cell just
            showing the same unshifted slice 18 times over. Same offset
            for both layers for the same phase-alignment reason as the
-           row header's own version of this. */
+           row header's own version of this.
+           background-size/background-position-x window the image across
+           however many columns are actually pinned right now (see
+           --matchup-pinned-col-count/--matchup-cell-pin-index's own
+           comment in applyMatchupChartPins()) instead of one cell width
+           each -- with two columns pinned, this is what makes the second
+           column's slice pick up exactly where the first one's left off,
+           reading as one shared texture spanning both instead of each
+           column tiling its own copy from the start. */
         .game-matchup-chart-cell.pinned {
             position: sticky;
             z-index: 0;
+            /* Same reasoning as .game-matchup-chart-row-header's own
+               will-change further up -- these are the cells actually
+               matching "the last column or two" flickering on a
+               horizontal scroll (up to two columns get pinned at once,
+               per toggleMatchupChartPin()'s cap). No standing-cost
+               concern here either, same as that rule, but for a
+               different reason: .pinned itself is only ever applied to
+               a column someone's actually chosen to freeze (see
+               applyMatchupChartPins()), so an unpinned cell never
+               matches this rule at all, let alone pays for the layer. */
+            will-change: transform;
 		background-image: var(--matchup-cell-bg-image-c), var(--matchup-cell-bg-image-b);
-		background-size: var(--matchup-cell-size) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)), 240px 240px;
+		background-size: calc(var(--matchup-cell-size) * var(--matchup-pinned-col-count, 1)) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)), 240px 240px;
+		background-position-x: calc(var(--matchup-cell-size) * var(--matchup-cell-pin-index, 0) * -1), calc(var(--matchup-cell-size) * var(--matchup-cell-pin-index, 0) * -1);
 		background-position-y: var(--matchup-row-offset, 0), var(--matchup-row-offset, 0);
 		background-repeat: no-repeat, repeat;
 		background-blend-mode: multiply;
@@ -8453,6 +8501,7 @@
                 closeSoundsPanel();
                 closeDiscordPanel();
                 beginPanelAnim();
+                preloadMatchupChartBackgrounds();
                 if (desktopFilterQuery.matches) {
                     document.body.classList.add('game-open');
                 } else {
@@ -10359,6 +10408,55 @@
             return `<div class="game-matchup-chart-col-header-inner">${icon}</div>`;
         }
 
+        // Prefetches (and, where supported, fully decodes) the Full Type
+        // Chart's own background images ahead of time -- called once
+        // from openGamePanel() below, well before the section is ever
+        // actually expanded (it starts collapsed, and Type Matchup is a
+        // couple taps deeper still), rather than left for the browser to
+        // discover reactively the moment setMatchupChartCollapsed(false)
+        // first reveals it. Two of these four URLs (the -b tile and the
+        // -c pinned-cell image) already get fetched for other always-
+        // visible elements elsewhere in the doc (.game-panel-bg and
+        // body::before respectively) by the time the Game panel's even
+        // open, so those two are effectively free re-requests here (the
+        // browser just serves them from its own cache) -- but the other
+        // two (the main tbody art and the header strip art) are unique
+        // to this table and were genuinely only ever being fetched for
+        // the first time right as the section opened, which is what
+        // showed up as a brief flash of plain white table underneath
+        // before that art caught up (same root cause as body::before's
+        // own will-change comment describes, just from a cold network
+        // fetch this time instead of a layer-promotion delay, since this
+        // section is display:none -- and therefore not even in the
+        // render tree -- until opened, unlike body::before which is
+        // always rendered). will-change can't help with that kind of
+        // delay (there's no box to promote ahead of time while
+        // display:none), so this preload is the fix, not that.
+        // img.decode() (awaited, but errors swallowed) pushes the actual
+        // bitmap decode to happen now too, off the main thread, rather
+        // than just the network fetch -- without it, a large cover-sized
+        // image can still cost a visible frame or two to rasterize on
+        // first paint even once it's fully downloaded and sitting in
+        // cache. Guarded by a flag since openGamePanel() can run more
+        // than once per session (closing and reopening the panel) and
+        // there's nothing more to gain from asking twice.
+        let matchupChartBackgroundsPreloaded = false;
+        function preloadMatchupChartBackgrounds() {
+            if (matchupChartBackgroundsPreloaded) return;
+            matchupChartBackgroundsPreloaded = true;
+            const urls = [
+                'https://dl.dropboxusercontent.com/scl/fi/wgzpjhghreerhmmum0ii3/Pokedex-Background-6.png?rlkey=sia0nfiyy8s40njo3djcx1ddo&st=ltggri53&dl=1', // --matchup-cell-bg-image-a
+                'https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1', // --matchup-cell-bg-image-b / --matchup-header-bg-image-b
+                'https://dl.dropboxusercontent.com/scl/fi/ofvdv0ay6z4wufs1nrspd/Pokedex-Background-3.png?rlkey=kwi0c2v6iypgmvryqebwm2cgx&st=bddxb3ed&dl=1', // --matchup-cell-bg-image-c
+                'https://dl.dropboxusercontent.com/scl/fi/i5ailfuuue0yvimiunlmg/Pokedex-Background-4.png?rlkey=rf6sl73lckbwdvhxv2tr5hpim&st=qjjrmunt&dl=1', // --matchup-header-bg-image-a
+            ];
+            urls.forEach(url => {
+                const img = new Image();
+                img.src = url;
+                if (img.decode) img.decode().catch(() => {});
+            });
+        }
+
         // Built once at load (see the bottom of this script) -- the
         // chart's contents (which 18 types exist, and every pairing's
         // base effectiveness) never change; only the 8 immune-pair cells'
@@ -10598,6 +10696,26 @@
                 table.querySelectorAll(`.game-matchup-chart-cell[data-def="${type}"]`).forEach(cell => {
                     cell.classList.toggle('pinned', isPinned);
                     cell.style.left = offset;
+                    // Same idea as --matchup-col-offset above, just
+                    // scoped to only the pinned columns rather than all
+                    // of TYPE_LIST -- there's no shared background
+                    // across an unpinned cell and its neighbors (only
+                    // .pinned cells paint anything), so windowing
+                    // against the full 18-column width like the headers
+                    // do would leave two adjacent pinned columns (which
+                    // is all that's ever visually contiguous here) each
+                    // showing some arbitrary, usually non-adjacent slice
+                    // instead of two slices that actually continue into
+                    // each other. --matchup-pinned-col-count sizes that
+                    // shared window to how many columns are actually
+                    // pinned right now (1 or 2 -- see
+                    // toggleMatchupChartPin()'s own cap), so a single
+                    // pinned column isn't stretched across a two-column
+                    // window it doesn't have a neighbor to fill.
+                    if (isPinned) {
+                        cell.style.setProperty('--matchup-cell-pin-index', pinIndex);
+                        cell.style.setProperty('--matchup-pinned-col-count', orderedPins.length);
+                    }
                 });
             });
         }
