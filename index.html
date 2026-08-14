@@ -1968,10 +1968,11 @@
 
         /* Poké Coins -- see the HTML comment above #game-pokecoins-section
            for why this lives on the main screen instead of as a Tools
-           tile below. The two buttons on each side flank a small
-           icon+value "counter" in the middle, so add/subtract read as
-           symmetric (-5/-1 ... +1/+5) rather than all stacked one
-           direction. */
+           tile below. The two columns flank a larger icon+value
+           "counter" in the middle, each column stacking its ±1 button
+           above its ±5 button, so add/subtract still read as symmetric
+           (-1/-5 on the left, +1/+5 on the right) while keeping the more
+           frequently-tapped ±1 buttons closest to hand. */
         .game-pokecoins {
             margin-bottom: 15px;
         }
@@ -1979,50 +1980,157 @@
         .game-pokecoins-controls {
             display: flex;
             align-items: center;
-            justify-content: center;
+            justify-content: space-between;
             flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        /* Houses each side's ±1/±5 pair stacked vertically -- see the
+           HTML comment above for why ±1 sits above ±5. */
+        .game-pokecoins-col {
+            display: flex;
+            flex-direction: column;
             gap: 6px;
         }
 
-        .game-pokecoins-btn {
-            min-width: 46px;
+        .filter-btn.game-pokecoins-btn {
+            min-width: 60px;
             text-align: center;
-            font-weight: bold;
+            font-weight: bold; 
+		font-size: 25pt;
+		padding: 5px 0px;
+		margin: 0px;
         }
 
+        /* Matches .filter-btn.exclude's red (NOT logic) and the
+           Match: All override's green (AND logic) on the filter panel --
+           see those rules' own comments further up -- so subtract/add
+           read using the same red/green convention already established
+           elsewhere in the app, rather than introducing a third color
+           pairing of their own. Compounded with .filter-btn (rather than
+           standing alone as .game-pokecoins-btn-minus/-plus) so this
+           wins on specificity over .filter-btn's own base background
+           regardless of which rule happens to come first in the sheet --
+           the same reason .filter-btn.include/.filter-btn.exclude are
+           written as compound selectors further down. */
+        .filter-btn.game-pokecoins-btn-minus {
+            background-color: rgba(255, 77, 77, 0.70);
+            color: white;
+        }
+
+        .filter-btn.game-pokecoins-btn-plus {
+            background-color: rgba(40, 180, 99, 0.75);
+            color: white;
+        }
+	  
+	  .filter-btn.game-pokecoins-btn-bottom {
+	      border-radius: 5px 5px 20px 20px;
+	  }
+	  
+	  .filter-btn.game-pokecoins-btn-top {
+	      border-radius: 20px 20px 5px 5px;
+	  }
+
+        /* Fixed height (not width) now that its children (icon, value,
+           input) are all absolutely positioned against it -- their
+           percentages resolve against whatever width the counter
+           actually ends up with, so nothing here needs a hard-pinned
+           width the way it would for normal-flow content.
+           flex:0 1 <basis> keeps that width at ~30% of the panel
+           (floored at 180px so the fixed 100px icon has room) whenever
+           .game-pokecoins-controls has space to spare. The 30% here is
+           a percentage, not 30vw -- a percentage flex-basis resolves
+           against .game-pokecoins-controls' own width, which the panel
+           caps at 480px regardless of window size, whereas 30vw scales
+           straight off the browser window and blew well past the
+           panel's actual width on wide desktop windows. That mattered
+           even with shrink:1 already in place below, since flex-wrap
+           decides which items fit on a line using each item's basis
+           *before* shrinking is applied -- an oversized basis forced a
+           wrap even though the shrunk result would've fit fine.
+           shrink:1 (not 0) still lets it give ground below that basis on
+           narrow phones instead of holding firm and forcing the whole
+           row to wrap onto two lines, which is what a non-shrinking
+           counter plus two button columns add up wider than the panel
+           itself. min-width:120px is the floor on *that* shrinking --
+           enough to keep the icon and at least a sliver of the number
+           both visible -- past which wrapping is the lesser evil. */
         .game-pokecoins-counter {
-            display: flex;
-            align-items: center;
-            gap: 8px;
+            position: relative;
+            flex: 0 1 max(30%, 180px);
+            min-width: 120px;
+            height: 100px;
             margin: 0 6px;
         }
 
+        /* Positioned by its right edge rather than its left so that
+           edge -- not the icon's center or left side -- is what's
+           pinned at the 60% mark: right:40% places the icon's own right
+           edge at (100% - 40%) = 60% of .game-pokecoins-counter's width,
+           regardless of the icon's own 100px size. Vertically centered
+           via top:50%/translateY rather than a margin, since the
+           counter's height is fixed but the icon isn't its only child
+           sharing that space. */
         .game-pokecoins-icon {
-            width: 30px;
-            height: 30px;
+            position: absolute;
+            top: 50%;
+            right: 40%;
+            transform: translateY(-50%);
+            width: 100px;
+            height: 100px;
             object-fit: contain;
         }
 
-        /* Tap target for entering a custom value (see
-           beginEditingPokeCoins() in the script) -- swapped for
-           .game-pokecoins-input rather than becoming one itself, so the
-           readout can stay centered/bold-and-outlined like every other
-           number in this panel right up until it's actually being
-           edited. */
+        /* Overlaid on top of the icon (both value and input come after
+           it in the DOM, so they already paint above it in the shared
+           stacking context without needing an explicit z-index) rather
+           than sitting beside it. left:50% pins its own left edge -- not
+           its center -- to the halfway mark, and right:0 stretches it the
+           rest of the way to .game-pokecoins-counter's own right edge so
+           it has a real width to left-align text-align:left within,
+           instead of shrink-wrapping around the text the way a plain
+           left offset with no right would. The [data-digits] rules below
+           (kept via applyPokeCoinsDigitSizing() in the script, since
+           0-999 only ever needs one of three fixed tiers rather than a
+           live measure-and-shrink loop) keep three digits legible rather
+           than clipped inside that fixed half-width box. */
         .game-pokecoins-value {
-            font-size: 26px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            right: 0;
+            transform: translateY(-50%);
+            font-size: 60pt;
             font-weight: bold;
             color: #FFF;
             text-shadow:
                 -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
                 -1px  0   0 black,                 1px  0   0 black,
                 -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
-            min-width: 36px;
+            white-space: nowrap;
             text-align: center;
             cursor: pointer;
             user-select: none;
             border-radius: 8px;
             padding: 2px 8px;
+		width: 110px;
+        }
+
+        /* Same three tiers as the input's own [data-digits] rules further
+           down -- see applyPokeCoinsDigitSizing() in the script for how
+           these get set, and the .game-pokecoins-counter comment above
+           for why 0-999 only ever needs three. Compounded with the base
+           class (rather than [data-digits] alone) purely so this reads
+           consistently with how the red/green button colors above solve
+           the exact same "which same-specificity rule wins" problem --
+           an attribute selector already out-specifies a bare class either
+           way, so it's not load-bearing here the way it is there. */
+        .game-pokecoins-value[data-digits="2"] {
+            font-size: 60pt;
+        }
+
+        .game-pokecoins-value[data-digits="3"] {
+            font-size: 45pt;
         }
 
         .game-pokecoins-value:hover {
@@ -2038,16 +2146,34 @@
             cursor: not-allowed;
         }
 
+        /* Same overlay positioning as .game-pokecoins-value just above --
+           this swaps in for that span in place (see
+           beginEditingPokeCoins()), so it needs to land in exactly the
+           same box rather than its own layout. */
         .game-pokecoins-input {
-            font-size: 20px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            right: 0;
+            transform: translateY(-50%);
+            font-size: 60pt;
             font-weight: bold;
             text-align: center;
-            width: 64px;
             padding: 4px 6px;
             border-radius: 8px;
             border: 1px solid #ccc;
             font-family: inherit;
             box-sizing: border-box;
+		background-color: rgba(255, 255, 255, 0.5);
+		width: 110px;
+        }
+
+        .game-pokecoins-input[data-digits="2"] {
+            font-size: 60pt;
+        }
+
+        .game-pokecoins-input[data-digits="3"] {
+            font-size: 45pt;
         }
 
         /* ---- Guest Saves (see GAME_PANEL_NOTES.md's Guest Saves notes)
@@ -6538,15 +6664,19 @@
                 <div class="game-section-header" id="game-pokecoins-header">Poké Coins</div>
                 <div class="game-pokecoins" id="game-pokecoins-section">
                     <div class="game-pokecoins-controls">
-                        <button class="filter-btn game-pokecoins-btn" data-pokecoins-delta="-5" aria-label="Subtract 5 Poké Coins">-5</button>
-                        <button class="filter-btn game-pokecoins-btn" data-pokecoins-delta="-1" aria-label="Subtract 1 Poké Coin">-1</button>
+                        <div class="game-pokecoins-col game-pokecoins-col-minus">
+                            <button class="filter-btn game-pokecoins-btn game-pokecoins-btn-minus game-pokecoins-btn-top" data-pokecoins-delta="-1" aria-label="Subtract 1 Poké Coin">-1</button>
+                            <button class="filter-btn game-pokecoins-btn game-pokecoins-btn-minus game-pokecoins-btn-bottom" data-pokecoins-delta="-5" aria-label="Subtract 5 Poké Coins">-5</button>
+                        </div>
                         <span class="game-pokecoins-counter">
                             <img class="game-pokecoins-icon" src="https://dl.dropboxusercontent.com/scl/fi/o63sd5nvfxkf6xj3yokv9/pokecoin-sm.png?rlkey=u9o5o0sz8trg9lnb1zbyeftmm&st=oso6uy1c&dl=1" alt="Poké Coin">
                             <span class="game-pokecoins-value" id="game-pokecoins-value" tabindex="0" role="button" aria-label="Poké Coin total, tap to enter a custom value">3</span>
-                            <input type="text" inputmode="numeric" pattern="[0-9]*" class="game-pokecoins-input" id="game-pokecoins-input" style="display: none;" aria-label="Custom Poké Coin total">
+                            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" class="game-pokecoins-input" id="game-pokecoins-input" style="display: none;" aria-label="Custom Poké Coin total">
                         </span>
-                        <button class="filter-btn game-pokecoins-btn" data-pokecoins-delta="1" aria-label="Add 1 Poké Coin">+1</button>
-                        <button class="filter-btn game-pokecoins-btn" data-pokecoins-delta="5" aria-label="Add 5 Poké Coins">+5</button>
+                        <div class="game-pokecoins-col game-pokecoins-col-plus">
+                            <button class="filter-btn game-pokecoins-btn game-pokecoins-btn-plus game-pokecoins-btn-top" data-pokecoins-delta="1" aria-label="Add 1 Poké Coin">+1</button>
+                            <button class="filter-btn game-pokecoins-btn game-pokecoins-btn-plus game-pokecoins-btn-bottom" data-pokecoins-delta="5" aria-label="Add 5 Poké Coins">+5</button>
+                        </div>
                     </div>
                 </div>
 
@@ -10805,6 +10935,20 @@
             return gameSaveDefaults.pokeCoinsEnabled === 'yes';
         }
 
+        // Keeps the counter's number legible as it grows into the fixed
+        // width capped in CSS (see .game-pokecoins-counter's own
+        // comment) -- 0-999 only ever needs one of three digit-widths,
+        // so a small set of fixed font-size tiers (the [data-digits]
+        // rules on .game-pokecoins-value/.game-pokecoins-input) covers
+        // every case without needing a live measure-and-shrink loop.
+        // Shared by the value span and the edit input so both size the
+        // same way regardless of which one's currently showing.
+        function applyPokeCoinsDigitSizing(el, text) {
+            if (!el) return;
+            const digitCount = String(text).replace(/[^0-9]/g, '').length || 1;
+            el.dataset.digits = String(Math.min(digitCount, 3));
+        }
+
         function renderPokeCoins() {
             const headerEl = document.getElementById('game-pokecoins-header');
             const sectionEl = document.getElementById('game-pokecoins-section');
@@ -10819,7 +10963,10 @@
             const data = getActiveSaveData();
             const value = typeof data.pokeCoins === 'number' ? data.pokeCoins : 3;
             const valueEl = document.getElementById('game-pokecoins-value');
-            if (valueEl && !pokeCoinsEditing) valueEl.textContent = value;
+            if (valueEl && !pokeCoinsEditing) {
+                valueEl.textContent = value;
+                applyPokeCoinsDigitSizing(valueEl, value);
+            }
             const readOnly = isActiveSaveReadOnly();
             document.querySelectorAll('.game-pokecoins-btn').forEach(btn => {
                 btn.disabled = readOnly;
@@ -10836,7 +10983,7 @@
             if (isActiveSaveReadOnly()) return;
             const data = getActiveSaveData();
             const parsed = Math.round(Number(value));
-            data.pokeCoins = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+            data.pokeCoins = Number.isFinite(parsed) ? Math.min(999, Math.max(0, parsed)) : 0;
             afterPokeCoinsChange();
         }
 
@@ -10877,6 +11024,7 @@
             if (!valueEl || !inputEl) return;
             pokeCoinsEditing = true;
             inputEl.value = valueEl.textContent;
+            applyPokeCoinsDigitSizing(inputEl, inputEl.value);
             valueEl.style.display = 'none';
             inputEl.style.display = '';
             inputEl.focus();
@@ -12345,6 +12493,9 @@
                 const end = e.target.selectionEnd;
                 e.target.value = e.target.value.toUpperCase();
                 e.target.setSelectionRange(start, end);
+            }
+            if (e.target.id === 'game-pokecoins-input') {
+                applyPokeCoinsDigitSizing(e.target, e.target.value);
             }
         });
 
