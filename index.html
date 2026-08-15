@@ -3000,48 +3000,35 @@
             border: 1px solid #ccc;
             border-radius: 8px;
             margin-top: 5px;
-            /* Legacy iOS momentum-scrolling hint -- redundant on current
-               Safari (which momentum-scrolls any overflow:auto container
-               by default) but still respected as a signal to give this
-               container its own compositing layer, which is cheap
-               insurance against the sticky descendants below needing to
-               fall back to the page's main scroller for hit-testing/
-               repaint during a fast drag. */
-            -webkit-overflow-scrolling: touch;
         }
 
-        /* Single layer now, not the two-layer multiply-blend treatment
-           .game-panel-bg uses elsewhere -- background-blend-mode is a
-           genuinely expensive per-pixel operation on mobile GPUs, and
-           this tbody background is exactly what's newly exposed as you
-           scroll (in either direction): Safari paints large scrollable
-           content in tiles just ahead of the viewport, and if a tile's
-           paint (here, computing the multiply blend fresh for that
-           tile) can't finish before the tile scrolls into view, it
-           briefly shows blank/white until it catches up. That's what
-           was actually behind the mobile-only, fast-scroll-only flicker
-           (see the "chat this was chased down in" for how a specific,
-           reproducible symptom -- a white flash on the leading edge,
-           worse the faster you scroll -- pointed at paint cost rather
-           than the sticky-positioning/compositing angle the will-change
-           rules elsewhere in this table were originally added for).
-           -a kept over -b since it's the dominant, larger-scale texture;
-           tbody's own box is exactly (table width) x (row count *
-           --matchup-cell-size) once buildMatchupChartTable() sets an
-           explicit table width, so this still reads as one shared
-           background across the whole grid, not tiled per cell. The
-           row-header column's own opaque background sits on top and
-           simply covers the leftmost --matchup-row-header-width slice
-           of this. will-change here is the non-sticky counterpart to
-           the fixes on the row header/corner/column headers/pinned
-           cells above (see any of theirs) -- same root cause as
-           #viewer-frame's own already-established will-change further
-           down (a large background scrolling on mobile), just via
-           ordinary horizontal scroll here instead of window.scrollBy(). */
+        /* Same two-layer multiply-blend treatment as .game-panel-bg
+           elsewhere, just applied directly to tbody instead of a separate
+           absolutely-positioned div behind it -- tbody's own box is
+           exactly (table width) x (row count * --matchup-cell-size) once
+           buildMatchupChartTable() sets an explicit table width, so this
+           still reads as one shared background across the whole grid, not
+           tiled per cell. No windowing math needed here the way the
+           sticky headers below require -- tbody isn't sticky, so it just
+           scrolls normally along with the rest of the table in both
+           directions, same as .game-panel-bg's own background does with
+           its panel. The row-header column's own opaque background sits
+           on top and simply covers the leftmost --matchup-row-header-
+           width slice of this.
+           will-change here is the non-sticky counterpart to the fixes on
+           the row header/corner/column headers/pinned cells above (see
+           any of theirs) -- same root cause as #viewer-frame's own
+           already-established will-change further down (a large multi-
+           layer blended background scrolling on mobile), just via
+           ordinary horizontal scroll here instead of window.scrollBy().
+           This turned out to be the one actually behind the reported
+           mobile flicker -- the sticky elements' own promotion alone
+           fixed the desktop open-flash, but not this. */
         .game-matchup-chart-table tbody {
-            background-image: var(--matchup-cell-bg-image-a);
-            background-size: cover;
-            background-repeat: no-repeat;
+            background-image: var(--matchup-cell-bg-image-a), var(--matchup-cell-bg-image-b);
+            background-size: cover, 240px 240px;
+            background-repeat: no-repeat, repeat;
+            background-blend-mode: multiply;
             will-change: transform;
         }
 
@@ -3077,18 +3064,23 @@
             width: var(--matchup-row-header-width);
             height: var(--matchup-cell-size);
             background-color: #fff;
-            background-image: var(--matchup-header-bg-image-a);
-            /* Own compositor layer so this composites as a translated,
-               already-rasterized layer while scrolling rather than
-               needing to repaint every frame as it tracks back into its
-               stuck position -- same reasoning as body::before's
-               will-change further up. Permanent rather than
-               class-toggled the way the four drawer panels' own
-               will-change is (see .drawer-gpu-promoted) -- unlike
-               those, every row header here is display:none (and so
-               entirely un-rendered, costing nothing) whenever the Full
-               Type Chart section itself is collapsed, so there's no
-               standing cost this needs to be toggled around. */
+            background-image: var(--matchup-header-bg-image-a), var(--matchup-header-bg-image-b);
+            /* Own compositor layer -- same reasoning as body::before's
+               will-change further up: a sticky element with a multi-
+               layer blended background otherwise gets left to composite
+               reactively as it scrolls back into its stuck position,
+               which is what showed up as a brief white flicker on mobile
+               right at the edge of a horizontal scroll (see
+               .game-matchup-chart-cell.pinned's own copy of this same
+               fix, and toggleMatchupChartPin()'s comment on why up to
+               two data columns can end up sticky alongside this one).
+               Permanent rather than class-toggled the way the four
+               drawer panels' own will-change is (see .drawer-gpu-
+               promoted) -- unlike those, every row header here is
+               display:none (and so entirely un-rendered, costing
+               nothing) whenever the Full Type Chart section itself is
+               collapsed, so there's no standing cost this needs to be
+               toggled around. */
             will-change: transform;
             /* -a is treated as a single tall strip covering every row
                header stacked together (--matchup-type-count is set by
@@ -3099,13 +3091,16 @@
                since each row header is sticky and paints this background
                itself rather than inheriting it from some non-sticky
                ancestor, which would just scroll out from underneath it.
-               Single layer only, no -b/blend-mode -- see the mobile
-               white-flash writeup on .game-matchup-chart-table tbody's
-               own background-image for why a live per-pixel blend was
-               dropped from every background in this table, not just
-               tbody's. */
-            background-size: var(--matchup-row-header-width) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1));
-            background-repeat: no-repeat;
+               -b keeps its real 240px tile size rather than being
+               stretched into that same strip -- it's meant to repeat, not
+               window, and 240 divides evenly by --matchup-cell-size (30),
+               so using the same per-row offset as -a (set inline in
+               buildMatchupChartTable()) keeps its repeat phase lined up
+               from row to row with no visible seam, the same as -a's
+               slices adjoin cleanly. */
+            background-size: var(--matchup-row-header-width) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)), 240px 240px;
+            background-repeat: no-repeat, repeat;
+            background-blend-mode: multiply;
             /* Tappable to pick Move Type -- see
                selectMatchupChartMoveType() in the script. Same touch/
                select handling as .game-matchup-chart-col-header for the
@@ -3116,19 +3111,7 @@
             -webkit-user-select: none;
             -webkit-touch-callout: none;
             touch-action: manipulation;
-            /* No blur radius (unlike this doc's other box-shadows) --
-               position: sticky plus a blurred box-shadow can in
-               principle be a WebKit compositing-layer complication, so
-               this was the first thing tried against the mobile
-               fast-scroll flicker. Testing ruled it out as the actual
-               cause here (see .game-matchup-chart-table tbody's own
-               background-image comment for what the cause turned out to
-               be), but a 0-blur shadow is still marginally cheaper to
-               paint than a blurred one for no real visual cost, so it's
-               left as-is rather than reverted.
-               Same reasoning applies to .game-matchup-chart-col-header's
-               own copy of this below. */
-            box-shadow: 2px 2px 0 black;
+		box-shadow: 2px 2px 5px black;
         }
 
         .game-matchup-chart-row-header:hover {
@@ -3204,6 +3187,33 @@
             will-change: transform;
         }
 
+        /* -a used to live directly on .game-matchup-chart-corner's own
+           background-image list, multiplied against -b there via
+           background-blend-mode -- moved to its own pseudo-element so it
+           can be flipped independently of -b (background-blend-mode
+           blends layers within ONE element's own list; there's no way to
+           transform just one of them, so giving -a a separate element of
+           its own via mix-blend-mode -- which blends an element against
+           whatever's behind it, i.e. .game-matchup-chart-corner's own
+           background set above -- is what makes an independent flip
+           possible at all). See .game-matchup-chart-col-header-inner's own
+           comment for why this needs z-index: 1 there but not here --
+           corner has no content of its own to protect. */
+        .game-matchup-chart-corner::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            background-image: var(--matchup-header-bg-image-a);
+            background-size: calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)) var(--matchup-cell-size);
+            background-position-x: var(--matchup-col-offset, 0);
+            background-position-y: center;
+            background-repeat: no-repeat;
+            transform: scaleY(-1);
+            mix-blend-mode: multiply;
+            pointer-events: none;
+        }
+
         /* Frozen to the top edge unconditionally, same as the row header
            column is frozen left unconditionally -- .pinned below adds
            freezing to the left edge too, for up to two of these at a
@@ -3225,8 +3235,10 @@
             /* --matchup-col-offset is the one thing set inline per cell
                (both in buildMatchupChartTable() and, after reordering, in
                applyMatchupChartPins() -- see its own comment), rather than
-               a fixed value here, since every column header shares one
-               strip of -b and needs its own slice of it. */
+               background-position-x directly, since ::before below needs
+               that identical offset for its own windowed -a layer and a
+               shared custom property is a single source of truth for both
+               instead of two inline styles that could drift out of sync. */
             background-size: 240px 240px;
             background-position-x: var(--matchup-col-offset, 0);
             background-position-y: center;
@@ -3235,28 +3247,43 @@
                will-change -- sticky to the top edge, so this is what's
                actually crossing the viewport during a *horizontal*
                scroll specifically (the row header/corner are only ever
-               tested by a vertical one). This is also the element that
-               used to carry a ::before overlay blending in -a via
-               mix-blend-mode -- removed for the same reason as
-               .game-matchup-chart-table tbody's own background-image
-               (see its comment): mix-blend-mode recomputes against
-               whatever's visually behind the element on every paint,
-               rather than blending two layers of one static element the
-               way background-blend-mode does, making it the single most
-               expensive piece of paint in this table. Since up to 18 of
-               these are the elements actually entering the viewport
-               along the leading edge of a horizontal scroll -- exactly
-               matching the reported symptom -- this was the single
-               highest-value place to drop it. */
+               tested by a vertical one). */
             will-change: transform;
             cursor: pointer;
             user-select: none;
             -webkit-user-select: none;
             -webkit-touch-callout: none;
             touch-action: manipulation;
-            /* Same reasoning as .game-matchup-chart-row-header's own
-               0-blur box-shadow above. */
-            box-shadow: 2px 2px 0 black;
+		box-shadow: 2px 2px 5px black;
+        }
+
+        /* -a used to live directly on .game-matchup-chart-col-header's own
+           background-image list -- moved to its own pseudo-element for the
+           same reason as .game-matchup-chart-corner::before (see its
+           comment): flipping just one of two blended layers isn't possible
+           within a single element's own background-image list, only across
+           two elements via mix-blend-mode. Still windowed the same way -a
+           always has been here (one shared strip across every column
+           header, sliced via --matchup-col-offset), just flipped. z-index:
+           0 here plus z-index: 1 on .game-matchup-chart-col-header-inner
+           below is what keeps the actual icon painting above this pseudo-
+           element instead of underneath it -- without that, an absolutely
+           positioned ::before with no z-index of its own still stacks
+           above the inner div's static, non-positioned content by
+           default. */
+        .game-matchup-chart-col-header::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            background-image: var(--matchup-header-bg-image-a);
+            background-size: calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)) var(--matchup-cell-size);
+            background-position-x: var(--matchup-col-offset, 0);
+            background-position-y: center;
+            background-repeat: no-repeat;
+            transform: scaleY(-1);
+            mix-blend-mode: multiply;
+            pointer-events: none;
         }
 
         .game-matchup-chart-col-header:hover {
@@ -3346,14 +3373,12 @@
                applyMatchupChartPins()), so an unpinned cell never
                matches this rule at all, let alone pays for the layer. */
             will-change: transform;
-            /* Single layer (-c only), no -b/blend-mode -- see the mobile
-               white-flash writeup on .game-matchup-chart-table tbody's
-               own background-image for why. */
-            background-image: var(--matchup-cell-bg-image-c);
-            background-size: calc(var(--matchup-cell-size) * var(--matchup-pinned-col-count, 1)) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1));
-            background-position-x: calc(var(--matchup-cell-size) * var(--matchup-cell-pin-index, 0) * -1);
-            background-position-y: var(--matchup-row-offset, 0);
-            background-repeat: no-repeat;
+		background-image: var(--matchup-cell-bg-image-c), var(--matchup-cell-bg-image-b);
+		background-size: calc(var(--matchup-cell-size) * var(--matchup-pinned-col-count, 1)) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)), 240px 240px;
+		background-position-x: calc(var(--matchup-cell-size) * var(--matchup-cell-pin-index, 0) * -1), calc(var(--matchup-cell-size) * var(--matchup-cell-pin-index, 0) * -1);
+		background-position-y: var(--matchup-row-offset, 0), var(--matchup-row-offset, 0);
+		background-repeat: no-repeat, repeat;
+		background-blend-mode: multiply;
         }
 
         #filter-top {
