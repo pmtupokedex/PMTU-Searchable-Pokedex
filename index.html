@@ -2950,27 +2950,78 @@
            header-width differs from it, since row headers keep their
            type name (see the chat this was decided in) and need real
            room for icon + text that a single square cell doesn't. */
+        /* Positioned ancestor for .game-matchup-chart-bg below -- that
+           div is a sibling of .game-matchup-chart-scroll, anchored
+           behind it rather than living inside the scrollable table, so
+           this is the nearest shared parent both can hang off of.
+           --matchup-cell-bg-image-a/-b live here now (not on
+           .game-matchup-chart-table below) for the same reason: a plain
+           table selector's custom properties don't reach a sibling div,
+           only its own descendants, so the pair needed a home visible to
+           both consumers. Custom properties inherit downward same as
+           before, so .game-matchup-chart-table still sees them without
+           having to redeclare anything. */
+        #game-matchup-chart-section {
+            position: relative;
+            --matchup-cell-bg-image-a: url("https://dl.dropboxusercontent.com/scl/fi/wgzpjhghreerhmmum0ii3/Pokedex-Background-6.png?rlkey=sia0nfiyy8s40njo3djcx1ddo&st=ltggri53&dl=1");
+            --matchup-cell-bg-image-b: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
+        }
+
+        /* The non-pinned data cells' background, moved off tbody (see
+           that rule's old comment, now gone) and onto its own layer that
+           sits behind the whole scroll box instead of inside it. Because
+           this div is a sibling of .game-matchup-chart-scroll rather
+           than a descendant, it's completely unaffected by that
+           element's own scrolling in either direction -- exactly the
+           trade being made here: the two-layer texture reads as one
+           fixed backdrop showing through the (now transparent) cells as
+           they scroll over it, rather than a texture that scrolls along
+           with the cells the way tbody's own copy used to. Sized via
+           inset: 0 off #game-matchup-chart-section's own box, which
+           wraps .game-matchup-chart-scroll snugly with no extra
+           padding/siblings, so it lines up with the scroll box without
+           needing to duplicate that box's own dimensions here. border-
+           radius mirrors .game-matchup-chart-scroll's own 8px so the
+           rounded corners still read as one shape with nothing square
+           peeking out from behind them. z-index: -1 (rather than just
+           relying on DOM order) explicitly pins this behind
+           .game-matchup-chart-scroll's own un-positioned, z-index: auto
+           box within this shared stacking context -- same convention as
+           .game-panel-bg/.sounds-panel-bg elsewhere in the doc. */
+        .game-matchup-chart-bg {
+            position: absolute;
+            inset: 0;
+            z-index: -1;
+            border-radius: 8px;
+            background-image: var(--matchup-cell-bg-image-a), var(--matchup-cell-bg-image-b);
+            background-size: cover, 240px 240px;
+            background-repeat: no-repeat, repeat;
+            background-blend-mode: multiply;
+            pointer-events: none;
+        }
+
         .game-matchup-chart-table {
             --matchup-cell-size: 30px;
             --matchup-row-header-width: 105px;
-            /* Mirrors the two-layer multiply-blend background pattern
-               used elsewhere in the doc (see .game-panel-bg above, whose
-               URLs these default to, since that's the panel this table
-               actually lives inside) rather than a single flat image --
-               an -a layer (the big textured image) and a -b layer (the
-               240px repeating pattern) combined with background-blend-
-               mode: multiply. Swap any of the four to a different url()
-               independently to give the cells and the headers their own
-               art instead of reusing .game-panel-bg's. */
-            --matchup-cell-bg-image-a: url("https://dl.dropboxusercontent.com/scl/fi/wgzpjhghreerhmmum0ii3/Pokedex-Background-6.png?rlkey=sia0nfiyy8s40njo3djcx1ddo&st=ltggri53&dl=1");
-            --matchup-cell-bg-image-b: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
+            /* -a/-b used to live here too (see .game-matchup-chart-bg's
+               own comment for where and why they moved) -- -c and the
+               header pair stay put since pinned cells and header cells
+               are still ordinary table descendants, not pulled out onto
+               their own layer. */
 		--matchup-cell-bg-image-c: url("https://dl.dropboxusercontent.com/scl/fi/ofvdv0ay6z4wufs1nrspd/Pokedex-Background-3.png?rlkey=kwi0c2v6iypgmvryqebwm2cgx&st=bddxb3ed&dl=1");
             --matchup-header-bg-image-a: url("https://dl.dropboxusercontent.com/scl/fi/i5ailfuuue0yvimiunlmg/Pokedex-Background-4.png?rlkey=rf6sl73lckbwdvhxv2tr5hpim&st=qjjrmunt&dl=1");
             --matchup-header-bg-image-b: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
             table-layout: fixed;
             border-collapse: separate;
             border-spacing: 0;
-            background: #fff;
+            /* Was #fff -- now transparent so ordinary (non-pinned) data
+               cells, which paint no background of their own, let
+               .game-matchup-chart-bg show through from behind instead of
+               being blocked by an opaque table background. Row header/
+               corner/column headers/pinned cells are unaffected -- each
+               of those already paints its own opaque background on top,
+               same as before. */
+            background: transparent;
             /* Not border-collapse: collapse -- a well-known combination
                with position: sticky that drops or misrenders cell borders
                in several browsers once a cell actually becomes stuck.
@@ -3002,35 +3053,15 @@
             margin-top: 5px;
         }
 
-        /* Same two-layer multiply-blend treatment as .game-panel-bg
-           elsewhere, just applied directly to tbody instead of a separate
-           absolutely-positioned div behind it -- tbody's own box is
-           exactly (table width) x (row count * --matchup-cell-size) once
-           buildMatchupChartTable() sets an explicit table width, so this
-           still reads as one shared background across the whole grid, not
-           tiled per cell. No windowing math needed here the way the
-           sticky headers below require -- tbody isn't sticky, so it just
-           scrolls normally along with the rest of the table in both
-           directions, same as .game-panel-bg's own background does with
-           its panel. The row-header column's own opaque background sits
-           on top and simply covers the leftmost --matchup-row-header-
-           width slice of this.
-           will-change here is the non-sticky counterpart to the fixes on
-           the row header/corner/column headers/pinned cells above (see
-           any of theirs) -- same root cause as #viewer-frame's own
-           already-established will-change further down (a large multi-
-           layer blended background scrolling on mobile), just via
-           ordinary horizontal scroll here instead of window.scrollBy().
-           This turned out to be the one actually behind the reported
-           mobile flicker -- the sticky elements' own promotion alone
-           fixed the desktop open-flash, but not this. */
-        .game-matchup-chart-table tbody {
-            background-image: var(--matchup-cell-bg-image-a), var(--matchup-cell-bg-image-b);
-            background-size: cover, 240px 240px;
-            background-repeat: no-repeat, repeat;
-            background-blend-mode: multiply;
-            will-change: transform;
-        }
+        /* tbody used to carry the two-layer multiply-blend background
+           itself (see .game-matchup-chart-bg's own comment, up with
+           #game-matchup-chart-section, for where that moved and why) --
+           now that the texture lives on a fixed layer behind the whole
+           scroll box instead of scrolling with tbody's own content,
+           there's nothing left for this rule to paint, and the mobile-
+           flicker will-change that used to sit here went with it: with
+           no per-scroll background repaint happening on tbody anymore,
+           there's no longer a compositor cost here to promote around. */
 
         .game-matchup-chart-table th,
         .game-matchup-chart-table td {
@@ -6793,6 +6824,7 @@
 
                 <div class="game-section-header game-collapsible-header collapsed" id="game-matchup-chart-header">Full Type Chart</div>
                 <div id="game-matchup-chart-section" style="display: none;">
+                    <div class="game-matchup-chart-bg"></div>
                     <div class="game-matchup-chart-scroll" id="game-matchup-chart-scroll">
                         <table class="game-matchup-chart-table" id="game-matchup-chart-table"></table>
                     </div>
