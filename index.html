@@ -2994,6 +2994,18 @@
             --matchup-row-header-width: 105px;
             --matchup-header-bg-image-a: url("https://dl.dropboxusercontent.com/scl/fi/i5ailfuuue0yvimiunlmg/Pokedex-Background-4.png?rlkey=rf6sl73lckbwdvhxv2tr5hpim&st=qjjrmunt&dl=1");
             --matchup-header-bg-image-b: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
+            /* --matchup-cell-size moved up here too -- .game-matchup-
+               chart-bg::before's own background-size calc() needs it,
+               same problem as the trio above: the table's own copy of
+               this custom property isn't visible to a sibling. This one
+               bit harder than a missed url() would have, though -- an
+               unresolvable var() inside a calc() doesn't just drop that
+               one value, it invalidates the whole background-size
+               property, which falls back to its initial auto (i.e. the
+               image at its own native resolution) rather than anything
+               close to 30px. That's what the oversized strip actually
+               was: not a wrong scale, but no scale at all. */
+            --matchup-cell-size: 30px;
         }
 
         /* The non-pinned data cells' background, moved off tbody (see
@@ -3062,15 +3074,38 @@
            colors only, no images -- so any fix living on the scrollbar
            couldn't render the same way in both), it's extending the
            backdrop that already sits behind everything, scrollbar gutter
-           included, so the fix is identical in every browser. Reuses
-           the row header's own two-layer texture (not a flat color)
-           so the strip actually reads as a continuation of that column
-           rather than a different-looking patch. Same var(--matchup-
-           row-header-width) the row header itself is sized off, so a
-           change to one keeps both in sync. Only the left corners get
-           the shared border-radius -- the right edge is an intentional
-           straight seam against the blue, same as the row header's own
-           right edge already reads against the data columns above it. */
+           included, so the fix is identical in every browser.
+
+           background-size/-position-y deliberately mirror .game-matchup-
+           chart-row-header's own copy of this exact texture (see that
+           rule's comment) rather than a plain background-size: cover --
+           cover crops/scales independently of the real row-header cells'
+           own windowed-strip technique, which is what showed up as a
+           visible seam right at the boundary where the real sticky
+           column ends and this strip begins: two different renderings
+           of the same source image meeting mid-pattern. Using the same
+           size + the same var(--matchup-cell-size) vertical shift (this
+           box's own top sits one row above where the real header
+           column's first row starts, since it spans the header row too,
+           not just the tbody rows) makes this strip's copy the same
+           pixels at the same phase, so it reads as one continuous
+           texture instead of two. Past the real header stack's own
+           height the -a image simply runs out (no-repeat), leaving
+           background-color showing through -- fine, since that's only
+           ever the sliver actually inside the scrollbar gutter.
+
+           box-shadow mirrors the real row header's own `2px 2px 5px
+           black` (see that rule) so the right edge keeps casting the
+           same soft shadow into the data area all the way down, instead
+           of stopping dead where the real header cells end -- y-offset
+           dropped to 0 since, unlike an individual row header cell,
+           there's nothing below this box's own bottom edge for a
+           downward shadow to read against. Sits behind everything
+           already (inherited from .game-matchup-chart-bg's own
+           z-index: -1), so this only ever becomes visible where nothing
+           opaque is already painted on top of it -- i.e. exactly the
+           gutter strip this rule exists for, not the real header column
+           itself, which already has its own per-cell shadow. */
         .game-matchup-chart-bg::before {
             content: '';
             position: absolute;
@@ -3079,19 +3114,22 @@
             border-radius: 8px 0 0 8px;
             background-color: #fff;
             background-image: var(--matchup-header-bg-image-a), var(--matchup-header-bg-image-b);
-            background-size: cover, 240px 240px;
+            background-size: var(--matchup-row-header-width) calc(var(--matchup-cell-size) * var(--matchup-type-count, 1)), 240px 240px;
+            background-position-y: calc(var(--matchup-cell-size) + 12px), calc(var(--matchup-cell-size) + 1px);
             background-repeat: no-repeat, repeat;
             background-blend-mode: multiply;
+            box-shadow: 2px -2px 5px black;
+            margin-left: 1px;
+            margin-top: 7%;
+            height: 95%;
         }
 
         .game-matchup-chart-table {
-            --matchup-cell-size: 30px;
-            /* --matchup-row-header-width/-a/-b (cell) all used to live
-               here too -- see #game-matchup-chart-section's own comment
-               for where and why the row-header-width and header-image
-               pair moved up alongside the cell pair. -c stays put since
-               pinned cells are still ordinary table descendants, not
-               pulled out onto their own layer. */
+            /* --matchup-cell-size/-row-header-width/-a/-b (cell) all used
+               to live here too -- see #game-matchup-chart-section's own
+               comment for where and why the whole group moved up. -c
+               stays put since pinned cells are still ordinary table
+               descendants, not pulled out onto their own layer. */
 		--matchup-cell-bg-image-c: url("https://dl.dropboxusercontent.com/scl/fi/ofvdv0ay6z4wufs1nrspd/Pokedex-Background-3.png?rlkey=kwi0c2v6iypgmvryqebwm2cgx&st=bddxb3ed&dl=1");
             table-layout: fixed;
             border-collapse: separate;
@@ -3223,7 +3261,7 @@
             -webkit-user-select: none;
             -webkit-touch-callout: none;
             touch-action: manipulation;
-		box-shadow: 2px 2px 5px black;
+		/* box-shadow: 2px 2px 5px black; */
         }
 
         .game-matchup-chart-row-header:hover {
@@ -10790,6 +10828,13 @@
             // their own CSS) -- both axes reuse this one count since
             // TYPE_LIST doubles as the row list and the column list.
             table.style.setProperty('--matchup-type-count', TYPE_LIST.length);
+            // Also set on the section, not just the table -- .game-matchup-
+            // chart-bg::before (see its own CSS comment) needs this same
+            // count for its own copy of the row-header background-size
+            // calc(), and it's a sibling of the table, not a descendant,
+            // so it can't read the table's own inline copy of this custom
+            // property.
+            document.getElementById('game-matchup-chart-section')?.style.setProperty('--matchup-type-count', TYPE_LIST.length);
             applyMatchupChartPins();
         }
 
