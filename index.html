@@ -194,6 +194,18 @@
             height: 10px;
         }
 
+        /* Offscreen probe measureMatchupScrollbarMetrics() (see its own
+           comment) creates to size .game-matchup-chart-bg::before's
+           backfill strip -- exists purely so that probe's own
+           ::-webkit-scrollbar matches #game-matchup-chart-scroll's real
+           one (10px, same as html's above) on Chromium/Safari, which,
+           unlike scrollbar-width/-color, can't be set through the
+           probe's inline style. */
+        .matchup-scrollbar-probe::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
         #filter-scroll,
         #viewer-related-grid,
         #viewer-info-content,
@@ -3006,6 +3018,17 @@
                close to 30px. That's what the oversized strip actually
                was: not a wrong scale, but no scale at all. */
             --matchup-cell-size: 30px;
+            /* Fallback value only -- measureMatchupScrollbarMetrics()
+               (see its own comment) overwrites this with the real,
+               currently-running browser's actual rendered horizontal-
+               scrollbar height in px the moment it can measure it, since
+               that varies by browser/OS/zoom and can't be known from CSS
+               alone. This starting value just covers the brief gap
+               before that JS runs (and the no-JS/measurement-failed
+               case) -- 10px because that's this exact scrollbar's own
+               hardcoded ::-webkit-scrollbar height a few rules up, the
+               closest guess available until the real one lands. */
+            --matchup-scrollbar-height: 10px;
         }
 
         /* The non-pinned data cells' background, moved off tbody (see
@@ -3109,8 +3132,42 @@
         .game-matchup-chart-bg::before {
             content: '';
             position: absolute;
-            inset: 0;
-            width: 99.5%;
+            /* Explicit left/bottom + width/height, not left+right (nor
+               top+bottom) with the third side left to auto -- relying on
+               the browser to *solve* for an auto side (as inset: 0 plus
+               a single top: auto override was doing) leaves room for
+               different browsers to resolve that over-constrained
+               left/width/right (and top/height/bottom) trio a hair
+               differently, which reads as exactly the stray sliver gap
+               above/right of this strip that showed up on a second
+               browser. Pinning both unknowns (width, height) directly
+               with calc()/var() instead removes that ambiguity outright
+               rather than trying to out-guess which browser resolves it
+               which way.
+
+               left: 1px/bottom: 0 are the two sides that were never in
+               question (see the old rule's own comment on the 1px) --
+               kept as anchors, with width/height doing the work the old
+               right/top used to. */
+            left: 1px;
+            bottom: 0;
+            /* --matchup-scrollbar-height (see #game-matchup-chart-
+               section's own fallback comment and
+               measureMatchupScrollbarMetrics() in the script) holds this
+               browser's real, measured horizontal-scrollbar height in
+               px -- this strip backfills that scrollbar's own track, so
+               its height is the one real dimension that matters here.
+               width intentionally does NOT subtract anything for the
+               vertical scrollbar's width -- there's no vertical
+               scrollbar to clear: this sits behind everything already
+               (z-index: -1, inherited from .game-matchup-chart-bg), so
+               the real vertical scrollbar simply renders on top of it
+               regardless of where this strip's own right edge falls.
+               Stopping short there only opened a gap with nothing
+               behind it (the section's own background, several layers
+               further back) instead of the intended backdrop. */
+            width: calc(100% - 1px);
+            height: calc(var(--matchup-scrollbar-height, 10px) + 1px);
             border-radius: 0px 0px 8px 8px;
             background-color: #fff;
             background-image: var(--matchup-header-bg-image-a), var(--matchup-header-bg-image-b);
@@ -3119,9 +3176,6 @@
             background-repeat: repeat, repeat;
             background-blend-mode: multiply;
             box-shadow: 0px -2px 5px black;
-            margin-left: 1px;
-            top: 98.2%;
-            height: 1.8%;
         }
 
         /* This strip exists purely to backfill the gutter behind a
@@ -10782,6 +10836,67 @@
             });
         }
 
+        // Feeds --matchup-scrollbar-height (see #game-matchup-chart-
+        // section's own fallback comment and .game-matchup-chart-bg::
+        // before's own comment on why it needs this) with this browser's
+        // actual rendered horizontal-scrollbar height in px, rather than
+        // leaving that backfill strip sized off a percentage guessed on
+        // one particular device. A classic (non-overlay) scrollbar always
+        // carves its own thickness out of its box's content area no
+        // matter what that box contains, so a plain offscreen probe with
+        // overflow: scroll -- no content of its own needed -- reserves
+        // the same real gutter #game-matchup-chart-scroll's own
+        // scrollbar does, and offsetHeight (border box, includes the
+        // gutter) minus clientHeight (content box, excludes it) isolates
+        // exactly that gutter. This is the standard technique for this,
+        // not something specific to this chart. (The probe measures its
+        // horizontal scrollbar's height, not its vertical scrollbar's
+        // width -- this chart only ever needed the former: see .game-
+        // matchup-chart-bg::before's own comment on why its width
+        // doesn't need a matching adjustment.)
+        //
+        // The probe carries #game-matchup-chart-scroll's own scrollbar-
+        // width/-color directly (Firefox) so a "thin" scrollbar measures
+        // as thin, not as whatever Firefox's un-styled default would be.
+        // Chromium/Safari's ::-webkit-scrollbar route can't be matched
+        // with inline style (pseudo-elements aren't reachable that way),
+        // so the probe instead carries .matchup-scrollbar-probe, a class
+        // whose only job (see its own CSS, up by html::-webkit-scrollbar)
+        // is mirroring that same 10px this chart's real scrollbar already
+        // uses on those browsers -- keeping this measured rather than
+        // hardcoded here too would need the probe to be live in the DOM
+        // long enough for a real ::-webkit-scrollbar layout pass, which
+        // isn't guaranteed synchronously the way the plain box-model
+        // subtraction above is.
+        //
+        // Run once at load (see the bottom of this script, alongside
+        // buildMatchupChartTable()) since a real, non-overlay scrollbar's
+        // rendered size is a property of the browser/OS rendering it, not
+        // of anything on this page -- nothing later in the session (a
+        // window resize, a save loading, a pin toggling) changes it, so
+        // there's nothing to listen for and no case where running this
+        // again would produce a different number.
+        function measureMatchupScrollbarMetrics() {
+            const section = document.getElementById('game-matchup-chart-section');
+            if (!section) return;
+            const probe = document.createElement('div');
+            probe.className = 'matchup-scrollbar-probe';
+            probe.style.cssText = 'position:absolute; top:-9999px; left:-9999px; width:100px; height:100px; overflow:scroll;';
+            probe.style.scrollbarWidth = 'thin';
+            probe.style.scrollbarColor = 'rgba(0,0,0,0.35) transparent';
+            document.body.appendChild(probe);
+            const height = probe.offsetHeight - probe.clientHeight;
+            document.body.removeChild(probe);
+            // A height of 0 means an overlay scrollbar (no gutter
+            // reserved at all) rather than a measurement failure -- the
+            // (pointer: coarse) rule already hides this whole strip for
+            // touchscreens, but a mouse-driven browser that also happens
+            // to use overlay scrollbars (e.g. macOS's default) can reach
+            // this same 0 legitimately, so it's kept rather than falling
+            // back to the 10px guess in that case too.
+            section.style.setProperty('--matchup-scrollbar-height', `${height}px`);
+        }
+
         // Built once at load (see the bottom of this script) -- the
         // chart's contents (which 18 types exist, and every pairing's
         // base effectiveness) never change; only the 8 immune-pair cells'
@@ -16238,6 +16353,7 @@
         // table's own cells.
         buildMatchupSelects();
         buildMatchupChartTable();
+        measureMatchupScrollbarMetrics();
         refreshGameUI();
         renderGameSaveDefaultsForm();
         resetGameScreen();
