@@ -2293,7 +2293,7 @@
         #game-screen-badges[data-readonly="true"] .game-badge-grid,
         #game-screen-badges[data-readonly="true"] .game-badge-extras,
         #game-screen-team[data-readonly="true"] .game-team-grid,
-        #game-screen-team[data-readonly="true"] #game-team-test-btn {
+        #game-screen-team[data-readonly="true"] #game-team-add-btn {
             opacity: 0.55;
             pointer-events: none;
         }
@@ -2593,6 +2593,62 @@
             display: block;
         }
 
+        #game-team-add-btn {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0 0 15px;
+        }
+
+        /* Same visual weight as .game-save-progress-banner above
+           (duplicated rather than shared, same independence reasoning as
+           every other pair of near-identical overlays/banners in this
+           doc) -- both are "here's something to resolve before you move
+           on" banners, just triggered by different things. Hidden by
+           default/toggled by renderTeamGrid() the same way
+           .game-save-progress-banner uses its own .visible class. */
+        .game-team-replace-banner {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            background: rgba(255, 196, 0, 0.18);
+            border: 2px solid rgba(255, 170, 0, 0.55);
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-bottom: 15px;
+        }
+
+        .game-team-replace-banner.visible {
+            display: flex;
+        }
+
+        .game-team-replace-banner span {
+            font-size: 14px;
+            font-weight: bold;
+            color: #7a5200;
+        }
+
+        .game-team-replace-banner .filter-btn {
+            margin: 0;
+            font-size: 13px;
+            padding: 8px 12px;
+            white-space: nowrap;
+        }
+
+        /* Highlights every filled slot as a valid replacement target
+           while .game-team-replace-banner is up -- .game-team-grid
+           itself carries data-replacing (see renderTeamGrid()) rather
+           than each slot needing its own JS-set state, since which slots
+           qualify (every filled one) is already fully described by
+           dataset.filled, already set on each slot for the empty-slot
+           case above. */
+        .game-team-grid[data-replacing="true"] .game-team-slot[data-filled="true"] {
+            outline: 3px solid #ffc107;
+            outline-offset: 2px;
+            cursor: pointer;
+        }
+
         /* Collect/remove confirmation -- covers just the panel itself
            (a direct child of #game-panel, which is already
            position: fixed and so anchors this absolute overlay to the
@@ -2818,6 +2874,31 @@
         .gallery-team-add-confirm-frame {
             width: 140px;
             margin: 0 auto 14px;
+        }
+
+        /* Sits between the frame and the three action buttons -- see the
+           HTML. Unchecked/enabled by default each time
+           openGalleryTeamAddConfirm() opens (see its own comment);
+           disabled outright (native disabled attribute, not a custom
+           .disabled class) whenever hasShinyForm() says this particular
+           Pokémon has no shiny art to switch to -- nothing to layer on
+           top of that state beyond the browser's own default disabled
+           look, so no extra CSS for it here. */
+        .gallery-team-add-confirm-shiny-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            margin: 0 0 14px;
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+            cursor: pointer;
+        }
+
+        .gallery-team-add-confirm-shiny-label:has(input:disabled) {
+            cursor: default;
+            opacity: 0.5;
         }
 
         /* Column instead of .game-save-slot-actions's own row -- these
@@ -7335,10 +7416,21 @@
                 </div>
                 <p class="game-readonly-banner">Read-Only — connect to this game's Lobby to make changes.</p>
                 <div class="game-team-grid" id="game-team-grid"></div>
-                <!-- Same temporary test hook as Badge Tracker above. -->
-		    <p style='color:white'>Work-In-Progress</p>
-                <p class="game-debug-readout" id="game-team-debug-readout"></p>
-                <button class="filter-btn" id="game-team-test-btn">Test: +1 Team Member</button>
+                <!-- Hidden by renderTeamGrid() while a replacement is
+                     pending (see teamReplacePendingMember/
+                     beginTeamReplaceMode() in the script) -- the banner
+                     below takes its place instead, since adding a second
+                     Pokémon mid-replacement would be confusing. -->
+                <button class="filter-btn" id="game-team-add-btn">Add a Pok&eacute;mon</button>
+                <!-- Reached only when confirmTeamAddSelection() finds the
+                     roster already full (see its own comment) -- every
+                     .game-team-slot click while this is visible replaces
+                     that member instead of doing nothing, until one is
+                     chosen or Cancel discards the pending Pokémon. -->
+                <div class="game-team-replace-banner" id="game-team-replace-banner">
+                    <span>Tap a Pok&eacute;mon on your team to replace it.</span>
+                    <button class="filter-btn exclude" id="game-team-replace-cancel-btn">Cancel</button>
+                </div>
             </div>
 
             <div class="game-screen" id="game-screen-lobby">
@@ -7521,6 +7613,13 @@
             <div class="game-team-slot gallery-team-add-confirm-frame">
                 <img class="game-team-slot-img" id="gallery-team-add-confirm-img" alt="">
             </div>
+            <!-- Disabled by openGalleryTeamAddConfirm() whenever this
+                 particular Pokémon has no shiny art -- see hasShinyForm()
+                 in the script. -->
+            <label class="gallery-team-add-confirm-shiny-label">
+                <input type="checkbox" id="gallery-team-add-confirm-shiny-checkbox">
+                Shiny
+            </label>
             <div class="gallery-team-add-confirm-actions">
                 <button class="filter-btn gallery-team-add-confirm-add-btn">Add This Pokémon to Your Team.</button>
                 <button class="filter-btn gallery-team-add-confirm-keep-btn">Keep Searching for a Pokémon.</button>
@@ -9418,12 +9517,13 @@
             // renderTeamGrid() (see the script) pads it out to 6 display
             // slots itself, the same way an array of collected badges
             // would rather than a struct with 6 named fields. Each entry
-            // mirrors the fields already available on a gallery <img>
-            // (see the fetch() that builds .image-card below -- dex/src/
-            // name/shinysrc) rather than inventing a separate shape, so
-            // wiring up the info panel's future "add to team" button
-            // later is just reading those same four properties off
-            // whichever <img> was clicked.
+            // is {dex, name, src, shinysrc, shiny} -- the first four
+            // mirror the fields already available on a gallery <img> (see
+            // the fetch() that builds .image-card below), and shiny is
+            // set from the confirm card's own checkbox in
+            // confirmTeamAddSelection() (see the chat this was decided
+            // in) -- renderTeamGrid() picks between src/shinysrc using
+            // it the same way setShinyShowing() does for the viewer.
             return { badges: { collected: {}, collectedExtras: {} }, team: { members: [] }, pokeCoins: 3 };
         }
         let unsavedSessionData = emptySaveScopedData();
@@ -10326,16 +10426,36 @@
         // frames rather than only rendering as many boxes as there are
         // members, so the six slots read as fixed roster positions
         // instead of a list that happens to be some number of items
-        // long. slot.dataset.filled records which case each one is,
-        // read back by the #game-scroll delegated click listener's own
-        // .game-team-slot branch -- an empty slot opens
-        // openTeamAddPromptOverlay(); a filled one is a no-op for now
-        // (see that branch's own comment).
+        // long. slot.dataset.filled/.index record which case each one is
+        // and its position in the array, both read back by the
+        // #game-scroll delegated click listener's own .game-team-slot
+        // branch -- what a click on this slot does depends on both that
+        // and teamReplacePendingMember (see its own comment): normally
+        // an empty slot opens openTeamAddPromptOverlay() and a filled one
+        // is a no-op, but with a replacement pending every filled slot
+        // becomes a valid target instead (see .game-team-grid's own
+        // data-replacing, toggled below) and there are no empty slots
+        // left for that case to matter anyway (six spots have to be full
+        // before a replacement can even become pending -- see
+        // confirmTeamAddSelection()).
+        //
+        // Also toggles #game-team-add-btn/#game-team-replace-banner to
+        // match whichever of those two states is current -- grouped here
+        // rather than left to each place that changes
+        // teamReplacePendingMember, since every one of them already calls
+        // this right afterward to redraw the grid itself.
         function renderTeamGrid() {
             const grid = document.getElementById('game-team-grid');
             if (!grid) return;
             const data = getActiveSaveData();
             const members = data.team.members || [];
+            const replacing = !!teamReplacePendingMember;
+
+            grid.dataset.replacing = replacing ? 'true' : 'false';
+            const addBtn = document.getElementById('game-team-add-btn');
+            if (addBtn) addBtn.style.display = replacing ? 'none' : '';
+            const replaceBanner = document.getElementById('game-team-replace-banner');
+            if (replaceBanner) replaceBanner.classList.toggle('visible', replacing);
 
             grid.innerHTML = '';
             for (let i = 0; i < 6; i++) {
@@ -10343,6 +10463,7 @@
                 const slot = document.createElement('div');
                 slot.className = 'game-team-slot';
                 slot.dataset.filled = member ? 'true' : 'false';
+                slot.dataset.index = i;
                 // Empty slots are just the bare frame, no placeholder
                 // glyph inside -- matches how an empty gallery position
                 // simply isn't a card at all, rather than a distinct
@@ -10350,47 +10471,25 @@
                 if (member) {
                     const img = document.createElement('img');
                     img.className = 'game-team-slot-img';
-                    img.src = member.src;
+                    // member.shiny (set by confirmTeamAddSelection() from
+                    // the confirm card's own checkbox) picks shinysrc
+                    // over src the same way setShinyShowing() does
+                    // elsewhere -- hasShinyForm() guards against a member
+                    // whose shiny flag is somehow true but whose
+                    // shinysrc isn't a real URL (shouldn't happen given
+                    // that checkbox is disabled for a no-shiny-form
+                    // Pokémon, but costs nothing to check here too).
+                    img.src = (member.shiny && hasShinyForm(member.shinysrc)) ? member.shinysrc : member.src;
                     img.alt = member.name || '';
                     // Same "just disappear, leave the frame bare" fallback
                     // as .game-matchup-chart-col-header-icon and its
                     // siblings (see buildMatchupChartColHeader() and
-                    // friends) -- most relevant here for
-                    // addTeamMemberDebugPlaceholder()'s own empty src
-                    // (see its comment), but just as correct once real
-                    // members can carry a src that 404s for some other
-                    // reason.
+                    // friends).
                     img.onerror = () => { img.style.display = 'none'; };
                     slot.appendChild(img);
                 }
                 grid.appendChild(slot);
             }
-        }
-
-        // Temporary test hook (see the HTML comment next to the button
-        // that calls this) -- pushes one placeholder member onto
-        // data.team.members, in the same {dex, name, src, shinysrc}
-        // shape a real gallery-sourced entry will eventually use (see
-        // emptySaveScopedData()'s own comment), so renderTeamGrid() has
-        // something real to exercise before the info panel's own future
-        // "add to team" button exists. src is deliberately left empty --
-        // there's no real artwork to stand in for yet, and
-        // renderTeamGrid()'s own onerror fallback already copes with
-        // that by just leaving the frame bare, the same as a real
-        // member's src ever failing to load would. No-ops past 6, same
-        // cap the real grid only ever shows.
-        let teamDebugPlaceholderCount = 0;
-        function addTeamMemberDebugPlaceholder() {
-            const data = getActiveSaveData();
-            if (!data.team.members) data.team.members = [];
-            if (data.team.members.length >= 6) return;
-            teamDebugPlaceholderCount++;
-            data.team.members.push({
-                dex: '',
-                name: `Test Mon ${teamDebugPlaceholderCount}`,
-                src: '',
-                shinysrc: '',
-            });
         }
 
         // Whether a gallery click currently means "pick a Pokémon for the
@@ -10418,6 +10517,34 @@
             teamAddModeActive = true;
             document.body.classList.add('team-add-mode');
             refreshBackButtonState();
+        }
+
+        // Set only by confirmTeamAddSelection() when it finds the roster
+        // already full (see its own comment) -- holds the new member that
+        // still needs a home. null the rest of the time. Unlike
+        // teamAddModeActive, this has no body class/cursor/banner of its
+        // own to drive out on the gallery -- everything it affects
+        // (.game-team-grid's data-replacing, #game-team-add-btn/
+        // #game-team-replace-banner) lives on the Team Tracker screen
+        // itself and is handled by renderTeamGrid() reading this flag
+        // directly, since the game panel's already open and on that
+        // screen by the time this is ever set.
+        let teamReplacePendingMember = null;
+
+        // Called from confirmTeamAddSelection() once it's back on Team
+        // Tracker with nowhere to put the new member -- just stashes it
+        // and re-renders; the actual replacement happens in the
+        // #game-scroll delegated listener's own .game-team-slot branch,
+        // once the player taps which of the six to overwrite. Left to
+        // setGameScreen() to discard this if the player navigates away
+        // from Team Tracker before choosing (see its own comment) --
+        // same "one authoritative place clears it, every path that
+        // should goes through that" shape as exitTeamAddMode(), just
+        // simpler since there's no mode-wide cursor/banner outside this
+        // one screen to also unwind.
+        function beginTeamReplaceMode(member) {
+            teamReplacePendingMember = member;
+            renderTeamGrid();
         }
 
         // The one authoritative way out of team-add mode -- called from
@@ -10458,12 +10585,23 @@
         // reads it back) already needs the live element for its
         // src/alt/dataset, and copying now would just be doing that
         // work a step early for no benefit.
+        //
+        // The shiny checkbox resets to unchecked every time this opens
+        // (rather than remembering the last confirm's state) and is
+        // disabled outright when hasShinyForm() says this particular
+        // Pokémon has no shiny art -- same guard renderTeamGrid()'s own
+        // shiny handling and the viewer's shinyToggleBtn both use.
         function openGalleryTeamAddConfirm(img) {
             teamAddCandidateImg = img;
             const frameImg = document.getElementById('gallery-team-add-confirm-img');
             if (frameImg) {
                 frameImg.src = img.src;
                 frameImg.alt = img.alt || '';
+            }
+            const shinyCheckbox = document.getElementById('gallery-team-add-confirm-shiny-checkbox');
+            if (shinyCheckbox) {
+                shinyCheckbox.checked = false;
+                shinyCheckbox.disabled = !hasShinyForm(img.dataset.shinysrc);
             }
             const overlay = document.getElementById('gallery-team-add-confirm-overlay');
             if (overlay) overlay.classList.add('visible');
@@ -10484,35 +10622,58 @@
         }
 
         // "Add This Pokémon to Your Team." -- the one path that actually
-        // writes a member. Mirrors addTeamMemberDebugPlaceholder()'s own
-        // shape/cap/persist logic exactly (see its comment), just sourced
-        // from teamAddCandidateImg's real fields instead of a placeholder
-        // -- dex/shinysrc come off the <img>'s own dataset the same way
-        // openImageViewer() already reads them, rather than inventing a
-        // second lookup. isActiveSaveReadOnly()/the length cap are both
-        // guarded here too even though neither should be reachable in
-        // practice (see beginTeamAddMode()'s own call site and
-        // renderTeamGrid()'s dataset.filled gate) -- cheap insurance
-        // against a stale click already in flight, same instinct as
-        // other mutators in this panel.
+        // writes a member. dex/shinysrc come off the <img>'s own dataset
+        // the same way openImageViewer() already reads them, rather than
+        // inventing a second lookup. shiny records whether the checkbox
+        // was both checked AND actually meaningful (hasShinyForm() guards
+        // against a disabled-but-somehow-checked edge case) -- kept as
+        // its own field alongside src/shinysrc, rather than overwriting
+        // src with shinysrc outright, so renderTeamGrid() can pick the
+        // right one the same way setShinyShowing() does elsewhere, and
+        // so a later "toggle this member's own shiny state" feature (if
+        // this tool ever grows one) would have both images to switch
+        // between. isActiveSaveReadOnly() is guarded here too even
+        // though it shouldn't be reachable in practice (see
+        // beginTeamAddMode()'s own call site) -- cheap insurance against
+        // a stale click already in flight, same instinct as other
+        // mutators in this panel.
+        //
+        // A full roster no longer blocks this the way it used to --
+        // #game-team-add-btn (see the chat this was decided in) can reach
+        // this same confirm even with all 6 slots taken, same as an empty
+        // slot click always could, so this is the one place that has to
+        // actually decide which case it is: room to spare pushes the new
+        // member straight on, same as always; no room hands off to
+        // beginTeamReplaceMode() instead, which leaves the actual
+        // placement up to the player rather than guessing who they'd
+        // want overwritten.
         function confirmTeamAddSelection() {
             const img = teamAddCandidateImg;
+            let member = null;
             if (img && !isActiveSaveReadOnly()) {
+                const shinyCheckbox = document.getElementById('gallery-team-add-confirm-shiny-checkbox');
+                const shiny = !!(shinyCheckbox && shinyCheckbox.checked && hasShinyForm(img.dataset.shinysrc));
+                member = {
+                    dex: img.dataset.dex || '',
+                    name: img.alt || '',
+                    src: img.src,
+                    shinysrc: img.dataset.shinysrc || '',
+                    shiny,
+                };
+            }
+            exitTeamAddMode();
+            if (member) {
                 const data = getActiveSaveData();
                 if (!data.team.members) data.team.members = [];
                 if (data.team.members.length < 6) {
-                    data.team.members.push({
-                        dex: img.dataset.dex || '',
-                        name: img.alt || '',
-                        src: img.src,
-                        shinysrc: img.dataset.shinysrc || '',
-                    });
+                    data.team.members.push(member);
                     if (activeSaveSlot !== null) persistGameSaves();
                     else if (activeGuestSaveId !== null) persistGameGuestSaves();
                     markUnsavedProgressChanged();
+                } else {
+                    beginTeamReplaceMode(member);
                 }
             }
-            exitTeamAddMode();
             openGamePanel();
             setGameScreen('team');
             renderTeamGrid();
@@ -10887,27 +11048,6 @@
                 void el.offsetWidth;
                 el.classList.add('pulse-once');
             });
-        }
-
-        // Temporary -- mirrors whatever's actually in the active save
-        // data (real or unsaved) next to the Team Tracker's own Test
-        // button, purely so the safety net above is visibly exercised
-        // before that tool has real UI of its own. Badge Tracker used to
-        // share this too, before it got real UI (see renderBadgeGrid()/
-        // renderBadgeStageReadout() above) -- goes away entirely once
-        // Team Tracker is real as well. Also disables the Test button
-        // itself while the active save is read-only (see
-        // isActiveSaveReadOnly()) -- same lock applied to Badge Tracker's
-        // own boxes, see the delegated click listener below.
-        function renderDebugReadouts() {
-            const data = getActiveSaveData();
-            const label = activeSaveSlot !== null ? gameSaves[activeSaveSlot].name
-                : (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) ? gameGuestSaves[activeGuestSaveId].playerName
-                : 'unsaved';
-            const teamEl = document.getElementById('game-team-debug-readout');
-            if (teamEl) teamEl.textContent = `Team Members: ${(data.team.members || []).length} (${label})`;
-            const teamTestBtn = document.getElementById('game-team-test-btn');
-            if (teamTestBtn) teamTestBtn.disabled = isActiveSaveReadOnly();
         }
 
         // Dims Badge Tracker's grid and Team Tracker's Test button, and
@@ -11984,7 +12124,6 @@
             renderGuestSavePicker();
             renderActiveSaveLabel();
             renderSaveProgressPrompt();
-            renderDebugReadouts();
             applyReadOnlyIndicators();
             renderBadgeGrid();
             renderTeamGrid();
@@ -12001,7 +12140,6 @@
         // unconditionally after every change without checking
         // activeSaveSlot/activeGuestSaveId itself.
         function markUnsavedProgressChanged() {
-            renderDebugReadouts();
             if (activeSaveSlot !== null || activeGuestSaveId !== null) return;
             const alreadyTouched = unsavedSessionTouched;
             unsavedSessionTouched = true;
@@ -12090,6 +12228,20 @@
         let currentGameScreen = 'main';
 
         function setGameScreen(screenId) {
+            // A pending replacement (see teamReplacePendingMember/
+            // beginTeamReplaceMode()) only makes sense while actually
+            // looking at Team Tracker -- leaving that screen any other
+            // way (the in-panel back button, closeGamePanel()'s own
+            // resetGameScreen() call, etc.) discards it rather than
+            // letting it silently linger and surprise a later visit back
+            // to this screen. Checked against the screen being left, not
+            // the one being entered, so navigating TO 'team' (the last
+            // step of confirmTeamAddSelection()'s own replace-mode path)
+            // doesn't immediately undo what it just set.
+            if (screenId !== 'team' && teamReplacePendingMember) {
+                teamReplacePendingMember = null;
+                renderTeamGrid();
+            }
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
                 el.classList.toggle('active', el.id === `game-screen-${screenId}`);
@@ -12126,11 +12278,11 @@
 
         // Initial refreshGameUI()/resetGameScreen()/setSavesSectionCollapsed()
         // calls for this panel live at the very end of the script instead
-        // of here -- renderSavePicker() and renderDebugReadouts() (via
-        // musicRegionLabel()/deriveGameStage()) both reach into
-        // GAME_STAGE_ORDER/MUSIC_REGION_LABELS/etc., which are declared
-        // with const further down in the Sounds panel's own script and
-        // aren't safe to touch before that declaration actually runs.
+        // of here -- renderSavePicker() (via musicRegionLabel()/
+        // deriveGameStage()) reaches into GAME_STAGE_ORDER/
+        // MUSIC_REGION_LABELS/etc., which are declared with const further
+        // down in the Sounds panel's own script and aren't safe to touch
+        // before that declaration actually runs.
         // Function declarations (createSave, renderSavePicker, and so on)
         // are hoisted and fine to define here regardless -- it's only
         // actually calling them this early that would hit the TDZ.
@@ -13308,32 +13460,56 @@
                 return;
             }
 
-            // Temporary test hook (see the HTML comment next to this
-            // button) -- mutates whatever getActiveSaveData() resolves to
-            // right now, persisting for real if that's a real save, or
-            // just marking the in-memory session touched if not. Badge
-            // Tracker used to have one of these too, before its real
-            // grid/overlay above replaced it.
-            const teamTestBtn = e.target.closest('#game-team-test-btn');
-            if (teamTestBtn) {
+            // #game-team-add-btn works exactly like tapping an empty
+            // slot below, every time -- same prompt regardless of
+            // whether the roster's actually full right now (see the
+            // chat this was decided in and confirmTeamAddSelection()'s
+            // own comment for what changes on the other end once a
+            // Pokémon's actually picked).
+            const teamAddBtn = e.target.closest('#game-team-add-btn');
+            if (teamAddBtn) {
                 if (isActiveSaveReadOnly()) return;
-                addTeamMemberDebugPlaceholder();
-                if (activeSaveSlot !== null) persistGameSaves();
-                else if (activeGuestSaveId !== null) persistGameGuestSaves();
-                markUnsavedProgressChanged();
+                openTeamAddPromptOverlay();
+                return;
+            }
+
+            // Discards teamReplacePendingMember without placing it
+            // anywhere -- the one way out of replace mode besides
+            // actually tapping a slot below. Leaves the roster
+            // untouched, same as "Don't Add a Pokémon." does for the
+            // gallery half of this flow.
+            const teamReplaceCancelBtn = e.target.closest('#game-team-replace-cancel-btn');
+            if (teamReplaceCancelBtn) {
+                teamReplacePendingMember = null;
                 renderTeamGrid();
                 return;
             }
 
-            // Only an empty slot (dataset.filled, set by renderTeamGrid())
-            // opens the add-a-Pokémon prompt -- a filled one is a no-op
-            // for now (see the chat this was decided in; viewing or
-            // removing an existing team member is a later step, not part
-            // of this scaffold). Read-only save: no prompt, same as every
-            // other mutating control in this panel.
+            // What a slot click does depends on teamReplacePendingMember
+            // (see its own comment): normally only an empty slot
+            // (dataset.filled, set by renderTeamGrid()) opens the
+            // add-a-Pokémon prompt, and a filled one is a no-op (viewing
+            // or removing an existing member outside a replacement is a
+            // later step, not part of this scaffold) -- but with a
+            // replacement pending, every filled slot becomes a valid
+            // target instead, overwriting that member in place. Read-only
+            // save: no effect either way, same as every other mutating
+            // control in this panel.
             const teamSlot = e.target.closest('.game-team-slot');
             if (teamSlot) {
                 if (isActiveSaveReadOnly()) return;
+                if (teamReplacePendingMember) {
+                    if (teamSlot.dataset.filled !== 'true') return;
+                    const data = getActiveSaveData();
+                    if (!data.team.members) data.team.members = [];
+                    data.team.members[Number(teamSlot.dataset.index)] = teamReplacePendingMember;
+                    teamReplacePendingMember = null;
+                    if (activeSaveSlot !== null) persistGameSaves();
+                    else if (activeGuestSaveId !== null) persistGameGuestSaves();
+                    markUnsavedProgressChanged();
+                    renderTeamGrid();
+                    return;
+                }
                 if (teamSlot.dataset.filled === 'true') return;
                 openTeamAddPromptOverlay();
                 return;
@@ -16815,6 +16991,19 @@
                 exitTeamAddMode();
                 return;
             }
+        });
+
+        // Live preview -- toggling the checkbox swaps the confirm card's
+        // own image between teamAddCandidateImg's regular and shiny art
+        // immediately, same idea as setShinyShowing() elsewhere, so the
+        // person can actually see what they're about to add before
+        // committing to it rather than finding out after the fact back
+        // on the Team Tracker grid.
+        document.getElementById('gallery-team-add-confirm-shiny-checkbox').addEventListener('change', (e) => {
+            const img = teamAddCandidateImg;
+            const frameImg = document.getElementById('gallery-team-add-confirm-img');
+            if (!img || !frameImg) return;
+            frameImg.src = (e.target.checked && hasShinyForm(img.dataset.shinysrc)) ? img.dataset.shinysrc : img.src;
         });
 
         // #team-add-mode-banner's own Cancel button -- same full exit as
