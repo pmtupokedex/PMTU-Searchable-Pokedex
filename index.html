@@ -2292,6 +2292,7 @@
 
         #game-screen-badges[data-readonly="true"] .game-badge-grid,
         #game-screen-badges[data-readonly="true"] .game-badge-extras,
+        #game-screen-team[data-readonly="true"] .game-team-grid,
         #game-screen-team[data-readonly="true"] #game-team-test-btn {
             opacity: 0.55;
             pointer-events: none;
@@ -2540,6 +2541,58 @@
             white-space: nowrap;
         }
 
+        /* Team Tracker's 6 fixed roster slots -- 3 rows of 2 (see
+           renderTeamGrid() in the script, which always renders all 6
+           regardless of how many are actually filled) rather than
+           .game-badge-grid's own 4-wide flow, since a team's slot count
+           never changes the way a region's badge count does. 1fr columns
+           (not a fixed pixel size) so this scales with the game panel's
+           own width same as .game-badge-grid, instead of the main
+           gallery/related-thumbnails' own fixed-168px treatment, which
+           assumes a wide scrolling row rather than a box that has to fit
+           this panel exactly. */
+        .game-team-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 0 0 15px;
+        }
+
+        /* Same Token-Border.png frame art as .image-card (main gallery)
+           and .related-thumb-wrap (viewer's related row) -- see either
+           of those rules' own comments for the source of this technique.
+           background-size: 100% 100% instead of their fixed-168px copy,
+           matching .game-team-grid's own 1fr scaling above: this frame
+           needs to scale with its own box, not stay a fixed art size the
+           way a viewer thumbnail or (at least before this) a gallery
+           card pinned to a fixed grid track would. Empty slots (no img
+           child -- see renderTeamGrid()) are just this bare frame, same
+           as an empty gallery position simply not being a card at all
+           rather than a distinct "nothing here" asset. */
+        .game-team-slot {
+            position: relative;
+            aspect-ratio: 1 / 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-image: url("https://dl.dropboxusercontent.com/scl/fi/askidb229lcjkk5urfmby/Token-Border.png?rlkey=vfj3kgu9q9jfdzbq4yxvbp8ty&st=yk6ycn4l&dl=1");
+            background-size: 100% 100%;
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        /* 89.286% (150/168) -- same art-inside-frame inset ratio as
+           .image-card img/#viewer-related-grid img (see .image-card's
+           own comment for the ratio's source), so a team member's token
+           reads as the exact same "thing" as its own gallery card and
+           its own related-row thumbnail, just at this grid's own scale. */
+        .game-team-slot-img {
+            width: 89.286%;
+            aspect-ratio: 1 / 1;
+            object-fit: contain;
+            display: block;
+        }
+
         /* Collect/remove confirmation -- covers just the panel itself
            (a direct child of #game-panel, which is already
            position: fixed and so anchors this absolute overlay to the
@@ -2701,6 +2754,150 @@
 
         #game-badge-confirm-options .game-save-slot-actions {
             margin-top: 4px;
+        }
+
+        /* "Add a Pokémon to your team?" -- see openTeamAddPromptOverlay()/
+           closeTeamAddPromptOverlay() and beginTeamAddMode() in the
+           script. Same positioning/backdrop rules as #game-badge-confirm-
+           overlay above (duplicated rather than shared, for the same
+           independence reason #game-lobby-join-confirm-overlay's own
+           comment gives), and reuses .game-badge-confirm-card/-title/
+           -subtext for the same "same kind of homegrown yes/no
+           confirmation, just triggered from a different place" reason
+           too. */
+        #game-team-add-prompt-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-add-prompt-overlay.visible {
+            display: flex;
+        }
+
+        /* The gallery-side half of this flow, once the panel above has
+           actually closed -- see openGalleryTeamAddConfirm()/
+           closeGalleryTeamAddConfirm() in the script. Unlike every
+           overlay above, this one can't live inside #game-panel (the
+           whole point is that the panel is closed while this shows), so
+           it's a body-level, fixed sibling of #image-overlay/#gallery
+           instead -- same reasoning as #rotate-lock-overlay's own
+           position: fixed, just at the toast tier's z-index (6000, one
+           above #coming-soon-toast/#tag-search-tooltip-toast's own 5000)
+           rather than that overlay's 99999, since this only ever needs
+           to sit above the gallery/nav/other panels, not literally
+           everything the way a hard device-orientation block does. */
+        #gallery-team-add-confirm-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 6000;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #gallery-team-add-confirm-overlay.visible {
+            display: flex;
+        }
+
+        /* Sizes the reused .game-team-slot/.game-team-slot-img frame (see
+           either of those rules' own comments) down to a fixed width for
+           this one-off confirmation card -- neither class sets its own
+           width on purpose, since .game-team-grid's 1fr columns are what
+           size it everywhere else; this is the one place that isn't a
+           grid track, so it needs to size itself instead. */
+        .gallery-team-add-confirm-frame {
+            width: 140px;
+            margin: 0 auto 14px;
+        }
+
+        /* Column instead of .game-save-slot-actions's own row -- these
+           three labels are full sentences, not short button words, so
+           stacking them keeps each one readable on one line rather than
+           wrapping awkwardly mid-sentence in a row layout. */
+        .gallery-team-add-confirm-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .gallery-team-add-confirm-actions .filter-btn {
+            margin: 0;
+        }
+
+        /* Persistent reminder that gallery clicks are being intercepted
+           for team-building right now (see beginTeamAddMode()/
+           exitTeamAddMode() in the script) -- doubles as the mobile cue
+           .game-team-slot's own desktop cursor:copy change has no
+           equivalent for (there's no hover state to speak of on a
+           touchscreen) and as an always-visible extra way out of this
+           mode, on top of the nav bar's own back button. Same toast
+           z-index tier as #gallery-team-add-confirm-overlay above, for
+           the same reason -- needs to clear the gallery/nav but nothing
+           more. Unlike #coming-soon-toast, this has a real button inside
+           it, so it can't be pointer-events: none the way that one is. */
+        #team-add-mode-banner {
+            display: none;
+            position: fixed;
+            top: calc(6% + 1.75in);
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 6000;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            max-width: min(92vw, 420px);
+            padding: 0.6em 1em 0.6em 1.4em;
+            background: rgba(0, 0, 0, 0.85);
+            border-radius: 999px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+            color: #fff;
+            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
+            font-weight: bold;
+            font-size: 14px;
+            text-align: center;
+        }
+
+        body.team-add-mode #team-add-mode-banner {
+            display: flex;
+        }
+
+        #team-add-mode-banner-cancel-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            border-radius: 999px;
+            color: #fff;
+            font-family: inherit;
+            font-weight: bold;
+            font-size: 0.85em;
+            padding: 0.4em 0.9em;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        /* Desktop-only visual cue for the same mode -- a touchscreen has
+           no hover state for this to ever show on, hence
+           #team-add-mode-banner above existing as the mobile equivalent.
+           cursor: copy (not a custom Poké Ball image) -- most
+           browser/OS pairings already render that as an arrow with a
+           small "+" badge, which is exactly the simple "+" affordance
+           this needs, with no custom cursor image to source, size, or
+           worry about a given OS/browser silently rejecting for being
+           the wrong dimensions. Scoped to .hit-zone specifically, not
+           .image-card itself, same split .image-card's own "No
+           cursor:pointer here" comment already explains. */
+        body.team-add-mode .image-card .hit-zone {
+            cursor: copy;
         }
 
         /* Type Matchup -- replicates a spreadsheet-based calculator the
@@ -7137,8 +7334,9 @@
                     <button class="filter-btn game-save-progress-btn">Save This Progress</button>
                 </div>
                 <p class="game-readonly-banner">Read-Only — connect to this game's Lobby to make changes.</p>
-                <p class="game-placeholder-text">Under Construction</p>
+                <div class="game-team-grid" id="game-team-grid"></div>
                 <!-- Same temporary test hook as Badge Tracker above. -->
+		    <p style='color:white'>Work-In-Progress</p>
                 <p class="game-debug-readout" id="game-team-debug-readout"></p>
                 <button class="filter-btn" id="game-team-test-btn">Test: +1 Team Member</button>
             </div>
@@ -7273,6 +7471,26 @@
             </div>
         </div>
 
+        <!-- "Add a Pokémon to your team?" -- see openTeamAddPromptOverlay()/
+             closeTeamAddPromptOverlay()/beginTeamAddMode() in the script.
+             Reuses the badge confirm overlay's own visual classes, same
+             as the lobby join confirm above. A Yes here closes the whole
+             game panel (see beginTeamAddMode()) -- the actual Pokémon
+             picking happens back out on the gallery, in
+             #gallery-team-add-confirm-overlay below (a separate,
+             body-level overlay, since the panel's closed by the time
+             that one matters). -->
+        <div id="game-team-add-prompt-overlay">
+            <div class="game-badge-confirm-card">
+                <p class="game-badge-confirm-title">Add a Pokémon to your team?</p>
+                <p class="game-badge-confirm-subtext">The Game panel will close so you can pick one from the gallery.</p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-team-add-prompt-yes-btn">Yes</button>
+                    <button class="filter-btn exclude game-team-add-prompt-no-btn">No</button>
+                </div>
+            </div>
+        </div>
+
         <!-- In-app QR scanner -- see openLobbyScanOverlay()/
              closeLobbyScanOverlay()/runLobbyScanDetection() in the
              script. #game-lobby-scan-canvas is never actually shown
@@ -7290,6 +7508,34 @@
                 <button class="filter-btn exclude game-lobby-scan-cancel-btn">Cancel</button>
             </div>
         </div>
+    </div>
+
+    <!-- Gallery-side half of the team-add flow -- see
+         openGalleryTeamAddConfirm()/closeGalleryTeamAddConfirm()/
+         confirmTeamAddSelection() in the script. Body-level like
+         #image-overlay/#gallery below (not nested in #game-panel -- see
+         #gallery-team-add-confirm-overlay's own CSS comment for why). -->
+    <div id="gallery-team-add-confirm-overlay">
+        <div class="game-badge-confirm-card">
+            <p class="game-badge-confirm-title">Add This Pokémon to Your Team?</p>
+            <div class="game-team-slot gallery-team-add-confirm-frame">
+                <img class="game-team-slot-img" id="gallery-team-add-confirm-img" alt="">
+            </div>
+            <div class="gallery-team-add-confirm-actions">
+                <button class="filter-btn gallery-team-add-confirm-add-btn">Add This Pokémon to Your Team.</button>
+                <button class="filter-btn gallery-team-add-confirm-keep-btn">Keep Searching for a Pokémon.</button>
+                <button class="filter-btn exclude gallery-team-add-confirm-cancel-btn">Don't Add a Pokémon.</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Persistent "you're in team-add mode" cue -- see
+         beginTeamAddMode()/exitTeamAddMode() in the script, and
+         #team-add-mode-banner's own CSS comment for why this exists
+         alongside the gallery's own cursor:copy change. -->
+    <div id="team-add-mode-banner">
+        <span>Tap a Pok&eacute;mon to add it to your team.</span>
+        <button type="button" id="team-add-mode-banner-cancel-btn">Cancel</button>
     </div>
 
     <div class="gallery-container" id="gallery"></div>
@@ -8105,6 +8351,15 @@
                 const img = card.querySelector('img');
                 const hitZone = card.querySelector('.hit-zone');
                 hitZone.addEventListener('click', () => {
+                    // Team-add mode (see beginTeamAddMode()) takes over
+                    // this click entirely instead of opening the viewer --
+                    // no galleryClickLocked check either, since this
+                    // never touches the viewer's own pulse/open/close
+                    // animations that guard exists for.
+                    if (teamAddModeActive) {
+                        openGalleryTeamAddConfirm(img);
+                        return;
+                    }
                     if (galleryClickLocked) return; // mid pulse-then-open or close-then-recenter-then-pulse -- ignore until it settles
                     if (card.classList.contains('active-in-viewer')) {
                         closeImageViewer();
@@ -8303,18 +8558,20 @@
 
         // Swaps the Back nav button into its "nothing to do" greyed-out
         // state whenever there's no panel open (filter panel, sounds
-        // panel, or image viewer) AND no active filter for it to clear.
-        // Called any time one of those could have changed: filters
-        // (updateFilters), the filter panel (open/closeFilterPanel), the
-        // sounds panel (open/closeSoundsPanel), or the image viewer
-        // (open/closeImageViewer).
+        // panel, or image viewer), team-add mode isn't active, AND no
+        // active filter for it to clear. Called any time one of those
+        // could have changed: filters (updateFilters), the filter panel
+        // (open/closeFilterPanel), the sounds panel (open/closeSoundsPanel),
+        // the image viewer (open/closeImageViewer), or team-add mode
+        // (beginTeamAddMode/exitTeamAddMode).
         function refreshBackButtonState() {
             const anyPanelOpen =
                 panel.classList.contains('open') ||
                 soundsPanel.classList.contains('open') ||
                 discordPanel.classList.contains('open') ||
                 gamePanel.classList.contains('open') ||
-                document.body.classList.contains('viewer-open');
+                document.body.classList.contains('viewer-open') ||
+                teamAddModeActive;
             const nothingToDo = !anyPanelOpen && !filtersActive();
             document.getElementById('nav-bottom-btn-back')
                 .classList.toggle('back-disabled', nothingToDo);
@@ -8975,6 +9232,15 @@
         // own 'game-open' body class. Mutually exclusive with the other
         // panels, same as they already are with each other.
         function openGamePanel() {
+            // Covers "opens the game panel again" (see exitTeamAddMode()'s
+            // own comment) for every path that can call this -- the nav
+            // bar's own game button, confirmTeamAddSelection() itself
+            // reopening back to Team Tracker, or anything else -- rather
+            // than needing each caller to remember to exit add mode
+            // first. Unconditional (outside the .open guard below) since
+            // add mode is only ever active while this panel is already
+            // closed, so there's no case where skipping this would matter.
+            exitTeamAddMode();
             if (!gamePanel.classList.contains('open')) {
                 promoteDrawerPanel(gamePanel);
                 gamePanel.classList.add('open');
@@ -9146,7 +9412,19 @@
             // in-memory unsaved session, so "Save This Progress" always
             // seeds a real save from the same starting point a fresh one
             // would have had anyway.
-            return { badges: { collected: {}, collectedExtras: {} }, team: {}, pokeCoins: 3 };
+            //
+            // team.members is an ordered array rather than 6 fixed keyed
+            // slots -- an empty roster is just an empty array, and
+            // renderTeamGrid() (see the script) pads it out to 6 display
+            // slots itself, the same way an array of collected badges
+            // would rather than a struct with 6 named fields. Each entry
+            // mirrors the fields already available on a gallery <img>
+            // (see the fetch() that builds .image-card below -- dex/src/
+            // name/shinysrc) rather than inventing a separate shape, so
+            // wiring up the info panel's future "add to team" button
+            // later is just reading those same four properties off
+            // whichever <img> was clicked.
+            return { badges: { collected: {}, collectedExtras: {} }, team: { members: [] }, pokeCoins: 3 };
         }
         let unsavedSessionData = emptySaveScopedData();
         let unsavedSessionTouched = false; // true once it's actually held something worth losing
@@ -10034,6 +10312,212 @@
             el.textContent = text;
         }
 
+        // Team Tracker's own frame grid -- same Token-Border.png artwork
+        // and 89.286% (150/168) art-inside-frame inset ratio as the main
+        // gallery's .image-card and the viewer's own .related-thumb-wrap
+        // (see those rules' own comments for the source of this
+        // technique), just arranged as a fixed 3-row/2-column CSS grid
+        // (see .game-team-grid/.game-team-slot) instead of either of
+        // those two's own flowing layouts, since a team is always
+        // exactly 6 slots rather than an open-ended set.
+        //
+        // Always renders all 6 regardless of how many members
+        // data.team.members actually holds -- pads out with plain empty
+        // frames rather than only rendering as many boxes as there are
+        // members, so the six slots read as fixed roster positions
+        // instead of a list that happens to be some number of items
+        // long. slot.dataset.filled records which case each one is,
+        // read back by the #game-scroll delegated click listener's own
+        // .game-team-slot branch -- an empty slot opens
+        // openTeamAddPromptOverlay(); a filled one is a no-op for now
+        // (see that branch's own comment).
+        function renderTeamGrid() {
+            const grid = document.getElementById('game-team-grid');
+            if (!grid) return;
+            const data = getActiveSaveData();
+            const members = data.team.members || [];
+
+            grid.innerHTML = '';
+            for (let i = 0; i < 6; i++) {
+                const member = members[i] || null;
+                const slot = document.createElement('div');
+                slot.className = 'game-team-slot';
+                slot.dataset.filled = member ? 'true' : 'false';
+                // Empty slots are just the bare frame, no placeholder
+                // glyph inside -- matches how an empty gallery position
+                // simply isn't a card at all, rather than a distinct
+                // "nothing here" visual that would need its own asset.
+                if (member) {
+                    const img = document.createElement('img');
+                    img.className = 'game-team-slot-img';
+                    img.src = member.src;
+                    img.alt = member.name || '';
+                    // Same "just disappear, leave the frame bare" fallback
+                    // as .game-matchup-chart-col-header-icon and its
+                    // siblings (see buildMatchupChartColHeader() and
+                    // friends) -- most relevant here for
+                    // addTeamMemberDebugPlaceholder()'s own empty src
+                    // (see its comment), but just as correct once real
+                    // members can carry a src that 404s for some other
+                    // reason.
+                    img.onerror = () => { img.style.display = 'none'; };
+                    slot.appendChild(img);
+                }
+                grid.appendChild(slot);
+            }
+        }
+
+        // Temporary test hook (see the HTML comment next to the button
+        // that calls this) -- pushes one placeholder member onto
+        // data.team.members, in the same {dex, name, src, shinysrc}
+        // shape a real gallery-sourced entry will eventually use (see
+        // emptySaveScopedData()'s own comment), so renderTeamGrid() has
+        // something real to exercise before the info panel's own future
+        // "add to team" button exists. src is deliberately left empty --
+        // there's no real artwork to stand in for yet, and
+        // renderTeamGrid()'s own onerror fallback already copes with
+        // that by just leaving the frame bare, the same as a real
+        // member's src ever failing to load would. No-ops past 6, same
+        // cap the real grid only ever shows.
+        let teamDebugPlaceholderCount = 0;
+        function addTeamMemberDebugPlaceholder() {
+            const data = getActiveSaveData();
+            if (!data.team.members) data.team.members = [];
+            if (data.team.members.length >= 6) return;
+            teamDebugPlaceholderCount++;
+            data.team.members.push({
+                dex: '',
+                name: `Test Mon ${teamDebugPlaceholderCount}`,
+                src: '',
+                shinysrc: '',
+            });
+        }
+
+        // Whether a gallery click currently means "pick a Pokémon for the
+        // team" instead of "open the viewer" -- see beginTeamAddMode()/
+        // exitTeamAddMode() below, attachImageEvents()'s own hit-zone
+        // listener (the actual branch point), and #team-add-mode-banner/
+        // cursor:copy in the CSS for how this stays visible to the
+        // player while it's on. teamAddCandidateImg is only meaningful
+        // while #gallery-team-add-confirm-overlay is open -- it's the
+        // specific gallery <img> that confirm is currently asking about,
+        // read by confirmTeamAddSelection() once "Add This Pokémon..."
+        // is actually clicked.
+        let teamAddModeActive = false;
+        let teamAddCandidateImg = null;
+
+        // Entered only from the "Yes" button on #game-team-add-prompt-
+        // overlay (see the click listener further down) -- that overlay
+        // itself is nested inside #game-panel, so this always runs with
+        // the panel about to close right underneath it. Left to the
+        // caller to actually call closeGamePanel(); this just flips the
+        // mode on and lets every other affected piece of UI (cursor,
+        // banner, the hit-zone listener, refreshBackButtonState()) react
+        // to that flag rather than needing to be told individually.
+        function beginTeamAddMode() {
+            teamAddModeActive = true;
+            document.body.classList.add('team-add-mode');
+            refreshBackButtonState();
+        }
+
+        // The one authoritative way out of team-add mode -- called from
+        // every exit path the chat this was built in called for
+        // (Don't Add a Pokémon; the nav bar's back button, when nothing
+        // else is open; the nav bar's close button; and openGamePanel()
+        // itself, covering "opens the game panel again" for every way
+        // that can happen, not just the ones already listed). Also closes
+        // #gallery-team-add-confirm-overlay and clears
+        // teamAddCandidateImg, rather than leaving each call site above
+        // responsible for remembering to do that too -- whatever that
+        // overlay was asking about stops being relevant the moment
+        // add-mode itself ends, same as the mode flag.
+        function exitTeamAddMode() {
+            if (!teamAddModeActive) return;
+            teamAddModeActive = false;
+            teamAddCandidateImg = null;
+            document.body.classList.remove('team-add-mode');
+            const confirmOverlay = document.getElementById('gallery-team-add-confirm-overlay');
+            if (confirmOverlay) confirmOverlay.classList.remove('visible');
+            refreshBackButtonState();
+        }
+
+        function openTeamAddPromptOverlay() {
+            const overlay = document.getElementById('game-team-add-prompt-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        function closeTeamAddPromptOverlay() {
+            const overlay = document.getElementById('game-team-add-prompt-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // img is the actual gallery <img> that was clicked (see
+        // attachImageEvents()'s own hit-zone listener) -- stashed on
+        // teamAddCandidateImg rather than copying its fields out yet,
+        // since confirmTeamAddSelection() (the only thing that ever
+        // reads it back) already needs the live element for its
+        // src/alt/dataset, and copying now would just be doing that
+        // work a step early for no benefit.
+        function openGalleryTeamAddConfirm(img) {
+            teamAddCandidateImg = img;
+            const frameImg = document.getElementById('gallery-team-add-confirm-img');
+            if (frameImg) {
+                frameImg.src = img.src;
+                frameImg.alt = img.alt || '';
+            }
+            const overlay = document.getElementById('gallery-team-add-confirm-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        // "Keep Searching for a Pokémon." lands here -- closes just this
+        // overlay, deliberately leaving teamAddModeActive itself alone,
+        // since staying in add mode so the next gallery click reopens
+        // this same confirm for whatever's clicked next is the entire
+        // point of that button (see the chat this was decided in).
+        // "Don't Add a Pokémon." and the backdrop click go through
+        // exitTeamAddMode() instead, which calls this same cleanup as
+        // part of leaving add mode entirely.
+        function closeGalleryTeamAddConfirm() {
+            teamAddCandidateImg = null;
+            const overlay = document.getElementById('gallery-team-add-confirm-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // "Add This Pokémon to Your Team." -- the one path that actually
+        // writes a member. Mirrors addTeamMemberDebugPlaceholder()'s own
+        // shape/cap/persist logic exactly (see its comment), just sourced
+        // from teamAddCandidateImg's real fields instead of a placeholder
+        // -- dex/shinysrc come off the <img>'s own dataset the same way
+        // openImageViewer() already reads them, rather than inventing a
+        // second lookup. isActiveSaveReadOnly()/the length cap are both
+        // guarded here too even though neither should be reachable in
+        // practice (see beginTeamAddMode()'s own call site and
+        // renderTeamGrid()'s dataset.filled gate) -- cheap insurance
+        // against a stale click already in flight, same instinct as
+        // other mutators in this panel.
+        function confirmTeamAddSelection() {
+            const img = teamAddCandidateImg;
+            if (img && !isActiveSaveReadOnly()) {
+                const data = getActiveSaveData();
+                if (!data.team.members) data.team.members = [];
+                if (data.team.members.length < 6) {
+                    data.team.members.push({
+                        dex: img.dataset.dex || '',
+                        name: img.alt || '',
+                        src: img.src,
+                        shinysrc: img.dataset.shinysrc || '',
+                    });
+                    if (activeSaveSlot !== null) persistGameSaves();
+                    else if (activeGuestSaveId !== null) persistGameGuestSaves();
+                    markUnsavedProgressChanged();
+                }
+            }
+            exitTeamAddMode();
+            openGamePanel();
+            setGameScreen('team');
+            renderTeamGrid();
+        }
+
         // Which slot the confirm/choice overlay is currently open for --
         // null while it's closed. Set by openBadgeOverlay()/
         // openPoolBadgeOverlay(), read by the overlay's own button
@@ -10421,7 +10905,7 @@
                 : (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) ? gameGuestSaves[activeGuestSaveId].playerName
                 : 'unsaved';
             const teamEl = document.getElementById('game-team-debug-readout');
-            if (teamEl) teamEl.textContent = `Team Members: ${data.team.count || 0} (${label})`;
+            if (teamEl) teamEl.textContent = `Team Members: ${(data.team.members || []).length} (${label})`;
             const teamTestBtn = document.getElementById('game-team-test-btn');
             if (teamTestBtn) teamTestBtn.disabled = isActiveSaveReadOnly();
         }
@@ -11503,6 +11987,7 @@
             renderDebugReadouts();
             applyReadOnlyIndicators();
             renderBadgeGrid();
+            renderTeamGrid();
             renderMatchupPanel();
             renderPokeCoins();
         }
@@ -12612,7 +13097,7 @@
                     hpRule: ruleset.hpRule,
                     pokeCoinsEnabled: !!ruleset.pokeCoinsEnabled,
                     badges: { collected: {}, collectedExtras: {} },
-                    team: {},
+                    team: { members: [] },
                     pokeCoins: 3,
                 };
             }
@@ -12832,11 +13317,25 @@
             const teamTestBtn = e.target.closest('#game-team-test-btn');
             if (teamTestBtn) {
                 if (isActiveSaveReadOnly()) return;
-                const data = getActiveSaveData();
-                data.team.count = (data.team.count || 0) + 1;
+                addTeamMemberDebugPlaceholder();
                 if (activeSaveSlot !== null) persistGameSaves();
                 else if (activeGuestSaveId !== null) persistGameGuestSaves();
                 markUnsavedProgressChanged();
+                renderTeamGrid();
+                return;
+            }
+
+            // Only an empty slot (dataset.filled, set by renderTeamGrid())
+            // opens the add-a-Pokémon prompt -- a filled one is a no-op
+            // for now (see the chat this was decided in; viewing or
+            // removing an existing team member is a later step, not part
+            // of this scaffold). Read-only save: no prompt, same as every
+            // other mutating control in this panel.
+            const teamSlot = e.target.closest('.game-team-slot');
+            if (teamSlot) {
+                if (isActiveSaveReadOnly()) return;
+                if (teamSlot.dataset.filled === 'true') return;
+                openTeamAddPromptOverlay();
                 return;
             }
 
@@ -12895,6 +13394,24 @@
                 const code = pendingLobbyJoinCode;
                 closeLobbyJoinConfirmOverlay();
                 joinLobbyByCode(code);
+                return;
+            }
+        });
+
+        // Same reasoning again -- this overlay's also a sibling of
+        // #game-scroll, not a descendant. A Yes here closes the whole
+        // game panel and hands off to the gallery (see
+        // beginTeamAddMode()'s own comment for why that's split into two
+        // steps rather than one function doing both).
+        document.getElementById('game-team-add-prompt-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-team-add-prompt-overlay' || e.target.closest('.game-team-add-prompt-no-btn')) {
+                closeTeamAddPromptOverlay();
+                return;
+            }
+            if (e.target.closest('.game-team-add-prompt-yes-btn')) {
+                closeTeamAddPromptOverlay();
+                closeGamePanel();
+                beginTeamAddMode();
                 return;
             }
         });
@@ -14152,6 +14669,12 @@
         document.getElementById('nav-bottom-btn-close').addEventListener('click', () => {
             const isClosed = pokedexPanel.classList.contains('closed');
 
+            // Team-add mode has no panel of its own open by the time this
+            // is reachable (see beginTeamAddMode()'s own comment), so it
+            // wouldn't be touched by any of the close*() calls below --
+            // needs its own explicit exit here, same as the back button's
+            // own handler further down.
+            exitTeamAddMode();
             closeFilterPanel();
             closeSoundsPanel();
             closeDiscordPanel();
@@ -14202,6 +14725,13 @@
                 closeSoundsPanel();
                 closeDiscordPanel();
                 closeGamePanel();
+            } else if (teamAddModeActive) {
+                // Team-add mode is only ever active while every panel
+                // above is already closed (see beginTeamAddMode()'s own
+                // comment), so this is never reachable in the same click
+                // as the branch above -- "on the gallery screen" from the
+                // chat this was decided in just falls out of that.
+                exitTeamAddMode();
             } else if (filtersActive()) {
                 // Nothing open, but a filter is active (Search button is
                 // in its state-2 look) — same clear as the filter panel's
@@ -16257,6 +16787,41 @@
         // the magnify panel if it's open.
         gallery.addEventListener('click', (e) => {
             if (e.target === gallery) closeOpenPanels();
+        });
+
+        // Gallery-side half of the team-add flow -- see
+        // openGalleryTeamAddConfirm()/closeGalleryTeamAddConfirm()/
+        // confirmTeamAddSelection() and beginTeamAddMode() above. A
+        // separate listener rather than folding into #game-scroll's own
+        // delegated one, same reasoning as every other overlay in this
+        // doc that isn't a #game-scroll descendant -- this one especially
+        // so, since #game-scroll (and the whole game panel it lives in)
+        // is closed the entire time this overlay's ever relevant.
+        // Backdrop click and "Don't Add a Pokémon." both go through
+        // exitTeamAddMode() (full cancel, leaves add mode entirely);
+        // "Keep Searching for a Pokémon." goes through
+        // closeGalleryTeamAddConfirm() alone instead, on purpose (see
+        // its own comment).
+        document.getElementById('gallery-team-add-confirm-overlay').addEventListener('click', (e) => {
+            if (e.target.closest('.gallery-team-add-confirm-add-btn')) {
+                confirmTeamAddSelection();
+                return;
+            }
+            if (e.target.closest('.gallery-team-add-confirm-keep-btn')) {
+                closeGalleryTeamAddConfirm();
+                return;
+            }
+            if (e.target.id === 'gallery-team-add-confirm-overlay' || e.target.closest('.gallery-team-add-confirm-cancel-btn')) {
+                exitTeamAddMode();
+                return;
+            }
+        });
+
+        // #team-add-mode-banner's own Cancel button -- same full exit as
+        // "Don't Add a Pokémon." above, just reachable without having
+        // clicked a gallery image first.
+        document.getElementById('team-add-mode-banner-cancel-btn').addEventListener('click', () => {
+            exitTeamAddMode();
         });
 
         // The listener above only ever fires for clicks landing inside
