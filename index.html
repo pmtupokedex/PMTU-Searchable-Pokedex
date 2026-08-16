@@ -2636,17 +2636,91 @@
             white-space: nowrap;
         }
 
-        /* Highlights every filled slot as a valid replacement target
-           while .game-team-replace-banner is up -- .game-team-grid
-           itself carries data-replacing (see renderTeamGrid()) rather
-           than each slot needing its own JS-set state, since which slots
-           qualify (every filled one) is already fully described by
-           dataset.filled, already set on each slot for the empty-slot
-           case above. */
-        .game-team-grid[data-replacing="true"] .game-team-slot[data-filled="true"] {
-            outline: 3px solid #ffc107;
-            outline-offset: 2px;
+        /* Restores the click target to just the art circle, same
+           technique and same 44.643% clip-path as .image-card/.hit-zone
+           (see its own comment for why) -- the whole point here is
+           freeing the bottom two corners for .game-team-slot-status/
+           -level below, the same way that circle already frees
+           .game-badge-corner-icon-wrap's own corner on a badge box.
+           Rendered for every slot, filled or not (see renderTeamGrid()),
+           so "click roughly the middle" always does the same thing
+           whether or not there's a Pokémon there yet -- what exactly
+           that is (open the add prompt, pick a replacement target, or
+           nothing) is the #game-scroll delegated listener's own call,
+           not this element's. */
+        .game-team-slot-hit-zone {
+            position: absolute;
+            inset: 0;
+            clip-path: circle(44.643%);
             cursor: pointer;
+        }
+
+        /* Status Condition -- bottom-left corner, only ever rendered for
+           a filled slot (see renderTeamGrid()). Same corner-circle
+           treatment as .game-badge-corner-icon-wrap, just clickable (see
+           openTeamStatusOverlay() in the script) instead of purely
+           decorative, and its own image sized/positioned to fill this
+           circle directly rather than needing a separate wrap+icon pair
+           the way that badge treatment does -- there's nothing here that
+           ever needs to render without the circle underneath it the way
+           a badge's collected artwork can outgrow
+           .game-badge-corner-icon-wrap's own decorative ring. */
+        .game-team-slot-status {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 25%;
+            aspect-ratio: 1 / 1;
+		border: 3.5px solid white;
+            border-radius: 50%;
+            background: rgba(50, 50, 50, 1);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .game-team-slot-status-img {
+            width: 90%;
+            aspect-ratio: 1 / 1;
+            object-fit: contain;
+        }
+
+        /* Level -- bottom-right corner, same circle treatment as the
+           status corner (see its own comment), just text instead of an
+           image, and split into two click zones instead of one (see
+           adjustTeamMemberLevel() and the #game-scroll delegated
+           listener's own .game-team-slot-level branch, which tells the
+           left half from the right by clientX against this element's own
+           bounding rect -- no visual divider between the two yet, see
+           the chat this was decided in). Color/outline match
+           .game-matchup-result-bonus (see its own comment for where that
+           treatment comes from) at this corner's own smaller scale. */
+        .game-team-slot-level {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 25%;
+            aspect-ratio: 1 / 1;
+		border: 3.5px solid white;
+            border-radius: 50%;
+            background: rgba(50, 50, 50, 1);
+		background-image: url("https://dl.dropboxusercontent.com/scl/fi/i0jleti9ik8q0ppoj42fg/level_die.png?rlkey=v7o1r039ho1t9blkh8mgh2ky6&st=ta9fd15b&dl=1");
+		background-size: 90%;
+		background-position: center;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: bold;
+            color: #FFEB3B;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+		letter-spacing: 2px;
         }
 
         /* Collect/remove confirmation -- covers just the panel itself
@@ -2835,6 +2909,61 @@
 
         #game-team-add-prompt-overlay.visible {
             display: flex;
+        }
+
+        /* Status Condition picker -- see openTeamStatusOverlay()/
+           closeTeamStatusOverlay() in the script. Same nested-in-
+           #game-panel positioning as #game-team-add-prompt-overlay
+           above (duplicated for the same independence reasoning as every
+           other pair like this in this doc). */
+        #game-team-status-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-status-overlay.visible {
+            display: flex;
+        }
+
+        #game-team-status-overlay .game-badge-confirm-card {
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        /* Same shape as .game-badge-choose-btn/-img above (see its own
+           comment) -- duplicated rather than shared, same independence
+           reasoning as every other near-identical pair in this doc. */
+        .game-team-status-choose-btn {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-align: left;
+        }
+
+        .game-team-status-choose-img {
+            width: 60px;
+            height: 60px;
+            object-fit: contain;
+            flex-shrink: 0;
+        }
+
+        /* Marks whichever status a member already has, if any, when
+           reopening the picker on top of it -- see
+           openTeamStatusOverlay()'s own template literal. Border color
+           only (not background) -- .filter-btn's own dark background
+           already carries the white text fine; swapping to a light
+           background here to signal "selected" the way .game-team-
+           status-choose-btn's non-active siblings imply would fight
+           that same text instead. */
+        .game-team-status-choose-btn.active {
+            border-color: #FFEB3B;
         }
 
         /* The gallery-side half of this flow, once the panel above has
@@ -7583,6 +7712,25 @@
             </div>
         </div>
 
+        <!-- Status Condition picker for a single Team Tracker slot -- see
+             openTeamStatusOverlay()/closeTeamStatusOverlay()/
+             setTeamMemberStatus() and STATUS_CONDITIONS in the script.
+             Reuses .game-badge-confirm-card/-title, and
+             .game-badge-choose-btn's own "several named things, pick
+             one" list pattern (duplicated as .game-team-status-choose-
+             btn/-img, same independence reasoning as every other
+             near-identical pair in this doc). -->
+        <div id="game-team-status-overlay">
+            <div class="game-badge-confirm-card">
+                <p class="game-badge-confirm-title">Choose a Status Condition</p>
+                <div id="game-team-status-options"></div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-team-status-none-btn">No Status</button>
+                    <button class="filter-btn game-team-status-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- In-app QR scanner -- see openLobbyScanOverlay()/
              closeLobbyScanOverlay()/runLobbyScanDetection() in the
              script. #game-lobby-scan-canvas is never actually shown
@@ -9377,6 +9525,14 @@
             // top-level nav, etc.), so this is the one place that
             // guarantees it regardless of how the panel actually closed.
             closeLobbyScanOverlay();
+            // Same reasoning for these two -- #game-panel moves off-
+            // screen via transform rather than unmounting (see its own
+            // CSS), so leaving either .visible when the panel closes
+            // would just have it silently still open, off-screen, ready
+            // to reappear the moment the panel reopens somewhere else
+            // entirely.
+            closeTeamAddPromptOverlay();
+            closeTeamStatusOverlay();
             resetGameScreen();
             refreshBackButtonState();
         }
@@ -9517,13 +9673,18 @@
             // renderTeamGrid() (see the script) pads it out to 6 display
             // slots itself, the same way an array of collected badges
             // would rather than a struct with 6 named fields. Each entry
-            // is {dex, name, src, shinysrc, shiny} -- the first four
-            // mirror the fields already available on a gallery <img> (see
-            // the fetch() that builds .image-card below), and shiny is
-            // set from the confirm card's own checkbox in
+            // is {dex, name, src, shinysrc, shiny, status, level} -- the
+            // first four mirror the fields already available on a gallery
+            // <img> (see the fetch() that builds .image-card below), and
+            // shiny is set from the confirm card's own checkbox in
             // confirmTeamAddSelection() (see the chat this was decided
-            // in) -- renderTeamGrid() picks between src/shinysrc using
-            // it the same way setShinyShowing() does for the viewer.
+            // in) -- renderTeamGrid() picks between src/shinysrc using it
+            // the same way setShinyShowing() does for the viewer.
+            // status/level are both edited later, straight from each
+            // slot's own corner badges (see STATUS_CONDITIONS/
+            // openTeamStatusOverlay() and adjustTeamMemberLevel()) --
+            // status is a STATUS_CONDITIONS id or null for "none set
+            // yet", level is an integer clamped 0-6.
             return { badges: { collected: {}, collectedExtras: {} }, team: { members: [] }, pokeCoins: 3 };
         }
         let unsavedSessionData = emptySaveScopedData();
@@ -10427,17 +10588,29 @@
         // members, so the six slots read as fixed roster positions
         // instead of a list that happens to be some number of items
         // long. slot.dataset.filled/.index record which case each one is
-        // and its position in the array, both read back by the
-        // #game-scroll delegated click listener's own .game-team-slot
-        // branch -- what a click on this slot does depends on both that
-        // and teamReplacePendingMember (see its own comment): normally
-        // an empty slot opens openTeamAddPromptOverlay() and a filled one
-        // is a no-op, but with a replacement pending every filled slot
-        // becomes a valid target instead (see .game-team-grid's own
-        // data-replacing, toggled below) and there are no empty slots
+        // and its position in the array, read back by all three of the
+        // #game-scroll delegated click listener's own branches below
+        // (hit-zone, status corner, level corner).
+        //
+        // Each slot's own .game-team-slot-hit-zone is the same circular-
+        // clip-path technique as .image-card/.hit-zone (see its own CSS
+        // comment for why) -- restoring the click target to just the art
+        // circle, rather than the slot's full square, is what leaves the
+        // bottom two corners free for .game-team-slot-status/-level
+        // below, the same way that same circle already leaves
+        // .game-badge-corner-icon-wrap's own corner free on a badge box.
+        // What clicking the hit-zone itself does depends on
+        // teamReplacePendingMember (see its own comment): normally an
+        // empty slot opens openTeamAddPromptOverlay() and a filled one is
+        // a no-op, but with a replacement pending every filled slot
+        // becomes a valid target instead, and there are no empty slots
         // left for that case to matter anyway (six spots have to be full
         // before a replacement can even become pending -- see
         // confirmTeamAddSelection()).
+        //
+        // The status/level corners themselves only ever render for a
+        // filled slot -- an empty one has no Pokémon to hang either piece
+        // of information off of.
         //
         // Also toggles #game-team-add-btn/#game-team-replace-banner to
         // match whichever of those two states is current -- grouped here
@@ -10451,7 +10624,6 @@
             const members = data.team.members || [];
             const replacing = !!teamReplacePendingMember;
 
-            grid.dataset.replacing = replacing ? 'true' : 'false';
             const addBtn = document.getElementById('game-team-add-btn');
             if (addBtn) addBtn.style.display = replacing ? 'none' : '';
             const replaceBanner = document.getElementById('game-team-replace-banner');
@@ -10488,6 +10660,33 @@
                     img.onerror = () => { img.style.display = 'none'; };
                     slot.appendChild(img);
                 }
+
+                const hitZone = document.createElement('div');
+                hitZone.className = 'game-team-slot-hit-zone';
+                slot.appendChild(hitZone);
+
+                if (member) {
+                    // Status Condition (bottom-left) -- statusImageMarkup()
+                    // (see its own comment, mirroring badgeImageMarkup()'s
+                    // exact convention) falls back to a bare empty circle
+                    // for a member with no status set yet, rather than a
+                    // broken image or nothing clickable at all.
+                    const status = STATUS_CONDITIONS.find(s => s.id === member.status) || null;
+                    const statusBadge = document.createElement('div');
+                    statusBadge.className = 'game-team-slot-status';
+                    statusBadge.dataset.index = i;
+                    statusBadge.innerHTML = status ? statusImageMarkup(status, 'game-team-slot-status-img') : '';
+                    slot.appendChild(statusBadge);
+
+                    // Level (bottom-right) -- 0-6, clamped in
+                    // adjustTeamMemberLevel() rather than here.
+                    const levelBadge = document.createElement('div');
+                    levelBadge.className = 'game-team-slot-level';
+                    levelBadge.dataset.index = i;
+                    levelBadge.textContent = member.level || 0;
+                    slot.appendChild(levelBadge);
+                }
+
                 grid.appendChild(slot);
             }
         }
@@ -10544,6 +10743,99 @@
         // one screen to also unwind.
         function beginTeamReplaceMode(member) {
             teamReplacePendingMember = member;
+            renderTeamGrid();
+        }
+
+        // The seven classic status conditions -- imageUrl is
+        // 'placeholder' for all of them for now (see statusImageMarkup()
+        // below, mirroring badgeImageMarkup()'s exact convention), one
+        // real URL to swap in per condition once art exists for it (see
+        // the chat this was decided in). Order here is also the order
+        // they're listed in openTeamStatusOverlay()'s own picker.
+        const STATUS_CONDITIONS = [
+            { id: 'sleep', name: 'Sleep', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/k4n1ezekk3x4u90mnd675/status_sleep.png?rlkey=ylbi2ax9l33au7g5391u593p5&st=vjk1vx0n&dl=1' },
+            { id: 'paralyzed', name: 'Paralyzed', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/m0z3ksk0nl26pul5zcj2b/status_paralyzed.png?rlkey=qxskg9prai8y92d4kfdcz9mj6&st=sc1jvn8g&dl=1' },
+            { id: 'burned', name: 'Burned', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/5qeffehvjywmy1wm39x8d/status_burned.png?rlkey=5mgt1i6qhler5yvtmgphb9axd&st=kio70iyt&dl=1' },
+            { id: 'poisoned', name: 'Poisoned', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/7us4g9rqtzv4eynnbytij/status_poison.png?rlkey=ennf48926k2ild7utr15qe2q1&st=4t6k8tt0&dl=1' },
+            { id: 'cursed', name: 'Cursed', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/3dkzpejd6jfdw1w1pq1mp/status_cursed.png?rlkey=8xouhxj1jqwgjd6xh56h9a76v&st=srl3u95r&dl=1' },
+            { id: 'confused', name: 'Confused', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/did39bio36p2xadtgq4fb/status_confused.png?rlkey=j76q57494x9yz0l5wk39knqfj&st=3s7yvlfb&dl=1' },
+            { id: 'frozen', name: 'Frozen', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/prdm359rrvzcybw52f19v/status_frozen.png?rlkey=t6mhor0dm5ylc2aonkj56izb0&st=pjz63oo9&dl=1' },
+        ];
+
+        // A real <img> once a given status actually has one, falling
+        // back to a plain "?" circle for anything still using the
+        // 'placeholder' sentinel -- same shape as badgeImageMarkup()
+        // above, just for STATUS_CONDITIONS instead of a gymBadges
+        // option.
+        function statusImageMarkup(status, imgClass) {
+            if (status.imageUrl && status.imageUrl !== 'placeholder') {
+                return `<img class="${imgClass}" src="${status.imageUrl}" alt="${status.name}">`;
+            }
+            return `<span class="game-badge-icon">?</span>`;
+        }
+
+        // Which slot's status is being edited -- only meaningful while
+        // #game-team-status-overlay is open, same shape as
+        // pendingBadgeSlotKey above for the badge overlay.
+        let pendingTeamStatusIndex = null;
+
+        // Builds the options list fresh every time rather than once up
+        // front, since which member (and therefore which status is
+        // already selected, if any) this is for changes on every open.
+        function openTeamStatusOverlay(index) {
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[index];
+            if (!member) return;
+            pendingTeamStatusIndex = index;
+            const optionsEl = document.getElementById('game-team-status-options');
+            if (optionsEl) {
+                optionsEl.innerHTML = STATUS_CONDITIONS.map(s => `
+                    <button class="filter-btn game-team-status-choose-btn${s.id === member.status ? ' active' : ''}" data-status="${s.id}">
+                        ${statusImageMarkup(s, 'game-team-status-choose-img')}
+                        <span>${s.name}</span>
+                    </button>
+                `).join('');
+            }
+            const overlay = document.getElementById('game-team-status-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        function closeTeamStatusOverlay() {
+            pendingTeamStatusIndex = null;
+            const overlay = document.getElementById('game-team-status-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // Shared by every button inside #game-team-status-overlay
+        // (including "No Status", which just passes null through) --
+        // see the overlay's own click listener further down.
+        function setTeamMemberStatus(statusId) {
+            if (pendingTeamStatusIndex === null) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[pendingTeamStatusIndex];
+            closeTeamStatusOverlay();
+            if (!member) return;
+            member.status = statusId;
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+        }
+
+        // delta is +1 or -1 -- clamped to 0-6 rather than left to wrap or
+        // go out of range, since the two halves of .game-team-slot-level
+        // (see the #game-scroll delegated listener below) call this
+        // unconditionally regardless of the member's current level.
+        function adjustTeamMemberLevel(index, delta) {
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[index];
+            if (!member) return;
+            const next = Math.max(0, Math.min(6, (member.level || 0) + delta));
+            if (next === (member.level || 0)) return;
+            member.level = next;
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
             renderTeamGrid();
         }
 
@@ -10659,6 +10951,12 @@
                     src: img.src,
                     shinysrc: img.dataset.shinysrc || '',
                     shiny,
+                    // status/level both start at their own "nothing set
+                    // yet" value -- see STATUS_CONDITIONS/
+                    // openTeamStatusOverlay() and adjustTeamMemberLevel()
+                    // in the script for how each is edited afterward.
+                    status: null,
+                    level: 0,
                 };
             }
             exitTeamAddMode();
@@ -12238,9 +12536,22 @@
             // the one being entered, so navigating TO 'team' (the last
             // step of confirmTeamAddSelection()'s own replace-mode path)
             // doesn't immediately undo what it just set.
-            if (screenId !== 'team' && teamReplacePendingMember) {
-                teamReplacePendingMember = null;
-                renderTeamGrid();
+            //
+            // Same reasoning for the two Team Tracker overlays -- closing
+            // the whole game panel already handles this (see
+            // closeGamePanel()'s own comment), but the nav bar's own
+            // Back button can call this function directly while the
+            // panel stays open (see its own "step back to main screen"
+            // branch), which would otherwise leave either overlay
+            // visibly floating on top of whatever screen this switches
+            // to instead.
+            if (screenId !== 'team') {
+                if (teamReplacePendingMember) {
+                    teamReplacePendingMember = null;
+                    renderTeamGrid();
+                }
+                closeTeamAddPromptOverlay();
+                closeTeamStatusOverlay();
             }
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
@@ -13485,19 +13796,50 @@
                 return;
             }
 
-            // What a slot click does depends on teamReplacePendingMember
-            // (see its own comment): normally only an empty slot
-            // (dataset.filled, set by renderTeamGrid()) opens the
-            // add-a-Pokémon prompt, and a filled one is a no-op (viewing
-            // or removing an existing member outside a replacement is a
-            // later step, not part of this scaffold) -- but with a
-            // replacement pending, every filled slot becomes a valid
-            // target instead, overwriting that member in place. Read-only
-            // save: no effect either way, same as every other mutating
-            // control in this panel.
-            const teamSlot = e.target.closest('.game-team-slot');
-            if (teamSlot) {
+            // Status Condition corner -- opens the picker for that slot.
+            // Blocked while a replacement's pending (see
+            // teamReplacePendingMember's own comment): that mode is only
+            // about picking which member to overwrite, so editing an
+            // unrelated member's status mid-flow would just be
+            // confusing.
+            const statusBadge = e.target.closest('.game-team-slot-status');
+            if (statusBadge) {
+                if (isActiveSaveReadOnly() || teamReplacePendingMember) return;
+                openTeamStatusOverlay(Number(statusBadge.dataset.index));
+                return;
+            }
+
+            // Level corner -- one element, two click zones (see its own
+            // CSS comment for why there's no visual split yet). Which
+            // half was clicked comes from clientX against this element's
+            // own bounding rect, not from two separate DOM nodes. Same
+            // replace-mode block as the status corner above, same
+            // reasoning.
+            const levelBadge = e.target.closest('.game-team-slot-level');
+            if (levelBadge) {
+                if (isActiveSaveReadOnly() || teamReplacePendingMember) return;
+                const rect = levelBadge.getBoundingClientRect();
+                const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
+                adjustTeamMemberLevel(Number(levelBadge.dataset.index), clickedRightHalf ? 1 : -1);
+                return;
+            }
+
+            // The hit-zone (see its own CSS comment for why this, and
+            // not the slot's full square, is the actual click target)
+            // -- what it does depends on teamReplacePendingMember (see
+            // its own comment): normally only an empty slot (dataset.
+            // filled, set by renderTeamGrid()) opens the add-a-Pokémon
+            // prompt, and a filled one is a no-op (viewing or removing an
+            // existing member outside a replacement is a later step, not
+            // part of this scaffold) -- but with a replacement pending,
+            // every filled slot becomes a valid target instead,
+            // overwriting that member in place. Read-only save: no
+            // effect either way, same as every other mutating control in
+            // this panel.
+            const teamSlotHitZone = e.target.closest('.game-team-slot-hit-zone');
+            if (teamSlotHitZone) {
                 if (isActiveSaveReadOnly()) return;
+                const teamSlot = teamSlotHitZone.closest('.game-team-slot');
                 if (teamReplacePendingMember) {
                     if (teamSlot.dataset.filled !== 'true') return;
                     const data = getActiveSaveData();
@@ -13514,6 +13856,7 @@
                 openTeamAddPromptOverlay();
                 return;
             }
+
 
             const lobbyHostBtn = e.target.closest('.game-lobby-host-btn');
             if (lobbyHostBtn) {
@@ -13588,6 +13931,24 @@
                 closeTeamAddPromptOverlay();
                 closeGamePanel();
                 beginTeamAddMode();
+                return;
+            }
+        });
+
+        // Same reasoning again -- this overlay's also a sibling of
+        // #game-scroll, not a descendant.
+        document.getElementById('game-team-status-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-team-status-overlay' || e.target.closest('.game-team-status-cancel-btn')) {
+                closeTeamStatusOverlay();
+                return;
+            }
+            if (e.target.closest('.game-team-status-none-btn')) {
+                setTeamMemberStatus(null);
+                return;
+            }
+            const chooseBtn = e.target.closest('.game-team-status-choose-btn');
+            if (chooseBtn) {
+                setTeamMemberStatus(chooseBtn.dataset.status);
                 return;
             }
         });
