@@ -3020,6 +3020,48 @@
             border-color: #FFEB3B;
         }
 
+        /* Hidden by default -- renderTeamStatusCounter() toggles
+           .visible based on whether STATUS_COUNTER_CONFIG has an entry
+           for the pending status (see its own comment), rather than
+           this ever showing empty or at a meaningless 0 for a status
+           that doesn't take a count at all. */
+        .game-team-status-counter-wrap {
+            display: none;
+            margin: 0 0 14px;
+        }
+
+        .game-team-status-counter-wrap.visible {
+            display: flex;
+            justify-content: center;
+        }
+
+        /* Same "one element, two invisible click zones" interaction as
+           .game-team-slot-level (left half decrements, right half
+           increments -- see the overlay's own click listener for the
+           clientX-against-bounding-rect split), deliberately given a
+           different look here rather than reusing that pill outright:
+           this sits as its own section in open card space instead of
+           hanging off a token's corner, so a wide rounded rectangle
+           reads more like a dedicated control than a badge. */
+        .game-team-status-counter {
+            width: 60%;
+            aspect-ratio: 3 / 1;
+            border: 3.5px solid white;
+            border-radius: 16px;
+            background: rgba(0, 90, 160, 0.85);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: bold;
+            color: #FFEB3B;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
         /* The gallery-side half of this flow, once the panel above has
            actually closed -- see openGalleryTeamAddConfirm()/
            closeGalleryTeamAddConfirm() in the script. Unlike every
@@ -7768,8 +7810,8 @@
 
         <!-- Status Condition picker for a single Team Tracker slot -- see
              openTeamStatusOverlay()/closeTeamStatusOverlay()/
-             setTeamMemberStatus() and STATUS_CONDITIONS in the script.
-             Reuses .game-confirm-card/-title, and
+             confirmTeamStatusSelection() and STATUS_CONDITIONS in the
+             script. Reuses .game-confirm-card/-title, and
              .game-badge-choose-btn's own "several named things, pick
              one" list pattern (duplicated as .game-team-status-choose-
              btn/-img, same independence reasoning as every other
@@ -7777,10 +7819,15 @@
         <div id="game-team-status-overlay">
             <div class="game-confirm-card">
                 <p class="game-confirm-title">Choose a Status Condition</p>
+                <div class="game-team-status-counter-wrap" id="game-team-status-counter-wrap">
+                    <div class="game-team-status-counter" id="game-team-status-counter">
+                        <span id="game-team-status-counter-value">0</span>
+                    </div>
+                </div>
                 <div id="game-team-status-options"></div>
                 <div class="game-save-slot-actions">
-                    <button class="filter-btn exclude game-team-status-none-btn">No Status</button>
-                    <button class="filter-btn game-team-status-cancel-btn">Cancel</button>
+                    <button class="filter-btn game-team-status-confirm-btn">Confirm</button>
+                    <button class="filter-btn exclude game-team-status-cancel-btn">Cancel</button>
                 </div>
             </div>
         </div>
@@ -10818,15 +10865,33 @@
 		{ id: 'sleep', name: 'Sleep', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/k4n1ezekk3x4u90mnd675/status_sleep.png?rlkey=ylbi2ax9l33au7g5391u593p5&st=vjk1vx0n&dl=1' },
         ];
 
-        // "No Status" placeholder for a filled slot's own status corner
-        // when the member has no status set -- same 'placeholder'
-        // sentinel convention as every other STATUS_CONDITIONS entry
-        // above (see that array's own comment), just not part of the
-        // picker list itself since "no status" isn't something you pick
-        // from STATUS_CONDITIONS, it's the absence of one. Swapping in a
-        // real imageUrl here later works exactly the same way it will
-        // for the conditions above.
+        // "No Status" -- shown both as a filled slot's own status corner
+        // when the member has no status set, and as the first (default-
+        // selected) entry in the picker list itself (see
+        // openTeamStatusOverlay()'s own template literal, which
+        // prepends this to STATUS_CONDITIONS rather than keeping a
+        // separate "No Status" button alongside Cancel the way this
+        // used to work). Kept as its own constant rather than folded
+        // into STATUS_CONDITIONS since it isn't a real status condition
+        // -- it's the absence of one -- and STATUS_COUNTER_CONFIG below
+        // deliberately has no entry for its 'none' id as a result.
         const NO_STATUS_PLACEHOLDER = { id: 'none', name: 'No Status', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/wplcws9dfin0zjm0adxxm/status_none.png?rlkey=gxd4i7p6zrzy3t6qh3hupyrow&st=c4hwidx3&dl=1' };
+
+        // Per-status counter range for the picker's own counter section
+        // (see openTeamStatusOverlay()/renderTeamStatusCounter() and
+        // .game-team-status-counter's own CSS comment) -- only the four
+        // statuses listed here get a counter at all; anything else
+        // (including 'none') hides that section entirely. default is
+        // its own field rather than reusing min, so where the counter
+        // resets to on a fresh selection can be set independently of
+        // how low it's allowed to go afterward -- all four currently
+        // reset to their own min, but don't have to.
+        const STATUS_COUNTER_CONFIG = {
+            burned: { min: 0, max: 4, default: 0 },
+            cursed: { min: 0, max: 2, default: 0 },
+            poisoned: { min: 0, max: 4, default: 0 },
+            sleep: { min: 0, max: 4, default: 4 },
+        };
 
         // A real <img> once a given status actually has one, falling
         // back to a plain "?" circle for anything still using the
@@ -10845,6 +10910,50 @@
         // pendingBadgeSlotKey above for the badge overlay.
         let pendingTeamStatusIndex = null;
 
+        // The picker's own in-progress choice -- 'none' or a
+        // STATUS_CONDITIONS id, plus whatever the counter section (if
+        // showing at all) is currently set to. Nothing here touches the
+        // member itself until confirmTeamStatusSelection() actually
+        // commits it -- Cancel just discards these two and closes,
+        // same "pick freely, only Confirm writes it back" shape as
+        // gymBadges' own multi-option choose flow.
+        let pendingTeamStatusId = null;
+        let pendingTeamStatusCounter = 0;
+
+
+        // Redraws just the options list against pendingTeamStatusId --
+        // called on open and again every time the pending selection
+        // changes, so .active always tracks the in-progress choice
+        // rather than the member's own already-committed status.
+        // NO_STATUS_PLACEHOLDER goes first and is what a member with no
+        // status set opens the picker already pointed at, replacing the
+        // old separate "No Status" button next to Cancel.
+        function renderTeamStatusOptions() {
+            const optionsEl = document.getElementById('game-team-status-options');
+            if (!optionsEl) return;
+            optionsEl.innerHTML = [NO_STATUS_PLACEHOLDER, ...STATUS_CONDITIONS].map(s => `
+                <button class="filter-btn game-team-status-choose-btn${s.id === pendingTeamStatusId ? ' active' : ''}" data-status="${s.id}">
+                    ${statusImageMarkup(s, 'game-team-status-choose-img')}
+                    <span>${s.name}</span>
+                </button>
+            `).join('');
+        }
+
+        // Shows/hides and redraws the counter section against
+        // pendingTeamStatusId/-Counter -- STATUS_COUNTER_CONFIG having
+        // no entry for the pending id (which is always true for 'none',
+        // and for confused/paralyzed/frozen, none of which take a
+        // counter) is what hides the section entirely rather than
+        // showing it empty or at 0.
+        function renderTeamStatusCounter() {
+            const wrap = document.getElementById('game-team-status-counter-wrap');
+            const valueEl = document.getElementById('game-team-status-counter-value');
+            if (!wrap || !valueEl) return;
+            const config = STATUS_COUNTER_CONFIG[pendingTeamStatusId];
+            wrap.classList.toggle('visible', !!config);
+            if (config) valueEl.textContent = pendingTeamStatusCounter;
+        }
+
         // Builds the options list fresh every time rather than once up
         // front, since which member (and therefore which status is
         // already selected, if any) this is for changes on every open.
@@ -10853,35 +10962,75 @@
             const member = (data.team.members || [])[index];
             if (!member) return;
             pendingTeamStatusIndex = index;
-            const optionsEl = document.getElementById('game-team-status-options');
-            if (optionsEl) {
-                optionsEl.innerHTML = STATUS_CONDITIONS.map(s => `
-                    <button class="filter-btn game-team-status-choose-btn${s.id === member.status ? ' active' : ''}" data-status="${s.id}">
-                        ${statusImageMarkup(s, 'game-team-status-choose-img')}
-                        <span>${s.name}</span>
-                    </button>
-                `).join('');
-            }
+            pendingTeamStatusId = member.status || 'none';
+            const config = STATUS_COUNTER_CONFIG[pendingTeamStatusId];
+            // Resumes the member's own already-set count if theirs is
+            // the pending status reopening on top of itself, rather
+            // than always snapping back to the config's default -- only
+            // a genuine change of status (see selectPendingTeamStatus()
+            // below) should reset it.
+            pendingTeamStatusCounter = config ? (member.statusCounter ?? config.default) : 0;
+            renderTeamStatusOptions();
+            renderTeamStatusCounter();
             const overlay = document.getElementById('game-team-status-overlay');
             if (overlay) overlay.classList.add('visible');
         }
 
         function closeTeamStatusOverlay() {
             pendingTeamStatusIndex = null;
+            pendingTeamStatusId = null;
+            pendingTeamStatusCounter = 0;
             const overlay = document.getElementById('game-team-status-overlay');
             if (overlay) overlay.classList.remove('visible');
         }
 
-        // Shared by every button inside #game-team-status-overlay
-        // (including "No Status", which just passes null through) --
-        // see the overlay's own click listener further down.
-        function setTeamMemberStatus(statusId) {
+        // Switches the picker's own pending choice -- called by every
+        // button in the options list (see the overlay's own click
+        // listener further down), including NO_STATUS_PLACEHOLDER's
+        // 'none' entry same as any real condition. Always resets the
+        // counter to its new status's own default (see
+        // STATUS_COUNTER_CONFIG's own comment) regardless of what it
+        // was on the status just switched away from.
+        function selectPendingTeamStatus(statusId) {
+            pendingTeamStatusId = statusId;
+            const config = STATUS_COUNTER_CONFIG[statusId];
+            pendingTeamStatusCounter = config ? config.default : 0;
+            renderTeamStatusOptions();
+            renderTeamStatusCounter();
+        }
+
+        // delta is +1 or -1, from whichever half of
+        // .game-team-status-counter got clicked (see the overlay's own
+        // click listener). No-ops if the pending status doesn't take a
+        // counter at all -- shouldn't be reachable since the section is
+        // hidden in that case, but guards anyway rather than let the
+        // counter silently drift on a status it doesn't apply to.
+        function adjustPendingTeamStatusCounter(delta) {
+            const config = STATUS_COUNTER_CONFIG[pendingTeamStatusId];
+            if (!config) return;
+            pendingTeamStatusCounter = Math.max(config.min, Math.min(config.max, pendingTeamStatusCounter + delta));
+            renderTeamStatusCounter();
+        }
+
+        // The picker's own Confirm -- the only thing that actually
+        // writes pendingTeamStatusId/-Counter back to the member (see
+        // pendingTeamStatusId's own comment). 'none' maps back to null
+        // the same way the old "No Status" button's setTeamMemberStatus
+        // (null) call did. statusCounter is only ever set for a status
+        // that actually has a STATUS_COUNTER_CONFIG entry -- left
+        // undefined otherwise rather than carrying a stale number
+        // around for a status it no longer applies to.
+        function confirmTeamStatusSelection() {
             if (pendingTeamStatusIndex === null) return;
             const data = getActiveSaveData();
             const member = (data.team.members || [])[pendingTeamStatusIndex];
+            const statusId = pendingTeamStatusId;
+            const counter = pendingTeamStatusCounter;
             closeTeamStatusOverlay();
             if (!member) return;
-            member.status = statusId;
+            member.status = statusId === 'none' ? null : statusId;
+            const config = STATUS_COUNTER_CONFIG[statusId];
+            member.statusCounter = config ? counter : undefined;
             if (activeSaveSlot !== null) persistGameSaves();
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
             markUnsavedProgressChanged();
@@ -14012,13 +14161,25 @@
                 closeTeamStatusOverlay();
                 return;
             }
-            if (e.target.closest('.game-team-status-none-btn')) {
-                setTeamMemberStatus(null);
+            if (e.target.closest('.game-team-status-confirm-btn')) {
+                confirmTeamStatusSelection();
+                return;
+            }
+            // Counter -- same "one element, two click zones" shape as
+            // .game-team-slot-level (see its own CSS comment and the
+            // #game-scroll delegated listener further down for why
+            // clientX against the bounding rect rather than two
+            // separate elements).
+            const counterEl = e.target.closest('.game-team-status-counter');
+            if (counterEl) {
+                const rect = counterEl.getBoundingClientRect();
+                const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
+                adjustPendingTeamStatusCounter(clickedRightHalf ? 1 : -1);
                 return;
             }
             const chooseBtn = e.target.closest('.game-team-status-choose-btn');
             if (chooseBtn) {
-                setTeamMemberStatus(chooseBtn.dataset.status);
+                selectPendingTeamStatus(chooseBtn.dataset.status);
                 return;
             }
         });
