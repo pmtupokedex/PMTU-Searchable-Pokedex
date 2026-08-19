@@ -2634,7 +2634,27 @@
             display: block;
             width: 100%;
             box-sizing: border-box;
-            margin: 0 0 15px;
+            margin: 0 0 10px;
+        }
+
+        /* Trade/Release -- see the chat these were added in.
+           #game-team-trade-btn just pops the standard "Coming Soon"
+           toast for now (see its own click listener) until the real
+           trade flow exists; #game-team-release-btn kicks off release
+           mode (see beginTeamReleaseMode() in the script). Same block
+           width/margin treatment as #game-team-add-btn above, own rule
+           rather than sharing a selector with it since these three
+           won't necessarily always want to change together. */
+        #game-team-trade-btn,
+        #game-team-release-btn {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0 0 10px;
+        }
+
+        #game-team-release-btn {
+            margin-bottom: 15px;
         }
 
         /* Same visual weight as .game-save-progress-banner above
@@ -2667,6 +2687,41 @@
         }
 
         .game-team-replace-banner .filter-btn {
+            margin: 0;
+            font-size: 13px;
+            padding: 8px 12px;
+            white-space: nowrap;
+        }
+
+        /* Release mode's own "tap a Pokémon to release it" banner --
+           same shape/positioning as .game-team-replace-banner above
+           (duplicated rather than shared, same independence reasoning as
+           every other near-identical pair in this doc), shown instead of
+           Add/Trade/Release while active (see beginTeamReleaseMode()/
+           exitTeamReleaseMode() in the script). */
+        .game-team-release-banner {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            background: rgba(255, 196, 0, 0.18);
+            border: 2px solid rgba(255, 170, 0, 0.55);
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-bottom: 15px;
+        }
+
+        .game-team-release-banner.visible {
+            display: flex;
+        }
+
+        .game-team-release-banner span {
+            font-size: 14px;
+            font-weight: bold;
+            color: #7a5200;
+        }
+
+        .game-team-release-banner .filter-btn {
             margin: 0;
             font-size: 13px;
             padding: 8px 12px;
@@ -3083,6 +3138,27 @@
         }
 
         #game-team-add-prompt-overlay.visible {
+            display: flex;
+        }
+
+        /* Two-stage Release confirmation -- see the markup's own
+           comment. Same positioning/backdrop rules as
+           #game-team-add-prompt-overlay above (duplicated for the same
+           independence reasoning as every other pair like this in this
+           doc). */
+        #game-team-release-confirm-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-release-confirm-overlay.visible {
             display: flex;
         }
 
@@ -4637,6 +4713,24 @@
         }
         .filter-btn.include { background-color: rgba(0, 153, 255, 0.70); color: white; }
         .filter-btn.exclude { background-color: rgba(255, 77, 77, 0.70); color: white; }
+
+        /* Applied to the Starter and Pokéstar Studios filter buttons for
+           the duration of an Add Pokémon session (see beginTeamAddMode()/
+           exitTeamAddMode() in the script) -- Starter gets forced to
+           .include (and this on top of it) when the roster's empty,
+           Pokéstar just gets this alone since it's force-excluded a
+           different way (see TEAM_ADD_FORCED_EXCLUDE_TAGS) and doesn't
+           need its own include/exclude class touched. pointer-events:
+           none is what actually makes it "can't be turned off" --
+           without it the button's own pointerdown/pointerup handlers
+           would still fire and toggle it right back. A dimmed opacity
+           on top of whatever color (.include, or none for Pokéstar)
+           already applies is enough to read as "locked" without a
+           dedicated icon. */
+        .filter-btn.team-add-locked {
+            pointer-events: none;
+            opacity: 0.6;
+        }
 	  
 	  .music-playlist-btn {
 		padding: 4px 10px;
@@ -7905,6 +7999,8 @@
                      below takes its place instead, since adding a second
                      Pokémon mid-replacement would be confusing. -->
                 <button class="filter-btn" id="game-team-add-btn">Add a Pok&eacute;mon</button>
+                <button class="filter-btn" id="game-team-trade-btn">Trade a Pok&eacute;mon</button>
+                <button class="filter-btn" id="game-team-release-btn">Release a Pok&eacute;mon</button>
                 <!-- Reached only when confirmTeamAddSelection() finds the
                      roster already full (see its own comment) -- every
                      .game-team-slot click while this is visible replaces
@@ -7913,6 +8009,16 @@
                 <div class="game-team-replace-banner" id="game-team-replace-banner">
                     <span>Tap a Pok&eacute;mon on your team to replace it.</span>
                     <button class="filter-btn exclude" id="game-team-replace-cancel-btn">Cancel</button>
+                </div>
+                <!-- Shown instead of Add/Trade/Release while
+                     beginTeamReleaseMode() is active (see the script) --
+                     every filled .game-team-slot click while this is
+                     visible opens the two-stage release confirm below
+                     for that member, until one is chosen or Cancel backs
+                     out with nothing released. -->
+                <div class="game-team-release-banner" id="game-team-release-banner">
+                    <span>Tap a Pok&eacute;mon on your team to release it.</span>
+                    <button class="filter-btn exclude" id="game-team-release-cancel-btn">Cancel</button>
                 </div>
             </div>
 
@@ -8062,6 +8168,29 @@
                 <div class="game-save-slot-actions">
                     <button class="filter-btn game-team-add-prompt-yes-btn">Yes</button>
                     <button class="filter-btn exclude game-team-add-prompt-no-btn">No</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Two-stage Release confirmation -- see beginTeamReleaseMode()/
+             openTeamReleaseConfirmOverlay()/confirmTeamReleaseStage() in
+             the script. One overlay, not two -- pendingTeamReleaseStage
+             (1 or 2) just swaps #game-team-release-confirm-title's text
+             and re-points what Yes does next, rather than closing and
+             reopening a second overlay on top of the first, per the
+             chat this was designed in ("very unlikely a user will do
+             this by mistake" called for a second confirmation, not
+             necessarily a whole second dialog). No on either stage backs
+             out to release-picking mode (#game-team-release-banner
+             stays up) rather than leaving release mode entirely -- same
+             "Cancel is its own separate, explicit exit" shape as
+             #game-team-replace-banner's own Cancel. -->
+        <div id="game-team-release-confirm-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-team-release-confirm-title">Do you want to release this Pok&eacute;mon back into the wild?</p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-team-release-confirm-yes-btn">Yes</button>
+                    <button class="filter-btn exclude game-team-release-confirm-no-btn">No</button>
                 </div>
             </div>
         </div>
@@ -9292,10 +9421,23 @@
                 const shinyFilterMatch =
                     !shinyShowing || hasShinyForm(card.querySelector('img')?.dataset.shinysrc);
 
+                // Add Pokémon guardrail: Mega Evolutions, Gigantamaxes,
+                // and Pokéstar Studios tokens never belong on a team, for
+                // the whole duration of any add-mode session (see
+                // TEAM_ADD_FORCED_EXCLUDE_TAGS/beginTeamAddMode()'s own
+                // comment) -- deliberately its own check rather than
+                // pushed into excludeFilters, since that array is rebuilt
+                // from scratch by updateFilters() on every filter-panel
+                // interaction (see its own comment) and would just get
+                // wiped the next time the player touched any button.
+                const teamAddForcedExcludeMatch =
+                    teamAddModeActive && TEAM_ADD_FORCED_EXCLUDE_TAGS.some(f => tags.includes(f));
+
                 card.classList.toggle(
                     'show',
                     sectionsMatch && includeMatch && explicitOrMatch && explicitAndMatch &&
-                        hideNoAbilityMatch && shinyFilterMatch && !(excludeMatch || explicitAndExcludeMatch)
+                        hideNoAbilityMatch && shinyFilterMatch &&
+                        !(excludeMatch || explicitAndExcludeMatch || teamAddForcedExcludeMatch)
                 );
             });
         }
@@ -9365,9 +9507,15 @@
             // still leave an old AND-group selection silently affecting
             // results even with every button visibly deselected.
             document.getElementById('tag-search').value = "";
-            document.querySelectorAll('.filter-btn[data-tag]').forEach(btn =>
-                btn.classList.remove('include', 'exclude')
-            );
+            document.querySelectorAll('.filter-btn[data-tag]').forEach(btn => {
+                // Same skip as resetUniqueProperties() above, for the
+                // same reason -- this loop reaches every filter button in
+                // the whole panel, Starter/Pokéstar included, so without
+                // this check "Reset Filters" would be just as able to
+                // silently undo an active Add Pokémon guardrail lock.
+                if (btn.classList.contains('team-add-locked')) return;
+                btn.classList.remove('include', 'exclude');
+            });
             // hideNoAbility has no data-tag, so the loop above never
             // touches it — needs resetting explicitly, same reasoning as
             // the AND-group state above.
@@ -9431,6 +9579,13 @@
 
         function resetUniqueProperties() {
             document.querySelectorAll('#unique-properties-section .filter-btn[data-tag]').forEach(btn => {
+                // Skips Starter (and, though it has no include/exclude
+                // class to strip anyway, Pokéstar) while an Add Pokémon
+                // guardrail lock is active on it (see
+                // beginTeamAddMode()'s own comment) -- otherwise "Show
+                // All" here would silently undo a lock that's supposed
+                // to survive exactly this kind of reset.
+                if (btn.classList.contains('team-add-locked')) return;
                 btn.classList.remove('include', 'exclude');
                 syncTagButtons(btn);
             });
@@ -11055,6 +11210,7 @@
             const data = getActiveSaveData();
             const members = data.team.members || [];
             const replacing = !!teamReplacePendingMember;
+            const releasing = !!teamReleaseModeActive;
 
             // Every multi-icon evolution badge (see startEvolutionBadgeCycle()
             // below) owns a running setInterval -- this whole grid gets
@@ -11068,10 +11224,20 @@
             activeEvolutionBadgeIntervals.forEach(id => clearInterval(id));
             activeEvolutionBadgeIntervals = [];
 
+            // Add/Trade/Release all hide together for either mode --
+            // replacing and releasing are mutually exclusive (see
+            // beginTeamReleaseMode()/beginTeamReplaceMode()) so at most
+            // one of the two banners below is ever visible at once.
             const addBtn = document.getElementById('game-team-add-btn');
-            if (addBtn) addBtn.style.display = replacing ? 'none' : '';
+            if (addBtn) addBtn.style.display = (replacing || releasing) ? 'none' : '';
+            const tradeBtn = document.getElementById('game-team-trade-btn');
+            if (tradeBtn) tradeBtn.style.display = (replacing || releasing) ? 'none' : '';
+            const releaseBtn = document.getElementById('game-team-release-btn');
+            if (releaseBtn) releaseBtn.style.display = (replacing || releasing) ? 'none' : '';
             const replaceBanner = document.getElementById('game-team-replace-banner');
             if (replaceBanner) replaceBanner.classList.toggle('visible', replacing);
+            const releaseBanner = document.getElementById('game-team-release-banner');
+            if (releaseBanner) releaseBanner.classList.toggle('visible', releasing);
 
             grid.innerHTML = '';
             for (let i = 0; i < 6; i++) {
@@ -11203,6 +11369,27 @@
         let teamAddModeActive = false;
         let teamAddCandidateImg = null;
 
+        // Tags force-excluded from the gallery for the whole duration of
+        // any Add Pokémon session, regardless of what the filter panel's
+        // own buttons say -- see filterGallery()'s own
+        // teamAddForcedExcludeMatch comment for why this bypasses
+        // excludeFilters entirely. 'mega'/'gmax' are the tags every Mega
+        // Evolution/Gigantamax entry itself carries (e.g. "Mega
+        // Charizard X", "G-Max Pikachu") -- distinct from 'canmega'/
+        // 'cangmax', which live on the base species instead (plain
+        // Charizard/Pikachu) and are left alone, since those are exactly
+        // the ones that SHOULD still show up.
+        const TEAM_ADD_FORCED_EXCLUDE_TAGS = ['mega', 'gmax', 'pokestar'];
+
+        // True only while an add-mode session that began with an empty
+        // roster has forced the Starter button on -- lets
+        // exitTeamAddMode() know whether it's responsible for undoing
+        // that (see its own comment), so a session that started with the
+        // roster already non-empty (and so never touched the Starter
+        // button at all) doesn't accidentally clear a Starter selection
+        // the player made themselves some other way.
+        let teamAddStarterLockActive = false;
+
         // Entered only from the "Yes" button on #game-team-add-prompt-
         // overlay (see the click listener further down) -- that overlay
         // itself is nested inside #game-panel, so this always runs with
@@ -11211,9 +11398,41 @@
         // mode on and lets every other affected piece of UI (cursor,
         // banner, the hit-zone listener, refreshBackButtonState()) react
         // to that flag rather than needing to be told individually.
+        //
+        // Also applies this session's guardrails (see the chat these
+        // were added in): the roster being empty right now -- i.e. this
+        // would be the very first team member -- forces the Starter
+        // filter on and locks it, since a first Pokémon has to be a
+        // starter; Mega Evolutions, Gigantamaxes, and Pokéstar Studios
+        // tokens are force-excluded for every add-mode session
+        // regardless of roster size (see TEAM_ADD_FORCED_EXCLUDE_TAGS
+        // above, applied in filterGallery() itself rather than here).
+        // Both kinds of lock are visual too (.team-add-locked, see its
+        // own CSS comment) so the relevant button(s) can't be tapped
+        // back off for as long as this mode stays active.
         function beginTeamAddMode() {
             teamAddModeActive = true;
             document.body.classList.add('team-add-mode');
+
+            const data = getActiveSaveData();
+            const rosterEmpty = (data.team.members || []).length === 0;
+            const starterBtn = document.querySelector('#unique-properties-section .filter-btn[data-tag="starter"]');
+            if (rosterEmpty && starterBtn) {
+                teamAddStarterLockActive = true;
+                starterBtn.classList.remove('exclude');
+                starterBtn.classList.add('include', 'team-add-locked');
+                updateFilters();
+            }
+            // Pokéstar's own include/exclude class is left untouched --
+            // it's force-excluded by tag regardless of this button's
+            // state (see TEAM_ADD_FORCED_EXCLUDE_TAGS), so toggling its
+            // normal include state on top would just produce a
+            // self-contradicting (and confusingly empty) result. Locked
+            // purely so tapping it can't do that.
+            const pokestarBtn = document.querySelector('#unique-properties-section .filter-btn[data-tag="pokestar"]');
+            if (pokestarBtn) pokestarBtn.classList.add('team-add-locked');
+
+            filterGallery();
             refreshBackButtonState();
         }
 
@@ -11243,6 +11462,123 @@
         function beginTeamReplaceMode(member) {
             teamReplacePendingMember = member;
             renderTeamGrid();
+        }
+
+        // Release mode's own equivalent of teamReplacePendingMember
+        // above -- true while #game-team-release-banner is up and every
+        // filled slot tap opens the two-stage confirm (see
+        // openTeamReleaseConfirmOverlay()) instead of its usual
+        // behavior. Mutually exclusive with a pending replacement by
+        // construction (beginTeamReleaseMode() below refuses to start
+        // while one's pending, and nothing that starts a replacement can
+        // fire while this is true either, since every entry point into
+        // that flow requires the Team Tracker's own controls, all of
+        // which are hidden -- see renderTeamGrid() -- while release mode
+        // is active).
+        let teamReleaseModeActive = false;
+
+        // Which slot (index into data.team.members) release mode is
+        // currently confirming, and which of the two stages that
+        // confirmation is on -- both only meaningful while
+        // #game-team-release-confirm-overlay is visible; see
+        // openTeamReleaseConfirmOverlay()/closeTeamReleaseConfirmOverlay()/
+        // confirmTeamReleaseStage() below.
+        let pendingTeamReleaseIndex = null;
+        let pendingTeamReleaseStage = null;
+
+        // Entered from #game-team-release-btn (see the #game-scroll
+        // delegated listener) -- just flips the mode flag and re-renders,
+        // same shape as beginTeamReplaceMode() above, except there's no
+        // stashed member to carry into it since release mode's target is
+        // chosen by tapping a slot afterward, not decided up front.
+        // Refuses to start over an in-progress replacement instead of
+        // silently clobbering it -- shouldn't be reachable anyway since
+        // #game-team-release-btn is hidden whenever a replacement is
+        // pending (see renderTeamGrid()), but costs nothing to guard.
+        function beginTeamReleaseMode() {
+            if (isActiveSaveReadOnly() || teamReplacePendingMember) return;
+            teamReleaseModeActive = true;
+            renderTeamGrid();
+        }
+
+        // The one authoritative way out of release mode -- called by
+        // #game-team-release-cancel-btn directly, and by
+        // confirmTeamReleaseStage() once a release actually goes through
+        // (see its own comment). Also closes the confirm overlay and
+        // clears its own pending state, in case this fires while stage 1
+        // or 2 is still up (e.g. the player backs out via the banner's
+        // Cancel without ever answering the confirm) -- same "one place
+        // unwinds everything, every exit path goes through it" shape as
+        // exitTeamAddMode().
+        function exitTeamReleaseMode() {
+            teamReleaseModeActive = false;
+            closeTeamReleaseConfirmOverlay();
+            renderTeamGrid();
+        }
+
+        // Opens stage 1 of the release confirm for one slot -- called
+        // only from the #game-scroll delegated listener's hit-zone
+        // branch, only while teamReleaseModeActive and only for a filled
+        // slot (an empty one has nothing to release). Release mode
+        // itself (the banner, the "tap a Pokémon" state) stays active
+        // underneath this whole time; only Cancel on the banner or an
+        // actual completed release (see confirmTeamReleaseStage()) ends
+        // it.
+        function openTeamReleaseConfirmOverlay(index) {
+            pendingTeamReleaseIndex = index;
+            pendingTeamReleaseStage = 1;
+            const titleEl = document.getElementById('game-team-release-confirm-title');
+            if (titleEl) titleEl.textContent = 'Do you want to release this Pokémon back into the wild?';
+            const overlay = document.getElementById('game-team-release-confirm-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        // No on either stage (see confirmTeamReleaseStage() below) routes
+        // here -- just hides the overlay and clears its own pending
+        // state, dropping back to release-picking mode (the banner never
+        // stops being visible underneath this overlay, so there's
+        // nothing further to restore).
+        function closeTeamReleaseConfirmOverlay() {
+            pendingTeamReleaseIndex = null;
+            pendingTeamReleaseStage = null;
+            const overlay = document.getElementById('game-team-release-confirm-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // Yes on either stage routes here. Stage 1 -> just advances to
+        // stage 2 (swaps the title to the "no way to undo this" text and
+        // waits for another Yes) without touching the roster at all --
+        // the whole point of the two-stage design is that stage 1's Yes
+        // alone never releases anything. Stage 2 -> actually removes the
+        // member: a plain splice() at that index, which -- since
+        // data.team.members is an ordinary array and renderTeamGrid()
+        // just reads members[i] for each of the 6 display slots straight
+        // off it -- automatically shifts every later member up to fill
+        // the gap, exactly the backfill behavior asked for, with no
+        // separate reindexing step needed. Exits release mode
+        // afterward via exitTeamReleaseMode() rather than leaving it
+        // active for another release, so a second release always starts
+        // from a fresh, deliberate tap of "Release a Pokémon" again.
+        function confirmTeamReleaseStage() {
+            if (pendingTeamReleaseIndex === null) return;
+
+            if (pendingTeamReleaseStage === 1) {
+                pendingTeamReleaseStage = 2;
+                const titleEl = document.getElementById('game-team-release-confirm-title');
+                if (titleEl) titleEl.textContent = 'There is no way to undo this. Are you sure?';
+                return;
+            }
+
+            const data = getActiveSaveData();
+            const members = data.team.members || [];
+            members.splice(pendingTeamReleaseIndex, 1);
+            data.team.members = members;
+
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+
+            exitTeamReleaseMode();
         }
 
         // Full pokemon-data.json entries keyed by name -- populated once
@@ -11787,6 +12123,23 @@
             document.body.classList.remove('team-add-mode');
             const confirmOverlay = document.getElementById('gallery-team-add-confirm-overlay');
             if (confirmOverlay) confirmOverlay.classList.remove('visible');
+
+            // Undoes beginTeamAddMode()'s own locks (see its comment) --
+            // teamAddModeActive is already false above, so this same
+            // filterGallery()/updateFilters() pass also lifts the
+            // TEAM_ADD_FORCED_EXCLUDE_TAGS guardrail at the same moment,
+            // not just the Starter one.
+            const pokestarBtn = document.querySelector('#unique-properties-section .filter-btn[data-tag="pokestar"]');
+            if (pokestarBtn) pokestarBtn.classList.remove('team-add-locked');
+            if (teamAddStarterLockActive) {
+                teamAddStarterLockActive = false;
+                const starterBtn = document.querySelector('#unique-properties-section .filter-btn[data-tag="starter"]');
+                if (starterBtn) starterBtn.classList.remove('include', 'team-add-locked');
+                updateFilters();
+            } else {
+                filterGallery();
+            }
+
             refreshBackButtonState();
         }
 
@@ -13484,8 +13837,13 @@
                     teamReplacePendingMember = null;
                     renderTeamGrid();
                 }
+                if (teamReleaseModeActive) {
+                    teamReleaseModeActive = false;
+                    renderTeamGrid();
+                }
                 closeTeamAddPromptOverlay();
                 closeTeamStatusOverlay();
+                closeTeamReleaseConfirmOverlay();
             }
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
@@ -14718,6 +15076,24 @@
                 return;
             }
 
+            // Not wired up yet -- just the standard "Coming Soon" toast
+            // (see showComingSoonToast()) until the real trade flow
+            // exists. No read-only guard: there's nothing here to
+            // actually mutate yet.
+            const teamTradeBtn = e.target.closest('#game-team-trade-btn');
+            if (teamTradeBtn) {
+                showComingSoonToast();
+                return;
+            }
+
+            // Enters release-picking mode -- see beginTeamReleaseMode()
+            // in the script.
+            const teamReleaseBtn = e.target.closest('#game-team-release-btn');
+            if (teamReleaseBtn) {
+                beginTeamReleaseMode();
+                return;
+            }
+
             // Discards teamReplacePendingMember without placing it
             // anywhere -- the one way out of replace mode besides
             // actually tapping a slot below. Leaves the roster
@@ -14730,6 +15106,16 @@
                 return;
             }
 
+            // The one way out of release mode besides actually tapping a
+            // slot below and completing (or backing out of) the
+            // two-stage confirm -- see exitTeamReleaseMode() in the
+            // script.
+            const teamReleaseCancelBtn = e.target.closest('#game-team-release-cancel-btn');
+            if (teamReleaseCancelBtn) {
+                exitTeamReleaseMode();
+                return;
+            }
+
             // Status Condition corner -- opens the picker for that slot.
             // Blocked while a replacement's pending (see
             // teamReplacePendingMember's own comment): that mode is only
@@ -14738,7 +15124,7 @@
             // confusing.
             const statusBadge = e.target.closest('.game-team-slot-status');
             if (statusBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
                 openTeamStatusOverlay(Number(statusBadge.dataset.index));
                 return;
             }
@@ -14751,7 +15137,7 @@
             // reasoning.
             const levelBadge = e.target.closest('.game-team-slot-level');
             if (levelBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
                 const rect = levelBadge.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 adjustTeamMemberLevel(Number(levelBadge.dataset.index), clickedRightHalf ? 1 : -1);
@@ -14771,7 +15157,7 @@
             // reasoning.
             const evolutionBadge = e.target.closest('.game-team-slot-evolution');
             if (evolutionBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
                 const index = Number(evolutionBadge.dataset.index);
                 const data = getActiveSaveData();
                 const member = (data.team.members || [])[index];
@@ -14792,16 +15178,19 @@
 
             // The hit-zone (see its own CSS comment for why this, and
             // not the slot's full square, is the actual click target)
-            // -- what it does depends on teamReplacePendingMember (see
-            // its own comment): normally only an empty slot (dataset.
-            // filled, set by renderTeamGrid()) opens the add-a-Pokémon
-            // prompt, and a filled one is a no-op (viewing or removing an
-            // existing member outside a replacement is a later step, not
-            // part of this scaffold) -- but with a replacement pending,
-            // every filled slot becomes a valid target instead,
-            // overwriting that member in place. Read-only save: no
-            // effect either way, same as every other mutating control in
-            // this panel.
+            // -- what it does depends on teamReplacePendingMember/
+            // teamReleaseModeActive (see their own comments): normally
+            // only an empty slot (dataset.filled, set by
+            // renderTeamGrid()) opens the add-a-Pokémon prompt, and a
+            // filled one is a no-op (viewing an existing member outside
+            // a replacement/release is a later step, not part of this
+            // scaffold) -- but with a replacement pending, every filled
+            // slot becomes a valid target instead, overwriting that
+            // member in place; with release mode active, every filled
+            // slot instead opens the two-stage release confirm for that
+            // member (an empty one stays a no-op either way -- nothing
+            // there to release). Read-only save: no effect either way,
+            // same as every other mutating control in this panel.
             const teamSlotHitZone = e.target.closest('.game-team-slot-hit-zone');
             if (teamSlotHitZone) {
                 if (isActiveSaveReadOnly()) return;
@@ -14816,6 +15205,11 @@
                     else if (activeGuestSaveId !== null) persistGameGuestSaves();
                     markUnsavedProgressChanged();
                     renderTeamGrid();
+                    return;
+                }
+                if (teamReleaseModeActive) {
+                    if (teamSlot.dataset.filled !== 'true') return;
+                    openTeamReleaseConfirmOverlay(Number(teamSlot.dataset.index));
                     return;
                 }
                 if (teamSlot.dataset.filled === 'true') return;
@@ -14897,6 +15291,24 @@
                 closeTeamAddPromptOverlay();
                 closeGamePanel();
                 beginTeamAddMode();
+                return;
+            }
+        });
+
+        // Same reasoning again -- this overlay's also a sibling of
+        // #game-scroll, not a descendant. No on either stage backs out
+        // to release-picking mode via closeTeamReleaseConfirmOverlay()
+        // (see its own comment); Yes on either stage always routes
+        // through confirmTeamReleaseStage(), which is what actually
+        // knows whether that's "advance to stage 2" or "really release
+        // it" based on pendingTeamReleaseStage.
+        document.getElementById('game-team-release-confirm-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-team-release-confirm-overlay' || e.target.closest('.game-team-release-confirm-no-btn')) {
+                closeTeamReleaseConfirmOverlay();
+                return;
+            }
+            if (e.target.closest('.game-team-release-confirm-yes-btn')) {
+                confirmTeamReleaseStage();
                 return;
             }
         });
