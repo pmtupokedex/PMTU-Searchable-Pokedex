@@ -2691,10 +2691,9 @@
         /* Evolution -- bottom-right corner, mirroring
            .game-team-slot-status's own corner-circle treatment exactly
            (same border/background/sizing, just right: 0 instead of
-           left: 0). Placeholder art only for now -- not wired to any
-           click handler yet the way the status corner is (see
-           openTeamStatusOverlay()), that comes with the actual
-           evolution feature in a later pass. */
+           left: 0). See computeTeamEvolutionState()/openTeamEvolutionOverlay()
+           in the script for what determines the icon shown here and what
+           tapping it does. */
         .game-team-slot-evolution {
             position: absolute;
             bottom: 0;
@@ -2704,6 +2703,7 @@
 		border: 3.5px solid white;
             border-radius: 50%;
             background: rgba(50, 50, 50, 1);
+            cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2711,9 +2711,33 @@
         }
 
         .game-team-slot-evolution-img {
-            width: 90%;
+            width: 100%;
             aspect-ratio: 1 / 1;
             object-fit: contain;
+        }
+
+        /* Multiple simultaneously-available evolution types (currently
+           only ever Mega + Gigantamax at once -- see
+           computeTeamEvolutionState()'s own comment) cycle through their
+           icons on the corner rather than the badge only ever showing
+           one -- see startEvolutionBadgeCycle() in the script for the
+           actual timing. Layers stack directly on top of each other
+           (position: absolute inside the already-flex-centered
+           .game-team-slot-evolution) so the crossfade is a pure opacity
+           transition with no layout shift between frames; a single-icon
+           badge (the common case) never gets more than one of these at
+           all, so it's just a plain static image with no transition
+           overhead. */
+        .game-team-slot-evolution-img.evolution-cycle-layer {
+            position: absolute;
+            inset: 0;
+            margin: auto;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+        }
+
+        .game-team-slot-evolution-img.evolution-cycle-layer.evolution-cycle-active {
+            opacity: 1;
         }
 
         /* Current count readout, layered over the status art itself
@@ -3040,6 +3064,112 @@
 
         #game-team-status-overlay.visible {
             display: flex;
+        }
+
+        /* Evolution / Mega Evolution / Gigantamax picker -- see
+           openTeamEvolutionOverlay()/closeTeamEvolutionOverlay() in the
+           script. Same nested-in-#game-panel positioning as
+           #game-team-status-overlay above (duplicated for the same
+           independence reasoning as every other pair like this in this
+           doc). */
+        #game-team-evolution-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-evolution-overlay.visible {
+            display: flex;
+        }
+
+        /* Groups the picker into "Evolution" / "Mega Evolution" /
+           "Gigantamax" sections -- only actually shown with a heading
+           (see .game-team-evolution-section-title below) when more than
+           one category has options at once (see
+           renderTeamEvolutionOptions()); a single-category picker just
+           shows its buttons with no header, same as the status picker
+           never labels itself either. */
+        .game-team-evolution-section + .game-team-evolution-section {
+            margin-top: 14px;
+        }
+
+        .game-team-evolution-section-title {
+            font-size: 13px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #cfcfcf;
+            text-align: center;
+            margin: 0 0 8px;
+        }
+
+        /* One full-width row per option (rather than a 2-up grid) --
+           see the chat this was adjusted in: tall enough per row that
+           the artwork itself (see .game-team-evolution-choose-img) is
+           actually big enough to make out, at the cost of the card
+           needing to scroll more often for a branching line with
+           several options -- acceptable per that same conversation,
+           since branching lines are the exception rather than the norm. */
+        .game-team-evolution-options {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+		padding-bottom: 5px;
+        }
+
+        .game-team-evolution-choose-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            text-align: center;
+            gap: 8px;
+            width: 100%;
+            margin: 0;
+            padding: 8px 14px;
+        }
+
+        .game-team-evolution-choose-img {
+            width: 250px;
+            height: 250px;
+            object-fit: contain;
+            flex-shrink: 0;
+        }
+
+        /* Marks the in-progress pick, same convention as
+           .game-team-status-choose-btn.active. */
+        .game-team-evolution-choose-btn.active {
+            border-color: #FFEB3B;
+        }
+
+        /* The no-picker-needed path (see renderTeamEvolutionOptions()) --
+           a single available option across every category skips the
+           button grid entirely and just previews the target's art above
+           a line stating what Confirm will do. */
+        .game-team-evolution-single-confirm-wrap {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            margin: 0 0 14px;
+        }
+
+        .game-team-evolution-single-confirm-img {
+            width: 250px;
+            height: 250px;
+            object-fit: contain;
+        }
+
+        .game-team-evolution-single-confirm {
+            text-align: center;
+            font-size: 15px;
+            margin: 0;
         }
 
         /* Caps how tall any of these confirm cards can get so long
@@ -7920,6 +8050,25 @@
             </div>
         </div>
 
+        <!-- Evolution / Mega Evolution / Gigantamax picker for a single
+             Team Tracker slot -- see openTeamEvolutionOverlay()/
+             closeTeamEvolutionOverlay()/confirmTeamEvolutionSelection()
+             in the script. Reuses .game-confirm-card/-title, same as
+             #game-team-status-overlay above. #game-team-evolution-options
+             holds either the single-option confirm line or the full
+             section-grouped picker grid, built fresh by
+             renderTeamEvolutionOptions() every time this opens. -->
+        <div id="game-team-evolution-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-team-evolution-title">Evolve</p>
+                <div id="game-team-evolution-options"></div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-team-evolution-confirm-btn">Confirm</button>
+                    <button class="filter-btn exclude game-team-evolution-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- In-app QR scanner -- see openLobbyScanOverlay()/
              closeLobbyScanOverlay()/runLobbyScanDetection() in the
              script. #game-lobby-scan-canvas is never actually shown
@@ -8750,6 +8899,29 @@
         fetch("https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/pokemon-data.json")
             .then(response => response.json())
             .then(data => {
+                // Keyed by name (the same string stored on a team
+                // member -- see confirmTeamAddSelection()) so the Team
+                // Tracker's evolution feature (computeTeamEvolutionState()
+                // and friends, further down) can look a member's full
+                // pokemon-data.json entry back up -- token_level,
+                // evolve_cost, evolves_to, mega_forms, gmax_forms,
+                // base_form/form_type -- without a second fetch of the
+                // same file. Populated here rather than in a fetch of
+                // its own since this data is already coming down for the
+                // gallery either way; team-tracker code just reads this
+                // global once it exists; a member rendered before it's
+                // populated falls back to the "unable" evolution state
+                // until the next renderTeamGrid() call (see
+                // POKEMON_BY_NAME's own comment further down).
+                data.forEach(p => { POKEMON_BY_NAME[p.name] = p; });
+                // Covers the case where Team Tracker was already open (and
+                // had already rendered every filled slot's evolution
+                // corner in the "unable" fallback state) by the time this
+                // fetch resolves -- picks those slots back up against the
+                // data that just arrived, same idea as any other
+                // async-data-arrives-after-first-render re-render in this
+                // doc.
+                renderTeamGrid();
                 data.forEach(p => {
                     const card = document.createElement("div");
                     card.className = "image-card";
@@ -10806,12 +10978,55 @@
         // rather than left to each place that changes
         // teamReplacePendingMember, since every one of them already calls
         // this right afterward to redraw the grid itself.
+        // Interval IDs for every currently-running evolution-badge
+        // crossfade (see startEvolutionBadgeCycle() below) -- cleared and
+        // rebuilt at the top of every renderTeamGrid() call, since that
+        // function always tears down and rebuilds the whole grid's markup
+        // from scratch; nothing else ever adds to or clears this array.
+        let activeEvolutionBadgeIntervals = [];
+
+        // Crossfades between a multi-icon evolution badge's stacked
+        // .evolution-cycle-layer <img> elements -- 2 seconds on each
+        // icon, then a 0.5s opacity fade to the next (the CSS transition
+        // on .evolution-cycle-layer itself is what actually animates the
+        // fade; this just flips which layer has .evolution-cycle-active
+        // every 2.5s, in sync with that transition's own duration). Only
+        // ever called for a badge with more than one icon at all -- see
+        // renderTeamGrid()'s own call site -- so a single-icon badge
+        // never pays for a timer it doesn't need. The returned interval
+        // ID is the caller's responsibility to track and clear (see
+        // activeEvolutionBadgeIntervals above); this function doesn't
+        // track it itself since it has no way to know when its own badge
+        // element gets torn down.
+        function startEvolutionBadgeCycle(badgeEl) {
+            const layers = badgeEl.querySelectorAll('.evolution-cycle-layer');
+            if (layers.length < 2) return;
+            let activeIndex = 0;
+            const intervalId = setInterval(() => {
+                activeIndex = (activeIndex + 1) % layers.length;
+                layers.forEach((layer, idx) => layer.classList.toggle('evolution-cycle-active', idx === activeIndex));
+            }, 2500);
+            activeEvolutionBadgeIntervals.push(intervalId);
+        }
+
         function renderTeamGrid() {
             const grid = document.getElementById('game-team-grid');
             if (!grid) return;
             const data = getActiveSaveData();
             const members = data.team.members || [];
             const replacing = !!teamReplacePendingMember;
+
+            // Every multi-icon evolution badge (see startEvolutionBadgeCycle()
+            // below) owns a running setInterval -- this whole grid gets
+            // torn down and rebuilt from scratch below, so anything left
+            // over from the previous render would keep firing against
+            // <img> elements no longer in the DOM. Cleared unconditionally
+            // up front rather than only when a badge is about to be
+            // replaced, since there's no cheaper way to know in advance
+            // which (if any) of this render's badges will end up
+            // single-icon instead.
+            activeEvolutionBadgeIntervals.forEach(id => clearInterval(id));
+            activeEvolutionBadgeIntervals = [];
 
             const addBtn = document.getElementById('game-team-add-btn');
             if (addBtn) addBtn.style.display = replacing ? 'none' : '';
@@ -10832,6 +11047,20 @@
                 if (member) {
                     const img = document.createElement('img');
                     img.className = 'game-team-slot-img';
+                    // A toggled-on Mega/Gigantamax (member.formOverride --
+                    // see computeTeamEvolutionState()'s own comment) shows
+                    // that alt-form's art instead of the member's own,
+                    // still respecting the shiny flag against whichever
+                    // set of src/shinysrc is actually in play -- the base
+                    // species' own src/shinysrc when there's no override,
+                    // the override entry's when there is. Falls back to
+                    // the member's own art if the override name somehow
+                    // isn't in POKEMON_BY_NAME (e.g. rendered before the
+                    // pokemon-data.json fetch resolves) rather than
+                    // showing nothing.
+                    const overrideEntry = member.formOverride ? POKEMON_BY_NAME[member.formOverride] : null;
+                    const artSrc = overrideEntry ? overrideEntry.src : member.src;
+                    const artShinySrc = overrideEntry ? (overrideEntry.shinysrc || '') : member.shinysrc;
                     // member.shiny (set by confirmTeamAddSelection() from
                     // the confirm card's own checkbox) picks shinysrc
                     // over src the same way setShinyShowing() does
@@ -10840,8 +11069,8 @@
                     // shinysrc isn't a real URL (shouldn't happen given
                     // that checkbox is disabled for a no-shiny-form
                     // Pokémon, but costs nothing to check here too).
-                    img.src = (member.shiny && hasShinyForm(member.shinysrc)) ? member.shinysrc : member.src;
-                    img.alt = member.name || '';
+                    img.src = (member.shiny && hasShinyForm(artShinySrc)) ? artShinySrc : artSrc;
+                    img.alt = (overrideEntry ? overrideEntry.name : member.name) || '';
                     // Same "just disappear, leave the frame bare" fallback
                     // as .game-matchup-chart-col-header-icon and its
                     // siblings (see buildMatchupChartColHeader() and
@@ -10889,14 +11118,31 @@
                     levelBadge.textContent = member.level || 0;
                     slot.appendChild(levelBadge);
 
-                    // Evolution (bottom-right) -- placeholder corner for
-                    // now, no data model or click handler behind it yet;
-                    // just the art slot itself, matching the status
-                    // corner's own image treatment.
+                    // Evolution (bottom-right) -- icon(s) and click
+                    // behavior both driven by computeTeamEvolutionState()
+                    // (see its own comment); the #game-scroll delegated
+                    // listener further down is what actually reacts to a
+                    // tap here. A single-icon state (the common case) is
+                    // just a plain static image; a multi-icon state
+                    // (currently only "can both Mega Evolve and
+                    // Gigantamax") gets one stacked layer per icon and a
+                    // running crossfade started via
+                    // startEvolutionBadgeCycle() below, tracked in
+                    // activeEvolutionBadgeIntervals so the next render
+                    // can clear it rather than leaking timers.
+                    const evoState = computeTeamEvolutionState(member);
                     const evolutionBadge = document.createElement('div');
                     evolutionBadge.className = 'game-team-slot-evolution';
                     evolutionBadge.dataset.index = i;
-                    evolutionBadge.innerHTML = '<img class="game-team-slot-evolution-img" src="https://dl.dropboxusercontent.com/scl/fi/ymjcqbhnwc46ivepaf1x2/evo_unable.png?rlkey=eopt73exlwrii5af4qddcwcgj&st=1u925b3k&dl=1" alt="Evolution">';
+                    evolutionBadge.dataset.evoMode = evoState.mode;
+                    if (evoState.icons.length === 1) {
+                        evolutionBadge.innerHTML = `<img class="game-team-slot-evolution-img" src="${evoState.icons[0]}" alt="Evolution">`;
+                    } else {
+                        evolutionBadge.innerHTML = evoState.icons.map((url, idx) => `
+                            <img class="game-team-slot-evolution-img evolution-cycle-layer${idx === 0 ? ' evolution-cycle-active' : ''}" src="${url}" alt="Evolution">
+                        `).join('');
+                        startEvolutionBadgeCycle(evolutionBadge);
+                    }
                     slot.appendChild(evolutionBadge);
                 }
 
@@ -10957,6 +11203,122 @@
         function beginTeamReplaceMode(member) {
             teamReplacePendingMember = member;
             renderTeamGrid();
+        }
+
+        // Full pokemon-data.json entries keyed by name -- populated once
+        // (see the fetch() that also builds the Pokédex gallery, further
+        // up) rather than fetched again here, since the same file already
+        // covers everything the evolution feature needs per species:
+        // tags (canevolve/canmega/cangmax), token_level, evolve_cost,
+        // evolves_to, mega_forms, gmax_forms, base_form, form_type. A
+        // member only ever stores its own name/dex/src/shinysrc/shiny/
+        // status/level (see emptySaveScopedData()'s own comment) -- this
+        // is what computeTeamEvolutionState() below looks that name up
+        // against to figure out what the evolution corner should show.
+        let POKEMON_BY_NAME = {};
+
+        // The four evolution-corner icons -- see the chat this was
+        // designed in. 'unable' is also renderTeamGrid()'s own inline
+        // fallback for a member found in neither POKEMON_BY_NAME nor as
+        // an active mega/gmax override, so every filled slot always has
+        // *some* icon here even before the pokemon-data.json fetch above
+        // resolves.
+        const EVOLUTION_MODE_IMAGES = {
+            unable: 'https://dl.dropboxusercontent.com/scl/fi/ymjcqbhnwc46ivepaf1x2/evo_unable.png?rlkey=eopt73exlwrii5af4qddcwcgj&st=1u925b3k&dl=1',
+            evolve: 'https://dl.dropboxusercontent.com/scl/fi/l42duwox0shzrypcbk0jj/evo_able.png?rlkey=v0zs5pdilahlfx5zar4nu0kmg&st=441pd2ky&dl=1',
+            mega: 'https://dl.dropboxusercontent.com/scl/fi/3lzv0bmccedyt4ca1sg8p/evo_mega.png?rlkey=8w7etkegnqz9walcj2dc31c24&st=b7k8wwbz&dl=1',
+            gmax: 'https://dl.dropboxusercontent.com/scl/fi/rwjaflyfqnxzot2ooa55x/evo_gmax.png?rlkey=8e85bdzjdnckgps7bt4nsgmj9&st=6qla9nbb&dl=1',
+            // Shown instead of 'mega'/'gmax' above once that form is
+            // actually toggled on (member.formOverride set) -- see
+            // computeTeamEvolutionState()'s 'active-mega'/'active-gmax'
+            // branch, distinct art from the "you can activate this"
+            // buttons per the chat this was added in.
+            activeMega: 'https://dl.dropboxusercontent.com/scl/fi/ttfbrvc2g7jh5cqk7fay1/evo_mega_active.png?rlkey=jj5rur7igdjhus9wi4nkak6ro&st=fhplglrd&dl=1',
+            activeGmax: 'https://dl.dropboxusercontent.com/scl/fi/8v4o0iq9bc4fh1fowxvmk/evo_gmax_active.png?rlkey=sr12w0oxozfnie3i25o5wdsyj&st=gpla4ovy&dl=1',
+        };
+
+        // member.formOverride -- not declared anywhere (members are
+        // plain object literals, see emptySaveScopedData()'s own
+        // comment), just documented here: a string naming the exact
+        // pokemon-data.json entry currently showing in place of the
+        // member's own art (e.g. "Mega Charizard X" or "G-Max
+        // Charizard"), or undefined/null for "not toggled on" -- set by
+        // confirmTeamEvolutionSelection()'s 'mega'/'gmax' branch,
+        // cleared by the #game-scroll delegated listener's own
+        // .game-team-slot-evolution branch (immediate revert) or by
+        // confirmTeamEvolutionSelection()'s 'evolve' branch (a genuine
+        // stage evolution invalidates whatever override was naming the
+        // old species). Deliberately its own field rather than folded
+        // into member.name/src the way a real stage evolution overwrites
+        // those -- Mega/Gigantamax don't change what species this member
+        // actually is (member.name stays the source of truth for future
+        // evolve/mega/gmax eligibility -- see computeTeamEvolutionState()
+        // below), they just swap the displayed art until toggled back
+        // off. renderTeamGrid()'s own img.src logic checks this before
+        // falling back to member.src/shinysrc.
+
+        // Figures out what the evolution corner should show/do for one
+        // team member, entirely from that member's own name/level plus
+        // POKEMON_BY_NAME -- called fresh every render rather than
+        // cached on the member, so a level change or a fetch resolving
+        // late is always reflected immediately.
+        //
+        // Returns { mode, icons } where mode is one of:
+        //   'unable'      -- nothing available; tapping the corner no-ops.
+        //   'available'   -- at least one of stage evolution/Mega
+        //                     Evolution/Gigantamax currently applies;
+        //                     tapping opens the picker/confirm, which
+        //                     lists every one of them that does (see
+        //                     openTeamEvolutionOverlay()).
+        //   'active-mega' -- already Mega Evolved (member.formOverride is
+        //                     set to a mega form); tapping reverts
+        //                     immediately, no overlay.
+        //   'active-gmax' -- already Gigantamaxed; same immediate-revert
+        //                     behavior as 'active-mega'.
+        //
+        // icons is the ordered list of image URLs the corner should
+        // cycle through (see startEvolutionBadgeCycle() in the script for
+        // the actual crossfade timing) -- every currently-applicable
+        // type contributes its own icon here, stage evolution included
+        // alongside Mega/Gigantamax rather than only the latter two (see
+        // the chat this was confirmed in); length 1 whenever only one
+        // type applies, which in practice is nearly always, since
+        // evolves_to/evolve_cost and mega_forms/gmax_forms don't overlap
+        // on the same species in this dataset -- only a fully-evolved
+        // (stage3) form ever carries canmega/cangmax, and a Pokémon that
+        // still has evolves_to ahead of it never does. Built generically
+        // (evolve/mega/gmax each independently checked and appended) all
+        // the same, so a future species that genuinely does have more
+        // than one type available at once -- including stage evolution
+        // alongside Mega/Gigantamax -- would just cycle through all of
+        // them without this function needing to change.
+        function computeTeamEvolutionState(member) {
+            if (!member) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable] };
+
+            if (member.formOverride) {
+                const overrideEntry = POKEMON_BY_NAME[member.formOverride];
+                const isGmax = overrideEntry && overrideEntry.form_type === 'gmax';
+                return {
+                    mode: isGmax ? 'active-gmax' : 'active-mega',
+                    icons: [isGmax ? EVOLUTION_MODE_IMAGES.activeGmax : EVOLUTION_MODE_IMAGES.activeMega],
+                };
+            }
+
+            const baseEntry = POKEMON_BY_NAME[member.name];
+            if (!baseEntry) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable] };
+
+            const canEvolve = !!(baseEntry.evolves_to && baseEntry.evolves_to.length
+                && typeof baseEntry.evolve_cost === 'number'
+                && (member.level || 0) >= baseEntry.evolve_cost);
+            const canMega = !!(baseEntry.mega_forms && baseEntry.mega_forms.length);
+            const canGmax = !!(baseEntry.gmax_forms && baseEntry.gmax_forms.length);
+
+            const icons = [];
+            if (canEvolve) icons.push(EVOLUTION_MODE_IMAGES.evolve);
+            if (canMega) icons.push(EVOLUTION_MODE_IMAGES.mega);
+            if (canGmax) icons.push(EVOLUTION_MODE_IMAGES.gmax);
+            if (icons.length) return { mode: 'available', icons };
+            return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable] };
         }
 
         // The seven classic status conditions -- imageUrl is
@@ -11158,6 +11520,209 @@
             const next = Math.max(0, Math.min(6, (member.level || 0) + delta));
             if (next === (member.level || 0)) return;
             member.level = next;
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+        }
+
+        // Which slot's evolution corner is being edited -- only
+        // meaningful while #game-team-evolution-overlay is open, same
+        // shape as pendingTeamStatusIndex.
+        let pendingTeamEvolutionIndex = null;
+
+        // The full list of choices the picker is currently showing, each
+        // { category: 'evolve'|'mega'|'gmax', name: <pokemon-data.json
+        // entry name> } -- rebuilt fresh every open by
+        // openTeamEvolutionOverlay() from that member's own base entry,
+        // never mutated afterward. selectTeamEvolutionOption() only ever
+        // changes which single one of these is "active" (pendingTeam
+        // EvolutionChoice), never this list itself.
+        let pendingTeamEvolutionOptions = [];
+
+        // The in-progress pick -- one entry out of
+        // pendingTeamEvolutionOptions, or null before anything's been
+        // tapped. Nothing here touches the member until
+        // confirmTeamEvolutionSelection() actually commits it, same
+        // "pick freely, only Confirm writes it back" shape as the status
+        // picker's own pendingTeamStatusId.
+        let pendingTeamEvolutionChoice = null;
+
+        const EVOLUTION_CATEGORY_LABELS = { evolve: 'Evolution', mega: 'Mega Evolution', gmax: 'Gigantamax' };
+
+        // Redraws #game-team-evolution-options against
+        // pendingTeamEvolutionOptions/-Choice -- called on open and again
+        // every time the pending pick changes. Two shapes, per the chat
+        // this was designed in: exactly one option total (regardless of
+        // category) skips the button grid for a preview image above a
+        // plain "Evolve into Ivysaur?"-style line, already counted as
+        // the pick so Confirm alone finishes it; more than one draws the
+        // full one-per-row list, grouped into category sections (only
+        // actually labeled when more than one category is present at
+        // once -- see .game-team-evolution-section-title's own CSS
+        // comment). Every preview image -- single or multi-option --
+        // shows the target's shiny art instead of its normal art when
+        // the member evolving is itself shiny right now (same
+        // hasShinyForm() guard renderTeamGrid() uses, so a target with
+        // no real shiny art falls back to its normal art rather than a
+        // broken image).
+        function renderTeamEvolutionOptions() {
+            const optionsEl = document.getElementById('game-team-evolution-options');
+            if (!optionsEl) return;
+
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[pendingTeamEvolutionIndex];
+            const memberShiny = !!(member && member.shiny);
+
+            function previewSrc(entry) {
+                if (!entry) return '';
+                return (memberShiny && hasShinyForm(entry.shinysrc)) ? entry.shinysrc : entry.src;
+            }
+
+            if (pendingTeamEvolutionOptions.length === 1) {
+                const only = pendingTeamEvolutionOptions[0];
+                const verb = only.category === 'evolve' ? 'Evolve into' : (only.category === 'mega' ? 'Mega Evolve into' : 'Gigantamax into');
+                const entry = POKEMON_BY_NAME[only.name];
+                const imgSrc = previewSrc(entry);
+                optionsEl.innerHTML = `
+                    <div class="game-team-evolution-single-confirm-wrap">
+                        ${imgSrc ? `<img class="game-team-evolution-single-confirm-img" src="${imgSrc}" alt="${escapeHtml(only.name)}">` : ''}
+                        <p class="game-team-evolution-single-confirm">${verb} <strong>${escapeHtml(only.name)}</strong>?</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const categories = ['evolve', 'mega', 'gmax'].filter(cat => pendingTeamEvolutionOptions.some(o => o.category === cat));
+            const showHeaders = categories.length > 1;
+
+            optionsEl.innerHTML = categories.map(cat => {
+                const opts = pendingTeamEvolutionOptions.filter(o => o.category === cat);
+                const buttonsHtml = opts.map(o => {
+                    const entry = POKEMON_BY_NAME[o.name];
+                    const imgSrc = previewSrc(entry);
+                    const active = pendingTeamEvolutionChoice
+                        && pendingTeamEvolutionChoice.category === o.category
+                        && pendingTeamEvolutionChoice.name === o.name;
+                    return `
+                        <button class="filter-btn game-team-evolution-choose-btn${active ? ' active' : ''}" data-category="${o.category}" data-name="${escapeHtml(o.name)}">
+                            ${imgSrc ? `<img class="game-team-evolution-choose-img" src="${imgSrc}" alt="${escapeHtml(o.name)}">` : ''}
+                            <span>${escapeHtml(o.name)}</span>
+                        </button>
+                    `;
+                }).join('');
+                return `
+                    <div class="game-team-evolution-section">
+                        ${showHeaders ? `<p class="game-team-evolution-section-title">${EVOLUTION_CATEGORY_LABELS[cat]}</p>` : ''}
+                        <div class="game-team-evolution-options">${buttonsHtml}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Builds pendingTeamEvolutionOptions from a member's base entry
+        // (see computeTeamEvolutionState() for the same eligibility
+        // rules used to decide the corner icon in the first place) and
+        // opens the picker. Only ever called for mode 'evolve'/'mega'/
+        // 'gmax' -- 'unable' is a no-op and 'active-mega'/'active-gmax'
+        // revert immediately without an overlay at all (see the
+        // #game-scroll delegated listener's own .game-team-slot-evolution
+        // branch further down).
+        function openTeamEvolutionOverlay(index) {
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[index];
+            if (!member) return;
+            const baseEntry = POKEMON_BY_NAME[member.name];
+            if (!baseEntry) return;
+
+            const options = [];
+            if (baseEntry.evolves_to && baseEntry.evolves_to.length
+                && typeof baseEntry.evolve_cost === 'number'
+                && (member.level || 0) >= baseEntry.evolve_cost) {
+                baseEntry.evolves_to.forEach(name => options.push({ category: 'evolve', name }));
+            }
+            if (baseEntry.mega_forms) baseEntry.mega_forms.forEach(name => options.push({ category: 'mega', name }));
+            if (baseEntry.gmax_forms) baseEntry.gmax_forms.forEach(name => options.push({ category: 'gmax', name }));
+            if (options.length === 0) return;
+
+            pendingTeamEvolutionIndex = index;
+            pendingTeamEvolutionOptions = options;
+            // A single option is already the pick -- the single-confirm
+            // line rendered above states it outright, so Confirm needs
+            // nothing further tapped first.
+            pendingTeamEvolutionChoice = options.length === 1 ? options[0] : null;
+
+            const titleEl = document.getElementById('game-team-evolution-title');
+            if (titleEl) {
+                titleEl.textContent = options.length === 1
+                    ? (options[0].category === 'evolve' ? 'Evolve' : (options[0].category === 'mega' ? 'Mega Evolve' : 'Gigantamax'))
+                    : 'Choose an Evolution';
+            }
+
+            renderTeamEvolutionOptions();
+            const overlay = document.getElementById('game-team-evolution-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        function closeTeamEvolutionOverlay() {
+            pendingTeamEvolutionIndex = null;
+            pendingTeamEvolutionOptions = [];
+            pendingTeamEvolutionChoice = null;
+            const overlay = document.getElementById('game-team-evolution-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // Switches the picker's own pending choice -- called by every
+        // button in the grid (see the overlay's own click listener
+        // further down). Never reachable for the single-option shape,
+        // since that path never renders any buttons to click.
+        function selectTeamEvolutionOption(category, name) {
+            pendingTeamEvolutionChoice = { category, name };
+            renderTeamEvolutionOptions();
+        }
+
+        // The picker's own Confirm -- the only thing that actually
+        // writes anything back to the member. Branches on the chosen
+        // option's category:
+        //   'evolve' -- a genuine, permanent stage evolution: the member
+        //     BECOMES the new species (name/dex/src/shinysrc all swap to
+        //     the target entry's own, same fields confirmTeamAddSelection()
+        //     sets when a member's first added), evolve_cost comes off
+        //     the level box, and any active Mega/Gigantamax override is
+        //     cleared outright -- a form override naming the old species
+        //     ("Mega Charizard X" while this member was still just
+        //     Charizard) would no longer even resolve against the new
+        //     one. In practice this path is never reached with an
+        //     override still active anyway, since 'active-mega'/
+        //     'active-gmax' revert immediately without ever opening this
+        //     overlay (see the delegated listener) -- cleared here too
+        //     regardless, as cheap insurance.
+        //   'mega'/'gmax' -- just sets member.formOverride to the chosen
+        //     form's name; the member's own species/level are untouched,
+        //     renderTeamGrid() picks up the override's art on the next
+        //     render (see its own comment).
+        function confirmTeamEvolutionSelection() {
+            if (pendingTeamEvolutionIndex === null || !pendingTeamEvolutionChoice) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[pendingTeamEvolutionIndex];
+            const choice = pendingTeamEvolutionChoice;
+            const baseEntry = POKEMON_BY_NAME[member ? member.name : ''];
+            closeTeamEvolutionOverlay();
+            if (!member || !baseEntry) return;
+
+            if (choice.category === 'evolve') {
+                const targetEntry = POKEMON_BY_NAME[choice.name];
+                if (!targetEntry) return;
+                member.dex = (targetEntry.tags && targetEntry.tags[0]) || '';
+                member.name = targetEntry.name;
+                member.src = targetEntry.src;
+                member.shinysrc = targetEntry.shinysrc || '';
+                member.level = Math.max(0, (member.level || 0) - baseEntry.evolve_cost);
+                member.formOverride = null;
+            } else {
+                member.formOverride = choice.name;
+            }
+
             if (activeSaveSlot !== null) persistGameSaves();
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
             markUnsavedProgressChanged();
@@ -14153,6 +14718,38 @@
                 return;
             }
 
+            // Evolution corner -- behavior depends entirely on
+            // computeTeamEvolutionState()'s mode (re-read here rather
+            // than trusted off the dataset attribute renderTeamGrid()
+            // left behind, in case level/save data changed underneath
+            // without a re-render in between): 'unable' no-ops, an
+            // already-active Mega/Gigantamax (dataset.evoMode 'active-
+            // mega'/'active-gmax') reverts immediately with no overlay
+            // at all (see the chat this was designed in -- "tapping
+            // again reverts"), and anything else opens the picker. Same
+            // replace-mode block as the status/level corners above, same
+            // reasoning.
+            const evolutionBadge = e.target.closest('.game-team-slot-evolution');
+            if (evolutionBadge) {
+                if (isActiveSaveReadOnly() || teamReplacePendingMember) return;
+                const index = Number(evolutionBadge.dataset.index);
+                const data = getActiveSaveData();
+                const member = (data.team.members || [])[index];
+                if (!member) return;
+                const evoState = computeTeamEvolutionState(member);
+                if (evoState.mode === 'unable') return;
+                if (evoState.mode === 'active-mega' || evoState.mode === 'active-gmax') {
+                    member.formOverride = null;
+                    if (activeSaveSlot !== null) persistGameSaves();
+                    else if (activeGuestSaveId !== null) persistGameGuestSaves();
+                    markUnsavedProgressChanged();
+                    renderTeamGrid();
+                    return;
+                }
+                openTeamEvolutionOverlay(index);
+                return;
+            }
+
             // The hit-zone (see its own CSS comment for why this, and
             // not the slot's full square, is the actual click target)
             // -- what it does depends on teamReplacePendingMember (see
@@ -14290,6 +14887,27 @@
             const chooseBtn = e.target.closest('.game-team-status-choose-btn');
             if (chooseBtn) {
                 selectPendingTeamStatus(chooseBtn.dataset.status);
+                return;
+            }
+        });
+
+        // Same shape as #game-team-status-overlay's own listener just
+        // above -- backdrop/Cancel close, Confirm commits, and a tap on
+        // one of the picker's buttons (only present at all in the
+        // multi-option shape -- see renderTeamEvolutionOptions()) just
+        // updates the pending pick.
+        document.getElementById('game-team-evolution-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-team-evolution-overlay' || e.target.closest('.game-team-evolution-cancel-btn')) {
+                closeTeamEvolutionOverlay();
+                return;
+            }
+            if (e.target.closest('.game-team-evolution-confirm-btn')) {
+                confirmTeamEvolutionSelection();
+                return;
+            }
+            const chooseBtn = e.target.closest('.game-team-evolution-choose-btn');
+            if (chooseBtn) {
+                selectTeamEvolutionOption(chooseBtn.dataset.category, chooseBtn.dataset.name);
                 return;
             }
         });
