@@ -3260,6 +3260,7 @@
            "sometimes hidden" case here the way a status without a
            STATUS_COUNTER_CONFIG entry has. */
         .game-team-hp-counter {
+            position: relative;
             width: 50%;
             aspect-ratio: 3 / 1;
             border: 3.5px solid white;
@@ -3515,6 +3516,7 @@
            hanging off a token's corner, so a wide rounded rectangle
            reads more like a dedicated control than a badge. */
         .game-team-status-counter {
+            position: relative;
             width: 50%;
             aspect-ratio: 3 / 1;
             border: 3.5px solid white;
@@ -3531,6 +3533,46 @@
                 -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
                 -1px  0   0 black,                 1px  0   0 black,
                 -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
+        /* Same left-half-decrements/right-half-increments affordance as
+           .game-team-slot-level::before/::after (see its own comment) --
+           shared by both counter widgets (.game-team-status-counter and
+           .game-team-hp-counter) via this single selector rather than
+           duplicated per-widget, since the two are already visually
+           identical wide pills and there's no reason for their +/- to
+           ever diverge. Purely decorative, pointer-events left alone so
+           they don't interfere with the click-zone math against the
+           pill's own bounding rect (see each overlay's own click
+           listener). */
+        .game-team-status-counter::before,
+        .game-team-status-counter::after,
+        .game-team-hp-counter::before,
+        .game-team-hp-counter::after {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 18px;
+            font-weight: bold;
+            line-height: 1;
+            color: #FFF;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+            pointer-events: none;
+        }
+
+        .game-team-status-counter::before,
+        .game-team-hp-counter::before {
+            content: "-";
+            left: 16px;
+        }
+
+        .game-team-status-counter::after,
+        .game-team-hp-counter::after {
+            content: "+";
+            right: 16px;
         }
 
         /* The gallery-side half of this flow, once the panel above has
@@ -4851,22 +4893,38 @@
         .filter-btn.include { background-color: rgba(0, 153, 255, 0.70); color: white; }
         .filter-btn.exclude { background-color: rgba(255, 77, 77, 0.70); color: white; }
 
-        /* Applied to the Starter and Pokéstar Studios filter buttons for
-           the duration of an Add Pokémon session (see beginTeamAddMode()/
-           exitTeamAddMode() in the script) -- Starter gets forced to
-           .include (and this on top of it) when the roster's empty,
-           Pokéstar just gets this alone since it's force-excluded a
-           different way (see TEAM_ADD_FORCED_EXCLUDE_TAGS) and doesn't
-           need its own include/exclude class touched. pointer-events:
-           none is what actually makes it "can't be turned off" --
-           without it the button's own pointerdown/pointerup handlers
-           would still fire and toggle it right back. A dimmed opacity
-           on top of whatever color (.include, or none for Pokéstar)
-           already applies is enough to read as "locked" without a
-           dedicated icon. */
-        .filter-btn.team-add-locked {
+        /* Generic "visibly present but can't be tapped right now" look --
+           used by the Add Pokémon guardrail buttons (Starter/Pokéstar,
+           see beginTeamAddMode()/exitTeamAddMode()). pointer-events: none
+           is what actually blocks interaction there -- without it the
+           button's own click handling would still fire. Darkened via
+           brightness() rather than opacity (see the chat this was
+           changed in) -- opacity let whatever's rendered *behind* the
+           element show through, which read as a visual glitch rather
+           than "locked"; brightness() dims the element's own
+           background/art in place without introducing any transparency
+           at all, same approach .game-team-slot-img.fainted already uses
+           for the token art itself. */
+        .game-team-corner-locked {
             pointer-events: none;
-            opacity: 0.6;
+            filter: brightness(0.5);
+        }
+
+        /* Darkens just the art inside a corner badge, leaving the
+           badge's own border/background untouched -- used for a fainted
+           member's Status corner image (see renderTeamGrid()'s own
+           comment) and, conditionally, the Evolution corner's own
+           "nothing available" icon while fainted (see
+           computeTeamEvolutionState()'s dimmed field) -- per the chat
+           this was split out in: .game-team-corner-locked's whole-badge
+           brightness() dim also washed out the corner's own white
+           border, which wasn't wanted for either of these. Neither
+           corner needs pointer-events: none here (unlike
+           .game-team-corner-locked above) -- both are already blocked at
+           the #game-scroll delegated listener level regardless of
+           anything CSS does. */
+        .game-team-corner-img-dimmed {
+            filter: brightness(0.5);
         }
 	  
 	  .music-playlist-btn {
@@ -9684,7 +9742,7 @@
                 // the whole panel, Starter/Pokéstar included, so without
                 // this check "Reset Filters" would be just as able to
                 // silently undo an active Add Pokémon guardrail lock.
-                if (btn.classList.contains('team-add-locked')) return;
+                if (btn.classList.contains('game-team-corner-locked')) return;
                 btn.classList.remove('include', 'exclude');
             });
             // hideNoAbility has no data-tag, so the loop above never
@@ -9756,7 +9814,7 @@
                 // beginTeamAddMode()'s own comment) -- otherwise "Show
                 // All" here would silently undo a lock that's supposed
                 // to survive exactly this kind of reset.
-                if (btn.classList.contains('team-add-locked')) return;
+                if (btn.classList.contains('game-team-corner-locked')) return;
                 btn.classList.remove('include', 'exclude');
                 syncTagButtons(btn);
             });
@@ -11495,6 +11553,19 @@
                     statusBadge.className = 'game-team-slot-status';
                     statusBadge.dataset.index = i;
                     statusBadge.innerHTML = statusImageMarkup(status || NO_STATUS_PLACEHOLDER, 'game-team-slot-status-img');
+                    // Fainted: darken just the inner image, leaving the
+                    // badge's own border/background at full brightness
+                    // (see .game-team-corner-img-dimmed's own CSS
+                    // comment for why -- a whole-badge dim used to wash
+                    // out the white border along with everything else).
+                    // The actual click block lives entirely in the
+                    // #game-scroll delegated listener's own
+                    // .game-team-slot-status branch; this is purely
+                    // visual.
+                    if (member.fainted) {
+                        const statusImgEl = statusBadge.querySelector('img');
+                        if (statusImgEl) statusImgEl.classList.add('game-team-corner-img-dimmed');
+                    }
                     // Current count, if this status is one of the four
                     // STATUS_COUNTER_CONFIG tracks (see its own comment)
                     // -- pointer-events: none (see the CSS) so it's
@@ -11535,10 +11606,20 @@
                     evolutionBadge.dataset.index = i;
                     evolutionBadge.dataset.evoMode = evoState.mode;
                     if (evoState.icons.length === 1) {
-                        evolutionBadge.innerHTML = `<img class="game-team-slot-evolution-img" src="${evoState.icons[0]}" alt="Evolution">`;
+                        // dimmed only ever applies to this single-icon
+                        // path (see computeTeamEvolutionState()'s own
+                        // comment -- it's exclusively the "fainted, and
+                        // nothing at all is available" case), darkening
+                        // just the icon itself rather than the whole
+                        // badge circle -- same
+                        // .game-team-corner-img-dimmed treatment as the
+                        // fainted Status corner's own image, for the same
+                        // "keep the white border readable" reason.
+                        const dimClass = evoState.dimmed ? ' game-team-corner-img-dimmed' : '';
+                        evolutionBadge.innerHTML = `<img class="game-team-slot-evolution-img${dimClass}" src="${evoState.icons[0]}" alt="Evolution">`;
                     } else {
                         evolutionBadge.innerHTML = evoState.icons.map((url, idx) => `
-                            <img class="game-team-slot-evolution-img evolution-cycle-layer${idx === 0 ? ' evolution-cycle-active' : ''}" src="${url}" alt="Evolution">
+                            <img class="game-team-slot-evolution-img${idx === 0 ? ' evolution-cycle-active' : ''} evolution-cycle-layer" src="${url}" alt="Evolution">
                         `).join('');
                         startEvolutionBadgeCycle(evolutionBadge);
                     }
@@ -11600,7 +11681,7 @@
         // tokens are force-excluded for every add-mode session
         // regardless of roster size (see TEAM_ADD_FORCED_EXCLUDE_TAGS
         // above, applied in filterGallery() itself rather than here).
-        // Both kinds of lock are visual too (.team-add-locked, see its
+        // Both kinds of lock are visual too (.game-team-corner-locked, see its
         // own CSS comment) so the relevant button(s) can't be tapped
         // back off for as long as this mode stays active.
         function beginTeamAddMode() {
@@ -11613,7 +11694,7 @@
             if (rosterEmpty && starterBtn) {
                 teamAddStarterLockActive = true;
                 starterBtn.classList.remove('exclude');
-                starterBtn.classList.add('include', 'team-add-locked');
+                starterBtn.classList.add('include', 'game-team-corner-locked');
                 updateFilters();
             }
             // Pokéstar's own include/exclude class is left untouched --
@@ -11623,7 +11704,7 @@
             // self-contradicting (and confusingly empty) result. Locked
             // purely so tapping it can't do that.
             const pokestarBtn = document.querySelector('#unique-properties-section .filter-btn[data-tag="pokestar"]');
-            if (pokestarBtn) pokestarBtn.classList.add('team-add-locked');
+            if (pokestarBtn) pokestarBtn.classList.add('game-team-corner-locked');
 
             filterGallery();
             refreshBackButtonState();
@@ -11862,7 +11943,7 @@
         // alongside Mega/Gigantamax -- would just cycle through all of
         // them without this function needing to change.
         function computeTeamEvolutionState(member) {
-            if (!member) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable] };
+            if (!member) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], dimmed: false };
 
             if (member.formOverride) {
                 const overrideEntry = POKEMON_BY_NAME[member.formOverride];
@@ -11870,24 +11951,40 @@
                 return {
                     mode: isGmax ? 'active-gmax' : 'active-mega',
                     icons: [isGmax ? EVOLUTION_MODE_IMAGES.activeGmax : EVOLUTION_MODE_IMAGES.activeMega],
+                    dimmed: false,
                 };
             }
 
             const baseEntry = POKEMON_BY_NAME[member.name];
-            if (!baseEntry) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable] };
+            if (!baseEntry) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], dimmed: !!member.fainted };
 
             const canEvolve = !!(baseEntry.evolves_to && baseEntry.evolves_to.length
                 && typeof baseEntry.evolve_cost === 'number'
                 && (member.level || 0) >= baseEntry.evolve_cost);
-            const canMega = !!(baseEntry.mega_forms && baseEntry.mega_forms.length);
-            const canGmax = !!(baseEntry.gmax_forms && baseEntry.gmax_forms.length);
+            // A fainted Pokémon can still be given a Rare Candy-style
+            // level-up and evolve normally (see the chat this was
+            // clarified in), but Mega Evolution/Gigantamax specifically
+            // require the Pokémon to be conscious in the first place --
+            // both forced false while fainted, regardless of what
+            // mega_forms/gmax_forms says.
+            const canMega = !member.fainted && !!(baseEntry.mega_forms && baseEntry.mega_forms.length);
+            const canGmax = !member.fainted && !!(baseEntry.gmax_forms && baseEntry.gmax_forms.length);
 
             const icons = [];
             if (canEvolve) icons.push(EVOLUTION_MODE_IMAGES.evolve);
             if (canMega) icons.push(EVOLUTION_MODE_IMAGES.mega);
             if (canGmax) icons.push(EVOLUTION_MODE_IMAGES.gmax);
-            if (icons.length) return { mode: 'available', icons };
-            return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable] };
+            // dimmed only ever applies to the 'unable' icon while
+            // fainted -- a fainted member with an available regular
+            // Evolution still shows evo_able.png at full brightness (per
+            // the chat this was added in), and 'available'/'active-*'
+            // above are left at their own explicit dimmed: false either
+            // way (an active Mega/Gigantamax can't coexist with fainted
+            // at all -- faintTeamMember() clears formOverride outright --
+            // so that branch is moot in practice, kept false purely for
+            // a consistent return shape).
+            if (icons.length) return { mode: 'available', icons, dimmed: false };
+            return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], dimmed: !!member.fainted };
         }
 
         // ---- Hit Points -----------------------------------------------
@@ -11918,20 +12015,69 @@
         // concept of a max (see getHpRule() above for why an unrecognized
         // hpRule value always resolves to 'standard' rather than falling
         // through here by accident). alt2's max is derived exactly as
-        // described in the chat this was built in: the target's own
-        // token_level (from pokemon-data.json, via POKEMON_BY_NAME) plus
-        // this member's own .game-team-slot-level value -- recomputed
-        // fresh every call rather than cached on the member, so a level
-        // change or an evolution (which can change which POKEMON_BY_NAME
-        // entry applies) is always reflected immediately.
+        // described in the chat this was built in: the currently-showing
+        // form's own token_level (from pokemon-data.json, via
+        // POKEMON_BY_NAME) plus this member's own .game-team-slot-level
+        // value -- "currently-showing form" meaning member.formOverride's
+        // own entry when a Mega/Gigantamax is active, not always the
+        // base species, since a lot of Mega/G-Max entries carry a
+        // token_level one higher than their base form (see the chat this
+        // was added in, and reconcileTeamMemberHpAcrossFormChange() below
+        // for how current hp gets shifted to match whenever that
+        // active/inactive state changes). Recomputed fresh every call
+        // rather than cached on the member, so a level change, a form
+        // change, or a genuine stage evolution (any of which can change
+        // which POKEMON_BY_NAME entry applies) is always reflected
+        // immediately.
         function getTeamMemberHpMax(member, hpRule) {
             if (hpRule === 'alt1') return 2;
             if (hpRule === 'alt2') {
-                const baseEntry = POKEMON_BY_NAME[member.name];
-                const tokenLevel = (baseEntry && typeof baseEntry.token_level === 'number') ? baseEntry.token_level : 0;
+                const activeEntry = (member.formOverride && POKEMON_BY_NAME[member.formOverride])
+                    || POKEMON_BY_NAME[member.name];
+                const tokenLevel = (activeEntry && typeof activeEntry.token_level === 'number') ? activeEntry.token_level : 0;
                 return tokenLevel + (member.level || 0);
             }
             return null;
+        }
+
+        // Called around any point member.formOverride is set or cleared
+        // (Mega/Gigantamax activating or reverting -- see
+        // confirmTeamEvolutionSelection()'s 'mega'/'gmax' branch and the
+        // #game-scroll delegated listener's own active-mega/active-gmax
+        // revert branch) so a token_level difference between a base
+        // species and its Mega/G-Max form doesn't leave a full-health
+        // member suddenly reading as wounded (or a wounded one suddenly
+        // fuller) purely from toggling form, in either direction -- the
+        // exact same "shift current hp by however much the max just
+        // moved" idea as the level-up fix in adjustTeamMemberLevel(),
+        // just triggered by a form change instead of a level change.
+        // oldMax MUST be captured by the caller with
+        // getTeamMemberHpMax() *before* actually changing
+        // member.formOverride; this reads the new max itself off
+        // whatever the member's state already is by the time it's
+        // called. No-op outside alt2, while fainted (hp is being reset
+        // fresh on the next revive regardless -- see confirmTeamRevive()
+        // -- so there's nothing meaningful to reconcile while fainted),
+        // or if the max didn't actually change.
+        //
+        // minHp (default 0) floors the result -- passed as 1 specifically
+        // when a special form is ENDING (see the delegated listener's own
+        // active-mega/active-gmax revert branch), per the chat this was
+        // added in: reverting Mega/Gigantamax should never drop a member
+        // to 0 HP purely from the form ending, even if the strict shift
+        // would land there, since fainting is only ever supposed to
+        // happen through an explicit action (faintTeamMember(), or the
+        // HP counter confirmed at 0) rather than as a side effect of a
+        // form wearing off. Left at the default everywhere else (level
+        // changes, and Mega/Gigantamax *activating*) since nothing in
+        // that chat called for the same floor there.
+        function reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax, minHp) {
+            if (hpRule !== 'alt2' || member.fainted) return;
+            const newMax = getTeamMemberHpMax(member, hpRule);
+            if (oldMax === null || newMax === null || oldMax === newMax) return;
+            const rawOldHp = typeof member.hp === 'number' ? member.hp : oldMax;
+            const floor = typeof minHp === 'number' ? minHp : 0;
+            member.hp = Math.min(newMax, Math.max(floor, rawOldHp + (newMax - oldMax)));
         }
 
         // Current HP for alt1/alt2 -- falls back to the current max
@@ -12312,16 +12458,23 @@
         // unconditionally regardless of the member's current level.
         //
         // Also carries alt2's own HP-growth rule (see getTeamMemberHpMax()
-        // for how a level factors into that hpRule's max at all): a
-        // level *increase* on a member who isn't fainted and is
-        // currently missing HP raises current hp by the same amount the
-        // level just went up by, capped at the new max -- per "its
-        // current hit points should increase by the increase in level"
-        // from the chat this was built in. A level decrease (or any
-        // change under 'standard'/'alt1', where level doesn't factor
-        // into HP at all) never raises hp, but still reclamps it down if
-        // the new max is now lower than whatever hp already was, so a
-        // display never shows more current HP than the max allows.
+        // for how a level factors into that hpRule's max at all): current
+        // hp shifts by exactly however much the max just moved, in
+        // either direction -- a level *increase* raises current hp right
+        // along with the new (also higher) max, so a full-health member
+        // stays full instead of silently falling a point behind (which
+        // is exactly what happened before this was fixed -- see the chat
+        // this was corrected in: gating the raise on "was already
+        // missing hp" meant a full-health member never got topped up on
+        // its first level-up, after which it WAS missing hp and every
+        // subsequent level-up only ever closed that same permanent
+        // 1-point gap instead of the fresh one it just opened, so it
+        // compounded instead of catching up). A level *decrease* shifts
+        // hp back down by the same amount rather than only reclamping if
+        // it would exceed the new lower max, for the same
+        // no-free-healing/no-free-damage symmetry reasoning as
+        // reconcileTeamMemberHpAcrossFormChange() below, which this
+        // shares its exact formula with.
         function adjustTeamMemberLevel(index, delta) {
             const data = getActiveSaveData();
             const member = (data.team.members || [])[index];
@@ -12330,18 +12483,11 @@
             if (next === (member.level || 0)) return;
 
             const hpRule = getHpRule(data);
-            const wasMissingHp = hpRule === 'alt2' && !member.fainted
-                && getTeamMemberHp(member, hpRule) < getTeamMemberHpMax(member, hpRule);
+            const oldMax = getTeamMemberHpMax(member, hpRule);
 
             member.level = next;
 
-            if (hpRule === 'alt2' && !member.fainted) {
-                const newMax = getTeamMemberHpMax(member, hpRule);
-                const currentHp = getTeamMemberHp(member, hpRule);
-                member.hp = (delta > 0 && wasMissingHp)
-                    ? Math.min(newMax, currentHp + delta)
-                    : Math.min(currentHp, newMax);
-            }
+            reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax);
 
             if (activeSaveSlot !== null) persistGameSaves();
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
@@ -12464,8 +12610,15 @@
                 && (member.level || 0) >= baseEntry.evolve_cost) {
                 baseEntry.evolves_to.forEach(name => options.push({ category: 'evolve', name }));
             }
-            if (baseEntry.mega_forms) baseEntry.mega_forms.forEach(name => options.push({ category: 'mega', name }));
-            if (baseEntry.gmax_forms) baseEntry.gmax_forms.forEach(name => options.push({ category: 'gmax', name }));
+            // Same fainted gate as computeTeamEvolutionState()'s own
+            // canMega/canGmax -- rebuilt independently here rather than
+            // trusting the corner's icon list, since this is what
+            // actually decides what Confirm can commit to, not just what
+            // gets displayed.
+            if (!member.fainted) {
+                if (baseEntry.mega_forms) baseEntry.mega_forms.forEach(name => options.push({ category: 'mega', name }));
+                if (baseEntry.gmax_forms) baseEntry.gmax_forms.forEach(name => options.push({ category: 'gmax', name }));
+            }
             if (options.length === 0) return;
 
             pendingTeamEvolutionIndex = index;
@@ -12533,6 +12686,8 @@
             closeTeamEvolutionOverlay();
             if (!member || !baseEntry) return;
 
+            const hpRule = getHpRule(data);
+
             if (choice.category === 'evolve') {
                 const targetEntry = POKEMON_BY_NAME[choice.name];
                 if (!targetEntry) return;
@@ -12543,7 +12698,14 @@
                 member.level = Math.max(0, (member.level || 0) - baseEntry.evolve_cost);
                 member.formOverride = null;
             } else {
+                // See reconcileTeamMemberHpAcrossFormChange()'s own
+                // comment -- oldMax has to be read before formOverride
+                // actually changes, since that's what getTeamMemberHpMax()
+                // keys its "which entry's token_level applies" logic off
+                // of.
+                const oldMax = getTeamMemberHpMax(member, hpRule);
                 member.formOverride = choice.name;
+                reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax);
             }
 
             if (activeSaveSlot !== null) persistGameSaves();
@@ -12577,11 +12739,11 @@
             // TEAM_ADD_FORCED_EXCLUDE_TAGS guardrail at the same moment,
             // not just the Starter one.
             const pokestarBtn = document.querySelector('#unique-properties-section .filter-btn[data-tag="pokestar"]');
-            if (pokestarBtn) pokestarBtn.classList.remove('team-add-locked');
+            if (pokestarBtn) pokestarBtn.classList.remove('game-team-corner-locked');
             if (teamAddStarterLockActive) {
                 teamAddStarterLockActive = false;
                 const starterBtn = document.querySelector('#unique-properties-section .filter-btn[data-tag="starter"]');
-                if (starterBtn) starterBtn.classList.remove('include', 'team-add-locked');
+                if (starterBtn) starterBtn.classList.remove('include', 'game-team-corner-locked');
                 updateFilters();
             } else {
                 filterGallery();
@@ -15612,11 +15774,19 @@
             // teamReplacePendingMember's own comment): that mode is only
             // about picking which member to overwrite, so editing an
             // unrelated member's status mid-flow would just be
-            // confusing.
+            // confusing. Also blocked outright for a fainted member --
+            // per the chat this was clarified in, a fainted Pokémon
+            // can't be given a status condition (faintTeamMember()
+            // already force-reverted it to None anyway, and there's
+            // nothing useful the picker could do here until it's
+            // revived).
             const statusBadge = e.target.closest('.game-team-slot-status');
             if (statusBadge) {
                 if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
-                openTeamStatusOverlay(Number(statusBadge.dataset.index));
+                const statusIndex = Number(statusBadge.dataset.index);
+                const statusMember = (getActiveSaveData().team.members || [])[statusIndex];
+                if (!statusMember || statusMember.fainted) return;
+                openTeamStatusOverlay(statusIndex);
                 return;
             }
 
@@ -15656,7 +15826,17 @@
                 const evoState = computeTeamEvolutionState(member);
                 if (evoState.mode === 'unable') return;
                 if (evoState.mode === 'active-mega' || evoState.mode === 'active-gmax') {
+                    // Same reconciliation as confirmTeamEvolutionSelection()'s
+                    // own mega/gmax branch, in reverse -- reverting
+                    // typically moves token_level (and so the alt2 max)
+                    // back down by whatever it moved up by on the way in.
+                    // minHp=1: see reconcileTeamMemberHpAcrossFormChange()'s
+                    // own comment -- a form ending should never zero a
+                    // member out by itself.
+                    const hpRule = getHpRule(data);
+                    const oldMax = getTeamMemberHpMax(member, hpRule);
                     member.formOverride = null;
+                    reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax, 1);
                     if (activeSaveSlot !== null) persistGameSaves();
                     else if (activeGuestSaveId !== null) persistGameGuestSaves();
                     markUnsavedProgressChanged();
