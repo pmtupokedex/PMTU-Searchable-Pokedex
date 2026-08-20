@@ -2630,6 +2630,15 @@
             display: block;
         }
 
+        /* Fainted state -- see computeTeamHpState()/faintTeamMember() in
+           the script. Just a brightness reduction on the token art
+           itself; the HP corner's own icon swap (see
+           .game-team-slot-hp-img's own comment) is what actually signals
+           the state, this just reinforces it on the art. */
+        .game-team-slot-img.fainted {
+            filter: brightness(0.35);
+        }
+
         #game-team-add-btn {
             display: block;
             width: 100%;
@@ -2777,6 +2786,64 @@
             width: 90%;
             aspect-ratio: 1 / 1;
             object-fit: contain;
+        }
+
+        /* HP -- top-left corner, mirroring .game-team-slot-status's own
+           corner-circle treatment exactly (same border/background/
+           sizing, just top: 0 instead of bottom: 0). Icon and click
+           behavior driven by computeTeamHpState() (see its own comment
+           in the script) -- default art vs. hp_fainted.png, and whether
+           tapping it faints, opens the HP counter overlay, or opens the
+           revive confirm, all depend on the active save's hpRule plus
+           whether this member is currently fainted. */
+        .game-team-slot-hp {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 25%;
+            aspect-ratio: 1 / 1;
+		border: 3.5px solid white;
+            border-radius: 50%;
+            background: rgba(50, 50, 50, 1);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .game-team-slot-hp-img {
+            width: 90%;
+            aspect-ratio: 1 / 1;
+            object-fit: contain;
+        }
+
+        /* Current HP readout for the alt1/alt2 hpRules -- centered on
+           the button rather than tucked in a corner like
+           .game-team-slot-status-count (see its own comment) since this
+           button doesn't have a token image of its own competing for
+           space, just the flat background art. Only ever added to the
+           DOM at all for alt1/alt2 while NOT fainted (see
+           renderTeamGrid()'s own comment) -- standard hpRule never gets
+           one, and it disappears the instant a member faints per the
+           chat this was designed in. pointer-events: none for the same
+           reason as every other readout-over-a-clickable-corner in this
+           doc -- purely a label, never a second click target. */
+        .game-team-slot-hp-count {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: bold;
+            line-height: 1;
+            color: #FFF;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+            pointer-events: none;
         }
 
         /* Evolution -- bottom-right corner, mirroring
@@ -3159,6 +3226,76 @@
         }
 
         #game-team-release-confirm-overlay.visible {
+            display: flex;
+        }
+
+        /* HP counter prompt (alt1/alt2 hpRules) -- see
+           openTeamHpOverlay()/closeTeamHpOverlay()/
+           confirmTeamHpSelection() in the script. Same positioning/
+           backdrop rules as every other Team Tracker overlay above
+           (duplicated for the same independence reasoning as every
+           other pair like this in this doc). */
+        #game-team-hp-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-hp-overlay.visible {
+            display: flex;
+        }
+
+        /* Same "one element, two invisible click zones" shape as
+           .game-team-status-counter (see its own comment) -- duplicated
+           rather than shared, same independence reasoning as every
+           other near-identical pair in this doc. No -wrap/.visible
+           toggle needed the way the status counter has one, since this
+           overlay only ever exists to show this counter -- there's no
+           "sometimes hidden" case here the way a status without a
+           STATUS_COUNTER_CONFIG entry has. */
+        .game-team-hp-counter {
+            width: 50%;
+            aspect-ratio: 3 / 1;
+            border: 3.5px solid white;
+            border-radius: 16px;
+            background: rgba(0, 90, 160, 0.85);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: bold;
+            color: #FFF;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+            margin: 0 auto 14px;
+        }
+
+        /* Revive confirmation -- see openTeamReviveConfirmOverlay()/
+           closeTeamReviveConfirmOverlay()/confirmTeamRevive() in the
+           script. Same positioning/backdrop rules as every other Team
+           Tracker overlay above. */
+        #game-team-revive-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-revive-overlay.visible {
             display: flex;
         }
 
@@ -8195,6 +8332,40 @@
             </div>
         </div>
 
+        <!-- HP counter prompt for the alt1/alt2 hpRules -- see
+             openTeamHpOverlay()/closeTeamHpOverlay()/
+             confirmTeamHpSelection() in the script. Reuses
+             .game-confirm-card/-title, same as every other Team Tracker
+             overlay above. -->
+        <div id="game-team-hp-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-team-hp-title">Hit Points</p>
+                <div class="game-team-hp-counter" id="game-team-hp-counter">
+                    <span id="game-team-hp-counter-value">0</span>
+                </div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-team-hp-confirm-btn">Confirm</button>
+                    <button class="filter-btn exclude game-team-hp-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Revive confirmation -- see openTeamReviveConfirmOverlay()/
+             closeTeamReviveConfirmOverlay()/confirmTeamRevive() in the
+             script. Reuses .game-confirm-card/-title, same as
+             #game-team-release-confirm-overlay above -- same one-
+             overlay-not-two-stages shape isn't needed here, this is
+             already just a single Yes/No. -->
+        <div id="game-team-revive-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Revive this Pok&eacute;mon?</p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-team-revive-yes-btn">Yes</button>
+                    <button class="filter-btn exclude game-team-revive-no-btn">No</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Status Condition picker for a single Team Tracker slot -- see
              openTeamStatusOverlay()/closeTeamStatusOverlay()/
              confirmTeamStatusSelection() and STATUS_CONDITIONS in the
@@ -11209,6 +11380,7 @@
             if (!grid) return;
             const data = getActiveSaveData();
             const members = data.team.members || [];
+            const hpRule = getHpRule(data);
             const replacing = !!teamReplacePendingMember;
             const releasing = !!teamReleaseModeActive;
 
@@ -11277,6 +11449,8 @@
                     // Pokémon, but costs nothing to check here too).
                     img.src = (member.shiny && hasShinyForm(artShinySrc)) ? artShinySrc : artSrc;
                     img.alt = (overrideEntry ? overrideEntry.name : member.name) || '';
+                    // See .game-team-slot-img.fainted's own CSS comment.
+                    img.classList.toggle('fainted', !!member.fainted);
                     // Same "just disappear, leave the frame bare" fallback
                     // as .game-matchup-chart-col-header-icon and its
                     // siblings (see buildMatchupChartColHeader() and
@@ -11290,6 +11464,25 @@
                 slot.appendChild(hitZone);
 
                 if (member) {
+                    // HP -- top-left corner. computeTeamHpState() decides
+                    // the icon; the count span is only ever added to the
+                    // DOM at all when showCount is true (alt1/alt2, not
+                    // fainted), same "absent, not just hidden" approach
+                    // as the status corner's own count readout (see
+                    // .game-team-slot-status-count's own comment).
+                    const hpState = computeTeamHpState(member, hpRule);
+                    const hpBadge = document.createElement('div');
+                    hpBadge.className = 'game-team-slot-hp';
+                    hpBadge.dataset.index = i;
+                    hpBadge.innerHTML = `<img class="game-team-slot-hp-img" src="${hpState.imageUrl}" alt="HP">`;
+                    if (hpState.showCount) {
+                        const hpCountEl = document.createElement('span');
+                        hpCountEl.className = 'game-team-slot-hp-count';
+                        hpCountEl.textContent = hpState.count;
+                        hpBadge.appendChild(hpCountEl);
+                    }
+                    slot.appendChild(hpBadge);
+
                     // Status Condition (bottom-left) -- statusImageMarkup()
                     // (see its own comment, mirroring badgeImageMarkup()'s
                     // exact convention) renders NO_STATUS_PLACEHOLDER's own
@@ -11697,6 +11890,234 @@
             return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable] };
         }
 
+        // ---- Hit Points -----------------------------------------------
+        // Three hpRule modes, chosen per save at creation time (see
+        // 'game-new-hp-rule-select'/'game-save-default-hp-rule' and
+        // createSave()'s own hpRule field) -- 'standard' is also the
+        // fallback for the in-memory unsaved session, which has no
+        // hpRule of its own at all (see emptySaveScopedData()), and for
+        // any other unrecognized value, so every helper below always has
+        // a definite mode to branch on rather than needing its own
+        // "what if this is missing" case.
+        //
+        // member.fainted (boolean) and member.hp (number, alt1/alt2
+        // only) aren't declared anywhere up front the way other member
+        // fields are documented (see emptySaveScopedData()'s own
+        // comment) -- fainted is simply absent/falsy until
+        // faintTeamMember() first sets it true, and hp is read through
+        // getTeamMemberHp() below rather than ever assumed present, so a
+        // member added before a save's hpRule existed (or added under a
+        // different hpRule than the one active now) still behaves
+        // correctly rather than needing a migration pass.
+
+        function getHpRule(data) {
+            return (data && (data.hpRule === 'alt1' || data.hpRule === 'alt2')) ? data.hpRule : 'standard';
+        }
+
+        // Max HP for alt1/alt2 -- null for 'standard', which has no
+        // concept of a max (see getHpRule() above for why an unrecognized
+        // hpRule value always resolves to 'standard' rather than falling
+        // through here by accident). alt2's max is derived exactly as
+        // described in the chat this was built in: the target's own
+        // token_level (from pokemon-data.json, via POKEMON_BY_NAME) plus
+        // this member's own .game-team-slot-level value -- recomputed
+        // fresh every call rather than cached on the member, so a level
+        // change or an evolution (which can change which POKEMON_BY_NAME
+        // entry applies) is always reflected immediately.
+        function getTeamMemberHpMax(member, hpRule) {
+            if (hpRule === 'alt1') return 2;
+            if (hpRule === 'alt2') {
+                const baseEntry = POKEMON_BY_NAME[member.name];
+                const tokenLevel = (baseEntry && typeof baseEntry.token_level === 'number') ? baseEntry.token_level : 0;
+                return tokenLevel + (member.level || 0);
+            }
+            return null;
+        }
+
+        // Current HP for alt1/alt2 -- falls back to the current max
+        // rather than assuming member.hp is already set, covering both a
+        // freshly-added member (see confirmTeamAddSelection(), which does
+        // set it explicitly, but this stays correct even if that ever
+        // drifts) and a member added under a different hpRule than the
+        // one now active.
+        function getTeamMemberHp(member, hpRule) {
+            const max = getTeamMemberHpMax(member, hpRule);
+            if (max === null) return null;
+            return typeof member.hp === 'number' ? Math.max(0, Math.min(max, member.hp)) : max;
+        }
+
+        const HP_MODE_IMAGES = {
+            default: 'https://dl.dropboxusercontent.com/scl/fi/6x6xymvyvb2zdvzrrc4vh/hp_button.png?rlkey=97bz2iibqs2uhdxiv3thdneda&st=nrs0phup&dl=1',
+            fainted: 'https://dl.dropboxusercontent.com/scl/fi/4l4jkugx6ennhlbmcpf3z/hp_fainted.png?rlkey=epuzzb9jcqy8ynj4ks0o840g6&st=x870yi3l&dl=1',
+        };
+
+        // Figures out what the HP corner should show/do for one team
+        // member -- called fresh every render (and again by the
+        // #game-scroll delegated listener on every tap, rather than
+        // trusted off a stale dataset attribute) the same way
+        // computeTeamEvolutionState() is, for the same "level/hpRule
+        // changing underneath it should always be reflected immediately"
+        // reason.
+        //
+        // Returns { imageUrl, showCount, count } where showCount/count
+        // are only meaningful for alt1/alt2 while NOT fainted (see
+        // renderTeamGrid()'s own comment on why the count element is
+        // only ever added to the DOM in that case at all, never just
+        // hidden). What tapping the corner actually does isn't decided
+        // here -- see the #game-scroll delegated listener's own
+        // .game-team-slot-hp branch, which re-derives fainted/hpRule
+        // itself rather than trusting a mode string, since (unlike
+        // computeTeamEvolutionState()'s modes) the click behavior here
+        // depends on hpRule in a way that doesn't collapse into a single
+        // small set of cases as cleanly.
+        function computeTeamHpState(member, hpRule) {
+            if (member.fainted) return { imageUrl: HP_MODE_IMAGES.fainted, showCount: false, count: 0 };
+            if (hpRule === 'standard') return { imageUrl: HP_MODE_IMAGES.default, showCount: false, count: 0 };
+            return { imageUrl: HP_MODE_IMAGES.default, showCount: true, count: getTeamMemberHp(member, hpRule) };
+        }
+
+        // The one place a member actually becomes fainted, called from
+        // every path that can cause it (Standard's direct tap,
+        // confirmTeamHpSelection()'s "confirmed at 0" branch) so all
+        // three hpRules apply the exact same shared Fainted-state effects
+        // described in the chat this was built in: status conditions
+        // clear outright (revert to No Status, same as a manual
+        // confirmTeamStatusSelection('none') pick) and any active
+        // Mega/Gigantamax override ends -- both permanently, per that
+        // same conversation ("Status conditions and temporary evolutions
+        // do not return" on revive), so there's nothing further for
+        // confirmTeamRevive() below to restore later.
+        function faintTeamMember(index) {
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[index];
+            if (!member || member.fainted) return;
+            member.fainted = true;
+            member.status = null;
+            member.statusCounter = undefined;
+            member.formOverride = null;
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+        }
+
+        // Which slot the revive confirm is open for -- only meaningful
+        // while #game-team-revive-overlay is visible, same shape as
+        // every other pendingTeam*Index in this doc.
+        let pendingTeamReviveIndex = null;
+
+        function openTeamReviveConfirmOverlay(index) {
+            pendingTeamReviveIndex = index;
+            const overlay = document.getElementById('game-team-revive-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        function closeTeamReviveConfirmOverlay() {
+            pendingTeamReviveIndex = null;
+            const overlay = document.getElementById('game-team-revive-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // Yes on the revive confirm routes here -- clears fainted and,
+        // for alt1/alt2, resets hp back to a fresh max (see
+        // getTeamMemberHpMax() above), per "When a Pokémon leaves the
+        // Fainted state, it should reset to its own hit point max" from
+        // the chat this was built in. Deliberately does NOT restore
+        // member.status/.formOverride -- those were already cleared for
+        // good back in faintTeamMember(), not merely hidden, so there's
+        // nothing here to bring back even if it wanted to.
+        function confirmTeamRevive() {
+            if (pendingTeamReviveIndex === null) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[pendingTeamReviveIndex];
+            closeTeamReviveConfirmOverlay();
+            if (!member) return;
+            member.fainted = false;
+            const hpRule = getHpRule(data);
+            const max = getTeamMemberHpMax(member, hpRule);
+            if (max !== null) member.hp = max;
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+        }
+
+        // Which slot the HP counter prompt (alt1/alt2 only) is open for,
+        // and its own in-progress value -- same "pick freely, only
+        // Confirm writes it back" shape as pendingTeamStatusId/-Counter,
+        // just without a picker list alongside it since there's only
+        // ever the one counter here.
+        let pendingTeamHpIndex = null;
+        let pendingTeamHpValue = 0;
+
+        function renderTeamHpCounter() {
+            const valueEl = document.getElementById('game-team-hp-counter-value');
+            if (valueEl) valueEl.textContent = pendingTeamHpValue;
+        }
+
+        function openTeamHpOverlay(index) {
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[index];
+            if (!member) return;
+            const hpRule = getHpRule(data);
+            if (hpRule === 'standard') return;
+            pendingTeamHpIndex = index;
+            pendingTeamHpValue = getTeamMemberHp(member, hpRule);
+            renderTeamHpCounter();
+            const overlay = document.getElementById('game-team-hp-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        function closeTeamHpOverlay() {
+            pendingTeamHpIndex = null;
+            pendingTeamHpValue = 0;
+            const overlay = document.getElementById('game-team-hp-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // delta is +1 or -1, from whichever half of .game-team-hp-counter
+        // got clicked (see the overlay's own click listener further
+        // down) -- clamped 0 to this member's own current max, re-read
+        // fresh each time rather than cached when the overlay opened, in
+        // case something else changed the member's level while it's open
+        // (shouldn't normally happen given the overlay is modal, but
+        // costs nothing to stay correct if it ever does).
+        function adjustPendingTeamHpValue(delta) {
+            if (pendingTeamHpIndex === null) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[pendingTeamHpIndex];
+            if (!member) return;
+            const hpRule = getHpRule(data);
+            const max = getTeamMemberHpMax(member, hpRule) || 0;
+            pendingTeamHpValue = Math.max(0, Math.min(max, pendingTeamHpValue + delta));
+            renderTeamHpCounter();
+        }
+
+        // The HP counter prompt's own Confirm. A confirmed value of 0
+        // routes straight into faintTeamMember() instead of ever writing
+        // member.hp = 0 and leaving the member alive at zero -- per "When
+        // the counter is at 0 and the user confirms... the Pokémon
+        // should switch to the Fainted state" from the chat this was
+        // built in. Anything above 0 just writes the value back.
+        function confirmTeamHpSelection() {
+            if (pendingTeamHpIndex === null) return;
+            const index = pendingTeamHpIndex;
+            const value = pendingTeamHpValue;
+            closeTeamHpOverlay();
+            if (value === 0) {
+                faintTeamMember(index);
+                return;
+            }
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[index];
+            if (!member) return;
+            member.hp = value;
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+        }
+
         // The seven classic status conditions -- imageUrl is
         // 'placeholder' for all of them for now (see statusImageMarkup()
         // below, mirroring badgeImageMarkup()'s exact convention), one
@@ -11889,13 +12310,39 @@
         // go out of range, since the two halves of .game-team-slot-level
         // (see the #game-scroll delegated listener below) call this
         // unconditionally regardless of the member's current level.
+        //
+        // Also carries alt2's own HP-growth rule (see getTeamMemberHpMax()
+        // for how a level factors into that hpRule's max at all): a
+        // level *increase* on a member who isn't fainted and is
+        // currently missing HP raises current hp by the same amount the
+        // level just went up by, capped at the new max -- per "its
+        // current hit points should increase by the increase in level"
+        // from the chat this was built in. A level decrease (or any
+        // change under 'standard'/'alt1', where level doesn't factor
+        // into HP at all) never raises hp, but still reclamps it down if
+        // the new max is now lower than whatever hp already was, so a
+        // display never shows more current HP than the max allows.
         function adjustTeamMemberLevel(index, delta) {
             const data = getActiveSaveData();
             const member = (data.team.members || [])[index];
             if (!member) return;
             const next = Math.max(0, Math.min(6, (member.level || 0) + delta));
             if (next === (member.level || 0)) return;
+
+            const hpRule = getHpRule(data);
+            const wasMissingHp = hpRule === 'alt2' && !member.fainted
+                && getTeamMemberHp(member, hpRule) < getTeamMemberHpMax(member, hpRule);
+
             member.level = next;
+
+            if (hpRule === 'alt2' && !member.fainted) {
+                const newMax = getTeamMemberHpMax(member, hpRule);
+                const currentHp = getTeamMemberHp(member, hpRule);
+                member.hp = (delta > 0 && wasMissingHp)
+                    ? Math.min(newMax, currentHp + delta)
+                    : Math.min(currentHp, newMax);
+            }
+
             if (activeSaveSlot !== null) persistGameSaves();
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
             markUnsavedProgressChanged();
@@ -12240,7 +12687,20 @@
                     // in the script for how each is edited afterward.
                     status: null,
                     level: 0,
+                    // fainted starts false, same "no data model yet"
+                    // shape as status above. hp only actually means
+                    // anything for the alt1/alt2 hpRules (see
+                    // getTeamMemberHp()'s own comment for why reading it
+                    // never assumes it's set even so) -- set to a fresh
+                    // max here under whatever hpRule is active right now
+                    // just for a clean starting value, at level 0 (alt2's
+                    // own max is exactly this species' own token_level at
+                    // that level).
+                    fainted: false,
                 };
+                const hpRuleAtAdd = getHpRule(getActiveSaveData());
+                const hpMaxAtAdd = getTeamMemberHpMax(member, hpRuleAtAdd);
+                if (hpMaxAtAdd !== null) member.hp = hpMaxAtAdd;
             }
             exitTeamAddMode();
             if (member) {
@@ -13844,6 +14304,8 @@
                 closeTeamAddPromptOverlay();
                 closeTeamStatusOverlay();
                 closeTeamReleaseConfirmOverlay();
+                closeTeamHpOverlay();
+                closeTeamReviveConfirmOverlay();
             }
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
@@ -15116,6 +15578,35 @@
                 return;
             }
 
+            // HP corner -- what a tap does depends on both fainted (see
+            // member.fainted's own comment) and the active save's hpRule
+            // (see getHpRule()): fainted always opens the revive
+            // confirm regardless of hpRule; otherwise 'standard' faints
+            // immediately with no confirmation at all (per the chat this
+            // was built in -- only reviving needs a prompt under that
+            // rule, not fainting), while 'alt1'/'alt2' open the HP
+            // counter prompt instead. Same replace/release-mode block as
+            // every other corner, same reasoning.
+            const hpBadge = e.target.closest('.game-team-slot-hp');
+            if (hpBadge) {
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+                const index = Number(hpBadge.dataset.index);
+                const data = getActiveSaveData();
+                const member = (data.team.members || [])[index];
+                if (!member) return;
+                if (member.fainted) {
+                    openTeamReviveConfirmOverlay(index);
+                    return;
+                }
+                const hpRule = getHpRule(data);
+                if (hpRule === 'standard') {
+                    faintTeamMember(index);
+                } else {
+                    openTeamHpOverlay(index);
+                }
+                return;
+            }
+
             // Status Condition corner -- opens the picker for that slot.
             // Blocked while a replacement's pending (see
             // teamReplacePendingMember's own comment): that mode is only
@@ -15339,6 +15830,41 @@
             const chooseBtn = e.target.closest('.game-team-status-choose-btn');
             if (chooseBtn) {
                 selectPendingTeamStatus(chooseBtn.dataset.status);
+                return;
+            }
+        });
+
+        // Same shape as #game-team-status-overlay's own listener above --
+        // backdrop/Cancel close, Confirm commits, and the counter is the
+        // same "one element, two click zones" shape as
+        // .game-team-status-counter (see its own comment).
+        document.getElementById('game-team-hp-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-team-hp-overlay' || e.target.closest('.game-team-hp-cancel-btn')) {
+                closeTeamHpOverlay();
+                return;
+            }
+            if (e.target.closest('.game-team-hp-confirm-btn')) {
+                confirmTeamHpSelection();
+                return;
+            }
+            const counterEl = e.target.closest('.game-team-hp-counter');
+            if (counterEl) {
+                const rect = counterEl.getBoundingClientRect();
+                const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
+                adjustPendingTeamHpValue(clickedRightHalf ? 1 : -1);
+                return;
+            }
+        });
+
+        // Plain Yes/No, same backdrop-closes-it-too shape as every other
+        // overlay in this doc.
+        document.getElementById('game-team-revive-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-team-revive-overlay' || e.target.closest('.game-team-revive-no-btn')) {
+                closeTeamReviveConfirmOverlay();
+                return;
+            }
+            if (e.target.closest('.game-team-revive-yes-btn')) {
+                confirmTeamRevive();
                 return;
             }
         });
