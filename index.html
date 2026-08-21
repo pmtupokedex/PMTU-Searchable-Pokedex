@@ -2849,11 +2849,13 @@
         /* Attach/Nature Cards -- top-right corner, the last of the four
            corners (HP top-left, Status bottom-left, Evolution
            bottom-right), same corner-circle treatment as the other
-           three. One button covers both card slots at once -- see
-           computeTeamCardsState()/openTeamCardsOverlay() in the script --
-           tapping it opens a single overlay listing both. Placeholder
-           art only for now (see CARD_SLOT_IMAGES in the script) pending
-           real button icons. */
+           three by default. One button covers both card slots at once
+           -- see computeTeamCardsState()/openTeamCardsOverlay() in the
+           script -- tapping it opens a single overlay listing both.
+           Icons come straight from each equipped card's own iconUrl in
+           attach-cards.json (see cardIconFor() in the script); the only
+           remaining placeholder is CARD_SLOT_IMAGES.empty for "nothing
+           equipped." */
         .game-team-slot-cards {
             position: absolute;
             top: 0;
@@ -2870,10 +2872,35 @@
             overflow: hidden;
         }
 
+        /* Only applied when an Attach AND a Nature icon are both
+           showing at once (see computeTeamCardsState()'s own comment on
+           when .pill gets added) -- keeps the badge's width exactly
+           what the plain circle's was (25%) and doubles the height
+           instead (aspect-ratio 1/2), stacking the two icons vertically
+           so the shape grows downward from the same top-right anchor
+           rather than sideways. border-radius stays large enough to
+           stay fully rounded (a vertical "pill"/stadium shape) at any
+           height this badge reaches. */
+        .game-team-slot-cards.pill {
+            aspect-ratio: 3 / 5;
+            border-radius: 999px;
+            flex-direction: column;
+            justify-content: space-evenly;
+            gap: 6%;
+        }
+
         .game-team-slot-cards-img {
             width: 90%;
             aspect-ratio: 1 / 1;
             object-fit: contain;
+        }
+
+        /* Each icon gets less of the shared width once there are two of
+           them stacked (see .pill's own gap/justify-content above for
+           the spacing between them) -- otherwise two 90%-width images
+           would run past the sides of the narrower vertical pill. */
+        .game-team-slot-cards.pill .game-team-slot-cards-img {
+            width: 78%;
         }
 
         /* Evolution -- bottom-right corner, mirroring
@@ -8016,6 +8043,12 @@
                             <option value="yes">Yes</option>
                         </select>
 
+                        <label for="game-new-natures-enabled-0">Use Nature Cards?</label>
+                        <select id="game-new-natures-enabled-0" class="game-new-natures-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
                         <div class="game-save-slot-actions">
                             <button class="filter-btn game-create-confirm-btn" data-slot="0">Create</button>
                             <button class="filter-btn game-create-cancel-btn" data-slot="0">Cancel</button>
@@ -8074,6 +8107,12 @@
 
                         <label for="game-new-pokecoins-enabled-1">Use Pok&eacute; Coins?</label>
                         <select id="game-new-pokecoins-enabled-1" class="game-new-pokecoins-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
+                        <label for="game-new-natures-enabled-1">Use Nature Cards?</label>
+                        <select id="game-new-natures-enabled-1" class="game-new-natures-enabled-select">
                             <option value="no" selected>No</option>
                             <option value="yes">Yes</option>
                         </select>
@@ -8140,6 +8179,12 @@
                             <option value="yes">Yes</option>
                         </select>
 
+                        <label for="game-new-natures-enabled-2">Use Nature Cards?</label>
+                        <select id="game-new-natures-enabled-2" class="game-new-natures-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
                         <div class="game-save-slot-actions">
                             <button class="filter-btn game-create-confirm-btn" data-slot="2">Create</button>
                             <button class="filter-btn game-create-cancel-btn" data-slot="2">Cancel</button>
@@ -8191,6 +8236,12 @@
 
                         <label for="game-save-default-pokecoins-enabled">Use Pok&eacute; Coins?</label>
                         <select id="game-save-default-pokecoins-enabled" class="game-save-default-pokecoins-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
+                        <label for="game-save-default-natures-enabled">Use Nature Cards?</label>
+                        <select id="game-save-default-natures-enabled" class="game-save-default-natures-enabled-select">
                             <option value="no" selected>No</option>
                             <option value="yes">Yes</option>
                         </select>
@@ -8614,7 +8665,7 @@
              opens #game-team-card-image-viewer below. -->
         <div id="game-team-cards-overlay">
             <div class="game-confirm-card">
-                <p class="game-confirm-title">Attach &amp; Nature Cards</p>
+                <p class="game-confirm-title" id="game-team-cards-title">Attach &amp; Nature Cards</p>
 
                 <div class="game-team-cards-section">
                     <p class="game-team-cards-section-title">Attach Card</p>
@@ -8624,7 +8675,7 @@
                     </div>
                 </div>
 
-                <div class="game-team-cards-section">
+                <div class="game-team-cards-section" id="game-team-cards-nature-section">
                     <p class="game-team-cards-section-title">Nature Card</p>
                     <select class="game-team-cards-select" id="game-team-cards-nature-select" data-slot="nature"></select>
                     <div class="game-team-cards-detail" id="game-team-cards-nature-detail">
@@ -10660,6 +10711,20 @@
             });
             if (changed) persistGameSaves();
         })();
+        // Backfills the "Use Nature Cards?" setting onto any save
+        // created before that setting existed -- defaulted to false
+        // (off), same as migratePokeCoinsEnabled() above and the
+        // creation form's own 'no'-selected option.
+        (function migrateNaturesEnabled() {
+            let changed = false;
+            gameSaves.forEach(save => {
+                if (save && typeof save.naturesEnabled !== 'boolean') {
+                    save.naturesEnabled = false;
+                    changed = true;
+                }
+            });
+            if (changed) persistGameSaves();
+        })();
         let activeSaveSlot = loadActiveSaveSlot(gameSaves);
 
         // In-memory-only "unsaved session" -- what Badge Tracker/Team
@@ -10741,6 +10806,13 @@
                 // default (see the creation form's own 'no'-selected
                 // option). See isPokeCoinsEnabledForActiveSave().
                 pokeCoinsEnabled: !!options.pokeCoinsEnabled,
+                // Whether the Nature Card section of the Attach/Nature
+                // Cards picker (Team Tracker) is shown at all for this
+                // save -- an optional house rule, off by default (see
+                // the creation form's own 'no'-selected option), same
+                // shape as pokeCoinsEnabled above. See
+                // isNaturesEnabledForActiveSave().
+                naturesEnabled: !!options.naturesEnabled,
                 // Placeholder until the badge tracker exists to actually
                 // derive this for real -- 'early' matches the Sounds
                 // panel's own GAME_STAGE_ORDER labels (see
@@ -10908,6 +10980,18 @@
             });
             if (changed) persistGameGuestSaves();
         })();
+        // Same idea as migrateNaturesEnabled() above, for guest saves.
+        (function migrateGuestNaturesEnabled() {
+            let changed = false;
+            Object.keys(gameGuestSaves).forEach(id => {
+                const save = gameGuestSaves[id];
+                if (save && typeof save.naturesEnabled !== 'boolean') {
+                    save.naturesEnabled = false;
+                    changed = true;
+                }
+            });
+            if (changed) persistGameGuestSaves();
+        })();
         let activeGuestSaveId = loadActiveGuestSaveId(gameGuestSaves);
         // Both can't be genuinely active at once -- if somehow both got
         // persisted (shouldn't happen going forward, every mutator below
@@ -10973,6 +11057,7 @@
                 typeEffectivenessRule: '.game-new-type-rule-select',
                 hpRule: '.game-new-hp-rule-select',
                 pokeCoinsEnabled: '.game-new-pokecoins-enabled-select',
+                naturesEnabled: '.game-new-natures-enabled-select',
             };
             Object.entries(fieldMap).forEach(([key, selector]) => {
                 if (!gameSaveDefaults[key]) return;
@@ -10993,6 +11078,7 @@
                 typeEffectivenessRule: '#game-save-default-type-rule',
                 hpRule: '#game-save-default-hp-rule',
                 pokeCoinsEnabled: '#game-save-default-pokecoins-enabled',
+                naturesEnabled: '#game-save-default-natures-enabled',
             };
             Object.entries(fieldMap).forEach(([key, selector]) => {
                 if (!gameSaveDefaults[key]) return;
@@ -11663,6 +11749,7 @@
             const data = getActiveSaveData();
             const members = data.team.members || [];
             const hpRule = getHpRule(data);
+            const naturesEnabled = isNaturesEnabledForActiveSave();
             const replacing = !!teamReplacePendingMember;
             const releasing = !!teamReleaseModeActive;
 
@@ -11767,12 +11854,17 @@
 
                     // Attach/Nature Cards (top-right) -- one badge covers
                     // both slots (see computeTeamCardsState()'s own
-                    // comment).
-                    const cardsState = computeTeamCardsState(member);
+                    // comment). Gets the .pill class only when both an
+                    // Attach and a Nature icon are showing at once --
+                    // see .game-team-slot-cards.pill in the CSS for the
+                    // taller shape that makes room for the second icon.
+                    const cardsState = computeTeamCardsState(member, naturesEnabled);
                     const cardsBadge = document.createElement('div');
-                    cardsBadge.className = 'game-team-slot-cards';
+                    cardsBadge.className = 'game-team-slot-cards' + (cardsState.pill ? ' pill' : '');
                     cardsBadge.dataset.index = i;
-                    cardsBadge.innerHTML = `<img class="game-team-slot-cards-img" src="${cardsState.imageUrl}" alt="Cards">`;
+                    cardsBadge.innerHTML = cardsState.images
+                        .map(img => `<img class="game-team-slot-cards-img" src="${img.url}" alt="${img.alt}" onerror="this.style.display='none'">`)
+                        .join('');
                     slot.appendChild(cardsBadge);
 
                     // Status Condition (bottom-left) -- statusImageMarkup()
@@ -12530,21 +12622,57 @@
         // ---- Attach / Nature Cards -------------------------------------
         // member.attachCardId/.natureCardId (see confirmTeamAddSelection()'s
         // own comment) each hold either an ATTACH_CARDS_BY_ID key or null.
-        // Placeholder icons only -- swap these once real button art
-        // exists, same starting point every other corner had before its
-        // own icon logic got built out.
+        // 'empty' is the only placeholder left now that real card art
+        // drives the badge (see cardIconFor() below) -- 'filled' is just
+        // the fallback for a card whose data hasn't loaded yet (or was
+        // removed from attach-cards.json) but is still equipped by id.
         const CARD_SLOT_IMAGES = {
             empty: 'https://placehold.co/64x64/png?text=%2B',
             filled: 'https://placehold.co/64x64/png?text=%E2%9C%93',
         };
 
-        // 'filled' the moment either slot has something equipped -- this
-        // one button covers both slots at once (see the chat this was
-        // designed in), so there's no attempt here to show which of the
-        // two (or whether both) are filled, just that at least one is.
-        function computeTeamCardsState(member) {
-            const filled = !!(member && (member.attachCardId || member.natureCardId));
-            return { imageUrl: filled ? CARD_SLOT_IMAGES.filled : CARD_SLOT_IMAGES.empty };
+        // Resolves a single equipped card id to the small icon it should
+        // show on the corner badge -- iconUrl if attach-cards.json has
+        // one, falling back to the card's full imageUrl (better than
+        // nothing) and then to the generic 'filled' placeholder if the
+        // card itself can't be found at all (data still loading, or the
+        // id no longer exists in the JSON). Returns null only for "no
+        // card equipped," which is what tells computeTeamCardsState()
+        // below there's nothing to show for that slot.
+        function cardIconFor(cardId) {
+            if (!cardId) return null;
+            const card = ATTACH_CARDS_BY_ID[cardId];
+            if (!card) return CARD_SLOT_IMAGES.filled;
+            return card.iconUrl || card.imageUrl || CARD_SLOT_IMAGES.filled;
+        }
+
+        // One badge covers both slots at once -- see the chat this was
+        // designed in. naturesEnabled gates whether the Nature slot is
+        // even consulted here, same as it gates the picker's own Nature
+        // section (see renderTeamCardsLists()) -- a save with Natures
+        // off should never show a pill just because a stray
+        // natureCardId happened to survive on old data.
+        //
+        // pill is only true when BOTH an Attach and a Nature icon would
+        // otherwise show at once -- one equipped card (of either type)
+        // still gets the plain single-icon circle, same shape as the
+        // old "filled" placeholder always used. Two icons is the one
+        // case that actually needs the taller pill shape to have room
+        // for both, stacked vertically downward from the same
+        // top-right anchor (see .game-team-slot-cards.pill in the CSS).
+        function computeTeamCardsState(member, naturesEnabled) {
+            const attachIcon = member ? cardIconFor(member.attachCardId) : null;
+            const natureIcon = (naturesEnabled && member) ? cardIconFor(member.natureCardId) : null;
+            if (attachIcon && natureIcon) {
+                return { pill: true, images: [
+                    { url: attachIcon, alt: 'Attach Card' },
+                    { url: natureIcon, alt: 'Nature Card' },
+                ] };
+            }
+            const singleIcon = attachIcon || natureIcon;
+            return { pill: false, images: [
+                { url: singleIcon || CARD_SLOT_IMAGES.empty, alt: 'Cards' },
+            ] };
         }
 
         // Which slot the picker is open for, and its own two independent
@@ -12609,6 +12737,25 @@
             }
 
             render('game-team-cards-attach-select', 'game-team-cards-attach-detail', 'attach', pendingTeamCardsAttachId);
+
+            // Nature Cards are an optional house rule (see the "Use
+            // Nature Cards?" field on the save-creation form and Default
+            // Save Settings card) -- when a save has them switched off,
+            // hide the whole section rather than just leaving it empty,
+            // and disable its select so it can't be driven by, say, a
+            // keyboard "change" event while hidden. Clearing the pending
+            // pick alongside it means confirmTeamCardsSelection() below
+            // can never write a stray natureCardId back onto the member
+            // for a save that has the section turned off.
+            const natureSectionEl = document.getElementById('game-team-cards-nature-section');
+            const natureSelectEl = document.getElementById('game-team-cards-nature-select');
+            const titleEl = document.getElementById('game-team-cards-title');
+            const naturesEnabled = isNaturesEnabledForActiveSave();
+            if (!naturesEnabled) pendingTeamCardsNatureId = null;
+            if (natureSectionEl) natureSectionEl.style.display = naturesEnabled ? '' : 'none';
+            if (natureSelectEl) natureSelectEl.disabled = !naturesEnabled;
+            if (titleEl) titleEl.textContent = naturesEnabled ? 'Attach & Nature Cards' : 'Attach Card';
+
             render('game-team-cards-nature-select', 'game-team-cards-nature-detail', 'nature', pendingTeamCardsNatureId);
         }
 
@@ -14631,6 +14778,23 @@
             return gameSaveDefaults.pokeCoinsEnabled === 'yes';
         }
 
+        // Whether the Nature Card section of the Attach/Nature Cards
+        // picker should show at all for the currently-active save --
+        // same shape as isPokeCoinsEnabledForActiveSave() just above,
+        // including the off-by-default fallback (no saves exist yet
+        // that this could break). A Guest Save gets its answer from the
+        // host via the lobby 'welcome' message (see finalizeGuestJoin()),
+        // same as Poké Coins.
+        function isNaturesEnabledForActiveSave() {
+            if (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) {
+                return !!gameGuestSaves[activeGuestSaveId].naturesEnabled;
+            }
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
+                return !!gameSaves[activeSaveSlot].naturesEnabled;
+            }
+            return gameSaveDefaults.naturesEnabled === 'yes';
+        }
+
         // Keeps the counter's number legible as it grows into the fixed
         // width capped in CSS (see .game-pokecoins-counter's own
         // comment) -- 0-999 only ever needs one of three digit-widths,
@@ -15485,6 +15649,7 @@
                 typeEffectivenessRule: hostSave.typeEffectivenessRule,
                 hpRule: hostSave.hpRule,
                 pokeCoinsEnabled: hostSave.pokeCoinsEnabled,
+                naturesEnabled: hostSave.naturesEnabled,
             };
         }
 
@@ -15828,6 +15993,7 @@
                 typeEffectivenessRule: data.typeEffectivenessRule,
                 hpRule: data.hpRule,
                 pokeCoinsEnabled: data.pokeCoinsEnabled,
+                naturesEnabled: data.naturesEnabled,
             };
             const existing = data.hostSaveId ? gameGuestSaves[data.hostSaveId] : null;
             if (existing) {
@@ -15894,6 +16060,7 @@
                 existing.typeEffectivenessRule = ruleset.typeEffectivenessRule;
                 existing.hpRule = ruleset.hpRule;
                 existing.pokeCoinsEnabled = !!ruleset.pokeCoinsEnabled;
+                existing.naturesEnabled = !!ruleset.naturesEnabled;
             } else {
                 gameGuestSaves[hostSaveId] = {
                     hostSaveId,
@@ -15907,6 +16074,7 @@
                     typeEffectivenessRule: ruleset.typeEffectivenessRule,
                     hpRule: ruleset.hpRule,
                     pokeCoinsEnabled: !!ruleset.pokeCoinsEnabled,
+                    naturesEnabled: !!ruleset.naturesEnabled,
                     badges: { collected: {}, collectedExtras: {} },
                     team: { members: [] },
                     pokeCoins: 3,
@@ -16061,6 +16229,10 @@
                     // meaningfully-different rule variants -- see
                     // isPokeCoinsEnabledForActiveSave() in the script.
                     pokeCoinsEnabled: slotEl.querySelector('.game-new-pokecoins-enabled-select').value === 'yes',
+                    // Same strict show/hide switch idea as pokeCoinsEnabled
+                    // above, just defaulting true -- see
+                    // isNaturesEnabledForActiveSave() in the script.
+                    naturesEnabled: slotEl.querySelector('.game-new-natures-enabled-select').value === 'yes',
                 });
                 nameInput.value = '';
                 return;
@@ -16643,6 +16815,7 @@
                 'game-save-default-type-rule': 'typeEffectivenessRule',
                 'game-save-default-hp-rule': 'hpRule',
                 'game-save-default-pokecoins-enabled': 'pokeCoinsEnabled',
+                'game-save-default-natures-enabled': 'naturesEnabled',
             };
             const key = defaultFieldMap[e.target.id];
             if (!key) return;
@@ -16652,6 +16825,10 @@
             // isPokeCoinsEnabledForActiveSave()'s fallback) -- harmless,
             // cheap no-op re-render otherwise.
             if (key === 'pokeCoinsEnabled') renderPokeCoins();
+            // Same idea for Nature Cards -- only matters if the Team
+            // Cards picker happens to be open right now (harmless no-op
+            // otherwise), same reasoning as pokeCoinsEnabled above.
+            if (key === 'naturesEnabled') renderTeamCardsLists();
         });
 
         // ---- Audio settings (global + per-category mute & volume) ------
