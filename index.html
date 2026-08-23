@@ -3906,8 +3906,6 @@
             justify-content: center;
             gap: 4px;
             margin-top: 6px;
-		padding-left: 30px;
-		padding-right: 30px;
         }
 
         .game-team-detail-status-picker.visible {
@@ -3943,6 +3941,19 @@
             width: 100%;
             height: 100%;
             object-fit: contain;
+        }
+
+        /* The strip's own "never mind" button (see
+           cancelTeamDetailStatusPickerPreview() in the script) -- same
+           footprint as the eight status buttons above so it sits
+           naturally at the end of the same row, but visually distinct
+           (red border, plain glyph, no icon image) so it doesn't read as
+           a ninth status option. */
+        .game-team-detail-status-picker-cancel-btn {
+            border-color: #E53935;
+            color: #FFF;
+            font-size: 22px;
+            line-height: 1;
         }
 
         /* Groups the picker into "Evolution" / "Mega Evolution" /
@@ -9193,12 +9204,20 @@
                      all eight options (NO_STATUS_PLACEHOLDER plus the
                      seven real STATUS_CONDITIONS, same list
                      openTeamStatusOverlay()'s own picker uses) in one
-                     row. A first tap on one previews it in the
-                     icon/counter/name above without committing anything
-                     (see previewTeamDetailStatus()); a second tap on
-                     that same option is what actually commits it and
-                     closes this strip back up again (see
-                     handleTeamDetailStatusPickerTap()). -->
+                     row, plus one more Cancel button at the end (see
+                     cancelTeamDetailStatusPickerPreview()). A first tap
+                     on an option previews it in the icon/counter/name
+                     above without committing anything (see
+                     previewTeamDetailStatus()); a second tap on that
+                     same option, or tapping the preview icon itself
+                     (see handleTeamDetailStatusIconTap()), is what
+                     actually commits it and closes this strip back up
+                     again (see commitTeamDetailStatus()). Cancel always
+                     backs out without committing regardless of what's
+                     currently armed. Rebuilt fresh by
+                     renderTeamDetailStatusPickerOptions() every time the
+                     strip opens or a preview changes -- this container
+                     starts empty. -->
                 <div class="game-team-detail-status-picker" id="game-team-detail-status-picker"></div>
 
                 <div class="game-team-detail-section">
@@ -14083,19 +14102,36 @@
         }
 
         // Shows what tapping this option a second time would commit --
-        // that status's own icon/name and its default counter value (if
-        // it has one), same as a fresh selection would land on in
-        // confirmTeamStatusSelection()'s older overlay. Nothing here
-        // touches the member itself; see handleTeamDetailStatusPickerTap()
-        // for what actually commits.
+        // that status's own icon/name, same as a fresh selection would
+        // land on in confirmTeamStatusSelection()'s older overlay.
+        // Nothing here touches the member itself; see
+        // handleTeamDetailStatusPickerTap() for what actually commits.
+        // The counter value is the one exception: previewing the
+        // member's own already-equipped status shows its real current
+        // count (member.statusCounter) rather than that status's
+        // default -- otherwise moving the preview away and back again
+        // without ever committing anything would look like it silently
+        // reset the count, per the chat this was built in. Any *other*
+        // status previewed still starts from its own default, same as
+        // before, since there's no "real" count to restore for a status
+        // the member doesn't currently have.
         function previewTeamDetailStatus(statusId) {
             const entry = STATUS_CONDITIONS.find(s => s.id === statusId) || NO_STATUS_PLACEHOLDER;
             const config = STATUS_COUNTER_CONFIG[statusId] || null;
-            paintTeamDetailStatusDisplay(entry, config, config ? config.default : 0, true);
+            let counterValue = config ? config.default : 0;
+            if (config && teamDetailIndex !== null) {
+                const data = getActiveSaveData();
+                const member = (data.team.members || [])[teamDetailIndex];
+                if (member && (member.status || 'none') === statusId) {
+                    counterValue = member.statusCounter ?? config.default;
+                }
+            }
+            paintTeamDetailStatusDisplay(entry, config, counterValue, true);
         }
 
-        // Rebuilds the 8-icon strip fresh -- called whenever it opens
-        // and again after every first tap (see
+        // Rebuilds the 8-icon strip fresh, plus one more Cancel button
+        // at the end (see cancelTeamDetailStatusPickerPreview() below) --
+        // called whenever it opens and again after every first tap (see
         // handleTeamDetailStatusPickerTap() below), same "built fresh
         // every time rather than kept in sync" approach
         // renderTeamStatusOptions() already takes for the older overlay
@@ -14111,21 +14147,51 @@
             const member = (data.team.members || [])[teamDetailIndex];
             const realId = member ? (member.status || 'none') : 'none';
             const highlightId = teamDetailStatusPendingId !== null ? teamDetailStatusPendingId : realId;
-            pickerEl.innerHTML = [NO_STATUS_PLACEHOLDER, ...STATUS_CONDITIONS].map(s => `
+            const optionsHtml = [NO_STATUS_PLACEHOLDER, ...STATUS_CONDITIONS].map(s => `
                 <button class="game-team-detail-status-picker-btn${s.id === highlightId ? ' active' : ''}" data-status="${s.id}">
                     ${statusImageMarkup(s, 'game-team-detail-status-picker-img')}
                 </button>
             `).join('');
+            const cancelHtml = `
+                <button class="game-team-detail-status-picker-btn game-team-detail-status-picker-cancel-btn" type="button" aria-label="Cancel">&times;</button>
+            `;
+            pickerEl.innerHTML = optionsHtml + cancelHtml;
         }
 
-        // Tapping the Status icon -- opens or closes the 8-icon strip;
-        // never commits anything on its own (see
-        // handleTeamDetailStatusPickerTap() for that). Closing without
-        // a confirm discards whatever was armed (teamDetailStatusPendingId
-        // reset to null) and restores the real, already-committed status
-        // to the column above (animated, same as any other update here)
-        // -- an abandoned preview should never linger on screen once the
-        // strip that was showing it closes. Same guards the corner
+        // The one place that actually discards an armed/previewed
+        // status and folds the strip back up without writing anything
+        // to the member -- shared by tapping the Status icon while
+        // nothing's armed (see toggleTeamDetailStatusPicker() below,
+        // which is also how the strip opens in the first place) and by
+        // the strip's own explicit Cancel button (see
+        // cancelTeamDetailStatusPickerPreview()). Skips the fade/slide
+        // entirely when there'd be nothing to visually undo anyway --
+        // either nothing was ever previewed this time the strip opened,
+        // or whatever's currently previewed already matches the
+        // member's real status -- same "don't animate a no-op" principle
+        // commitTeamDetailStatus() below follows.
+        function discardTeamDetailStatusPreviewAndClose() {
+            if (teamDetailIndex === null) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            const realId = member ? (member.status || 'none') : 'none';
+            const noVisibleChange = teamDetailStatusPendingId === null || teamDetailStatusPendingId === realId;
+
+            teamDetailStatusPendingId = null;
+            teamDetailStatusPickerOpen = false;
+            renderTeamDetailStatusSection(!noVisibleChange);
+            const pickerEl = document.getElementById('game-team-detail-status-picker');
+            if (pickerEl) pickerEl.classList.remove('visible');
+        }
+
+        // Tapping the Status icon -- opens the 8-icon strip if it's
+        // closed; if it's already open with nothing armed yet, closes
+        // it back up via discardTeamDetailStatusPreviewAndClose() above
+        // (there's nothing to discard in that case, so that call is
+        // just a plain close). An *armed* preview is handled entirely
+        // by handleTeamDetailStatusIconTap() instead, one level up --
+        // see its own comment -- so this function is never actually
+        // reached while something's armed. Same guards the corner
         // badge's own tap already enforces (see its own comment in the
         // #game-scroll delegated listener) -- blocked on a read-only
         // save, mid-replacement, mid-release, or for a fainted member
@@ -14138,32 +14204,77 @@
             const member = (data.team.members || [])[teamDetailIndex];
             if (!member || member.fainted) return;
 
-            teamDetailStatusPickerOpen = !teamDetailStatusPickerOpen;
-            teamDetailStatusPendingId = null;
             if (teamDetailStatusPickerOpen) {
-                renderTeamDetailStatusPickerOptions();
-            } else {
-                renderTeamDetailStatusSection(true);
+                discardTeamDetailStatusPreviewAndClose();
+                return;
             }
+            teamDetailStatusPickerOpen = true;
+            renderTeamDetailStatusPickerOptions();
             const pickerEl = document.getElementById('game-team-detail-status-picker');
-            if (pickerEl) pickerEl.classList.toggle('visible', teamDetailStatusPickerOpen);
+            if (pickerEl) pickerEl.classList.add('visible');
+        }
+
+        // The strip's own explicit "never mind" button -- always
+        // available while the strip is open (whether or not anything's
+        // currently armed), unlike tapping the icon itself, which
+        // commits instead of canceling once something's armed (see
+        // handleTeamDetailStatusIconTap()). Per the chat this was built
+        // in: once tapping the icon can confirm, there needs to be some
+        // other unambiguous way back out that never accidentally
+        // commits.
+        function cancelTeamDetailStatusPickerPreview() {
+            discardTeamDetailStatusPreviewAndClose();
+        }
+
+        // Actually writes a status to the member -- shared by both ways
+        // to confirm an armed preview (a second tap on the same picker
+        // option in handleTeamDetailStatusPickerTap() below, or tapping
+        // the preview icon itself in handleTeamDetailStatusIconTap())
+        // rather than duplicated per caller, since committing is
+        // committing no matter which of the two the user reached for.
+        // statusId 'none' clears the status entirely, same mapping
+        // confirmTeamStatusSelection() uses for the older overlay's own
+        // NO_STATUS_PLACEHOLDER option. statusCounter always resets to
+        // the newly-picked status's own default (or is left undefined
+        // for a status with no counter at all) rather than carrying
+        // over whatever the previous status's count happened to be --
+        // same reasoning selectPendingTeamStatus() already has for the
+        // older overlay. Skips the fade/slide when statusId is exactly
+        // what was already being previewed (true every time this is
+        // actually reached today, since both callers only ever confirm
+        // an armed preview) -- the icon/counter/name already show this
+        // status, so animating here would just make it disappear and
+        // immediately reappear for no visible reason, per the chat this
+        // was built in.
+        function commitTeamDetailStatus(statusId) {
+            if (teamDetailIndex === null) return;
+            if (isActiveSaveReadOnly()) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            if (!member) return;
+            const alreadyShown = teamDetailStatusPendingId === statusId;
+
+            member.status = statusId === 'none' ? null : statusId;
+            const config = STATUS_COUNTER_CONFIG[statusId];
+            member.statusCounter = config ? config.default : undefined;
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+
+            teamDetailStatusPendingId = null;
+            teamDetailStatusPickerOpen = false;
+            renderTeamDetailStatusSection(!alreadyShown);
+            const pickerEl = document.getElementById('game-team-detail-status-picker');
+            if (pickerEl) pickerEl.classList.remove('visible');
         }
 
         // One of the eight options in the strip was tapped -- a tap on
         // whatever's already armed (teamDetailStatusPendingId) commits
-        // it; any other tap just arms/previews that option instead (see
-        // previewTeamDetailStatus()), per "a second tap should be our
-        // confirm" from the chat this was built in. Committing writes
-        // straight to the member (no further Confirm button, same
-        // immediate-commit convention as the HP section) and folds the
-        // strip back up again. statusId 'none' clears the status
-        // entirely, same mapping confirmTeamStatusSelection() uses for
-        // the older overlay's own NO_STATUS_PLACEHOLDER option.
-        // statusCounter always resets to the newly-picked status's own
-        // default (or is left undefined for a status with no counter at
-        // all) rather than carrying over whatever the previous status's
-        // count happened to be -- same reasoning
-        // selectPendingTeamStatus() already has for the older overlay.
+        // it (see commitTeamDetailStatus() above); any other tap just
+        // arms/previews that option instead (see previewTeamDetailStatus()),
+        // per "a second tap should be our confirm" from the chat this
+        // was built in.
         function handleTeamDetailStatusPickerTap(statusId) {
             if (teamDetailIndex === null) return;
             if (isActiveSaveReadOnly()) return;
@@ -14175,22 +14286,28 @@
                 return;
             }
 
-            const data = getActiveSaveData();
-            const member = (data.team.members || [])[teamDetailIndex];
-            if (!member) return;
-            member.status = statusId === 'none' ? null : statusId;
-            const config = STATUS_COUNTER_CONFIG[statusId];
-            member.statusCounter = config ? config.default : undefined;
-            if (activeSaveSlot !== null) persistGameSaves();
-            else if (activeGuestSaveId !== null) persistGameGuestSaves();
-            markUnsavedProgressChanged();
-            renderTeamGrid();
+            commitTeamDetailStatus(statusId);
+        }
 
-            teamDetailStatusPendingId = null;
-            teamDetailStatusPickerOpen = false;
-            renderTeamDetailStatusSection(true);
-            const pickerEl = document.getElementById('game-team-detail-status-picker');
-            if (pickerEl) pickerEl.classList.remove('visible');
+        // Tapping the preview icon in the Status column itself --
+        // normally the same open/close toggle as always (see
+        // toggleTeamDetailStatusPicker()), but with a preview currently
+        // armed (teamDetailStatusPendingId set -- see
+        // handleTeamDetailStatusPickerTap()'s own comment), this is a
+        // second, more direct way to confirm that same preview, rather
+        // than making the user hunt back down for the one button they
+        // already tapped once. Per the chat this was built in. Canceling
+        // an armed preview without committing now has its own dedicated
+        // button in the strip instead (see
+        // cancelTeamDetailStatusPickerPreview()) precisely because this
+        // path no longer doubles as a safe "never mind" once something's
+        // armed.
+        function handleTeamDetailStatusIconTap() {
+            if (teamDetailStatusPickerOpen && teamDetailStatusPendingId !== null) {
+                commitTeamDetailStatus(teamDetailStatusPendingId);
+                return;
+            }
+            toggleTeamDetailStatusPicker();
         }
 
         // delta is +1 or -1, from whichever half of
@@ -14202,7 +14319,11 @@
         // preview at that point, not the real member -- see
         // previewTeamDetailStatus() -- so there's nothing real here yet
         // to adjust) or if the member's current status doesn't take a
-        // counter at all.
+        // counter at all. Unlike every other update to this column,
+        // this one skips the fade-and-slide (renderTeamDetailStatusSection()'s
+        // animate left off) -- per the chat this was built in, a simple
+        // +/- didn't need the same transition the picker's icon/name
+        // swaps get.
         function adjustTeamDetailStatusCounter(delta) {
             if (teamDetailIndex === null) return;
             if (isActiveSaveReadOnly()) return;
@@ -14220,7 +14341,7 @@
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
             markUnsavedProgressChanged();
             renderTeamGrid();
-            renderTeamDetailStatusSection(true);
+            renderTeamDetailStatusSection();
         }
 
         // The one authoritative way out of team-add mode -- called from
@@ -17704,7 +17825,7 @@
             }
             const statusIcon = e.target.closest('.game-team-detail-status-icon-wrap');
             if (statusIcon) {
-                toggleTeamDetailStatusPicker();
+                handleTeamDetailStatusIconTap();
                 return;
             }
             const statusCounter = e.target.closest('.game-team-detail-status-counter');
@@ -17712,6 +17833,11 @@
                 const rect = statusCounter.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 adjustTeamDetailStatusCounter(clickedRightHalf ? 1 : -1);
+                return;
+            }
+            const statusCancelBtn = e.target.closest('.game-team-detail-status-picker-cancel-btn');
+            if (statusCancelBtn) {
+                cancelTeamDetailStatusPickerPreview();
                 return;
             }
             const statusPickerBtn = e.target.closest('.game-team-detail-status-picker-btn');
