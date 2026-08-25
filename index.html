@@ -184,7 +184,16 @@
            page's own design instead of an OS-level UI element sitting on
            top of it. Covers the filter panel's own scroll, the
            related-images row's horizontal scroll, the general-info
-           panel's scroll, and the Full Type Chart's own scroll box. html
+           panel's scroll, the Full Type Chart's own scroll box, and every
+           .game-confirm-card (including the Team Tracker's detail view --
+           see its own max-height/overflow-y rule further down) -- that
+           last one matters especially once a card's content is animating
+           its own height (the Status/Evolution strips' slide open/closed,
+           Level recentering, etc. -- see the chat this was added in): the
+           browser's default scrollbar snapping in and out chunky and
+           unstyled read as a jarring interruption right in the middle of
+           an otherwise smooth transition, where this thin/transparent one
+           barely registers doing the same thing. html
            (the page's own root scrollbar) is kept
            thin to match but deliberately left uncolored below — its
            "transparent" track doesn't actually reveal <body>'s decorative
@@ -235,7 +244,8 @@
         #viewer-related-grid,
         #viewer-info-content,
         #how-to-use-section,
-        #game-matchup-chart-scroll {
+        #game-matchup-chart-scroll,
+        .game-confirm-card {
             scrollbar-width: thin;
             scrollbar-color: rgba(0,0,0,0.35) transparent;
         }
@@ -244,7 +254,8 @@
         #viewer-related-grid::-webkit-scrollbar,
         #viewer-info-content::-webkit-scrollbar,
         #how-to-use-section::-webkit-scrollbar,
-        #game-matchup-chart-scroll::-webkit-scrollbar {
+        #game-matchup-chart-scroll::-webkit-scrollbar,
+        .game-confirm-card::-webkit-scrollbar {
             width: 10px;
             height: 10px;
         }
@@ -253,7 +264,8 @@
         #viewer-related-grid::-webkit-scrollbar-track,
         #viewer-info-content::-webkit-scrollbar-track,
         #how-to-use-section::-webkit-scrollbar-track,
-        #game-matchup-chart-scroll::-webkit-scrollbar-track {
+        #game-matchup-chart-scroll::-webkit-scrollbar-track,
+        .game-confirm-card::-webkit-scrollbar-track {
             background: transparent;
         }
 
@@ -261,7 +273,8 @@
         #viewer-related-grid::-webkit-scrollbar-thumb,
         #viewer-info-content::-webkit-scrollbar-thumb,
         #how-to-use-section::-webkit-scrollbar-thumb,
-        #game-matchup-chart-scroll::-webkit-scrollbar-thumb {
+        #game-matchup-chart-scroll::-webkit-scrollbar-thumb,
+        .game-confirm-card::-webkit-scrollbar-thumb {
             background-color: rgba(0,0,0,0.35);
             border-radius: 10px;
             /* A transparent border with background-clip: padding-box makes
@@ -276,7 +289,8 @@
         #viewer-related-grid::-webkit-scrollbar-thumb:hover,
         #viewer-info-content::-webkit-scrollbar-thumb:hover,
         #how-to-use-section::-webkit-scrollbar-thumb:hover,
-        #game-matchup-chart-scroll::-webkit-scrollbar-thumb:hover {
+        #game-matchup-chart-scroll::-webkit-scrollbar-thumb:hover,
+        .game-confirm-card::-webkit-scrollbar-thumb:hover {
             background-color: rgba(0,0,0,0.55);
         }
 
@@ -3592,13 +3606,17 @@
             margin: 0 auto 4px;
         }
 
-        /* Four placeholder sections (HP/Status/Evolution/Items) for now
-           -- see the chat this was scaffolded in. Same section-title
+        /* Items is still a placeholder section (see the chat this was
+           scaffolded in) -- HP/Level/Status/Evolution have all moved on
+           to their own dedicated markup/CSS by now. Same section-title
            treatment as .game-team-cards-section-title, reused rather
            than shared for the same independence reasoning as everywhere
-           else in this doc. Each -body is genuinely empty until a later
-           pass fills it in; the min-height just keeps an empty section
-           from visually collapsing to nothing before then. */
+           else in this doc. -body is genuinely empty until its own pass
+           fills it in; the min-height just keeps it from visually
+           collapsing to nothing before then. The adjacent-sibling margin
+           rule below has nothing to pair against right now (Items is
+           the only .game-team-detail-section left), but stays in place
+           for whenever a second one shows up. */
         .game-team-detail-section + .game-team-detail-section {
             margin-top: 16px;
         }
@@ -3617,28 +3635,83 @@
             min-height: 20px;
         }
 
-        /* HP and Status share one row, each taking half the popup's
-           width -- see the chat this was built in. gap eats a little
-           into that 50/50 split visually, same tradeoff every other
-           flex-gap layout in this doc makes; flex: 1 1 0 on the columns
-           (rather than width: 50%) is what actually keeps them equal
-           regardless of which one's content happens to be wider. Only
-           HP has any real content behind it so far -- Status keeps
-           using the same empty .game-team-detail-section-body
-           placeholder as Evolution/Items below until its own pass. */
+        /* HP/Level and Status/Evolution each share their own row (two of
+           these total now), each column taking half its row's width --
+           see the chat this was rearranged in. gap eats a little into
+           that 50/50 split visually, same tradeoff every other flex-gap
+           layout in this doc makes; flex: 1 1 0 on the columns (rather
+           than width: 50%) is what actually keeps them equal regardless
+           of which one's content happens to be wider. margin-top applies
+           unconditionally (not just as a following-sibling rule) so the
+           second row gets the same spacing below the first that
+           everything else in this card uses, without needing a separate
+           selector for that. */
         .game-team-detail-columns {
             display: flex;
             gap: 12px;
             margin-top: 16px;
         }
 
-        .game-team-detail-columns + .game-team-detail-section {
-            margin-top: 16px;
-        }
-
         .game-team-detail-col {
             flex: 1 1 0;
             min-width: 0;
+        }
+
+        /* Level/Evolution row only (see the HTML comment above it).
+           Both columns keep a permanently fixed width -- calc(50% - 6px),
+           the other 6px being half the row's own 12px gap, same as a
+           plain 50/50 .game-team-detail-columns split -- rather than the
+           flex: 1 1 0 stretch every other .game-team-detail-col still
+           gets. The row's own flex layout never actually changes between
+           the two states (no flex-basis/justify-content toggling --
+           those don't animate cleanly frame-to-frame, which read as a
+           snap rather than a slide per the chat this was revised in).
+           Instead: Level's own centering is a transform: translateX on
+           .game-team-detail-level-col itself (see .no-evolution below
+           for the exact math), and Evolution's hide/show is an
+           opacity+transform fade on #game-team-detail-evolution-section
+           itself, both driven by the same .no-evolution class
+           renderTeamDetailEvolutionSection() toggles on the row. Because
+           Evolution's column keeps its normal flex-basis at all times
+           (it just becomes invisible and non-interactive), Level's
+           translateX-based slide never has to fight a reflowing sibling
+           to land exactly centered. */
+        .game-team-detail-level-evo-row .game-team-detail-level-col,
+        .game-team-detail-level-evo-row #game-team-detail-evolution-section {
+            flex: 0 0 calc(50% - 6px);
+            min-width: 0;
+        }
+
+        .game-team-detail-level-evo-row .game-team-detail-level-col {
+            transition: transform 0.3s ease;
+        }
+
+        /* Shifts Level right by half of Evolution's own column width
+           plus half the row's gap -- since Evolution's column is
+           exactly as wide as Level's own (both calc(50% - 6px)), that's
+           precisely enough to land Level dead-center in the full row.
+           Written as a % of Level's own width (the 50%) rather than the
+           row's, since that's what a translateX percentage resolves
+           against -- see the chat this was worked out in for the algebra. */
+        .game-team-detail-level-evo-row.no-evolution .game-team-detail-level-col {
+            transform: translateX(calc(50% + 6px));
+        }
+
+        #game-team-detail-evolution-section {
+            opacity: 1;
+            transform: translateX(0);
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+
+        /* Slides in from the left (negative translateX easing back to 0)
+           rather than growing or sliding in from the right, per the chat
+           this was refined in. pointer-events: none keeps its buttons
+           unclickable while faded out, since the column itself never
+           leaves the layout (see the block comment above). */
+        .game-team-detail-level-evo-row.no-evolution #game-team-detail-evolution-section {
+            opacity: 0;
+            transform: translateX(-16px);
+            pointer-events: none;
         }
 
         /* Icon justified left, counter pill (see
@@ -3751,6 +3824,119 @@
                 -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
                 -1px  0   0 black,                 1px  0   0 black,
                 -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
+        /* Total Level and the counter sit in one row now, not stacked --
+           see the chat this was laid out in. Centered as a pair (rather
+           than left-justified the way HP's icon/counter row is) since
+           there's no separate label text anchoring the left edge here
+           any more once base level stopped being shown on its own. No
+           gap -- .game-team-detail-level-total's own negative margin
+           below is what creates the deliberate overlap instead. */
+        .game-team-detail-level-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 6px;
+        }
+
+        /* The pill that tucks partially behind the counter (see the
+           negative margin-right below, and .game-team-detail-level-counter's
+           own higher z-index) -- same yellow as the counter's own number
+           so the two read as one continuous "level" readout despite the
+           visual layering, and now the same white border treatment the
+           counter has too, per the chat this was refined in. Fixed
+           width (rather than sizing to content via padding) plus
+           flex-shrink: 0 is what keeps this the same size whether Total
+           Level is showing one digit or two -- letting it size to
+           content would shift both its own width and how much of it
+           peeks out from behind the counter every time the digit count
+           changed. */
+        .game-team-detail-level-total {
+            position: relative;
+            z-index: 1;
+            flex-shrink: 0;
+            width: 60px;
+            margin-right: -18px;
+            padding: 3px 13px;
+            border: 3.5px solid white;
+            border-radius: 999px 0px 0px 999px;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            align-items: center;
+            justify-content: left;
+            font-size: 18px;
+            font-weight: bold;
+            color: #FFEB3B;
+        }
+
+        /* Same pill/die-background/+-- treatment as the corner
+           .game-team-slot-level (see its own CSS comment for where the
+           colors and die artwork come from) -- reusing
+           adjustTeamMemberLevel() in the script (see
+           adjustTeamDetailLevel()) is what actually keeps the two in
+           sync, not shared markup/CSS. flex: 1 1 auto (rather than
+           width: 100%) lets .game-team-detail-level-total sit beside it
+           in .game-team-detail-level-row without either one dictating a
+           fixed width for the other. The higher z-index than
+           .game-team-detail-level-total (and the DOM order, which alone
+           would already paint this one on top) is what makes the
+           overlap actually tuck the total pill *behind* this one rather
+           than the other way around, per the chat this was built in. */
+        .game-team-detail-level-counter {
+            position: relative;
+            z-index: 2;
+            flex: 1 1 auto;
+            min-width: 70%;
+            aspect-ratio: 2.5 / 1;
+            border: 3.5px solid white;
+            border-radius: 999px;
+            background: rgba(50, 50, 50, 1);
+		background-image: url("https://dl.dropboxusercontent.com/scl/fi/i0jleti9ik8q0ppoj42fg/level_die.png?rlkey=v7o1r039ho1t9blkh8mgh2ky6&st=ta9fd15b&dl=1");
+		background-size: auto 100%;
+		background-repeat: no-repeat;
+		background-position: center;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: bold;
+            color: #FFEB3B;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
+        /* Same left-half-decrements/right-half-increments affordance as
+           .game-team-slot-level::before/::after (see its own comment)
+           -- duplicated rather than shared, same independence reasoning
+           as everywhere else in this doc. */
+        .game-team-detail-level-counter::before,
+        .game-team-detail-level-counter::after {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 16px;
+            font-weight: bold;
+            line-height: 1;
+            color: #FFF;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+            pointer-events: none;
+        }
+
+        .game-team-detail-level-counter::before {
+            content: "-";
+            left: 10px;
+        }
+
+        .game-team-detail-level-counter::after {
+            content: "+";
+            right: 10px;
         }
 
         /* Same "icon left, counter right, label below" shape as
@@ -3896,20 +4082,50 @@
            STATUS_CONDITIONS) in one row below the HP/Status row --
            hidden until the Status icon is tapped (see
            toggleTeamDetailStatusPicker() in the script), rather than
-           taking up space here permanently. flex-wrap as a safety net
-           for a narrower card than the 8*30px-plus-gaps this was sized
-           for, rather than assuming this exact card width everywhere
-           this might render. */
+           taking up space here permanently. This outer element is
+           purely the slide/fade mechanism now (a single-row CSS grid
+           animating between 0fr/1fr, per the chat this was refined in
+           -- grid-template-rows is what actually gets an "auto height"
+           reveal to animate at all, unlike display or max-height) --
+           .-inner (see below) carries the actual flex-wrap layout, plus
+           the margin/padding this rule used to hold itself, so both
+           collapse away together rather than leaving a gap behind once
+           collapsed. renderTeamDetailStatusPickerOptions() writes into
+           .-inner, not this element, so replacing that markup can never
+           clobber the classes/transition living here. */
         .game-team-detail-status-picker {
-            display: none;
+            display: grid;
+            grid-template-rows: 0fr;
+            opacity: 0;
+            transition: grid-template-rows 0.3s ease, opacity 0.3s ease;
+        }
+
+        .game-team-detail-status-picker.visible {
+            grid-template-rows: 1fr;
+            opacity: 1;
+        }
+
+        /* min-height: 0 overrides a grid item's default min-height:
+           auto, which would otherwise refuse to shrink below its own
+           content's height no matter what the track above is doing --
+           without it the 0fr row above could never actually reach zero.
+           overflow: hidden is what clips the flex-wrapped buttons as
+           that happens (and is what makes the reveal read as a slide
+           rather than a crop-from-the-bottom, since it's clipping a
+           track whose height is animating rather than the content
+           itself moving). flex-wrap as a safety net for a narrower card
+           than the 8*30px-plus-gaps this was sized for, rather than
+           assuming this exact card width everywhere this might render. */
+        .game-team-detail-status-picker-inner {
+            min-height: 0;
+            overflow: hidden;
+            display: flex;
             flex-wrap: wrap;
             justify-content: center;
             gap: 4px;
             margin-top: 6px;
-        }
-
-        .game-team-detail-status-picker.visible {
-            display: flex;
+		padding-left: 30px;
+		padding-right: 30px;
         }
 
         /* Plain reset rather than .filter-btn's own pill/label look --
@@ -3954,6 +4170,77 @@
             color: #FFF;
             font-size: 22px;
             line-height: 1;
+        }
+
+        /* One button per applicable category (or the lone revert button
+           -- see renderTeamDetailEvolutionSection() in the script) --
+           same 40px icon-button footprint as the HP/Status icons above
+           it, just possibly more than one side by side here. */
+        .game-team-detail-evolution-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .game-team-detail-evolution-type-btn {
+            width: 40px;
+            height: 40px;
+            flex-shrink: 0;
+            padding: 0;
+            border: 3px solid white;
+            border-radius: 50%;
+            background: rgba(50, 50, 50, 0.85);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .game-team-detail-evolution-type-btn img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        /* Marks whichever category's strip is currently expanded below
+           -- same "border color only" treatment as
+           .game-team-detail-status-picker-btn.active. */
+        .game-team-detail-evolution-type-btn.active {
+            border-color: #FFEB3B;
+        }
+
+        /* Hidden until a type button above is tapped. This outer element
+           is purely the slide/fade mechanism (see
+           .game-team-detail-status-picker's own comment for why a
+           single-row grid animating between 0fr/1fr is what's doing
+           that, and why it's kept separate from .-inner). .-inner
+           carries the margin this rule used to hold itself, and is
+           filled in by renderTeamDetailEvolutionPicker() with the
+           corner badge's own
+           .game-team-evolution-choose-btn/.game-team-evolution-single-confirm-*
+           markup (see its own comment for why those are reused rather
+           than duplicated), so the artwork inside renders at the exact
+           same size as it does in that other picker. */
+        .game-team-detail-evolution-picker {
+            display: grid;
+            grid-template-rows: 0fr;
+            opacity: 0;
+            transition: grid-template-rows 0.3s ease, opacity 0.3s ease;
+        }
+
+        .game-team-detail-evolution-picker.visible {
+            grid-template-rows: 1fr;
+            opacity: 1;
+        }
+
+        /* min-height: 0/overflow: hidden -- same reasoning as
+           .game-team-detail-status-picker-inner's own comment, just
+           carrying this rule's own margin-top instead of that one's
+           margin/padding. */
+        .game-team-detail-evolution-picker-inner {
+            min-height: 0;
+            overflow: hidden;
+            margin-top: 16px;
         }
 
         /* Groups the picker into "Evolution" / "Mega Evolution" /
@@ -9158,22 +9445,110 @@
              any corner badge -- this is meant as one place that shows
              what those four corner badges (HP, Status, Evolution,
              Attach/Nature Cards) each cover individually, not a
-             replacement for any of their own overlays. HP was the first
-             of the four sections to actually get built out (see
-             renderTeamDetailHpSection()/adjustTeamDetailHp() in the
-             script) -- it's a genuine live edit straight from this
-             screen now, not just a readout, per the chat this was built
-             in. Status is the second (see
-             renderTeamDetailStatusSection()/toggleTeamDetailStatusPicker()/
-             handleTeamDetailStatusPickerTap()) -- Evolution/Items are
-             still empty placeholders (see .game-team-detail-section-body)
-             awaiting their own pass. HP and Status share a row, each
-             taking half the popup's width (see .game-team-detail-columns
-             in the CSS); Evolution and Items stay full-width below. -->
+             replacement for any of their own overlays. HP, Level,
+             Status, and Evolution all have real content now (see
+             renderTeamDetailHpSection()/renderTeamDetailLevelSection()/
+             renderTeamDetailStatusSection()/renderTeamDetailEvolutionSection()
+             below) -- Items stays an empty placeholder (see
+             .game-team-detail-section-body) awaiting its own pass.
+             HP/Level and Status/Evolution each share their own row, per
+             the chat this was rearranged in -- see
+             .game-team-detail-columns in the CSS. Status and Evolution's
+             own expandable strips are mutually exclusive now that they
+             sit side by side (see toggleTeamDetailStatusPicker()'s and
+             handleTeamDetailEvolutionTypeTap()'s own comments) -- opening
+             one always closes the other first, exactly as if its Cancel
+             had been tapped. -->
         <div id="game-team-detail-overlay">
             <div class="game-confirm-card">
                 <img class="game-team-detail-img" id="game-team-detail-img" alt="">
                 <p class="game-confirm-title" id="game-team-detail-name">&nbsp;</p>
+
+                <!-- Level/Evolution now share the top row, HP/Status the
+                     second -- per the chat this was rearranged in. This
+                     row carries its own id/class (rather than reusing
+                     the plain .game-team-detail-columns the row below
+                     still uses) because, unlike Status, Level doesn't
+                     stay pinned to the left when Evolution has nothing
+                     to show: it recenters instead, at the same fixed
+                     width it always has (see .game-team-detail-level-col
+                     below) rather than stretching to fill the freed-up
+                     row. See renderTeamDetailEvolutionSection()'s own
+                     comment for the no-evolution class this toggles. -->
+                <div class="game-team-detail-columns game-team-detail-level-evo-row" id="game-team-detail-level-evo-row">
+                    <!-- Reuses adjustTeamMemberLevel() -- the same
+                         function the corner .game-team-slot-level pill
+                         already commits through -- so leveling up/down
+                         from here can never drift out of sync with the
+                         corner badge's own math (HP reconciliation under
+                         alt2, the 0-6 clamp, etc). Base level itself
+                         isn't shown at all any more -- just Total Level
+                         (base level from pokemon-data.json plus this
+                         counter -- see getTeamMemberBaseLevel()/
+                         getTeamMemberHpMax()'s own comments), as its own
+                         small black pill tucked partially behind the
+                         counter rather than a separate line, per the
+                         chat this was laid out in. -->
+                    <div class="game-team-detail-col game-team-detail-level-col">
+                        <p class="game-team-detail-section-title">Level</p>
+                        <div class="game-team-detail-level-row">
+                            <div class="game-team-detail-level-total" id="game-team-detail-level-total">
+                                <span id="game-team-detail-level-total-value">0</span>
+                            </div>
+                            <div class="game-team-detail-level-counter" id="game-team-detail-level-counter">
+                                <span id="game-team-detail-level-counter-value">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Always present as a .game-team-detail-col at its
+                         normal fixed width, even with no valid
+                         evolutions -- its own opacity/transform fade it
+                         out in place (see the CSS) rather than the
+                         column shrinking away, since Level's own
+                         translateX-based centering is worked out
+                         assuming this column's width never changes. See
+                         renderTeamDetailEvolutionSection()'s own
+                         comment for the no-evolution class that drives
+                         both. -->
+                    <div class="game-team-detail-col" id="game-team-detail-evolution-section">
+                        <div id="game-team-detail-evolution-content">
+                            <p class="game-team-detail-section-title">Evolution</p>
+                            <!-- One button per currently-applicable
+                                 category (Evolve/Mega/Gigantamax), or the
+                                 single revert button while a Mega/
+                                 Gigantamax override is already active --
+                                 see renderTeamDetailEvolutionSection() in
+                                 the script, the only thing that ever
+                                 fills this in. -->
+                            <div class="game-team-detail-evolution-buttons" id="game-team-detail-evolution-buttons"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hidden until one of the type buttons above is
+                     tapped (see handleTeamDetailEvolutionTypeTap() in
+                     the script) -- filled in fresh by
+                     renderTeamDetailEvolutionPicker() with whichever
+                     single category's own options, reusing the same
+                     .game-team-evolution-* classes (and therefore the
+                     same artwork sizes) the corner badge's own combined
+                     picker uses. Kept outside the Level/Evolution row
+                     itself (full popup width) rather than confined to
+                     Evolution's own half -- a 250px preview image (see
+                     .game-team-evolution-single-confirm-img) wouldn't
+                     come close to fitting in a half-width column. Sits
+                     directly below the row it comes from (Evolution's
+                     own row, not Status/HP's) per the chat this was
+                     rearranged in -- the outer div is what actually
+                     slides/fades open via grid-template-rows (see the
+                     CSS), .-inner is the plain flex-wrap content that
+                     gets replaced wholesale by innerHTML each time
+                     without disturbing the outer element's own classes/
+                     transition. -->
+                <div class="game-team-detail-evolution-picker" id="game-team-detail-evolution-picker">
+                    <div class="game-team-detail-evolution-picker-inner" id="game-team-detail-evolution-picker-inner"></div>
+                </div>
 
                 <div class="game-team-detail-columns">
                     <div class="game-team-detail-col">
@@ -9216,13 +9591,14 @@
                      backs out without committing regardless of what's
                      currently armed. Rebuilt fresh by
                      renderTeamDetailStatusPickerOptions() every time the
-                     strip opens or a preview changes -- this container
-                     starts empty. -->
-                <div class="game-team-detail-status-picker" id="game-team-detail-status-picker"></div>
-
-                <div class="game-team-detail-section">
-                    <p class="game-team-detail-section-title">Evolution</p>
-                    <div class="game-team-detail-section-body" id="game-team-detail-evolution-body"></div>
+                     strip opens or a preview changes -- .-inner is the
+                     part that gets replaced, same split as the Evolution
+                     picker above and for the same reason. Kept outside
+                     the HP/Status row itself (full popup width), since a
+                     320px-wide half-column would be nowhere near enough
+                     room for eight icons. -->
+                <div class="game-team-detail-status-picker" id="game-team-detail-status-picker">
+                    <div class="game-team-detail-status-picker-inner" id="game-team-detail-status-picker-inner"></div>
                 </div>
 
                 <div class="game-team-detail-section">
@@ -12860,32 +13236,44 @@
             return (data && (data.hpRule === 'alt1' || data.hpRule === 'alt2')) ? data.hpRule : 'standard';
         }
 
+        // The currently-showing form's own token_level from
+        // pokemon-data.json (via POKEMON_BY_NAME) -- "currently-showing
+        // form" meaning member.formOverride's own entry when a Mega/
+        // Gigantamax is active, not always the base species, since a lot
+        // of Mega/G-Max entries carry a token_level one higher than
+        // their base form (see the chat this was added in). 0 if the
+        // entry can't be found or has no token_level of its own, same
+        // "never undefined, always a definite number" convention every
+        // other numeric member field in this doc follows. Shared by
+        // getTeamMemberHpMax()'s own alt2 branch below and the detail
+        // view's own Level section (see renderTeamDetailLevelSection())
+        // rather than each re-deriving the same lookup independently --
+        // "the Pokémon's base level" means the same thing to both.
+        function getTeamMemberBaseLevel(member) {
+            const activeEntry = (member.formOverride && POKEMON_BY_NAME[member.formOverride])
+                || POKEMON_BY_NAME[member.name];
+            return (activeEntry && typeof activeEntry.token_level === 'number') ? activeEntry.token_level : 0;
+        }
+
         // Max HP for alt1/alt2 -- null for 'standard', which has no
         // concept of a max (see getHpRule() above for why an unrecognized
         // hpRule value always resolves to 'standard' rather than falling
-        // through here by accident). alt2's max is derived exactly as
-        // described in the chat this was built in: the currently-showing
-        // form's own token_level (from pokemon-data.json, via
-        // POKEMON_BY_NAME) plus this member's own .game-team-slot-level
-        // value -- "currently-showing form" meaning member.formOverride's
-        // own entry when a Mega/Gigantamax is active, not always the
-        // base species, since a lot of Mega/G-Max entries carry a
-        // token_level one higher than their base form (see the chat this
-        // was added in, and reconcileTeamMemberHpAcrossFormChange() below
-        // for how current hp gets shifted to match whenever that
-        // active/inactive state changes). Recomputed fresh every call
-        // rather than cached on the member, so a level change, a form
-        // change, or a genuine stage evolution (any of which can change
-        // which POKEMON_BY_NAME entry applies) is always reflected
-        // immediately.
+        // through here by accident). alt2's max is the member's base
+        // level (see getTeamMemberBaseLevel() above) plus this member's
+        // own .game-team-slot-level value -- exactly the same "total
+        // level" the detail view's own Level section now shows on its
+        // own top line (see renderTeamDetailLevelSection()), regardless
+        // of which hpRule is actually active; see
+        // reconcileTeamMemberHpAcrossFormChange() below for how current
+        // hp gets shifted to match whenever a Mega/Gigantamax's own
+        // token_level difference changes this. Recomputed fresh every
+        // call rather than cached on the member, so a level change, a
+        // form change, or a genuine stage evolution (any of which can
+        // change which POKEMON_BY_NAME entry applies) is always
+        // reflected immediately.
         function getTeamMemberHpMax(member, hpRule) {
             if (hpRule === 'alt1') return 2;
-            if (hpRule === 'alt2') {
-                const activeEntry = (member.formOverride && POKEMON_BY_NAME[member.formOverride])
-                    || POKEMON_BY_NAME[member.name];
-                const tokenLevel = (activeEntry && typeof activeEntry.token_level === 'number') ? activeEntry.token_level : 0;
-                return tokenLevel + (member.level || 0);
-            }
+            if (hpRule === 'alt2') return getTeamMemberBaseLevel(member) + (member.level || 0);
             return null;
         }
 
@@ -13669,21 +14057,20 @@
             }).join('');
         }
 
-        // Builds pendingTeamEvolutionOptions from a member's base entry
-        // (see computeTeamEvolutionState() for the same eligibility
-        // rules used to decide the corner icon in the first place) and
-        // opens the picker. Only ever called for mode 'evolve'/'mega'/
-        // 'gmax' -- 'unable' is a no-op and 'active-mega'/'active-gmax'
-        // revert immediately without an overlay at all (see the
-        // #game-scroll delegated listener's own .game-team-slot-evolution
-        // branch further down).
-        function openTeamEvolutionOverlay(index) {
-            const data = getActiveSaveData();
-            const member = (data.team.members || [])[index];
-            if (!member) return;
+        // Builds the full list of {category, name} evolution options
+        // currently available to a member -- same eligibility rules
+        // computeTeamEvolutionState() uses to decide the corner badge's
+        // own icon(s), just returned as data rather than a single
+        // mode/icon summary. Shared by the corner badge's own combined
+        // multi-category picker (openTeamEvolutionOverlay() below) and
+        // the detail view's own per-type buttons/strip (see
+        // renderTeamDetailEvolutionSection()) rather than duplicated per
+        // caller, since the eligibility math itself is exactly the same
+        // no matter which screen is asking.
+        function getTeamEvolutionOptions(member) {
+            if (!member) return [];
             const baseEntry = POKEMON_BY_NAME[member.name];
-            if (!baseEntry) return;
-
+            if (!baseEntry) return [];
             const options = [];
             if (baseEntry.evolves_to && baseEntry.evolves_to.length
                 && typeof baseEntry.evolve_cost === 'number'
@@ -13691,14 +14078,73 @@
                 baseEntry.evolves_to.forEach(name => options.push({ category: 'evolve', name }));
             }
             // Same fainted gate as computeTeamEvolutionState()'s own
-            // canMega/canGmax -- rebuilt independently here rather than
-            // trusting the corner's icon list, since this is what
-            // actually decides what Confirm can commit to, not just what
-            // gets displayed.
+            // canMega/canGmax.
             if (!member.fainted) {
                 if (baseEntry.mega_forms) baseEntry.mega_forms.forEach(name => options.push({ category: 'mega', name }));
                 if (baseEntry.gmax_forms) baseEntry.gmax_forms.forEach(name => options.push({ category: 'gmax', name }));
             }
+            return options;
+        }
+
+        // Actually applies a chosen evolution/Mega Evolution/Gigantamax
+        // to a member -- shared by the corner badge's own Confirm
+        // (confirmTeamEvolutionSelection() below) and the detail view's
+        // own per-type Confirm (confirmTeamDetailEvolutionChoice())
+        // rather than duplicated per caller, since applying a choice is
+        // applying a choice no matter which screen it came from.
+        // baseEntry is the member's species entry *before* this call --
+        // callers read it before applying, same as they already have to
+        // for evolve_cost below.
+        //   'evolve' -- a genuine, permanent stage evolution: the member
+        //     BECOMES the new species (name/dex/src/shinysrc all swap to
+        //     the target entry's own, same fields confirmTeamAddSelection()
+        //     sets when a member's first added), evolve_cost comes off
+        //     the level box, and any active Mega/Gigantamax override is
+        //     cleared outright -- a form override naming the old species
+        //     ("Mega Charizard X" while this member was still just
+        //     Charizard) would no longer even resolve against the new
+        //     one. In practice this path is never reached with an
+        //     override still active anyway, since 'active-mega'/
+        //     'active-gmax' revert immediately without ever opening
+        //     either picker (see the #game-scroll delegated listener) --
+        //     cleared here too regardless, as cheap insurance.
+        //   'mega'/'gmax' -- just sets member.formOverride to the chosen
+        //     form's name; the member's own species/level are untouched,
+        //     renderTeamGrid()/renderTeamDetailHeader() each pick up the
+        //     override's art on their own next render.
+        function applyEvolutionChoice(member, baseEntry, choice, hpRule) {
+            if (choice.category === 'evolve') {
+                const targetEntry = POKEMON_BY_NAME[choice.name];
+                if (!targetEntry) return;
+                member.dex = (targetEntry.tags && targetEntry.tags[0]) || '';
+                member.name = targetEntry.name;
+                member.src = targetEntry.src;
+                member.shinysrc = targetEntry.shinysrc || '';
+                member.level = Math.max(0, (member.level || 0) - baseEntry.evolve_cost);
+                member.formOverride = null;
+            } else {
+                // See reconcileTeamMemberHpAcrossFormChange()'s own
+                // comment -- oldMax has to be read before formOverride
+                // actually changes, since that's what getTeamMemberHpMax()
+                // keys its "which entry's token_level applies" logic off
+                // of.
+                const oldMax = getTeamMemberHpMax(member, hpRule);
+                member.formOverride = choice.name;
+                reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax);
+            }
+        }
+
+        // Builds pendingTeamEvolutionOptions (see getTeamEvolutionOptions()
+        // above) and opens the picker. Only ever called for mode
+        // 'evolve'/'mega'/'gmax' -- 'unable' is a no-op and 'active-mega'/
+        // 'active-gmax' revert immediately without an overlay at all (see
+        // the #game-scroll delegated listener's own
+        // .game-team-slot-evolution branch further down).
+        function openTeamEvolutionOverlay(index) {
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[index];
+            if (!member) return;
+            const options = getTeamEvolutionOptions(member);
             if (options.length === 0) return;
 
             pendingTeamEvolutionIndex = index;
@@ -13738,25 +14184,8 @@
         }
 
         // The picker's own Confirm -- the only thing that actually
-        // writes anything back to the member. Branches on the chosen
-        // option's category:
-        //   'evolve' -- a genuine, permanent stage evolution: the member
-        //     BECOMES the new species (name/dex/src/shinysrc all swap to
-        //     the target entry's own, same fields confirmTeamAddSelection()
-        //     sets when a member's first added), evolve_cost comes off
-        //     the level box, and any active Mega/Gigantamax override is
-        //     cleared outright -- a form override naming the old species
-        //     ("Mega Charizard X" while this member was still just
-        //     Charizard) would no longer even resolve against the new
-        //     one. In practice this path is never reached with an
-        //     override still active anyway, since 'active-mega'/
-        //     'active-gmax' revert immediately without ever opening this
-        //     overlay (see the delegated listener) -- cleared here too
-        //     regardless, as cheap insurance.
-        //   'mega'/'gmax' -- just sets member.formOverride to the chosen
-        //     form's name; the member's own species/level are untouched,
-        //     renderTeamGrid() picks up the override's art on the next
-        //     render (see its own comment).
+        // writes anything back to the member (see applyEvolutionChoice()
+        // above for exactly what).
         function confirmTeamEvolutionSelection() {
             if (pendingTeamEvolutionIndex === null || !pendingTeamEvolutionChoice) return;
             const data = getActiveSaveData();
@@ -13766,27 +14195,7 @@
             closeTeamEvolutionOverlay();
             if (!member || !baseEntry) return;
 
-            const hpRule = getHpRule(data);
-
-            if (choice.category === 'evolve') {
-                const targetEntry = POKEMON_BY_NAME[choice.name];
-                if (!targetEntry) return;
-                member.dex = (targetEntry.tags && targetEntry.tags[0]) || '';
-                member.name = targetEntry.name;
-                member.src = targetEntry.src;
-                member.shinysrc = targetEntry.shinysrc || '';
-                member.level = Math.max(0, (member.level || 0) - baseEntry.evolve_cost);
-                member.formOverride = null;
-            } else {
-                // See reconcileTeamMemberHpAcrossFormChange()'s own
-                // comment -- oldMax has to be read before formOverride
-                // actually changes, since that's what getTeamMemberHpMax()
-                // keys its "which entry's token_level applies" logic off
-                // of.
-                const oldMax = getTeamMemberHpMax(member, hpRule);
-                member.formOverride = choice.name;
-                reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax);
-            }
+            applyEvolutionChoice(member, baseEntry, choice, getHpRule(data));
 
             if (activeSaveSlot !== null) persistGameSaves();
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
@@ -13811,26 +14220,41 @@
         // left.
         let teamDetailStatusPickerOpen = false;
 
-        // Full-detail view for a single filled slot -- opened by
-        // tapping the slot's own hit-zone (see the #game-scroll
-        // delegated listener's own comment on .game-team-slot-hit-zone)
-        // rather than any of its four corner badges. HP and Status are
-        // the two of the four sections with real content so far (see
-        // renderTeamDetailHpSection()/renderTeamDetailStatusSection()
-        // below) -- Evolution/Items stay empty placeholders (see the
-        // chat this was scaffolded in) until their own pass.
-        function openTeamDetailOverlay(index) {
-            const data = getActiveSaveData();
-            const member = (data.team.members || [])[index];
-            if (!member) return;
-            teamDetailIndex = index;
-            teamDetailStatusPickerOpen = false;
+        // Which evolution type's strip (if any) is expanded below the
+        // Evolution section's own row of type buttons -- null, 'evolve',
+        // 'mega', or 'gmax'. Only one at a time, same "opening a
+        // different one replaces whichever was open" shape as the
+        // Status picker only ever having one thing armed.
+        let teamDetailEvolutionCategory = null;
 
-            // Same "an active Mega/Gigantamax form overrides the base
-            // species' own name/art" logic as renderTeamGrid()'s own
-            // slot image (see its comment for the full reasoning) --
-            // duplicated rather than shared, same independence
-            // reasoning as everywhere else in this doc.
+        // The in-progress pick within whichever category strip is open
+        // -- same {category, name} shape as pendingTeamEvolutionChoice
+        // (the corner badge's own overlay), just scoped to
+        // teamDetailIndex/teamDetailEvolutionCategory instead. null
+        // while nothing's been tapped yet in a multi-option strip, or
+        // auto-set the moment a strip with only one option opens --
+        // same "already the pick, Confirm alone finishes it" shortcut
+        // renderTeamEvolutionOptions() takes for the corner badge's own
+        // overlay.
+        let teamDetailEvolutionChoice = null;
+
+        // Paints the art/name at the top of the detail view from
+        // teamDetailIndex's current state -- split out from
+        // openTeamDetailOverlay() so confirmTeamDetailEvolutionChoice()
+        // can re-run it too: a genuine stage evolution or a Mega/
+        // Gigantamax toggle both change what this member's own name/art
+        // resolve to, so the header can't just be painted once on open
+        // and left alone. Same "an active Mega/Gigantamax form overrides
+        // the base species' own name/art" logic as renderTeamGrid()'s
+        // own slot image (see its comment for the full reasoning) --
+        // duplicated rather than shared, same independence reasoning as
+        // everywhere else in this doc.
+        function renderTeamDetailHeader() {
+            if (teamDetailIndex === null) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            if (!member) return;
+
             const overrideEntry = member.formOverride ? POKEMON_BY_NAME[member.formOverride] : null;
             const artSrc = overrideEntry ? overrideEntry.src : member.src;
             const artShinySrc = overrideEntry ? (overrideEntry.shinysrc || '') : member.shinysrc;
@@ -13844,11 +14268,37 @@
             }
             const nameEl = document.getElementById('game-team-detail-name');
             if (nameEl) nameEl.textContent = (overrideEntry ? overrideEntry.name : member.name) || '';
+        }
 
+        // Full-detail view for a single filled slot -- opened by
+        // tapping the slot's own hit-zone (see the #game-scroll
+        // delegated listener's own comment on .game-team-slot-hit-zone)
+        // rather than any of its four corner badges. HP, Status, and
+        // Evolution are the three of the four sections with real content
+        // so far (see renderTeamDetailHpSection()/renderTeamDetailStatusSection()/
+        // renderTeamDetailEvolutionSection() below) -- Items stays an
+        // empty placeholder (see the chat this was scaffolded in) until
+        // its own pass.
+        function openTeamDetailOverlay(index) {
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[index];
+            if (!member) return;
+            teamDetailIndex = index;
+            teamDetailStatusPickerOpen = false;
+            teamDetailEvolutionCategory = null;
+            teamDetailEvolutionChoice = null;
+
+            renderTeamDetailHeader();
             renderTeamDetailHpSection();
+            renderTeamDetailLevelSection();
             renderTeamDetailStatusSection();
-            const pickerEl = document.getElementById('game-team-detail-status-picker');
-            if (pickerEl) pickerEl.classList.remove('visible');
+            const statusPickerEl = document.getElementById('game-team-detail-status-picker');
+            if (statusPickerEl) statusPickerEl.classList.remove('visible');
+            renderTeamDetailEvolutionSection();
+            const evolutionPickerEl = document.getElementById('game-team-detail-evolution-picker');
+            if (evolutionPickerEl) evolutionPickerEl.classList.remove('visible');
+            const evolutionPickerInnerEl = document.getElementById('game-team-detail-evolution-picker-inner');
+            if (evolutionPickerInnerEl) evolutionPickerInnerEl.innerHTML = '';
 
             const overlay = document.getElementById('game-team-detail-overlay');
             if (overlay) overlay.classList.add('visible');
@@ -13857,6 +14307,8 @@
         function closeTeamDetailOverlay() {
             teamDetailIndex = null;
             teamDetailStatusPickerOpen = false;
+            teamDetailEvolutionCategory = null;
+            teamDetailEvolutionChoice = null;
             const overlay = document.getElementById('game-team-detail-overlay');
             if (overlay) overlay.classList.remove('visible');
         }
@@ -13948,6 +14400,12 @@
             // never touches status either way, so this is a harmless
             // no-op refresh in that direction).
             renderTeamDetailStatusSection(true);
+            // Fainting also forces canMega/canGmax off (though not
+            // canEvolve -- see computeTeamEvolutionState()'s own
+            // comment), so the Evolution section's own buttons can
+            // change here too; reviving can bring them back. Cheap
+            // either way if nothing actually changed.
+            renderTeamDetailEvolutionSection();
         }
 
         // delta is +1 or -1, from whichever half of
@@ -13982,7 +14440,14 @@
             if (hpRule === 'standard') return;
 
             if (member.fainted) {
-                if (delta > 0) reviveTeamMember(teamDetailIndex);
+                if (delta > 0) {
+                    reviveTeamMember(teamDetailIndex);
+                    // Reviving can re-enable Mega/Gigantamax eligibility
+                    // that fainting had switched off -- see
+                    // computeTeamEvolutionState()'s own comment -- so the
+                    // Evolution section's buttons may need to reappear.
+                    renderTeamDetailEvolutionSection();
+                }
                 renderTeamDetailHpSection();
                 return;
             }
@@ -13998,6 +14463,9 @@
                 // comment -- faintTeamMember() force-clears status, so
                 // the Status column needs a refresh here too.
                 renderTeamDetailStatusSection(true);
+                // And the same Mega/Gigantamax-eligibility reasoning for
+                // the Evolution section.
+                renderTeamDetailEvolutionSection();
             } else {
                 member.hp = next;
                 if (activeSaveSlot !== null) persistGameSaves();
@@ -14006,6 +14474,53 @@
                 renderTeamGrid();
             }
             renderTeamDetailHpSection();
+        }
+
+        // Redraws the Level column against teamDetailIndex's current
+        // state -- called on open and again after every
+        // adjustTeamDetailLevel(). No animation, no icon -- just two
+        // plain numbers, same plain-readout treatment
+        // adjustTeamDetailStatusCounter() settled on for its own
+        // counter: Total Level (base level plus the counter -- see
+        // getTeamMemberBaseLevel()/getTeamMemberHpMax()'s own comments)
+        // in its own small pill beside the counter itself, per the chat
+        // this was laid out in. Base level on its own isn't shown here
+        // at all any more.
+        function renderTeamDetailLevelSection() {
+            if (teamDetailIndex === null) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            if (!member) return;
+            const counterValue = member.level || 0;
+            const totalLevel = getTeamMemberBaseLevel(member) + counterValue;
+
+            const totalEl = document.getElementById('game-team-detail-level-total-value');
+            if (totalEl) totalEl.textContent = totalLevel;
+            const valueEl = document.getElementById('game-team-detail-level-counter-value');
+            if (valueEl) valueEl.textContent = counterValue;
+        }
+
+        // delta is +1 or -1, from whichever half of
+        // .game-team-detail-level-counter got clicked (see the overlay's
+        // own click listener further down). Hands off entirely to
+        // adjustTeamMemberLevel() -- the exact same function the corner
+        // .game-team-slot-level pill already commits through, clamp/HP-
+        // reconciliation/persistence/renderTeamGrid() and all -- rather
+        // than reimplementing any of that here, so leveling from this
+        // screen can never drift out of sync with the corner badge's own
+        // math. Only adds what's specific to this view: refreshing the
+        // Level column itself, the HP column (a level change can shift
+        // current/max HP under alt2 -- see adjustTeamMemberLevel()'s own
+        // comment), and the Evolution column (a level change can cross
+        // evolve_cost in either direction, changing whether the Evolve
+        // button itself should be showing at all).
+        function adjustTeamDetailLevel(delta) {
+            if (teamDetailIndex === null) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            adjustTeamMemberLevel(teamDetailIndex, delta);
+            renderTeamDetailLevelSection();
+            renderTeamDetailHpSection();
+            renderTeamDetailEvolutionSection();
         }
 
         // Which status the picker strip currently has "armed" -- null
@@ -14141,7 +14656,7 @@
         // already-committed status the moment the strip opens and
         // nothing's been tapped yet.
         function renderTeamDetailStatusPickerOptions() {
-            const pickerEl = document.getElementById('game-team-detail-status-picker');
+            const pickerEl = document.getElementById('game-team-detail-status-picker-inner');
             if (!pickerEl || teamDetailIndex === null) return;
             const data = getActiveSaveData();
             const member = (data.team.members || [])[teamDetailIndex];
@@ -14197,6 +14712,9 @@
         // save, mid-replacement, mid-release, or for a fainted member
         // (which always reads as "No Status" anyway, so there'd be
         // nothing meaningful to change here until it's revived).
+        // Opening also closes Evolution's own strip first if it's open
+        // -- see handleTeamDetailEvolutionTypeTap()'s own comment for
+        // the same rule the other direction.
         function toggleTeamDetailStatusPicker() {
             if (teamDetailIndex === null) return;
             if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
@@ -14207,6 +14725,13 @@
             if (teamDetailStatusPickerOpen) {
                 discardTeamDetailStatusPreviewAndClose();
                 return;
+            }
+            // Status and Evolution sit side by side now (see the chat
+            // this was rearranged in) -- only one of their two
+            // expandable strips can be open at once.
+            if (teamDetailEvolutionCategory !== null) {
+                cancelTeamDetailEvolutionPicker();
+                renderTeamDetailEvolutionSection();
             }
             teamDetailStatusPickerOpen = true;
             renderTeamDetailStatusPickerOptions();
@@ -14342,6 +14867,292 @@
             markUnsavedProgressChanged();
             renderTeamGrid();
             renderTeamDetailStatusSection();
+        }
+
+        // Redraws the Evolution column -- its own row of type buttons
+        // (one per currently-applicable category, or the single revert
+        // button while a Mega/Gigantamax override is active) plus
+        // whatever's needed to keep an already-open strip in sync.
+        // Reuses computeTeamEvolutionState() (same mode/icons the corner
+        // badge itself is driven by) rather than re-deriving eligibility
+        // independently, so the two can never disagree about what's
+        // currently possible.
+        //
+        // In 'unable' mode this only ever toggles the .no-evolution
+        // class on #game-team-detail-level-evo-row -- the CSS is what
+        // actually fades/slides #game-team-detail-evolution-section out
+        // in place and re-centers Level via transform (see the chat
+        // this was reworked in for why display/flex-basis toggling
+        // couldn't animate cleanly). The column itself, and
+        // #game-team-detail-evolution-content inside it, always stay in
+        // the DOM at their normal size -- nothing here ever collapses
+        // the row down to one column.
+        function renderTeamDetailEvolutionSection() {
+            const contentEl = document.getElementById('game-team-detail-evolution-content');
+            const buttonsEl = document.getElementById('game-team-detail-evolution-buttons');
+            const rowEl = document.getElementById('game-team-detail-level-evo-row');
+            if (!contentEl || !buttonsEl || teamDetailIndex === null) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            if (!member) {
+                if (rowEl) rowEl.classList.add('no-evolution');
+                return;
+            }
+
+            const evoState = computeTeamEvolutionState(member);
+
+            if (evoState.mode === 'unable') {
+                // Toggles the row into its centered, Evolution-faded-out
+                // layout (see .game-team-detail-level-evo-row.no-evolution
+                // in the CSS) -- the actual slide-and-fade-in happens
+                // when this class comes back off below, not here.
+                // #game-team-detail-evolution-content is deliberately
+                // left alone (no display toggling) -- the column that
+                // wraps it handles hiding entirely through opacity +
+                // pointer-events now, so its fade can actually animate
+                // instead of the content just vanishing the instant this
+                // class flips.
+                if (rowEl) rowEl.classList.add('no-evolution');
+                // Nothing available -- fold any open strip away too
+                // (e.g. a level-down or a Curse elsewhere mid-session
+                // could plausibly invalidate what used to be available),
+                // so reopening later always starts clean rather than
+                // showing a strip for options that no longer exist.
+                cancelTeamDetailEvolutionPicker();
+                return;
+            }
+            if (rowEl) rowEl.classList.remove('no-evolution');
+
+            if (evoState.mode === 'active-mega' || evoState.mode === 'active-gmax') {
+                // Same immediate-revert behavior as the corner badge's
+                // own tap (see handleTeamDetailEvolutionTypeTap()'s
+                // 'revert' branch) -- one button, no strip at all.
+                buttonsEl.innerHTML = `
+                    <button class="game-team-detail-evolution-type-btn" data-category="revert">
+                        <img src="${evoState.icons[0]}" alt="Revert">
+                    </button>
+                `;
+                cancelTeamDetailEvolutionPicker();
+                return;
+            }
+
+            // 'available' -- one button per applicable category, same
+            // evolve/mega/gmax ordering computeTeamEvolutionState() uses
+            // for its own cycling icons.
+            const options = getTeamEvolutionOptions(member);
+            const categories = ['evolve', 'mega', 'gmax'].filter(cat => options.some(o => o.category === cat));
+            // An open strip whose category no longer has any options
+            // (same "invalidated mid-session" scenario as the 'unable'
+            // branch above, just less drastic) gets folded away rather
+            // than left open on stale data.
+            if (teamDetailEvolutionCategory && !categories.includes(teamDetailEvolutionCategory)) {
+                cancelTeamDetailEvolutionPicker();
+            }
+            buttonsEl.innerHTML = categories.map(cat => `
+                <button class="game-team-detail-evolution-type-btn${cat === teamDetailEvolutionCategory ? ' active' : ''}" data-category="${cat}">
+                    <img src="${EVOLUTION_MODE_IMAGES[cat]}" alt="${EVOLUTION_CATEGORY_LABELS[cat]}">
+                </button>
+            `).join('');
+        }
+
+        // Fills in the hidden strip below the type-buttons row for
+        // whichever category is currently expanded (teamDetailEvolutionCategory)
+        // -- same two shapes renderTeamEvolutionOptions() already uses
+        // for the corner badge's own combined picker (a single option
+        // skips straight to an image-plus-confirm-line, more than one
+        // draws a chooseable list), just scoped to one category instead
+        // of all of them at once, and reusing those exact same
+        // .game-team-evolution-* classes so the artwork renders at
+        // identical sizes to "other evolution dialogs," per the chat
+        // this was built in. Confirm/Cancel live inside this same
+        // container so they only exist while there's actually something
+        // open to act on.
+        function renderTeamDetailEvolutionPicker() {
+            const pickerEl = document.getElementById('game-team-detail-evolution-picker-inner');
+            if (!pickerEl || teamDetailIndex === null || !teamDetailEvolutionCategory) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            if (!member) return;
+            const memberShiny = !!member.shiny;
+            const options = getTeamEvolutionOptions(member).filter(o => o.category === teamDetailEvolutionCategory);
+
+            function previewSrc(entry) {
+                if (!entry) return '';
+                return (memberShiny && hasShinyForm(entry.shinysrc)) ? entry.shinysrc : entry.src;
+            }
+
+            let bodyHtml;
+            if (options.length === 1) {
+                const only = options[0];
+                const verb = only.category === 'evolve' ? 'Evolve into' : (only.category === 'mega' ? 'Mega Evolve into' : 'Gigantamax into');
+                const entry = POKEMON_BY_NAME[only.name];
+                const imgSrc = previewSrc(entry);
+                bodyHtml = `
+                    <div class="game-team-evolution-single-confirm-wrap">
+                        ${imgSrc ? `<img class="game-team-evolution-single-confirm-img" src="${imgSrc}" alt="${escapeHtml(only.name)}">` : ''}
+                        <p class="game-team-evolution-single-confirm">${verb} <strong>${escapeHtml(only.name)}</strong>?</p>
+                    </div>
+                `;
+            } else {
+                bodyHtml = `
+                    <div class="game-team-evolution-options">
+                        ${options.map(o => {
+                            const entry = POKEMON_BY_NAME[o.name];
+                            const imgSrc = previewSrc(entry);
+                            const active = teamDetailEvolutionChoice && teamDetailEvolutionChoice.name === o.name;
+                            return `
+                                <button class="filter-btn game-team-evolution-choose-btn${active ? ' active' : ''}" data-name="${escapeHtml(o.name)}">
+                                    ${imgSrc ? `<img class="game-team-evolution-choose-img" src="${imgSrc}" alt="${escapeHtml(o.name)}">` : ''}
+                                    <span>${escapeHtml(o.name)}</span>
+                                </button>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }
+
+            pickerEl.innerHTML = `
+                ${bodyHtml}
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-team-detail-evolution-confirm-btn">Confirm</button>
+                    <button class="filter-btn exclude game-team-detail-evolution-cancel-btn">Cancel</button>
+                </div>
+            `;
+        }
+
+        // Tapping one of the Evolution section's own type buttons --
+        // 'revert' (only ever present in 'active-mega'/'active-gmax'
+        // mode) immediately clears the override, mirroring the corner
+        // badge's own tap-to-revert exactly, no strip involved. Any real
+        // category re-opens the strip fresh for that type if it wasn't
+        // already open, or folds it back up (discarding whatever was
+        // chosen, same as the Status icon's own "tap again with nothing
+        // armed" close) if it was.
+        function handleTeamDetailEvolutionTypeTap(category) {
+            if (teamDetailIndex === null) return;
+
+            if (category === 'revert') {
+                if (isActiveSaveReadOnly()) return;
+                const data = getActiveSaveData();
+                const member = (data.team.members || [])[teamDetailIndex];
+                if (!member) return;
+                member.formOverride = null;
+                if (activeSaveSlot !== null) persistGameSaves();
+                else if (activeGuestSaveId !== null) persistGameGuestSaves();
+                markUnsavedProgressChanged();
+                renderTeamGrid();
+                renderTeamDetailHeader();
+                renderTeamDetailHpSection();
+                // Reverting can change which entry's token_level applies
+                // (see getTeamMemberBaseLevel()), which shifts Total
+                // Level even though the counter itself (member.level)
+                // didn't change.
+                renderTeamDetailLevelSection();
+                renderTeamDetailEvolutionSection();
+                return;
+            }
+
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+
+            if (teamDetailEvolutionCategory === category) {
+                cancelTeamDetailEvolutionPicker();
+                renderTeamDetailEvolutionSection();
+                return;
+            }
+
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            if (!member) return;
+            const options = getTeamEvolutionOptions(member).filter(o => o.category === category);
+            if (!options.length) return;
+
+            // Status and Evolution sit side by side now (see the chat
+            // this was rearranged in) -- only one of their two
+            // expandable strips can be open at once. Opening this one
+            // closes Status's first, exactly as if its own Cancel had
+            // been tapped (see discardTeamDetailStatusPreviewAndClose()'s
+            // own comment).
+            if (teamDetailStatusPickerOpen) {
+                discardTeamDetailStatusPreviewAndClose();
+            }
+
+            teamDetailEvolutionCategory = category;
+            // Same "a single option is already the pick" shortcut
+            // openTeamEvolutionOverlay() takes for the corner badge's
+            // own picker.
+            teamDetailEvolutionChoice = options.length === 1 ? options[0] : null;
+            renderTeamDetailEvolutionPicker();
+            renderTeamDetailEvolutionSection();
+            const pickerEl = document.getElementById('game-team-detail-evolution-picker');
+            if (pickerEl) pickerEl.classList.add('visible');
+        }
+
+        // One of the multi-option strip's own choices was tapped --
+        // never reachable for the single-option shape, same as
+        // selectTeamEvolutionOption()'s own comment for the corner
+        // badge's picker.
+        function selectTeamDetailEvolutionChoice(name) {
+            if (!teamDetailEvolutionCategory) return;
+            teamDetailEvolutionChoice = { category: teamDetailEvolutionCategory, name };
+            renderTeamDetailEvolutionPicker();
+        }
+
+        // Folds the strip away without committing anything -- the
+        // strip's own explicit Cancel button, but also reused internally
+        // (see handleTeamDetailEvolutionTypeTap()'s own "tap the already-
+        // open category again" branch and renderTeamDetailEvolutionSection()'s
+        // two "this got invalidated mid-session" branches) rather than
+        // duplicated across all of them.
+        function cancelTeamDetailEvolutionPicker() {
+            teamDetailEvolutionCategory = null;
+            teamDetailEvolutionChoice = null;
+            const pickerEl = document.getElementById('game-team-detail-evolution-picker');
+            // Leaves .-inner's markup alone rather than clearing it here
+            // -- with the slide-up now an actual CSS transition (see the
+            // grid-template-rows rule), yanking the content out from
+            // under it immediately would cut that animation short
+            // before it has anything left to show. It gets overwritten
+            // fresh the next time this strip actually opens (see
+            // handleTeamDetailEvolutionTypeTap(), which always calls
+            // renderTeamDetailEvolutionPicker() before adding .visible
+            // back), so there's never a stale-content flash to worry
+            // about either.
+            if (pickerEl) pickerEl.classList.remove('visible');
+        }
+
+        // The strip's own Confirm -- see applyEvolutionChoice() for what
+        // actually gets written to the member. A genuine stage evolution
+        // or a Mega/Gigantamax toggle both change what this member's own
+        // name/art resolve to (and can change its HP max -- see
+        // reconcileTeamMemberHpAcrossFormChange()), so this refreshes the
+        // header and HP section too, not just Evolution's own buttons.
+        function confirmTeamDetailEvolutionChoice() {
+            if (teamDetailIndex === null || !teamDetailEvolutionChoice) return;
+            if (isActiveSaveReadOnly()) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            const choice = teamDetailEvolutionChoice;
+            const baseEntry = POKEMON_BY_NAME[member ? member.name : ''];
+            cancelTeamDetailEvolutionPicker();
+            if (!member || !baseEntry) return;
+
+            applyEvolutionChoice(member, baseEntry, choice, getHpRule(data));
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+
+            renderTeamDetailHeader();
+            renderTeamDetailHpSection();
+            // A genuine stage evolution changes member.level itself
+            // (evolve_cost comes off it -- see applyEvolutionChoice()'s
+            // own comment), and either an evolve or a Mega/Gigantamax
+            // toggle can change which entry's token_level applies (see
+            // getTeamMemberBaseLevel()) -- either way Total Level can
+            // shift here even when the counter's own commit path
+            // (adjustTeamDetailLevel()) was never touched.
+            renderTeamDetailLevelSection();
+            renderTeamDetailEvolutionSection();
         }
 
         // The one authoritative way out of team-add mode -- called from
@@ -17800,12 +18611,16 @@
             }
         });
 
-        // Backdrop/Close are the only two ways out, same shape as every
-        // other overlay's backdrop-closes-it-too convention in this doc
-        // -- no Confirm here since HP and Status (the only two sections
-        // with actual controls so far) already commit immediately on
-        // every click (see adjustTeamDetailHp()'s/
-        // handleTeamDetailStatusPickerTap()'s own comments).
+        // Backdrop/Close are the only two ways out of the overlay as a
+        // whole, same shape as every other overlay's backdrop-closes-it-
+        // too convention in this doc. HP and Status commit immediately
+        // on every click within their own sections (see
+        // adjustTeamDetailHp()'s/handleTeamDetailStatusPickerTap()'s own
+        // comments) -- Evolution is the one exception, with its own
+        // Confirm/Cancel inside whichever strip is open (see
+        // renderTeamDetailEvolutionPicker()), matching "choose and
+        // confirm" from the chat that section was built in rather than
+        // the tap-again-to-confirm shape Status uses.
         document.getElementById('game-team-detail-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'game-team-detail-overlay' || e.target.closest('.game-team-detail-close-btn')) {
                 closeTeamDetailOverlay();
@@ -17821,6 +18636,13 @@
                 const rect = hpCounter.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 adjustTeamDetailHp(clickedRightHalf ? 1 : -1);
+                return;
+            }
+            const levelCounter = e.target.closest('.game-team-detail-level-counter');
+            if (levelCounter) {
+                const rect = levelCounter.getBoundingClientRect();
+                const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
+                adjustTeamDetailLevel(clickedRightHalf ? 1 : -1);
                 return;
             }
             const statusIcon = e.target.closest('.game-team-detail-status-icon-wrap');
@@ -17843,6 +18665,27 @@
             const statusPickerBtn = e.target.closest('.game-team-detail-status-picker-btn');
             if (statusPickerBtn) {
                 handleTeamDetailStatusPickerTap(statusPickerBtn.dataset.status);
+                return;
+            }
+            const evolutionTypeBtn = e.target.closest('.game-team-detail-evolution-type-btn');
+            if (evolutionTypeBtn) {
+                handleTeamDetailEvolutionTypeTap(evolutionTypeBtn.dataset.category);
+                return;
+            }
+            const evolutionChooseBtn = e.target.closest('.game-team-evolution-choose-btn');
+            if (evolutionChooseBtn) {
+                selectTeamDetailEvolutionChoice(evolutionChooseBtn.dataset.name);
+                return;
+            }
+            const evolutionConfirmBtn = e.target.closest('.game-team-detail-evolution-confirm-btn');
+            if (evolutionConfirmBtn) {
+                confirmTeamDetailEvolutionChoice();
+                return;
+            }
+            const evolutionCancelBtn = e.target.closest('.game-team-detail-evolution-cancel-btn');
+            if (evolutionCancelBtn) {
+                cancelTeamDetailEvolutionPicker();
+                renderTeamDetailEvolutionSection();
                 return;
             }
         });
