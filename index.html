@@ -4218,8 +4218,6 @@
             justify-content: center;
             gap: 4px;
             margin-top: 6px;
-		padding-left: 30px;
-		padding-right: 30px;
         }
 
         /* Plain reset rather than .filter-btn's own pill/label look --
@@ -4261,6 +4259,19 @@
            a ninth status option. */
         .game-team-detail-status-picker-cancel-btn {
             border-color: #E53935;
+            color: #FFF;
+            font-size: 22px;
+            line-height: 1;
+        }
+
+        /* The strip's own explicit "commit" button (see
+           handleTeamDetailStatusPickerConfirmTap() in the script) --
+           sits between the eight status options and Cancel, same
+           footprint and plain-glyph treatment as Cancel's own rule just
+           above, just green/checkmark rather than red/times so the two
+           read as opposite ends of the same pair. */
+        .game-team-detail-status-picker-confirm-btn {
+            border-color: #43A047;
             color: #FFF;
             font-size: 22px;
             line-height: 1;
@@ -13904,11 +13915,22 @@
         // resets to on a fresh selection can be set independently of
         // how low it's allowed to go afterward -- all four currently
         // reset to their own min, but don't have to.
+        // faintAtMax marks the three conditions where running the
+        // counter all the way up is what faints the member (Burned/
+        // Poisoned at their 4th counter, Cursed at its 2nd) -- see
+        // adjustTeamDetailStatusCounter() and confirmTeamStatusSelection(),
+        // the two places a counter actually gets written to a member,
+        // for where this is checked. clearAtMin is Sleep's own mirror
+        // of that idea at the other end of its range -- counting all
+        // the way down to 0 wakes the member up (status reverts to
+        // 'none') instead of ever sitting at a committed 0, same two
+        // call sites. No status currently sets both flags, but nothing
+        // stops one from doing so if a future condition needs it.
         const STATUS_COUNTER_CONFIG = {
-            burned: { min: 0, max: 4, default: 0 },
-            cursed: { min: 0, max: 2, default: 0 },
-            poisoned: { min: 0, max: 4, default: 0 },
-            sleep: { min: 0, max: 4, default: 4 },
+            burned: { min: 0, max: 4, default: 0, faintAtMax: true },
+            cursed: { min: 0, max: 2, default: 0, faintAtMax: true },
+            poisoned: { min: 0, max: 4, default: 0, faintAtMax: true },
+            sleep: { min: 0, max: 4, default: 4, clearAtMin: true },
         };
 
         // A real <img> once a given status actually has one, falling
@@ -14041,13 +14063,38 @@
         function confirmTeamStatusSelection() {
             if (pendingTeamStatusIndex === null) return;
             const data = getActiveSaveData();
-            const member = (data.team.members || [])[pendingTeamStatusIndex];
+            const index = pendingTeamStatusIndex;
+            const member = (data.team.members || [])[index];
             const statusId = pendingTeamStatusId;
             const counter = pendingTeamStatusCounter;
             closeTeamStatusOverlay();
             if (!member) return;
-            member.status = statusId === 'none' ? null : statusId;
             const config = STATUS_COUNTER_CONFIG[statusId];
+            // Confirming with the counter already dialed up to that
+            // status's faintAtMax ceiling (Burned/Poisoned's 4th, Cursed's
+            // 2nd -- see STATUS_COUNTER_CONFIG's own comment) faints the
+            // member outright instead of ever writing that status/count
+            // combination onto them -- faintTeamMember() already clears
+            // status/statusCounter itself, so there's nothing left here to
+            // set.
+            if (config && config.faintAtMax && counter === config.max) {
+                faintTeamMember(index);
+                return;
+            }
+            // Same idea in the other direction for clearAtMin (Sleep) --
+            // confirming with the counter dialed all the way down to 0
+            // reverts the member straight to 'none' instead of ever
+            // committing a Sleep status sitting at a spent 0 count.
+            if (config && config.clearAtMin && counter === config.min) {
+                member.status = null;
+                member.statusCounter = undefined;
+                if (activeSaveSlot !== null) persistGameSaves();
+                else if (activeGuestSaveId !== null) persistGameGuestSaves();
+                markUnsavedProgressChanged();
+                renderTeamGrid();
+                return;
+            }
+            member.status = statusId === 'none' ? null : statusId;
             member.statusCounter = config ? counter : undefined;
             if (activeSaveSlot !== null) persistGameSaves();
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
@@ -14779,9 +14826,10 @@
             paintTeamDetailStatusDisplay(entry, config, counterValue, true);
         }
 
-        // Rebuilds the 8-icon strip fresh, plus one more Cancel button
-        // at the end (see cancelTeamDetailStatusPickerPreview() below) --
-        // called whenever it opens and again after every first tap (see
+        // Rebuilds the 8-icon strip fresh, plus a Confirm and a Cancel
+        // button at the end (see handleTeamDetailStatusPickerConfirmTap()/
+        // cancelTeamDetailStatusPickerPreview() below) -- called whenever
+        // it opens and again after every first tap (see
         // handleTeamDetailStatusPickerTap() below), same "built fresh
         // every time rather than kept in sync" approach
         // renderTeamStatusOptions() already takes for the older overlay
@@ -14802,10 +14850,13 @@
                     ${statusImageMarkup(s, 'game-team-detail-status-picker-img')}
                 </button>
             `).join('');
+            const confirmHtml = `
+                <button class="game-team-detail-status-picker-btn game-team-detail-status-picker-confirm-btn" type="button" aria-label="Confirm">&check;</button>
+            `;
             const cancelHtml = `
                 <button class="game-team-detail-status-picker-btn game-team-detail-status-picker-cancel-btn" type="button" aria-label="Cancel">&times;</button>
             `;
-            pickerEl.innerHTML = optionsHtml + cancelHtml;
+            pickerEl.innerHTML = optionsHtml + confirmHtml + cancelHtml;
         }
 
         // The one place that actually discards an armed/previewed
@@ -14884,6 +14935,21 @@
         // commits.
         function cancelTeamDetailStatusPickerPreview() {
             discardTeamDetailStatusPreviewAndClose();
+        }
+
+        // The strip's own explicit "commit" button -- sits opposite
+        // Cancel and does exactly what a second tap on an already-armed
+        // option, or tapping the preview icon itself while armed, both
+        // already do (see handleTeamDetailStatusPickerTap()'s and
+        // handleTeamDetailStatusIconTap()'s own comments) -- just a more
+        // discoverable third way to reach the same commit. No-op with
+        // nothing armed yet (teamDetailStatusPendingId still null),
+        // same guard handleTeamDetailStatusIconTap() applies before
+        // ever calling commitTeamDetailStatus() -- there's nothing
+        // previewed to write in that case.
+        function handleTeamDetailStatusPickerConfirmTap() {
+            if (teamDetailStatusPendingId === null) return;
+            commitTeamDetailStatus(teamDetailStatusPendingId);
         }
 
         // Actually writes a status to the member -- shared by both ways
@@ -14996,6 +15062,41 @@
             const current = member.statusCounter ?? config.default;
             const next = Math.max(config.min, Math.min(config.max, current + delta));
             if (next === current) return;
+
+            // Landing exactly on that status's faintAtMax ceiling (Burned/
+            // Poisoned's 4th counter, Cursed's 2nd -- see
+            // STATUS_COUNTER_CONFIG's own comment) faints the member here
+            // rather than ever writing that count onto them, same "reaching
+            // the limit routes into faintTeamMember() instead of landing on
+            // it" shape as adjustTeamDetailHp()'s own 0 case. Refreshes the
+            // HP and Evolution columns too, same as every other path that
+            // reaches faintTeamMember() from this detail screen, since
+            // fainting touches both of those as well.
+            if (config.faintAtMax && next === config.max) {
+                faintTeamMember(teamDetailIndex);
+                renderTeamDetailStatusSection(true);
+                renderTeamDetailHpSection();
+                renderTeamDetailEvolutionSection();
+                return;
+            }
+
+            // Sleep's own mirror of the above at 0 instead of max --
+            // counting down to 0 wakes the member up rather than ever
+            // leaving Sleep committed at a spent 0 count. Doesn't touch
+            // HP/Evolution the way faintAtMax does above since waking up
+            // isn't fainting -- nothing else on this screen depends on
+            // status the way it depends on fainted.
+            if (config.clearAtMin && next === config.min) {
+                member.status = null;
+                member.statusCounter = undefined;
+                if (activeSaveSlot !== null) persistGameSaves();
+                else if (activeGuestSaveId !== null) persistGameGuestSaves();
+                markUnsavedProgressChanged();
+                renderTeamGrid();
+                renderTeamDetailStatusSection(true);
+                return;
+            }
+
             member.statusCounter = next;
             if (activeSaveSlot !== null) persistGameSaves();
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
@@ -18790,6 +18891,11 @@
                 const rect = statusCounter.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 adjustTeamDetailStatusCounter(clickedRightHalf ? 1 : -1);
+                return;
+            }
+            const statusConfirmBtn = e.target.closest('.game-team-detail-status-picker-confirm-btn');
+            if (statusConfirmBtn) {
+                handleTeamDetailStatusPickerConfirmTap();
                 return;
             }
             const statusCancelBtn = e.target.closest('.game-team-detail-status-picker-cancel-btn');
