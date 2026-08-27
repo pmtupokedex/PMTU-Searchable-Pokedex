@@ -4432,6 +4432,20 @@
             margin: 0;
         }
 
+        /* legendaryEvolutionReminderHtml()'s own reminder line -- only
+           ever rendered for a gated:false legendary_evolve choice
+           (Kubfu today), since this app has no state to actually
+           enforce a play-and-discard card requirement the way it can
+           for an attached one. Deliberately muted/italic rather than
+           styled like a warning -- it's a rules reminder, not an error. */
+        .game-team-evolution-reminder {
+            text-align: center;
+            font-size: 13px;
+            font-style: italic;
+            color: #888;
+            margin: 8px 0 0;
+        }
+
         /* Caps how tall any of these confirm cards can get so long
            content (the badge choose grid, the full status list, etc.)
            scrolls inside the card instead of just pushing off-screen
@@ -13258,6 +13272,51 @@
             activeGmax: 'https://dl.dropboxusercontent.com/scl/fi/8v4o0iq9bc4fh1fowxvmk/evo_gmax_active.png?rlkey=sr12w0oxozfnie3i25o5wdsyj&st=gpla4ovy&dl=1',
         };
 
+        // baseEntry.legendary_evolve -- a pokemon-data.json entry's own
+        // opt-in third evolution mechanic, alongside evolve_cost/
+        // evolves_to and mega_forms/gmax_forms above. Shape:
+        //   {
+        //     gated: true|false,
+        //     reverts: true|false,
+        //     targets: {
+        //       "<evolves_to-style target name>": {
+        //         cardId: "<attach-cards.json id>",
+        //         iconId: "<unique badge icon id, informational only>",
+        //         iconUrl: "<unique badge icon, used in place of the
+        //                    shared EVOLUTION_MODE_IMAGES.evolve/mega/
+        //                    gmax art>",
+        //       },
+        //       ...
+        //     },
+        //   }
+        // gated:true means a target only ever qualifies while
+        // member.attachCardId equals that target's own cardId (see
+        // getTeamEvolutionOptions()'s own 'legendary' branch) --
+        // gated:false (Kubfu today) means every target always qualifies
+        // regardless of attachCardId, since that mechanic is "play and
+        // discard the card" rather than "keep it attached," which this
+        // app has no state for; legendaryEvolutionReminderHtml() covers
+        // that gap with reminder text instead of a real gate.
+        // reverts:true means evolving sets member.formOverride the same
+        // way Mega/Gigantamax do (temporary, art-only, species stays
+        // member.name) and clears itself automatically the moment
+        // member.attachCardId stops matching that target's own cardId
+        // (see reconcileLegendaryEvolutionOnCardChange()) -- tapping the
+        // corner badge or the detail view's own indicator while active
+        // does NOT revert it early, unlike Mega/Gigantamax's own tap-to-
+        // revert (see computeTeamEvolutionState()'s 'active-legendary'
+        // branch and handleTeamDetailEvolutionTypeTap()'s 'active-
+        // legendary' sentinel category). reverts:false means evolving is
+        // a genuine permanent species change instead (member.name/src/
+        // shinysrc/dex overwritten, same as the plain 'evolve' category
+        // -- see applyEvolutionChoice()), just gated by gated/cardId
+        // above instead of by evolve_cost/level; Zygarde's two forms use
+        // gated:true + reverts:false, Kubfu uses gated:false +
+        // reverts:false. A future new entry fitting any of these three
+        // shapes -- or in principle the fourth, gated:false + reverts:true,
+        // though nothing uses it today -- just needs this block added,
+        // no logic changes anywhere in this doc.
+
         // member.formOverride -- not declared anywhere (members are
         // plain object literals, see emptySaveScopedData()'s own
         // comment), just documented here: a string naming the exact
@@ -13287,15 +13346,22 @@
         // Returns { mode, icons } where mode is one of:
         //   'unable'      -- nothing available; tapping the corner no-ops.
         //   'available'   -- at least one of stage evolution/Mega
-        //                     Evolution/Gigantamax currently applies;
-        //                     tapping opens the picker/confirm, which
-        //                     lists every one of them that does (see
-        //                     openTeamEvolutionOverlay()).
+        //                     Evolution/Gigantamax/legendary_evolve
+        //                     currently applies; tapping opens the
+        //                     picker/confirm, which lists every one of
+        //                     them that does (see openTeamEvolutionOverlay()).
         //   'active-mega' -- already Mega Evolved (member.formOverride is
         //                     set to a mega form); tapping reverts
         //                     immediately, no overlay.
         //   'active-gmax' -- already Gigantamaxed; same immediate-revert
         //                     behavior as 'active-mega'.
+        //   'active-legendary' -- currently in a reverts:true
+        //                     legendary_evolve form (Primal Kyogre and
+        //                     the like); unlike 'active-mega'/'active-gmax',
+        //                     tapping this one does NOT revert -- the
+        //                     only way out is detaching the card that
+        //                     got it there in the first place (see
+        //                     reconcileLegendaryEvolutionOnCardChange()).
         //
         // icons is the ordered list of image URLs the corner should
         // cycle through (see startEvolutionBadgeCycle() in the script for
@@ -13312,12 +13378,36 @@
         // the same, so a future species that genuinely does have more
         // than one type available at once -- including stage evolution
         // alongside Mega/Gigantamax -- would just cycle through all of
-        // them without this function needing to change.
+        // them without this function needing to change. legendary_evolve
+        // options are folded in the same way, just sourced from
+        // getTeamEvolutionOptions() rather than re-deriving the same
+        // eligibility math a second time here, since each one carries
+        // its own unique icon (see legendary_evolve's own comment above
+        // POKEMON_BY_NAME) rather than one shared EVOLUTION_MODE_IMAGES
+        // entry the way evolve/mega/gmax do.
         function computeTeamEvolutionState(member) {
             if (!member) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], dimmed: false };
 
             if (member.formOverride) {
                 const overrideEntry = POKEMON_BY_NAME[member.formOverride];
+                // A formOverride can come from either an ordinary Mega/
+                // Gigantamax toggle or a reverts:true legendary_evolve
+                // (see getTeamEvolutionOptions()'s own 'legendary'
+                // branch) -- both just set this same field, so checking
+                // the CURRENT species' own legendary_evolve.targets for
+                // an entry matching this override's name is what tells
+                // the two apart.
+                const baseEntryForOverride = POKEMON_BY_NAME[member.name];
+                const legendaryCfg = baseEntryForOverride && baseEntryForOverride.legendary_evolve;
+                const legendaryTarget = legendaryCfg && legendaryCfg.reverts && legendaryCfg.targets
+                    && legendaryCfg.targets[member.formOverride];
+                if (legendaryTarget) {
+                    return {
+                        mode: 'active-legendary',
+                        icons: [legendaryTarget.iconUrl || EVOLUTION_MODE_IMAGES.unable],
+                        dimmed: false,
+                    };
+                }
                 const isGmax = overrideEntry && overrideEntry.form_type === 'gmax';
                 return {
                     mode: isGmax ? 'active-gmax' : 'active-mega',
@@ -13345,6 +13435,9 @@
             if (canEvolve) icons.push(EVOLUTION_MODE_IMAGES.evolve);
             if (canMega) icons.push(EVOLUTION_MODE_IMAGES.mega);
             if (canGmax) icons.push(EVOLUTION_MODE_IMAGES.gmax);
+            getTeamEvolutionOptions(member).forEach(option => {
+                if (option.category === 'legendary' && option.iconUrl) icons.push(option.iconUrl);
+            });
             // dimmed only ever applies to the 'unable' icon while
             // fainted -- a fainted member with an available regular
             // Evolution still shows evo_able.png at full brightness (per
@@ -13842,6 +13935,33 @@
             renderTeamCardsLists();
         }
 
+        // A reverts:true legendary_evolve form (member.formOverride set
+        // to e.g. "Primal Kyogre") only stays active while
+        // member.attachCardId still matches that specific target's own
+        // cardId -- called right after attachCardId changes (the only
+        // place it ever does, confirmTeamCardsSelection() below) to undo
+        // the transformation the instant that stops being true, whether
+        // the card was removed outright or swapped for a different one.
+        // No-ops for a formOverride that isn't a legendary form at all
+        // (an active Mega/Gigantamax has nothing to do with attach
+        // cards) or one whose own required card is still attached.
+        // Mirrors the #game-scroll delegated listener's own 'active-
+        // mega'/'active-gmax' revert -- same oldMax-before/minHp=1
+        // reconciliation, just triggered by a card change instead of a
+        // tap.
+        function reconcileLegendaryEvolutionOnCardChange(member, hpRule) {
+            if (!member || !member.formOverride) return;
+            const baseEntry = POKEMON_BY_NAME[member.name];
+            const cfg = baseEntry && baseEntry.legendary_evolve;
+            if (!cfg || !cfg.reverts || !cfg.targets) return;
+            const target = cfg.targets[member.formOverride];
+            if (!target) return;
+            if (member.attachCardId && member.attachCardId === target.cardId) return;
+            const oldMax = getTeamMemberHpMax(member, hpRule);
+            member.formOverride = null;
+            reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax, 1);
+        }
+
         function confirmTeamCardsSelection() {
             if (pendingTeamCardsIndex === null) return;
             const data = getActiveSaveData();
@@ -13852,6 +13972,7 @@
             if (!member) return;
             member.attachCardId = attachId;
             member.natureCardId = natureId;
+            reconcileLegendaryEvolutionOnCardChange(member, getHpRule(data));
             if (activeSaveSlot !== null) persistGameSaves();
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
             markUnsavedProgressChanged();
@@ -14167,7 +14288,40 @@
         // picker's own pendingTeamStatusId.
         let pendingTeamEvolutionChoice = null;
 
-        const EVOLUTION_CATEGORY_LABELS = { evolve: 'Evolution', mega: 'Mega Evolution', gmax: 'Gigantamax' };
+        const EVOLUTION_CATEGORY_LABELS = { evolve: 'Evolution', mega: 'Mega Evolution', gmax: 'Gigantamax', legendary: 'Legendary Evolution' };
+
+        // Shared "Evolve into"/"Mega Evolve into"/etc. verb for a single
+        // choice -- used by both the corner badge's own single-option
+        // preview line and the detail view's own (see
+        // renderTeamEvolutionOptions()/renderTeamDetailEvolutionPicker()
+        // below), rather than keeping two copies of the same ternary in
+        // sync by hand. legendary choices read as "Transform into" when
+        // reverts is true (Primal Kyogre and the like -- temporary, so
+        // "Evolve" would overstate it) and "Evolve into" when it's false
+        // (Zygarde/Kubfu -- a real, permanent species change same as any
+        // other evolution).
+        function evolutionChoiceVerb(choice) {
+            if (choice.category === 'evolve') return 'Evolve into';
+            if (choice.category === 'mega') return 'Mega Evolve into';
+            if (choice.category === 'gmax') return 'Gigantamax into';
+            if (choice.category === 'legendary') return choice.reverts ? 'Transform into' : 'Evolve into';
+            return 'Evolve into';
+        }
+
+        // Reminder line for a legendary_evolve choice whose card
+        // requirement this app can't actually enforce (gated:false --
+        // Kubfu today, "play and discard" rather than "keep attached")
+        // -- pulls the card's own display name from ATTACH_CARDS_BY_ID
+        // so it can't go stale if that card gets renamed later. Returns
+        // '' for anything else (gated:true targets are already enforced
+        // by the attach check itself, so a reminder would just be
+        // noise; non-legendary categories never call this at all).
+        function legendaryEvolutionReminderHtml(choice) {
+            if (!choice || choice.category !== 'legendary' || choice.gated) return '';
+            const card = choice.cardId ? ATTACH_CARDS_BY_ID[choice.cardId] : null;
+            const cardName = card ? card.name : 'the required';
+            return `<p class="game-team-evolution-reminder">This Evolution requires the use of the ${escapeHtml(cardName)} card.</p>`;
+        }
 
         // Redraws #game-team-evolution-options against
         // pendingTeamEvolutionOptions/-Choice -- called on open and again
@@ -14200,19 +14354,20 @@
 
             if (pendingTeamEvolutionOptions.length === 1) {
                 const only = pendingTeamEvolutionOptions[0];
-                const verb = only.category === 'evolve' ? 'Evolve into' : (only.category === 'mega' ? 'Mega Evolve into' : 'Gigantamax into');
+                const verb = evolutionChoiceVerb(only);
                 const entry = POKEMON_BY_NAME[only.name];
                 const imgSrc = previewSrc(entry);
                 optionsEl.innerHTML = `
                     <div class="game-team-evolution-single-confirm-wrap">
                         ${imgSrc ? `<img class="game-team-evolution-single-confirm-img" src="${imgSrc}" alt="${escapeHtml(only.name)}">` : ''}
                         <p class="game-team-evolution-single-confirm">${verb} <strong>${escapeHtml(only.name)}</strong>?</p>
+                        ${legendaryEvolutionReminderHtml(only)}
                     </div>
                 `;
                 return;
             }
 
-            const categories = ['evolve', 'mega', 'gmax'].filter(cat => pendingTeamEvolutionOptions.some(o => o.category === cat));
+            const categories = ['evolve', 'mega', 'gmax', 'legendary'].filter(cat => pendingTeamEvolutionOptions.some(o => o.category === cat));
             const showHeaders = categories.length > 1;
 
             optionsEl.innerHTML = categories.map(cat => {
@@ -14236,7 +14391,7 @@
                         <div class="game-team-evolution-options">${buttonsHtml}</div>
                     </div>
                 `;
-            }).join('');
+            }).join('') + legendaryEvolutionReminderHtml(pendingTeamEvolutionChoice);
         }
 
         // Builds the full list of {category, name} evolution options
@@ -14265,18 +14420,54 @@
                 if (baseEntry.mega_forms) baseEntry.mega_forms.forEach(name => options.push({ category: 'mega', name }));
                 if (baseEntry.gmax_forms) baseEntry.gmax_forms.forEach(name => options.push({ category: 'gmax', name }));
             }
+            // Kyogre/Groudon/etc.-style entries -- see
+            // legendary_evolve's own comment above EVOLUTION_MODE_IMAGES for
+            // the full shape. gated:true targets only ever appear here
+            // while the member's own attachCardId matches that target's
+            // specific card (see the Attach/Nature Cards section
+            // elsewhere in this doc); gated:false (Kubfu) always
+            // qualifies, since there's no card *attachment* this app
+            // can check for a play-and-discard requirement -- Kubfu's
+            // reminder text (see legendaryEvolutionReminderHtml()) is
+            // what covers that instead. reverts:true targets follow the
+            // same fainted gate as Mega/Gigantamax above (a fainted
+            // member can't newly transform); reverts:false targets stay
+            // available while fainted, same as a genuine stage evolution
+            // does, since they're a permanent species change same as
+            // one.
+            if (baseEntry.legendary_evolve && baseEntry.legendary_evolve.targets) {
+                const cfg = baseEntry.legendary_evolve;
+                const gated = !!cfg.gated;
+                const reverts = !!cfg.reverts;
+                if (!reverts || !member.fainted) {
+                    Object.keys(cfg.targets).forEach(name => {
+                        const target = cfg.targets[name] || {};
+                        const eligible = !gated || (!!member.attachCardId && member.attachCardId === target.cardId);
+                        if (eligible) {
+                            options.push({
+                                category: 'legendary',
+                                name,
+                                gated,
+                                reverts,
+                                cardId: target.cardId,
+                                iconUrl: target.iconUrl,
+                            });
+                        }
+                    });
+                }
+            }
             return options;
         }
 
-        // Actually applies a chosen evolution/Mega Evolution/Gigantamax
-        // to a member -- shared by the corner badge's own Confirm
-        // (confirmTeamEvolutionSelection() below) and the detail view's
-        // own per-type Confirm (confirmTeamDetailEvolutionChoice())
-        // rather than duplicated per caller, since applying a choice is
-        // applying a choice no matter which screen it came from.
-        // baseEntry is the member's species entry *before* this call --
-        // callers read it before applying, same as they already have to
-        // for evolve_cost below.
+        // Actually applies a chosen evolution/Mega Evolution/Gigantamax/
+        // legendary_evolve to a member -- shared by the corner badge's
+        // own Confirm (confirmTeamEvolutionSelection() below) and the
+        // detail view's own per-type Confirm
+        // (confirmTeamDetailEvolutionChoice()) rather than duplicated
+        // per caller, since applying a choice is applying a choice no
+        // matter which screen it came from. baseEntry is the member's
+        // species entry *before* this call -- callers read it before
+        // applying, same as they already have to for evolve_cost below.
         //   'evolve' -- a genuine, permanent stage evolution: the member
         //     BECOMES the new species (name/dex/src/shinysrc all swap to
         //     the target entry's own, same fields confirmTeamAddSelection()
@@ -14294,15 +14485,26 @@
         //     form's name; the member's own species/level are untouched,
         //     renderTeamGrid()/renderTeamDetailHeader() each pick up the
         //     override's art on their own next render.
+        //   'legendary' -- follows the 'evolve' branch's own permanent
+        //     species-change path when choice.reverts is false (Zygarde,
+        //     Kubfu), just without an evolve_cost to deduct (these
+        //     entries never carry one -- see legendary_evolve's own
+        //     comment above EVOLUTION_MODE_IMAGES); otherwise it's
+        //     mechanically identical to 'mega'/'gmax' (formOverride
+        //     only), just gated/cleared differently -- see
+        //     reconcileLegendaryEvolutionOnCardChange() for how it comes
+        //     back off.
         function applyEvolutionChoice(member, baseEntry, choice, hpRule) {
-            if (choice.category === 'evolve') {
+            if (choice.category === 'evolve' || (choice.category === 'legendary' && !choice.reverts)) {
                 const targetEntry = POKEMON_BY_NAME[choice.name];
                 if (!targetEntry) return;
                 member.dex = (targetEntry.tags && targetEntry.tags[0]) || '';
                 member.name = targetEntry.name;
                 member.src = targetEntry.src;
                 member.shinysrc = targetEntry.shinysrc || '';
-                member.level = Math.max(0, (member.level || 0) - baseEntry.evolve_cost);
+                if (choice.category === 'evolve') {
+                    member.level = Math.max(0, (member.level || 0) - baseEntry.evolve_cost);
+                }
                 member.formOverride = null;
             } else {
                 // See reconcileTeamMemberHpAcrossFormChange()'s own
@@ -14339,7 +14541,10 @@
             const titleEl = document.getElementById('game-team-evolution-title');
             if (titleEl) {
                 titleEl.textContent = options.length === 1
-                    ? (options[0].category === 'evolve' ? 'Evolve' : (options[0].category === 'mega' ? 'Mega Evolve' : 'Gigantamax'))
+                    ? (options[0].category === 'evolve' ? 'Evolve'
+                        : options[0].category === 'mega' ? 'Mega Evolve'
+                        : options[0].category === 'gmax' ? 'Gigantamax'
+                        : options[0].reverts ? 'Transform' : 'Evolve')
                     : 'Choose an Evolution';
             }
 
@@ -14361,7 +14566,13 @@
         // further down). Never reachable for the single-option shape,
         // since that path never renders any buttons to click.
         function selectTeamEvolutionOption(category, name) {
-            pendingTeamEvolutionChoice = { category, name };
+            // Looks the full option back up (rather than reconstructing
+            // a bare {category, name} stub) so gated/reverts/cardId/
+            // iconUrl survive the pick -- applyEvolutionChoice()'s own
+            // reverts check and legendaryEvolutionReminderHtml() both
+            // need those for a 'legendary' choice.
+            const found = pendingTeamEvolutionOptions.find(o => o.category === category && o.name === name);
+            pendingTeamEvolutionChoice = found || { category, name };
             renderTeamEvolutionOptions();
         }
 
@@ -15172,11 +15383,38 @@
                 return;
             }
 
+            if (evoState.mode === 'active-legendary') {
+                // Ends only when its card is detached (see
+                // reconcileLegendaryEvolutionOnCardChange()) -- no tap-
+                // to-revert the way Mega/Gigantamax gets above, so this
+                // is a plain static indicator rather than a real button.
+                // data-category is a sentinel that never matches a real
+                // category name, so a stray tap here is a guaranteed
+                // no-op through handleTeamDetailEvolutionTypeTap()'s own
+                // "no options for this category" fallthrough rather than
+                // needing its own dedicated guard there.
+                buttonsEl.innerHTML = `
+                    <button class="game-team-detail-evolution-type-btn" data-category="active-legendary" title="Ends when its card is detached">
+                        <img src="${evoState.icons[0]}" alt="Active Evolution">
+                    </button>
+                `;
+                cancelTeamDetailEvolutionPicker();
+                return;
+            }
+
             // 'available' -- one button per applicable category, same
-            // evolve/mega/gmax ordering computeTeamEvolutionState() uses
-            // for its own cycling icons.
+            // evolve/mega/gmax/legendary ordering computeTeamEvolutionState()
+            // uses for its own cycling icons. The 'legendary' button
+            // uses the first eligible legendary option's own unique icon
+            // rather than one shared EVOLUTION_MODE_IMAGES entry -- in
+            // practice this app never has more than one legendary option
+            // eligible at once except Kubfu, whose two options share the
+            // same category button here regardless (tapping it opens the
+            // strip, where both show up as fully distinguishable choices
+            // via their own real Pokémon artwork -- see previewSrc() in
+            // renderTeamDetailEvolutionPicker() below).
             const options = getTeamEvolutionOptions(member);
-            const categories = ['evolve', 'mega', 'gmax'].filter(cat => options.some(o => o.category === cat));
+            const categories = ['evolve', 'mega', 'gmax', 'legendary'].filter(cat => options.some(o => o.category === cat));
             // An open strip whose category no longer has any options
             // (same "invalidated mid-session" scenario as the 'unable'
             // branch above, just less drastic) gets folded away rather
@@ -15184,11 +15422,16 @@
             if (teamDetailEvolutionCategory && !categories.includes(teamDetailEvolutionCategory)) {
                 cancelTeamDetailEvolutionPicker();
             }
-            buttonsEl.innerHTML = categories.map(cat => `
+            buttonsEl.innerHTML = categories.map(cat => {
+                const icon = cat === 'legendary'
+                    ? ((options.find(o => o.category === 'legendary') || {}).iconUrl || EVOLUTION_MODE_IMAGES.unable)
+                    : EVOLUTION_MODE_IMAGES[cat];
+                return `
                 <button class="game-team-detail-evolution-type-btn${cat === teamDetailEvolutionCategory ? ' active' : ''}" data-category="${cat}">
-                    <img src="${EVOLUTION_MODE_IMAGES[cat]}" alt="${EVOLUTION_CATEGORY_LABELS[cat]}">
+                    <img src="${icon}" alt="${EVOLUTION_CATEGORY_LABELS[cat]}">
                 </button>
-            `).join('');
+            `;
+            }).join('');
         }
 
         // Fills in the hidden strip below the type-buttons row for
@@ -15220,13 +15463,14 @@
             let bodyHtml;
             if (options.length === 1) {
                 const only = options[0];
-                const verb = only.category === 'evolve' ? 'Evolve into' : (only.category === 'mega' ? 'Mega Evolve into' : 'Gigantamax into');
+                const verb = evolutionChoiceVerb(only);
                 const entry = POKEMON_BY_NAME[only.name];
                 const imgSrc = previewSrc(entry);
                 bodyHtml = `
                     <div class="game-team-evolution-single-confirm-wrap">
                         ${imgSrc ? `<img class="game-team-evolution-single-confirm-img" src="${imgSrc}" alt="${escapeHtml(only.name)}">` : ''}
                         <p class="game-team-evolution-single-confirm">${verb} <strong>${escapeHtml(only.name)}</strong>?</p>
+                        ${legendaryEvolutionReminderHtml(only)}
                     </div>
                 `;
             } else {
@@ -15244,6 +15488,7 @@
                             `;
                         }).join('')}
                     </div>
+                    ${legendaryEvolutionReminderHtml(teamDetailEvolutionChoice)}
                 `;
             }
 
@@ -15329,7 +15574,13 @@
         // badge's picker.
         function selectTeamDetailEvolutionChoice(name) {
             if (!teamDetailEvolutionCategory) return;
-            teamDetailEvolutionChoice = { category: teamDetailEvolutionCategory, name };
+            // Same full-option lookup as selectTeamEvolutionOption()
+            // above, and for the same reason.
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            const options = member ? getTeamEvolutionOptions(member).filter(o => o.category === teamDetailEvolutionCategory) : [];
+            const found = options.find(o => o.name === name);
+            teamDetailEvolutionChoice = found || { category: teamDetailEvolutionCategory, name };
             renderTeamDetailEvolutionPicker();
         }
 
@@ -18541,9 +18792,12 @@
             // already-active Mega/Gigantamax (dataset.evoMode 'active-
             // mega'/'active-gmax') reverts immediately with no overlay
             // at all (see the chat this was designed in -- "tapping
-            // again reverts"), and anything else opens the picker. Same
-            // replace-mode block as the status/level corners above, same
-            // reasoning.
+            // again reverts"), 'active-legendary' also no-ops (per the
+            // chat this was designed in, the only way out of one of
+            // these is detaching its card -- see
+            // reconcileLegendaryEvolutionOnCardChange()), and anything
+            // else opens the picker. Same replace-mode block as the
+            // status/level corners above, same reasoning.
             const evolutionBadge = e.target.closest('.game-team-slot-evolution');
             if (evolutionBadge) {
                 if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
@@ -18552,7 +18806,7 @@
                 const member = (data.team.members || [])[index];
                 if (!member) return;
                 const evoState = computeTeamEvolutionState(member);
-                if (evoState.mode === 'unable') return;
+                if (evoState.mode === 'unable' || evoState.mode === 'active-legendary') return;
                 if (evoState.mode === 'active-mega' || evoState.mode === 'active-gmax') {
                     // Same reconciliation as confirmTeamEvolutionSelection()'s
                     // own mega/gmax branch, in reverse -- reverting
