@@ -3467,9 +3467,18 @@
         /* Each section (Attach, Nature) now gets its own detail panel --
            see the chat this was split from a single shared panel --
            showing whichever card that section's own picker list has
-           currently selected. Row layout: clickable thumbnail on the
-           left (see .game-team-cards-detail-thumb below), name + rules
-           text filling the rest. */
+           currently selected (or, on the details panel's own copy of
+           this same markup, whichever card the member currently has
+           equipped -- see renderTeamDetailCardsSection()). Just the
+           artwork now, blown up to fill the section (see
+           .game-team-cards-photo below) -- there used to be a
+           thumbnail-plus-name/rules-text layout here, dropped in favor
+           of just the art (see the chat this was simplified in) on the
+           assumption the card's own art already carries its name/rules
+           text the way a real physical card would. flex-wrap: wrap is
+           what lets Remove Card (on the details panel's own copy) sit
+           on its own line underneath the photo rather than squeezing
+           in beside it. */
         .game-team-cards-detail {
             margin-top: 10px;
 		margin-bottom: 10px;
@@ -3479,39 +3488,9 @@
             background: rgba(0, 0, 0, 0.2);
             min-height: 48px;
             display: flex;
+            flex-wrap: wrap;
             align-items: flex-start;
             gap: 10px;
-        }
-
-        /* Opens openTeamCardImageViewer() (see its own comment) --
-           cursor: pointer/the border are the only hints this is tappable
-           beyond the corner-badge-style affordances already established
-           elsewhere in this doc. */
-        .game-team-cards-detail-thumb {
-            width: 101px;
-            height: 140px;
-            object-fit: contain;
-            flex-shrink: 0;
-            border: 2px solid rgba(255, 255, 255, 0.4);
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.06);
-            cursor: pointer;
-        }
-
-        .game-team-cards-detail-text {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .game-team-cards-detail-name {
-            font-weight: bold;
-            margin: 0 0 4px;
-        }
-
-        .game-team-cards-detail-rules {
-            font-size: 13px;
-            line-height: 1.4;
-            margin: 0;
         }
 
         .game-team-cards-detail-empty {
@@ -3520,6 +3499,55 @@
             text-align: center;
             margin: 0;
             width: 100%;
+        }
+
+        /* The card's own artwork, blown up to fill its section --
+           shared by both the corner badge's own Attach/Nature Cards
+           overlay (renderTeamCardsLists()) and the details panel's own
+           copy (renderTeamDetailCardsSection()), now that both use the
+           same photo-only layout (see the chat this was unified in).
+           Opens openTeamCardImageViewer() on tap (see its own comment)
+           -- cursor: pointer/the border are the only hints beyond that.
+           width: 100% is what makes it take the whole flex row by
+           itself and wrap anything after it (Remove Card, on the
+           details panel's own copy) onto its own line underneath, via
+           .game-team-cards-detail's own flex-wrap: wrap above. 16px
+           border-radius (see the chat this was tuned in) matches the
+           card artwork's own rounded corners rather than the sharper
+           6px the old small thumbnail used. */
+        .game-team-cards-photo {
+            width: 100%;
+            max-width: 240px;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+            object-fit: contain;
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.06);
+            cursor: pointer;
+        }
+
+        /* Add Card/Remove Card/Cancel in the details panel's own Attach
+           Card/Nature Card sections (see renderTeamDetailCardsSection())
+           -- same .filter-btn/.filter-btn.exclude language the rest of
+           this doc already uses for confirm/cancel-style actions (see
+           e.g. #game-team-revive-overlay's own Yes/No), just sized down
+           to fit under a single detail panel instead of a full-width
+           confirm row. Cancel here reuses the same red .exclude variant
+           as Remove -- both back out of the current state rather than
+           committing something, "No" and "Cancel" reading the same way
+           Remove does in this spot.
+           .game-team-cards-detail is a flex row (thumbnail + text side
+           by side, see its own rule above) -- flex-basis: 100% is what
+           pushes this onto its own full-width line underneath rather
+           than squeezing into the row alongside them. */
+        .game-team-detail-card-btn {
+            flex-basis: 100%;
+            margin: 8px 0 0;
+            padding: 8px 10px;
+            font-size: 13px;
+            border-radius: 10px;
         }
 
         /* Full-size card image viewer -- see openTeamCardImageViewer()/
@@ -3630,17 +3658,16 @@
             margin: 0 auto 4px;
         }
 
-        /* Items is still a placeholder section (see the chat this was
-           scaffolded in) -- HP/Level/Status/Evolution have all moved on
-           to their own dedicated markup/CSS by now. Same section-title
+        /* Attach Card/Nature Card -- read-only replicas of the corner
+           badge's own Attach/Nature Cards overlay detail panels (see
+           renderTeamDetailCardsSection() in the script), reusing that
+           overlay's own .game-team-cards-detail* classes as-is rather
+           than duplicating that layout under a second name. Actually
+           changing either card still only happens through that overlay
+           -- these two sections are viewing only. Same section-title
            treatment as .game-team-cards-section-title, reused rather
            than shared for the same independence reasoning as everywhere
-           else in this doc. -body is genuinely empty until its own pass
-           fills it in; the min-height just keeps it from visually
-           collapsing to nothing before then. The adjacent-sibling margin
-           rule below has nothing to pair against right now (Items is
-           the only .game-team-detail-section left), but stays in place
-           for whenever a second one shows up. */
+           else in this doc. */
         .game-team-detail-section + .game-team-detail-section {
             margin-top: 16px;
         }
@@ -3653,10 +3680,6 @@
             color: #333;
             text-align: center;
             margin: 0 0 8px;
-        }
-
-        .game-team-detail-section-body {
-            min-height: 20px;
         }
 
         /* HP/Level and Status/Evolution each share their own row (two of
@@ -9501,12 +9524,13 @@
              confirmTeamCardsSelection() and ATTACH_CARDS_BY_ID in the
              script. Reuses .game-confirm-card/-title, same as every
              other Team Tracker overlay above. Both dropdowns and each
-             section's own detail panel (thumbnail + rules text, one per
-             section rather than shared -- see the chat this was split
-             in) are built fresh every open by renderTeamCardsLists(),
-             same "always rebuilt, never hand-edited" convention as the
-             evolution picker's own options. A detail panel's thumbnail
-             opens #game-team-card-image-viewer below. -->
+             section's own detail panel (just the card's own artwork,
+             one per section rather than shared -- see the chat this was
+             split in) are built fresh every open by
+             renderTeamCardsLists(), same "always rebuilt, never
+             hand-edited" convention as the evolution picker's own
+             options. A detail panel's own photo opens
+             #game-team-card-image-viewer below. -->
         <div id="game-team-cards-overlay">
             <div class="game-confirm-card">
                 <p class="game-confirm-title" id="game-team-cards-title">Attach &amp; Nature Cards</p>
@@ -9515,7 +9539,7 @@
                     <p class="game-team-cards-section-title">Attach Card</p>
                     <select class="game-team-cards-select" id="game-team-cards-attach-select" data-slot="attach"></select>
                     <div class="game-team-cards-detail" id="game-team-cards-attach-detail">
-                        <p class="game-team-cards-detail-empty">Select a card to see its rules text.</p>
+                        <p class="game-team-cards-detail-empty">Select a card to preview it.</p>
                     </div>
                 </div>
 
@@ -9523,7 +9547,7 @@
                     <p class="game-team-cards-section-title">Nature Card</p>
                     <select class="game-team-cards-select" id="game-team-cards-nature-select" data-slot="nature"></select>
                     <div class="game-team-cards-detail" id="game-team-cards-nature-detail">
-                        <p class="game-team-cards-detail-empty">Select a card to see its rules text.</p>
+                        <p class="game-team-cards-detail-empty">Select a card to preview it.</p>
                     </div>
                 </div>
 
@@ -9594,11 +9618,10 @@
              what those four corner badges (HP, Status, Evolution,
              Attach/Nature Cards) each cover individually, not a
              replacement for any of their own overlays. HP, Level,
-             Status, and Evolution all have real content now (see
-             renderTeamDetailHpSection()/renderTeamDetailLevelSection()/
-             renderTeamDetailStatusSection()/renderTeamDetailEvolutionSection()
-             below) -- Items stays an empty placeholder (see
-             .game-team-detail-section-body) awaiting its own pass.
+             Status, Evolution, and now Attach/Nature Cards all have real
+             content (see renderTeamDetailHpSection()/renderTeamDetailLevelSection()/
+             renderTeamDetailStatusSection()/renderTeamDetailEvolutionSection()/
+             renderTeamDetailCardsSection() below).
              HP/Level and Status/Evolution each share their own row, per
              the chat this was rearranged in -- see
              .game-team-detail-columns in the CSS. Status and Evolution's
@@ -9750,8 +9773,17 @@
                 </div>
 
                 <div class="game-team-detail-section">
-                    <p class="game-team-detail-section-title">Items</p>
-                    <div class="game-team-detail-section-body" id="game-team-detail-items-body"></div>
+                    <p class="game-team-detail-section-title">Attach Card</p>
+                    <div class="game-team-cards-detail" id="game-team-detail-attach-card-detail"></div>
+                </div>
+
+                <!-- Hidden outright (see renderTeamDetailCardsSection())
+                     whenever the active save has Nature Cards turned
+                     off -- same rule the Attach/Nature Cards overlay's
+                     own Nature section already follows. -->
+                <div class="game-team-detail-section" id="game-team-detail-nature-card-section">
+                    <p class="game-team-detail-section-title">Nature Card</p>
+                    <div class="game-team-cards-detail" id="game-team-detail-nature-card-detail"></div>
                 </div>
 
                 <div class="game-save-slot-actions">
@@ -13841,10 +13873,12 @@
         // as well as every card of that cardType currently in
         // ATTACH_CARDS_BY_ID. Each section's own detail panel shows
         // whichever card that same section's pending id currently
-        // points at -- a thumbnail (tapping it opens
-        // openTeamCardImageViewer()) plus the card's name and rules
-        // text, or the plain instructional line when that slot's pick is
-        // "None". The <select>'s own displayed value is set directly
+        // points at -- just its own artwork, blown up via
+        // .game-team-cards-photo (tapping it opens
+        // openTeamCardImageViewer()), or the plain instructional line
+        // when that slot's pick is "None" -- see .game-team-cards-photo's
+        // own comment for why there's no name/rules text alongside it
+        // anymore. The <select>'s own displayed value is set directly
         // (rather than via a "selected" attribute baked into the option
         // string) since rebuilding a select's innerHTML always resets
         // its value to the first option regardless -- setting .value
@@ -13866,14 +13900,10 @@
                 if (detailEl) {
                     const card = pendingId ? ATTACH_CARDS_BY_ID[pendingId] : null;
                     detailEl.innerHTML = card
-                        ? `
-                            ${card.imageUrl ? `<img class="game-team-cards-detail-thumb" src="${card.imageUrl}" alt="${escapeHtml(card.name)}" data-card-id="${card.id}">` : ''}
-                            <div class="game-team-cards-detail-text">
-                                <p class="game-team-cards-detail-name">${escapeHtml(card.name)}</p>
-                                <p class="game-team-cards-detail-rules">${escapeHtmlWithLineBreaks(card.rulesText || '')}</p>
-                            </div>
-                        `
-                        : `<p class="game-team-cards-detail-empty">Select a card to see its rules text.</p>`;
+                        ? (card.imageUrl
+                            ? `<img class="game-team-cards-photo" src="${card.imageUrl}" alt="${escapeHtml(card.name)}" data-card-id="${card.id}">`
+                            : `<p class="game-team-cards-detail-empty">${escapeHtml(card.name)}</p>`)
+                        : `<p class="game-team-cards-detail-empty">Select a card to preview it.</p>`;
                 }
             }
 
@@ -13980,9 +14010,9 @@
         }
 
         // Full-size card image lightbox -- opened by tapping a detail
-        // panel's own thumbnail (see the #game-team-cards-overlay click
-        // listener's own .game-team-cards-detail-thumb branch further
-        // down). Deliberately doesn't touch pendingTeamCardsIndex/etc --
+        // panel's own photo (see the #game-team-cards-overlay click
+        // listener's own .game-team-cards-photo branch further down).
+        // Deliberately doesn't touch pendingTeamCardsIndex/etc --
         // #game-team-cards-overlay stays open underneath this the whole
         // time, unaffected.
         function openTeamCardImageViewer(imageUrl, name) {
@@ -14685,6 +14715,7 @@
             renderTeamDetailHpSection();
             renderTeamDetailLevelSection();
             renderTeamDetailStatusSection();
+            renderTeamDetailCardsSection();
             const statusPickerEl = document.getElementById('game-team-detail-status-picker');
             if (statusPickerEl) statusPickerEl.classList.remove('visible');
             renderTeamDetailEvolutionSection();
@@ -14980,6 +15011,172 @@
                     fadeTargets.forEach(el => el.classList.remove('game-team-detail-status-fade-out'));
                 });
             }, 150);
+        }
+
+        // Which slot (attach/nature) currently has its "pick a card"
+        // dropdown open on the details panel -- null whenever neither
+        // does. Only meaningful for a slot with no card currently
+        // equipped (see renderTeamDetailCardsSection() below); a slot
+        // with a card equipped shows Remove Card instead and never
+        // touches this. Not reset by openTeamDetailOverlay() -- once the
+        // panel closes teamDetailIndex itself goes back to null and
+        // nothing reads this until it's set fresh by the next Add Card
+        // tap anyway.
+        let teamDetailCardsAddingSlot = null;
+
+        // Interactive replica of the corner badge's own Attach/Nature
+        // Cards overlay detail panels (see renderTeamCardsLists() above)
+        // -- same thumbnail+name+rules-text layout and the same
+        // .game-team-cards-detail* classes as that overlay, but unlike
+        // that read-only-from-here-now description, changing either
+        // card is now possible straight from this panel too (see the
+        // chat this was added in) via removeTeamDetailCard()/
+        // selectTeamDetailCardOption() below -- both commit immediately,
+        // no separate Confirm step the way the corner badge's own
+        // overlay has, since there's only ever one card in play per
+        // slot here rather than two pending picks to reconcile at once.
+        // Three states per slot:
+        //   card equipped -- thumbnail+text, Remove Card underneath.
+        //   no card, not adding -- the empty-state message, Add Card
+        //     underneath.
+        //   no card, teamDetailCardsAddingSlot === this slot -- a
+        //     dropdown (reusing .game-team-cards-select as-is) plus
+        //     Cancel, in place of the message+Add Card.
+        // Called on open (openTeamDetailOverlay()) and again after every
+        // mutation here, same as every other detail-view section.
+        function renderTeamDetailCardsSection() {
+            if (teamDetailIndex === null) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            if (!member) return;
+            const cards = Object.values(ATTACH_CARDS_BY_ID);
+
+            function renderOne(elId, slot, cardId, emptyText) {
+                const el = document.getElementById(elId);
+                if (!el) return;
+                const card = cardId ? ATTACH_CARDS_BY_ID[cardId] : null;
+                if (card) {
+                    el.innerHTML = `
+                        ${card.imageUrl
+                            ? `<img class="game-team-cards-photo" src="${card.imageUrl}" alt="${escapeHtml(card.name)}" data-card-id="${card.id}">`
+                            : `<p class="game-team-cards-detail-empty">${escapeHtml(card.name)}</p>`}
+                        <button class="filter-btn exclude game-team-detail-card-btn game-team-detail-card-remove-btn" type="button" data-slot="${slot}">Remove Card</button>
+                    `;
+                    return;
+                }
+                if (teamDetailCardsAddingSlot === slot) {
+                    const options = cards.filter(c => c.cardType === slot);
+                    el.innerHTML = `
+                        <select class="game-team-cards-select game-team-detail-card-select" data-slot="${slot}">
+                            <option value="" disabled selected>Select a card...</option>
+                            ${options.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
+                        </select>
+                        <button class="filter-btn exclude game-team-detail-card-btn game-team-detail-card-cancel-btn" type="button" data-slot="${slot}">Cancel</button>
+                    `;
+                    return;
+                }
+                el.innerHTML = `
+                    <p class="game-team-cards-detail-empty">${emptyText}</p>
+                    <button class="filter-btn game-team-detail-card-btn game-team-detail-card-add-btn" type="button" data-slot="${slot}">Add Card</button>
+                `;
+            }
+
+            renderOne('game-team-detail-attach-card-detail', 'attach', member.attachCardId, 'No Attach Card equipped.');
+
+            // Same "hide the section outright when the save has Nature
+            // Cards turned off" rule as the overlay's own Nature
+            // section. Also drops a stray adding-state left open for
+            // 'nature' if the save's rules changed underneath this
+            // screen -- there'd be nothing valid to render if it stayed.
+            const natureSectionEl = document.getElementById('game-team-detail-nature-card-section');
+            const naturesEnabled = isNaturesEnabledForActiveSave();
+            if (natureSectionEl) natureSectionEl.style.display = naturesEnabled ? '' : 'none';
+            if (!naturesEnabled && teamDetailCardsAddingSlot === 'nature') teamDetailCardsAddingSlot = null;
+            if (naturesEnabled) renderOne('game-team-detail-nature-card-detail', 'nature', member.natureCardId, 'No Nature Card equipped.');
+        }
+
+        // Add Card tap -- just reveals that slot's own dropdown in place
+        // of the empty-state message, nothing committed yet.
+        function openTeamDetailCardAdd(slot) {
+            if (teamDetailIndex === null) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            teamDetailCardsAddingSlot = slot;
+            renderTeamDetailCardsSection();
+        }
+
+        // Cancel tap -- backs out of the dropdown without picking
+        // anything, same empty state as before Add Card was tapped.
+        function cancelTeamDetailCardAdd() {
+            teamDetailCardsAddingSlot = null;
+            renderTeamDetailCardsSection();
+        }
+
+        // The dropdown's own 'change' event (see the
+        // #game-team-detail-overlay change listener below) -- picking a
+        // real card commits it straight to the member immediately, no
+        // separate Confirm step (see renderTeamDetailCardsSection()'s
+        // own comment for why). Refreshes Header/HP/Evolution alongside
+        // the Cards section itself and the main grid, same set
+        // reconcileLegendaryEvolutionOnCardChange() can touch when the
+        // Attach Card slot is the one that changed -- attaching a card
+        // that happens to match a legendary_evolve target's own cardId
+        // doesn't by itself trigger the evolution (the player still
+        // picks it from the Evolution column like any other), but it's
+        // the same set of columns an eventual reconciliation could
+        // touch, so keeping all three in sync here is simplest. The
+        // Nature Card slot never touches any of that, but re-running
+        // them anyway costs nothing and keeps this one function correct
+        // for both slots rather than branching.
+        function selectTeamDetailCardOption(slot, cardId) {
+            if (teamDetailIndex === null) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (!cardId || (slot !== 'attach' && slot !== 'nature')) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            if (!member) return;
+            if (slot === 'attach') member.attachCardId = cardId;
+            else member.natureCardId = cardId;
+            teamDetailCardsAddingSlot = null;
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+            renderTeamDetailCardsSection();
+            renderTeamDetailHeader();
+            renderTeamDetailHpSection();
+            renderTeamDetailEvolutionSection();
+        }
+
+        // Remove Card tap -- unequips that slot immediately, no confirm
+        // step (see the chat this was requested in). Detaching the
+        // Attach Card specifically can end an active reverts:true
+        // legendary evolution (see
+        // reconcileLegendaryEvolutionOnCardChange()), which touches
+        // HP/species art/the Evolution column same as that does --
+        // Nature Card removal never can, but re-running all three either
+        // way costs nothing and keeps this one function correct for both
+        // slots rather than branching on it.
+        function removeTeamDetailCard(slot) {
+            if (teamDetailIndex === null) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (slot !== 'attach' && slot !== 'nature') return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[teamDetailIndex];
+            if (!member) return;
+            if (slot === 'attach') {
+                member.attachCardId = null;
+                reconcileLegendaryEvolutionOnCardChange(member, getHpRule(data));
+            } else {
+                member.natureCardId = null;
+            }
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+            renderTeamDetailCardsSection();
+            renderTeamDetailHeader();
+            renderTeamDetailHpSection();
+            renderTeamDetailEvolutionSection();
         }
 
         // Redraws the Status column against teamDetailIndex's current
@@ -19051,7 +19248,7 @@
                 confirmTeamCardsSelection();
                 return;
             }
-            const thumb = e.target.closest('.game-team-cards-detail-thumb');
+            const thumb = e.target.closest('.game-team-cards-photo');
             if (thumb) {
                 const card = ATTACH_CARDS_BY_ID[thumb.dataset.cardId];
                 if (card) openTeamCardImageViewer(card.imageUrl, card.name);
@@ -19183,6 +19380,47 @@
                 renderTeamDetailEvolutionSection();
                 return;
             }
+            // Same tap-to-enlarge as the Attach/Nature Cards overlay's
+            // own photo (see that overlay's own click listener) -- both
+            // now use the same .game-team-cards-photo class since both
+            // dropped the name/rules text in favor of just the artwork
+            // (see the chat this was unified in).
+            const cardThumb = e.target.closest('.game-team-cards-photo');
+            if (cardThumb) {
+                const card = ATTACH_CARDS_BY_ID[cardThumb.dataset.cardId];
+                if (card) openTeamCardImageViewer(card.imageUrl, card.name);
+                return;
+            }
+            const cardAddBtn = e.target.closest('.game-team-detail-card-add-btn');
+            if (cardAddBtn) {
+                openTeamDetailCardAdd(cardAddBtn.dataset.slot);
+                return;
+            }
+            const cardCancelBtn = e.target.closest('.game-team-detail-card-cancel-btn');
+            if (cardCancelBtn) {
+                cancelTeamDetailCardAdd();
+                return;
+            }
+            const cardRemoveBtn = e.target.closest('.game-team-detail-card-remove-btn');
+            if (cardRemoveBtn) {
+                removeTeamDetailCard(cardRemoveBtn.dataset.slot);
+                return;
+            }
+        });
+
+        // The Attach/Nature Card dropdown (see
+        // renderTeamDetailCardsSection()) fires 'change' rather than
+        // 'click' -- same reasoning as the corner badge's own Cards
+        // overlay dropdowns for a dedicated listener here rather than
+        // folding this into the delegated 'click' handler above. Unlike
+        // those two though, this dropdown is created and destroyed on
+        // every render rather than a fixed element that's just hidden/
+        // shown, so a listener bound once to the select itself wouldn't
+        // survive a re-render -- delegated on the stable overlay
+        // container instead, same as the click handler above.
+        document.getElementById('game-team-detail-overlay').addEventListener('change', (e) => {
+            const select = e.target.closest('.game-team-detail-card-select');
+            if (select) selectTeamDetailCardOption(select.dataset.slot, select.value);
         });
 
         // Same reasoning again -- Cancel is the only manual exit path
