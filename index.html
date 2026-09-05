@@ -3581,7 +3581,7 @@
 
         .game-team-cards-accordion-group {
             border: 1px solid rgba(255, 255, 255, 0.25);
-            border-radius: 15px;
+            border-radius: 20px;
             /* overflow: hidden deliberately left off -- some engines
                treat any non-visible overflow on an ancestor as an
                intervening scroll boundary even when it can't actually
@@ -3623,7 +3623,13 @@
            #333 -- unreadable against a dark header) rather than any
            alpha, and the SAME style whether collapsed or expanded (see
            the chat this was unified in) -- one unchanging dark header
-           rather than a jarring light-to-dark swap on expand. */
+           rather than a jarring light-to-dark swap on expand.
+           border/text-transform/text-shadow copied from .filter-btn's
+           own values (rather than making the header a .filter-btn
+           itself, which would fight its sticky/background/radius rules
+           above) so it matches .game-team-cards-accordion-option below
+           it -- same black-ish border and black-outlined all-caps text
+           as every other button in this doc. */
         .game-team-cards-accordion-header {
             width: 100%;
             display: flex;
@@ -3636,18 +3642,43 @@
             font-size: 13px;
             font-weight: bold;
             text-align: left;
+            text-transform: uppercase;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
             cursor: pointer;
-            border-radius: 15px;
+            border-radius: 20px;
             position: sticky;
             top: -20px;
             z-index: 2;
+		background-image: url(https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1);
+		background-position: top;
+		background-repeat: repeat;
+		background-blend-mode: multiply;
+		background-size: 240px 240px;
         }
 
         /* Only the corner rounding differs between collapsed/expanded
            now (see the chat this was unified in for why background/text
            don't) -- flat where it meets the body immediately below it. */
         .game-team-cards-accordion-group.expanded .game-team-cards-accordion-header {
-            border-radius: 15px 15px 0 0;
+            border-radius: 20px 20px 0 0;
+        }
+
+        /* .stuck is set/cleared by refreshAccordionStuckHeaders() in the
+           script, not by any CSS state -- there's no standard selector
+           for "this sticky element has actually reached its stuck
+           offset" (as opposed to merely being close, still within the
+           -20px cushion -- see the chat this was requested in), so a
+           scroll listener compares the header's own live position
+           against .game-confirm-card's own instead. Needs to win over
+           both the plain header rule above AND the .expanded one, hence
+           matching both here at equal specificity rather than relying
+           on source order. */
+        .game-team-cards-accordion-header.stuck,
+        .game-team-cards-accordion-group.expanded .game-team-cards-accordion-header.stuck {
+            border-radius: 0;
         }
 
         .game-team-cards-accordion-count {
@@ -3676,6 +3707,10 @@
             padding: 6px 10px;
             font-size: 13px;
             border-radius: 6px;
+        }
+	  
+	  .game-team-cards-accordion-body .filter-btn {
+		margin: 5px 0px;
         }
 
         /* Full-size card image viewer -- see openTeamCardImageViewer()/
@@ -13565,6 +13600,7 @@
                         : `<p class="game-team-cards-detail-empty">${escapeHtml(card.name)}</p>`}
                     <button class="filter-btn exclude game-team-cards-card-btn" type="button" data-test-remove="accordion">Remove Card</button>
                 `;
+                refreshAccordionStuckHeaders();
                 return;
             }
             if (testAttachAccordionAdding) {
@@ -13591,12 +13627,14 @@
                     </div>
                     <button class="filter-btn exclude game-team-cards-card-btn" type="button" data-test-cancel="accordion">Cancel</button>
                 `;
+                refreshAccordionStuckHeaders();
                 return;
             }
             el.innerHTML = `
                 <p class="game-team-cards-detail-empty">No card equipped.</p>
                 <button class="filter-btn game-team-cards-card-btn" type="button" data-test-add="accordion">Add Card</button>
             `;
+            refreshAccordionStuckHeaders();
         }
 
         // The four evolution-corner icons -- see the chat this was
@@ -19820,6 +19858,35 @@
             const select = e.target.closest('.game-team-cards-card-select');
             if (select) selectTeamDetailCardOption(select.dataset.slot, select.value);
         });
+
+        // EXPERIMENTAL Variant B's own "actually reached the top" check
+        // -- see .game-team-cards-accordion-header.stuck's own CSS
+        // comment for why this can't just be a CSS selector. Compares
+        // each currently-rendered header's own live position against
+        // .game-confirm-card's (there's normally just one header
+        // touching the top at a time, but this checks all of them
+        // rather than assuming, since a body-less collapsed header can
+        // end up there too) -- <= cardTop + 1 rather than strict
+        // equality absorbs ordinary subpixel rounding rather than
+        // flickering the corners on and off by fractions of a pixel.
+        // Run on every scroll of that card and again after every
+        // toggle/pick/cancel re-render (see renderTestAttachAccordionSection()'s
+        // own calls), since expanding or collapsing a group shifts
+        // everything below it without necessarily firing a scroll event
+        // on its own.
+        function refreshAccordionStuckHeaders() {
+            const cardEl = document.querySelector('#game-team-detail-overlay .game-confirm-card');
+            if (!cardEl) return;
+            const cardTop = cardEl.getBoundingClientRect().top;
+            cardEl.querySelectorAll('.game-team-cards-accordion-header').forEach(header => {
+                header.classList.toggle('stuck', header.getBoundingClientRect().top <= cardTop + 1);
+            });
+        }
+
+        const teamDetailConfirmCardEl = document.querySelector('#game-team-detail-overlay .game-confirm-card');
+        if (teamDetailConfirmCardEl) {
+            teamDetailConfirmCardEl.addEventListener('scroll', refreshAccordionStuckHeaders);
+        }
 
         // Same reasoning again -- Cancel is the only manual exit path
         // (a successful scan closes itself via runLobbyScanDetectionTick()).
