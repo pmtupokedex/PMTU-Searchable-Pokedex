@@ -3555,78 +3555,6 @@
             border-radius: 10px;
         }
 
-        /* EXPERIMENTAL Variant B's own collapsible category list -- see
-           renderTestAttachAccordionSection()'s own comment in the
-           script. flex-basis: 100% (same reasoning as
-           .game-team-cards-card-btn above) puts the whole accordion on
-           its own line under the empty-state message, and a capped
-           max-height/scroll keeps a long list (Variant A's own <select>
-           gets this for free from the OS, a custom list like this one
-           has to ask for it explicitly) from pushing Cancel off the
-           bottom of the card. */
-        .game-team-cards-accordion {
-            flex-basis: 100%;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            max-height: 280px;
-            overflow-y: auto;
-            margin-top: 8px;
-        }
-
-        .game-team-cards-accordion-group {
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-
-        /* Each group's own header toggles just that group (see the
-           delegated click listener's own data-test-toggle-deck branch)
-           -- more than one can be expanded at once, unlike a typical
-           single-open accordion, since there's no reason browsing TM
-           Deck should force Shop Deck shut. */
-        .game-team-cards-accordion-header {
-            width: 100%;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 10px;
-            background: rgba(255, 255, 255, 0.08);
-            border: none;
-            color: inherit;
-            font-size: 13px;
-            font-weight: bold;
-            text-align: left;
-            cursor: pointer;
-        }
-
-        .game-team-cards-accordion-count {
-            margin-left: auto;
-            font-weight: normal;
-            font-size: 12px;
-            opacity: 0.7;
-        }
-
-        .game-team-cards-accordion-caret {
-            font-size: 11px;
-            opacity: 0.7;
-        }
-
-        .game-team-cards-accordion-body {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            padding: 6px 8px 8px;
-        }
-
-        .game-team-cards-accordion-option {
-            width: 100%;
-            text-align: left;
-            padding: 6px 10px;
-            font-size: 13px;
-            border-radius: 6px;
-        }
-
         /* Full-size card image viewer -- see openTeamCardImageViewer()/
            closeTeamCardImageViewer() in the script. A dedicated
            lightweight lightbox rather than reusing the main Pokédex
@@ -9627,17 +9555,6 @@
                     <div class="game-team-cards-detail" id="game-team-cards-nature-detail"></div>
                 </div>
 
-                <!-- EXPERIMENTAL Variant A -- see
-                     renderTestAttachDropdownSection()'s own comment in
-                     the script. Not a real card slot; purely for
-                     comparing this interaction pattern against Variant
-                     B (the collapsible accordion) over on
-                     #game-team-detail-overlay. -->
-                <div class="game-team-cards-section">
-                    <p class="game-team-cards-section-title">Attach Card -- Test A (Dropdown w/ Categories)</p>
-                    <div class="game-team-cards-detail" id="game-team-cards-test-dropdown-detail"></div>
-                </div>
-
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude game-team-cards-close-btn">Close</button>
                 </div>
@@ -9870,17 +9787,6 @@
                 <div class="game-team-detail-section" id="game-team-detail-nature-card-section">
                     <p class="game-team-detail-section-title">Nature Card</p>
                     <div class="game-team-cards-detail" id="game-team-detail-nature-card-detail"></div>
-                </div>
-
-                <!-- EXPERIMENTAL Variant B -- see
-                     renderTestAttachAccordionSection()'s own comment in
-                     the script. Not a real card slot; purely for
-                     comparing this interaction pattern against Variant
-                     A (the plain grouped dropdown) over on
-                     #game-team-cards-overlay. -->
-                <div class="game-team-detail-section">
-                    <p class="game-team-detail-section-title">Attach Card -- Test B (Collapsible Categories)</p>
-                    <div class="game-team-cards-detail" id="game-team-detail-test-accordion-detail"></div>
                 </div>
 
                 <div class="game-save-slot-actions">
@@ -13407,146 +13313,10 @@
                 // POKEMON_BY_NAME's own re-render-on-late-arrival call
                 // just below.
                 renderTeamGrid();
-                renderTestAttachDropdownSection();
-                renderTestAttachAccordionSection();
             })
             .catch(err => {
                 console.warn('Could not load card data:', err);
             });
-
-        // ---- EXPERIMENTAL: grouped-by-category Attach Card pickers -----
-        // Two throwaway A/B variants for browsing the 381-card Attach
-        // pool (TM Deck alone is 291 of those) by cardDeck instead of one
-        // long flat list -- see the chat these were built to compare.
-        // Deliberately NOT wired into member.attachCardId, persistence,
-        // commitTeamMemberCard(), or reconcileLegendaryEvolutionOnCardChange()
-        // at all -- these are just for feeling out the two interaction
-        // patterns side by side before picking a winner, not a real third
-        // way to equip a card. Each keeps its own local-only "what's
-        // picked right now" state instead.
-        //
-        // Display order for cards.json's own cardDeck values within the
-        // Attach pool -- Nature Deck excluded since these two test
-        // widgets are Attach-only. A deck with zero matches in the
-        // current pool is simply skipped; anything unexpected (there
-        // shouldn't be one) gets appended at the end so nothing silently
-        // disappears.
-        const ATTACH_CARD_DECK_ORDER = [
-            'Event Deck', 'Item Deck', 'Shop Deck', 'TM Deck',
-            'Poké Ball Deck', 'Tera Type Deck', 'Type-Enhancer Deck',
-            'Z-Crystal Deck', 'Reward Item Deck',
-        ];
-
-        // Groups getAttachableCardsForSlot('attach')'s own list by
-        // cardDeck, in ATTACH_CARD_DECK_ORDER -- returns
-        // [{ deck, cards }, ...]. Shared by both experimental widgets
-        // below so they're always comparing the exact same underlying
-        // data, just presented two different ways.
-        function groupAttachableCardsByDeck() {
-            const cards = getAttachableCardsForSlot('attach');
-            const byDeck = {};
-            cards.forEach(c => {
-                const deck = c.cardDeck || 'Other';
-                (byDeck[deck] = byDeck[deck] || []).push(c);
-            });
-            const order = ATTACH_CARD_DECK_ORDER.filter(d => byDeck[d]);
-            Object.keys(byDeck).forEach(d => { if (!order.includes(d)) order.push(d); });
-            return order.map(deck => ({ deck, cards: byDeck[deck] }));
-        }
-
-        // ---- Variant A: native <select> + <optgroup> (corner badge) ----
-        // Native grouped headers -- work fine on mobile, but browsers
-        // don't allow a <optgroup> to collapse/expand (see the chat this
-        // was compared against Variant B for).
-        let testAttachCardIdDropdown = null;
-        let testAttachDropdownAdding = false;
-
-        function renderTestAttachDropdownSection() {
-            const el = document.getElementById('game-team-cards-test-dropdown-detail');
-            if (!el) return;
-            const card = testAttachCardIdDropdown ? CARDS_BY_ID[testAttachCardIdDropdown] : null;
-            if (card) {
-                el.innerHTML = `
-                    ${card.imageUrl
-                        ? `<img class="game-team-cards-photo" src="${card.imageUrl}" alt="${escapeHtml(card.name)}" data-card-id="${card.id}">`
-                        : `<p class="game-team-cards-detail-empty">${escapeHtml(card.name)}</p>`}
-                    <button class="filter-btn exclude game-team-cards-card-btn" type="button" data-test-remove="dropdown">Remove Card</button>
-                `;
-                return;
-            }
-            if (testAttachDropdownAdding) {
-                const groups = groupAttachableCardsByDeck();
-                el.innerHTML = `
-                    <select class="game-team-cards-select game-team-cards-test-select" data-test-select="dropdown">
-                        <option value="" disabled selected>Select a card...</option>
-                        ${groups.map(g => `
-                            <optgroup label="${escapeHtml(g.deck)} (${g.cards.length})">
-                                ${g.cards.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
-                            </optgroup>
-                        `).join('')}
-                    </select>
-                    <button class="filter-btn exclude game-team-cards-card-btn" type="button" data-test-cancel="dropdown">Cancel</button>
-                `;
-                return;
-            }
-            el.innerHTML = `
-                <p class="game-team-cards-detail-empty">No card equipped.</p>
-                <button class="filter-btn game-team-cards-card-btn" type="button" data-test-add="dropdown">Add Card</button>
-            `;
-        }
-
-        // ---- Variant B: custom collapsible accordion (detail view) -----
-        // Each cardDeck is its own collapsible group -- more than one can
-        // be open at once (tapping a header just toggles that one deck's
-        // own membership in the expanded set, independent of the others).
-        let testAttachCardIdAccordion = null;
-        let testAttachAccordionAdding = false;
-        let testAttachAccordionExpandedDecks = new Set();
-
-        function renderTestAttachAccordionSection() {
-            const el = document.getElementById('game-team-detail-test-accordion-detail');
-            if (!el) return;
-            const card = testAttachCardIdAccordion ? CARDS_BY_ID[testAttachCardIdAccordion] : null;
-            if (card) {
-                el.innerHTML = `
-                    ${card.imageUrl
-                        ? `<img class="game-team-cards-photo" src="${card.imageUrl}" alt="${escapeHtml(card.name)}" data-card-id="${card.id}">`
-                        : `<p class="game-team-cards-detail-empty">${escapeHtml(card.name)}</p>`}
-                    <button class="filter-btn exclude game-team-cards-card-btn" type="button" data-test-remove="accordion">Remove Card</button>
-                `;
-                return;
-            }
-            if (testAttachAccordionAdding) {
-                const groups = groupAttachableCardsByDeck();
-                el.innerHTML = `
-                    <div class="game-team-cards-accordion">
-                        ${groups.map(g => {
-                            const expanded = testAttachAccordionExpandedDecks.has(g.deck);
-                            return `
-                                <div class="game-team-cards-accordion-group${expanded ? ' expanded' : ''}">
-                                    <button class="game-team-cards-accordion-header" type="button" data-test-toggle-deck="${escapeHtml(g.deck)}">
-                                        <span>${escapeHtml(g.deck)}</span>
-                                        <span class="game-team-cards-accordion-count">${g.cards.length}</span>
-                                        <span class="game-team-cards-accordion-caret">${expanded ? '&#9652;' : '&#9662;'}</span>
-                                    </button>
-                                    ${expanded ? `
-                                        <div class="game-team-cards-accordion-body">
-                                            ${g.cards.map(c => `<button class="filter-btn game-team-cards-accordion-option" type="button" data-test-pick="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
-                                        </div>
-                                    ` : ''}
-                                </div>
-                            `;
-                        }).join('')}
-                    </div>
-                    <button class="filter-btn exclude game-team-cards-card-btn" type="button" data-test-cancel="accordion">Cancel</button>
-                `;
-                return;
-            }
-            el.innerHTML = `
-                <p class="game-team-cards-detail-empty">No card equipped.</p>
-                <button class="filter-btn game-team-cards-card-btn" type="button" data-test-add="accordion">Add Card</button>
-            `;
-        }
 
         // The four evolution-corner icons -- see the chat this was
         // designed in. 'unable' is also renderTeamGrid()'s own inline
@@ -14253,12 +14023,6 @@
             teamCardsOverlayIndex = index;
             teamCardsOverlayAddingSlot = null;
             renderTeamCardsOverlay();
-            // EXPERIMENTAL -- resets Variant A back to empty every open
-            // rather than remembering a prior pick, since it isn't tied
-            // to this (or any) member at all -- see its own comment.
-            testAttachCardIdDropdown = null;
-            testAttachDropdownAdding = false;
-            renderTestAttachDropdownSection();
             const overlay = document.getElementById('game-team-cards-overlay');
             if (overlay) overlay.classList.add('visible');
         }
@@ -15043,14 +14807,6 @@
             renderTeamDetailLevelSection();
             renderTeamDetailStatusSection();
             renderTeamDetailCardsSection();
-            // EXPERIMENTAL -- resets Variant B back to empty/collapsed
-            // every open rather than remembering a prior pick, since it
-            // isn't tied to this (or any) member at all -- see its own
-            // comment.
-            testAttachCardIdAccordion = null;
-            testAttachAccordionAdding = false;
-            testAttachAccordionExpandedDecks = new Set();
-            renderTestAttachAccordionSection();
             const statusPickerEl = document.getElementById('game-team-detail-status-picker');
             if (statusPickerEl) statusPickerEl.classList.remove('visible');
             renderTeamDetailEvolutionSection();
@@ -19539,36 +19295,6 @@
                 removeTeamCardsOverlayCard(cardRemoveBtn.dataset.slot);
                 return;
             }
-            // ---- EXPERIMENTAL Variant A (dropdown w/ <optgroup>) --
-            // see renderTestAttachDropdownSection()'s own comment.
-            if (e.target.closest('[data-test-add="dropdown"]')) {
-                testAttachDropdownAdding = true;
-                renderTestAttachDropdownSection();
-                return;
-            }
-            if (e.target.closest('[data-test-cancel="dropdown"]')) {
-                testAttachDropdownAdding = false;
-                renderTestAttachDropdownSection();
-                return;
-            }
-            if (e.target.closest('[data-test-remove="dropdown"]')) {
-                testAttachCardIdDropdown = null;
-                renderTestAttachDropdownSection();
-                return;
-            }
-        });
-
-        // Same "test dropdown uses its own class so it can't get picked
-        // up by the real Attach/Nature change listener below" reasoning
-        // as renderTestAttachDropdownSection()'s own comment.
-        document.getElementById('game-team-cards-overlay').addEventListener('change', (e) => {
-            const testSelect = e.target.closest('.game-team-cards-test-select');
-            if (testSelect && testSelect.value) {
-                testAttachCardIdDropdown = testSelect.value;
-                testAttachDropdownAdding = false;
-                renderTestAttachDropdownSection();
-                return;
-            }
         });
 
         // The Attach/Nature Card dropdown (see renderTeamCardSlotPanel())
@@ -19719,38 +19445,6 @@
             const cardRemoveBtn = e.target.closest('.game-team-cards-remove-btn');
             if (cardRemoveBtn) {
                 removeTeamDetailCard(cardRemoveBtn.dataset.slot);
-                return;
-            }
-            // ---- EXPERIMENTAL Variant B (collapsible accordion) --
-            // see renderTestAttachAccordionSection()'s own comment.
-            if (e.target.closest('[data-test-add="accordion"]')) {
-                testAttachAccordionAdding = true;
-                renderTestAttachAccordionSection();
-                return;
-            }
-            if (e.target.closest('[data-test-cancel="accordion"]')) {
-                testAttachAccordionAdding = false;
-                renderTestAttachAccordionSection();
-                return;
-            }
-            if (e.target.closest('[data-test-remove="accordion"]')) {
-                testAttachCardIdAccordion = null;
-                renderTestAttachAccordionSection();
-                return;
-            }
-            const deckToggle = e.target.closest('[data-test-toggle-deck]');
-            if (deckToggle) {
-                const deck = deckToggle.dataset.testToggleDeck;
-                if (testAttachAccordionExpandedDecks.has(deck)) testAttachAccordionExpandedDecks.delete(deck);
-                else testAttachAccordionExpandedDecks.add(deck);
-                renderTestAttachAccordionSection();
-                return;
-            }
-            const deckPick = e.target.closest('[data-test-pick]');
-            if (deckPick) {
-                testAttachCardIdAccordion = deckPick.dataset.testPick;
-                testAttachAccordionAdding = false;
-                renderTestAttachAccordionSection();
                 return;
             }
         });
