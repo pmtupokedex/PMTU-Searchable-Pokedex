@@ -2916,17 +2916,51 @@
            vertical "pill"/stadium shape) at any height this badge
            reaches. */
         .game-team-slot-cards.pill {
-            aspect-ratio: 3 / 5;
+            aspect-ratio: 6 / 11;
             border-radius: 999px;
             flex-direction: column;
-            justify-content: space-evenly;
-            gap: 6%;
         }
 
         .game-team-slot-cards-img {
-            width: 90%;
+            width: 100%;
             aspect-ratio: 1 / 1;
             object-fit: contain;
+            background-repeat: no-repeat;
+        }
+
+        /* Wrapper for the auto-cropped-icon case (see ICON_CROP_BY_CARD_TYPE
+           in the script) -- takes over .game-team-slot-cards-img's own
+           box (same width/aspect-ratio) but clips its own oversized
+           .game-team-slot-cards-crop-img child locally, rather than
+           relying on the outer .game-team-slot-cards circle/pill clip.
+           That's needed for the two-icon pill case: without this,
+           an oversized cropped image could bleed sideways into the
+           other icon's slot before the outer pill's own clip ever
+           caught it, since the pill's clip boundary is the whole
+           stadium shape, not each stacked icon's individual square. */
+        .game-team-slot-cards-crop {
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* The actual cropped card art -- deliberately rendered as a real
+           <img> rather than a CSS background-image. Both should look
+           identical in principle, but scaling a background-image on a
+           clipped/composited layer (like this circular badge) can come
+           out visibly jagged/un-anti-aliased in some browsers, since it
+           doesn't reliably go through the same high-quality resampling
+           pipeline normal <img> scaling does. Sized explicitly per-card
+           via inline style (see the crop math in the script) rather
+           than through this class, which just handles the parts that
+           are the same for every cropped icon: absolutely positioned
+           within its .game-team-slot-cards-crop wrapper (so the inline
+           left/top percentages position it correctly), and exempted
+           from any max-width:100% reset that would otherwise shrink an
+           intentionally-oversized image back down to its container. */
+        .game-team-slot-cards-crop-img {
+            position: absolute;
+            max-width: none;
+            max-height: none;
         }
 
         /* Each icon gets less of the shared width once there are two of
@@ -2934,7 +2968,7 @@
            the spacing between them) -- otherwise two 90%-width images
            would run past the sides of the narrower vertical pill. */
         .game-team-slot-cards.pill .game-team-slot-cards-img {
-            width: 78%;
+            width: 100%;
         }
 
         /* Evolution -- top-right corner, mirroring
@@ -3358,17 +3392,51 @@
             display: flex;
         }
 
+        /* Icon + counter pill, same shared layout .game-team-detail-hp-top
+           uses for the detail column, duplicated under its own class per
+           this doc's usual independence reasoning. justify-content is
+           overridden to center below once #game-team-hp-counter's own
+           max-width is in play -- see that override's comment for why. */
+        .game-team-hp-top {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 8px;
+            width: 100%;
+        }
+
+        /* Purely a visual indicator here, unlike
+           .game-team-detail-hp-icon -- this overlay never opens on an
+           already-Fainted member (see openTeamHpOverlay()'s own call
+           site, the #game-scroll delegated listener's .game-team-slot-hp
+           branch, which always routes those to the plain Yes/No revive
+           confirm instead), so there's no revive case for a tap here to
+           handle, and 'standard' (the only rule where a healthy icon tap
+           faints on the detail column) never reaches this overlay
+           either. Duplicated under its own class rather than shared,
+           same independence reasoning as everywhere else in this doc. */
+        .game-team-hp-icon {
+            width: 40px;
+            height: 40px;
+            object-fit: contain;
+            flex-shrink: 0;
+        }
+
         /* Same "one element, two invisible click zones" shape as
-           .game-team-status-counter (see its own comment) -- duplicated
-           rather than shared, same independence reasoning as every
-           other near-identical pair in this doc. No -wrap/.visible
+           .game-team-detail-status-counter (see its own comment) --
+           duplicated rather than shared, same independence reasoning as
+           every other near-identical pair in this doc. No -wrap/.visible
            toggle needed the way the status counter has one, since this
            overlay only ever exists to show this counter -- there's no
            "sometimes hidden" case here the way a status without a
-           STATUS_COUNTER_CONFIG entry has. */
+           STATUS_COUNTER_CONFIG entry has. flex: 1 1 auto is shared with
+           the detail column's version of this counter (see
+           #game-team-hp-counter's own max-width override just below for
+           why that's capped here rather than left to fill the row). */
         .game-team-hp-counter {
             position: relative;
-            width: 50%;
+            flex: 1 1 auto;
+            min-width: 0;
             aspect-ratio: 3 / 1;
             border: 3.5px solid white;
             border-radius: 16px;
@@ -3377,18 +3445,58 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 28px;
+            font-size: 15px;
             font-weight: bold;
             color: #FFF;
             text-shadow:
                 -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
                 -1px  0   0 black,                 1px  0   0 black,
                 -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
-            margin: 0 auto 14px;
+        }
+
+        /* Same reasoning as #game-team-status-counter's own max-width
+           (see its comment): flex: 1 1 auto is shared with the detail
+           column's version of this counter, where it only ever has to
+           fill the sliver left over next to that column's icon. This
+           overlay has no such column to constrain it -- .game-team-hp-top
+           runs the full card width -- so left alone it stretches (and,
+           via aspect-ratio, grows taller right along with it) into a
+           much bigger control than intended. Capped to the same ~86px
+           the status counter borrows back, scoped by id so the detail
+           column's own instance is untouched. */
+        #game-team-hp-counter {
+            max-width: 86px;
+        }
+
+        /* Same reasoning as #game-team-status-top's own override (see
+           its comment): now that the counter beside it is capped to a
+           fixed ~86px instead of filling the row, left-aligning the pair
+           the way the detail column does would leave a large empty gap
+           to the right of it in this overlay's much wider, unsplit row
+           -- centering the pair as a unit instead keeps them looking
+           intentional. */
+        #game-team-hp-top {
+            justify-content: center;
+        }
+
+        /* Mirrors .game-team-detail-hp-status-text, duplicated under its
+           own class for the same independence reasoning as
+           .game-team-hp-top/-icon above. */
+        .game-team-hp-status-text {
+            margin: -3px 0 14px;
+            font-size: 22px;
+            font-weight: bold;
+            text-align: center;
+            color: #FFF;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
         }
 
         /* Revive confirmation -- see openTeamReviveConfirmOverlay()/
            closeTeamReviveConfirmOverlay()/confirmTeamRevive() in the
+
            script. Same positioning/backdrop rules as every other Team
            Tracker overlay above. */
         #game-team-revive-overlay {
@@ -4169,6 +4277,12 @@
 		#game-team-detail-status-counter {
                 padding-top: 3px;
             }
+		
+		/* Same nudge as #game-team-detail-hp-counter just above, now that
+		   this overlay's counter shares its X&nbsp;/&nbsp;Y text layout. */
+		#game-team-hp-counter {
+                padding-top: 3px;
+            }
         }
 
         /* Same left-half-decrements/right-half-increments affordance as
@@ -4216,6 +4330,21 @@
             gap: 8px;
         }
 
+        /* The detail pane's own flex-start above exists so the icon and
+           its full-width flex: 1 1 auto counter sit flush against each
+           other with no dead space at the column's right edge. Now that
+           #game-team-status-counter caps that same counter to a fixed
+           ~86px instead (see its own comment), left-aligning the same
+           way here would leave a large empty gap to the right of it in
+           this overlay's much wider, unsplit row -- centering the pair
+           as a unit instead keeps them looking intentional regardless of
+           whether the counter's showing (overriding flex-start) or
+           hidden (redundant with, but harmless alongside, .game-team-
+           detail-status-top-centered's own toggle for that case). */
+        #game-team-status-top {
+            justify-content: center;
+        }
+
         .game-team-detail-status-top.game-team-detail-status-top-centered {
             justify-content: center;
         }
@@ -4238,6 +4367,15 @@
             align-items: center;
             justify-content: center;
             cursor: pointer;
+        }
+
+        /* Unlike the detail pane's own icon (a genuine tap target -- see
+           handleTeamDetailStatusIconTap()), this overlay's icon is a
+           plain live preview with no click handler of its own anymore
+           (see the overlay's click listener), so the shared pointer
+           cursor above would be a misleading affordance here. */
+        #game-team-status-icon-wrap {
+            cursor: default;
         }
 
         .game-team-detail-status-icon-img {
@@ -4276,6 +4414,23 @@
                 -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
                 -1px  0   0 black,                 1px  0   0 black,
                 -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
+        /* In the detail pane, this counter's flex: 1 1 auto only ever
+           has to fill whatever's left of a ~134px-wide half-column (see
+           .game-team-detail-col) after the 40px icon and 8px gap beside
+           it -- roughly 86px. This overlay has no such column split (its
+           whole .game-team-detail-status-top runs the full ~280px card
+           width), so left alone the same flex: 1 1 auto stretches this
+           to fill nearly the entire card instead, and aspect-ratio: 3/1
+           then scales its height up right along with that extra width --
+           reading as a much bigger control than the detail pane's own,
+           not just a wider one. Capping the width here to that same
+           ~86px the detail pane's column would have given it (scoped by
+           id so the detail pane's own instance is untouched) borrows its
+           actual on-screen size back rather than just its shape. */
+        #game-team-status-counter {
+            max-width: 86px;
         }
 
         /* Same left-half-decrements/right-half-increments affordance as
@@ -4449,6 +4604,21 @@
             margin-top: 6px;
         }
 
+        /* This overlay only ever shows the eight status options (no
+           check/cancel appended to the row the way the detail pane's own
+           strip has -- see the overlay's own HTML comment), so it can
+           afford, and reads better with, some side breathing room the
+           shared rule above doesn't give it -- scoped by id rather than
+           added to the shared class so the detail pane's own denser,
+           ten-button strip is untouched. 30px either side is what
+           narrows the row just enough that only 4 of the 8 45px buttons
+           fit per line instead of 5, landing on a clean two rows of four
+           rather than an uneven 5-and-3 split. */
+        #game-team-status-picker-inner {
+            padding-left: 30px;
+            padding-right: 30px;
+        }
+
         /* Plain reset rather than .filter-btn's own pill/label look --
            there's no room for a name label next to eight of these in one
            row, just the icon itself (see statusImageMarkup() again for
@@ -4467,9 +4637,12 @@
             justify-content: center;
         }
 
-        /* Marks whichever status the member already has, same "border
-           color only" reasoning as .game-team-status-choose-btn.active's
-           own comment. */
+        /* Marks whichever status is currently highlighted -- the
+           member's real status when nothing's armed yet, or the armed
+           preview once one is (see renderTeamDetailStatusPickerOptions()/
+           renderTeamStatusPickerOptions() in the script for exactly
+           which). Border color only, not background -- the dark
+           background already carries the icon fine. */
         .game-team-detail-status-picker-btn.active {
             border-color: #FFEB3B;
         }
@@ -4631,8 +4804,8 @@
             flex-shrink: 0;
         }
 
-        /* Marks the in-progress pick, same convention as
-           .game-team-status-choose-btn.active. */
+        /* Marks the in-progress pick, same "border color only"
+           convention as .game-team-detail-status-picker-btn.active. */
         .game-team-evolution-choose-btn.active {
             border-color: #FFEB3B;
         }
@@ -4646,7 +4819,7 @@
             flex-direction: column;
             align-items: center;
             gap: 10px;
-            margin: 0 0 14px;
+            margin: 12px 0 12px;
         }
 
         .game-team-evolution-single-confirm-img {
@@ -4661,18 +4834,21 @@
             margin: 0;
         }
 
-        /* legendaryEvolutionReminderHtml()'s own reminder line -- only
-           ever rendered for a gated:false legendary_evolve choice
-           (Kubfu today), since this app has no state to actually
-           enforce a play-and-discard card requirement the way it can
-           for an attached one. Deliberately muted/italic rather than
-           styled like a warning -- it's a rules reminder, not an error. */
+        /* evolutionReminderHtml()'s own reminder line -- rendered for
+           Mega Evolution and Gigantamax choices (their own item
+           requirements this app has no state to track/enforce, e.g. a
+           Mega Stone/Mega Bracelet or Dynamax Band actually being in
+           play) and for a gated:false legendary_evolve choice (Kubfu
+           today, same "can't enforce a play-and-discard card
+           requirement the way an attached one is enforced" reasoning).
+           Deliberately muted/italic rather than styled like a warning --
+           it's a rules reminder, not an error. */
         .game-team-evolution-reminder {
             text-align: center;
             font-size: 13px;
-            font-style: italic;
-            color: #888;
-            margin: 8px 0 0;
+            font-weight: bold;
+            color: #333;
+            margin: 8px 0 16px;
         }
 
         /* Caps how tall any of these confirm cards can get so long
@@ -4728,108 +4904,17 @@
             }
         }
 
-        /* Same shape as .game-badge-choose-btn/-img and
-           .game-badge-choose-grid above (see their own comments) --
-           duplicated rather than shared, same independence reasoning as
-           every other near-identical pair in this doc. */
-        #game-team-status-options {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-		padding-bottom: 5px;
-        }
-
-        .game-team-status-choose-btn {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: flex-start;
-            text-align: center;
-            flex: 0 0 calc(50% - 15px);
-            width: calc(50% - 5px);
-            margin: 0;
-        }
-
-        .game-team-status-choose-img {
-            width: 60px;
-            height: 60px;
-            object-fit: contain;
-            flex-shrink: 0;
-        }
-
-        /* Marks whichever status a member already has, if any, when
-           reopening the picker on top of it -- see
-           openTeamStatusOverlay()'s own template literal. Border color
-           only (not background) -- .filter-btn's own dark background
-           already carries the white text fine; swapping to a light
-           background here to signal "selected" the way .game-team-
-           status-choose-btn's non-active siblings imply would fight
-           that same text instead. */
-        .game-team-status-choose-btn.active {
-            border-color: #FFEB3B;
-        }
-
-        /* Hidden by default -- renderTeamStatusCounter() toggles
-           .visible based on whether STATUS_COUNTER_CONFIG has an entry
-           for the pending status (see its own comment), rather than
-           this ever showing empty or at a meaningless 0 for a status
-           that doesn't take a count at all. */
-        .game-team-status-counter-wrap {
-            display: none;
-            margin: 0 0 14px;
-        }
-
-        .game-team-status-counter-wrap.visible {
-            display: flex;
-            justify-content: center;
-        }
-
-        /* Same "one element, two invisible click zones" interaction as
-           .game-team-slot-level (left half decrements, right half
-           increments -- see the overlay's own click listener for the
-           clientX-against-bounding-rect split), deliberately given a
-           different look here rather than reusing that pill outright:
-           this sits as its own section in open card space instead of
-           hanging off a token's corner, so a wide rounded rectangle
-           reads more like a dedicated control than a badge. */
-        .game-team-status-counter {
-            position: relative;
-            width: 50%;
-            aspect-ratio: 3 / 1;
-            border: 3.5px solid white;
-            border-radius: 16px;
-            background: rgba(0, 90, 160, 0.85);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 28px;
-            font-weight: bold;
-            color: #FFF;
-            text-shadow:
-                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
-                -1px  0   0 black,                 1px  0   0 black,
-                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
-        }
-
         /* Same left-half-decrements/right-half-increments affordance as
            .game-team-slot-level::before/::after (see its own comment) --
-           shared by both counter widgets (.game-team-status-counter and
-           .game-team-hp-counter) via this single selector rather than
-           duplicated per-widget, since the two are already visually
-           identical wide pills and there's no reason for their +/- to
-           ever diverge. Purely decorative, pointer-events left alone so
-           they don't interfere with the click-zone math against the
-           pill's own bounding rect (see each overlay's own click
-           listener). */
-        .game-team-status-counter::before,
-        .game-team-status-counter::after,
+           purely decorative, pointer-events left alone so they don't
+           interfere with the click-zone math against the pill's own
+           bounding rect (see the HP overlay's own click listener). */
         .game-team-hp-counter::before,
         .game-team-hp-counter::after {
             position: absolute;
             top: 50%;
             transform: translateY(-50%);
-            font-size: 18px;
+            font-size: 12px;
             font-weight: bold;
             line-height: 1;
             color: #FFF;
@@ -4840,16 +4925,14 @@
             pointer-events: none;
         }
 
-        .game-team-status-counter::before,
         .game-team-hp-counter::before {
             content: "-";
-            left: 16px;
+            left: 8px;
         }
 
-        .game-team-status-counter::after,
         .game-team-hp-counter::after {
             content: "+";
-            right: 16px;
+            right: 8px;
         }
 
         /* The gallery-side half of this flow, once the panel above has
@@ -9695,13 +9778,27 @@
              openTeamHpOverlay()/closeTeamHpOverlay()/
              confirmTeamHpSelection() in the script. Reuses
              .game-confirm-card/-title, same as every other Team Tracker
-             overlay above. -->
+             overlay above. Restyled to mirror #game-team-detail-overlay's
+             own HP column (icon + X/max counter + Healthy/Fainted text --
+             see .game-team-hp-top/-icon/-status-text in the CSS,
+             deliberately separate classes from that column's
+             .game-team-detail-hp-* equivalents rather than shared, same
+             independence reasoning as every other near-identical pair in
+             this doc), but the icon here is purely a visual indicator
+             (see its own CSS comment for why) and this overlay keeps its
+             own Confirm/Cancel staging rather than the detail column's
+             immediate-commit-per-tap behavior: nothing here writes to
+             the member until Confirm is tapped. -->
         <div id="game-team-hp-overlay">
             <div class="game-confirm-card">
                 <p class="game-confirm-title" id="game-team-hp-title">Hit Points</p>
-                <div class="game-team-hp-counter" id="game-team-hp-counter">
-                    <span id="game-team-hp-counter-value">0</span>
+                <div class="game-team-hp-top" id="game-team-hp-top">
+                    <img class="game-team-hp-icon" id="game-team-hp-icon" alt="HP">
+                    <div class="game-team-hp-counter" id="game-team-hp-counter">
+                        <span id="game-team-hp-counter-value">0</span>&nbsp;/&nbsp;<span id="game-team-hp-counter-max">0</span>
+                    </div>
                 </div>
+                <p class="game-team-hp-status-text" id="game-team-hp-status-text">Healthy</p>
                 <div class="game-save-slot-actions">
                     <button class="filter-btn game-team-hp-confirm-btn">Confirm</button>
                     <button class="filter-btn exclude game-team-hp-cancel-btn">Cancel</button>
@@ -9771,23 +9868,47 @@
             <img id="game-team-card-image-viewer-img" src="" alt="">
         </div>
 
-        <!-- Status Condition picker for a single Team Tracker slot -- see
-             openTeamStatusOverlay()/closeTeamStatusOverlay()/
-             confirmTeamStatusSelection() and STATUS_CONDITIONS in the
-             script. Reuses .game-confirm-card/-title, and
-             .game-badge-choose-btn's own "several named things, pick
-             one" list pattern (duplicated as .game-team-status-choose-
-             btn/-img, same independence reasoning as every other
-             near-identical pair in this doc). -->
+        <!-- Mirrors the detail pane's own Status column layout almost
+             exactly (see .game-team-detail-status-top/-icon-wrap/
+             -counter/-name-text/-card-panel/-picker in the CSS, all
+             reused verbatim here under this overlay's own ids) -- see
+             openTeamStatusOverlay()/renderTeamStatusDisplay()/
+             selectPendingTeamStatus()/confirmTeamStatusSelection() in
+             the script for the adapted logic. Unlike the detail pane,
+             a single tap on any option in the strip below immediately
+             updates icon/counter/name/card to that pick (see
+             selectPendingTeamStatus()) rather than requiring a second
+             tap to arm/commit it -- nothing is actually written to the
+             member until the overlay's own Confirm button below is
+             tapped (see confirmTeamStatusSelection()), same staged
+             "pick freely, only Confirm writes it back" shape
+             #game-team-hp-overlay's own counter already has. The picker
+             strip here is also permanently expanded (.visible baked
+             into the markup, never toggled) since this whole overlay
+             already exists just to pick a status -- there's no separate
+             "closed" state for it to collapse back into, and no
+             check/cancel buttons built into the strip itself the way
+             the detail pane's own does -- Confirm/Cancel live in their
+             own row below instead, same shape as the HP overlay. -->
         <div id="game-team-status-overlay">
             <div class="game-confirm-card">
                 <p class="game-confirm-title">Choose a Status Condition</p>
-                <div class="game-team-status-counter-wrap" id="game-team-status-counter-wrap">
-                    <div class="game-team-status-counter" id="game-team-status-counter">
+                <div class="game-team-detail-status-top" id="game-team-status-top">
+                    <div class="game-team-detail-status-icon-wrap" id="game-team-status-icon-wrap"></div>
+                    <div class="game-team-detail-status-counter" id="game-team-status-counter">
                         <span id="game-team-status-counter-value">0</span>
                     </div>
                 </div>
-                <div id="game-team-status-options"></div>
+                <p class="game-team-detail-status-name-text" id="game-team-status-name-text">No Status</p>
+                <div class="game-team-detail-status-card-panel" id="game-team-status-card-panel">
+                    <div class="game-team-detail-status-card-panel-inner" id="game-team-status-card-panel-inner">
+                        <img class="game-team-detail-status-card-img" id="game-team-status-card-img" src="" alt="">
+                        <button class="filter-btn game-team-detail-status-card-flip-btn" id="game-team-status-card-flip-btn" type="button">Flip Card</button>
+                    </div>
+                </div>
+                <div class="game-team-detail-status-picker visible" id="game-team-status-picker">
+                    <div class="game-team-detail-status-picker-inner" id="game-team-status-picker-inner"></div>
+                </div>
                 <div class="game-save-slot-actions">
                     <button class="filter-btn game-team-status-confirm-btn">Confirm</button>
                     <button class="filter-btn exclude game-team-status-cancel-btn">Cancel</button>
@@ -13135,12 +13256,29 @@
                     // Attach and a Nature icon are showing at once --
                     // see .game-team-slot-cards.pill in the CSS for the
                     // taller shape that makes room for the second icon.
+                    //
+                    // Each image renders as a plain <img> when crop is
+                    // null (a real iconUrl, or one of the CARD_SLOT_IMAGES
+                    // fallbacks) or, when cardIconFor() fell back to
+                    // auto-cropping imageUrl (see ICON_CROP_BY_CARD_TYPE),
+                    // as a small wrapper clipping an oversized <img> of
+                    // the full card art -- zooming in on just the
+                    // illustration box instead of squishing the whole
+                    // card into the circle. Deliberately built from a
+                    // real <img> rather than a CSS background-image (an
+                    // earlier version of this used background-size/
+                    // -position) since background-image scaling on a
+                    // clipped/composited layer like this badge rendered
+                    // visibly jagged in testing -- ordinary <img> scaling
+                    // doesn't have that problem. cropIconMarkup() below
+                    // does the size/position -> CSS math; see its own
+                    // comment for why plain percentages don't work here.
                     const cardsState = computeTeamCardsState(member, naturesEnabled);
                     const cardsBadge = document.createElement('div');
                     cardsBadge.className = 'game-team-slot-cards' + (cardsState.pill ? ' pill' : '');
                     cardsBadge.dataset.index = i;
                     cardsBadge.innerHTML = cardsState.images
-                        .map(img => `<img class="game-team-slot-cards-img" src="${img.url}" alt="${img.alt}" onerror="this.style.display='none'">`)
+                        .map(img => img.crop ? cropIconMarkup(img) : `<img class="game-team-slot-cards-img" src="${img.url}" alt="${img.alt}" onerror="this.style.display='none'">`)
                         .join('');
                     slot.appendChild(cardsBadge);
 
@@ -13619,7 +13757,7 @@
         // gated:false (Kubfu today) means every target always qualifies
         // regardless of attachCardId, since that mechanic is "play and
         // discard the card" rather than "keep it attached," which this
-        // app has no state for; legendaryEvolutionReminderHtml() covers
+        // app has no state for; evolutionReminderHtml() covers
         // that gap with reminder text instead of a real gate.
         // reverts:true means evolving sets member.formOverride the same
         // way Mega/Gigantamax do (temporary, art-only, species stays
@@ -14016,9 +14154,36 @@
         let pendingTeamHpIndex = null;
         let pendingTeamHpValue = 0;
 
-        function renderTeamHpCounter() {
+        // Mirrors renderTeamDetailHpSection()'s icon/counter/status-text
+        // trio (see its own comment), just without the hasCounter/
+        // top-centered/revive-via-icon pieces that helper needs: this
+        // overlay never opens under 'standard' at all (see
+        // openTeamHpOverlay()'s own guard), so the counter's never
+        // hidden here, and it never opens on an already-Fainted member
+        // either (the corner badge always routes those to the plain
+        // Yes/No revive confirm instead -- see the #game-scroll
+        // delegated listener's own .game-team-slot-hp branch), so unlike
+        // that column there's no revive case for the icon to handle:
+        // "Fainted" here only ever means "the counter's been run down to
+        // 0 in this session," purely a preview of what Confirm would do,
+        // derived straight from pendingTeamHpValue rather than tracked
+        // as its own separate flag.
+        function renderTeamHpOverlayState() {
+            const fainted = pendingTeamHpValue === 0;
+            const iconEl = document.getElementById('game-team-hp-icon');
+            if (iconEl) {
+                iconEl.src = fainted ? HP_MODE_IMAGES.fainted : HP_MODE_IMAGES.default;
+            }
             const valueEl = document.getElementById('game-team-hp-counter-value');
             if (valueEl) valueEl.textContent = pendingTeamHpValue;
+            const maxEl = document.getElementById('game-team-hp-counter-max');
+            if (maxEl) {
+                const data = getActiveSaveData();
+                const member = pendingTeamHpIndex === null ? null : (data.team.members || [])[pendingTeamHpIndex];
+                maxEl.textContent = member ? (getTeamMemberHpMax(member, getHpRule(data)) || 0) : 0;
+            }
+            const statusTextEl = document.getElementById('game-team-hp-status-text');
+            if (statusTextEl) statusTextEl.textContent = fainted ? 'Fainted' : 'Healthy';
         }
 
         function openTeamHpOverlay(index) {
@@ -14029,7 +14194,7 @@
             if (hpRule === 'standard') return;
             pendingTeamHpIndex = index;
             pendingTeamHpValue = getTeamMemberHp(member, hpRule);
-            renderTeamHpCounter();
+            renderTeamHpOverlayState();
             const overlay = document.getElementById('game-team-hp-overlay');
             if (overlay) overlay.classList.add('visible');
         }
@@ -14056,7 +14221,7 @@
             const hpRule = getHpRule(data);
             const max = getTeamMemberHpMax(member, hpRule) || 0;
             pendingTeamHpValue = Math.max(0, Math.min(max, pendingTeamHpValue + delta));
-            renderTeamHpCounter();
+            renderTeamHpOverlayState();
         }
 
         // The HP counter prompt's own Confirm. A confirmed value of 0
@@ -14096,25 +14261,89 @@
             filled: 'https://placehold.co/64x64/png?text=%E2%9C%93',
         };
 
+        // Per-cardType illustration-box position for the auto-crop
+        // fallback used by cardIconFor() below, as a CSS background-size/
+        // background-position pair -- 'size' is the zoom factor
+        // (fullCardDimension / illustrationBoxDimension for both axes)
+        // and 'position' centers that box in view. Item and Event share
+        // one entry since their box sits in the same spot on both
+        // templates; Nature's box sits in the bottom half instead.
+        // 'default' covers any cardType that shows up before it gets its
+        // own entry here. These are placeholder numbers -- tune them
+        // against a real card image, then everything using this table
+        // updates automatically.
+        const ICON_CROP_BY_CARD_TYPE = {
+            Item:   { size: '95px 133px', position: '50% 19.5%' },
+            Event:  { size: '95px 133px', position: '50% 19.5%' },
+            Nature: { size: '140px 196px', position: '50% 76.5%' },
+            default: { size: '95px 133px', position: '50% 19.5%' },
+        };
+
         // Resolves a single equipped card id to the small icon it should
-        // show on the corner badge -- iconUrl if cards.json has a real
-        // one, falling back to the card's full imageUrl (better than
-        // nothing) and then to the generic 'filled' placeholder if the
-        // card itself can't be found at all (data still loading, or the
-        // id no longer exists in the JSON). "placeholder" is cards.json's
-        // own literal sentinel value for "no icon assigned yet" (every
-        // entry has it as of the chat this was migrated in) rather than
-        // a real URL -- treated the same as iconUrl being absent
-        // entirely, falling through to imageUrl same as before. Returns
-        // null only for "no card equipped," which is what tells
-        // computeTeamCardsState() below there's nothing to show for that
-        // slot.
+        // show on the corner badge, as { url, crop }. 'crop' is null when
+        // url is meant to be used as-is (a real cards.json iconUrl, or
+        // one of the CARD_SLOT_IMAGES fallbacks) -- otherwise it's the
+        // { size, position } pair from ICON_CROP_BY_CARD_TYPE above,
+        // telling the renderer (see cropIconMarkup()) to show url as a
+        // zoomed/panned crop instead of a plain <img>, cropping in on
+        // just the illustration box rather than squishing the whole
+        // card into a tiny circle.
+        //
+        // "placeholder" is cards.json's own literal sentinel value for
+        // "no custom icon assigned" (every entry has it as of the chat
+        // this was migrated in) -- treated the same as iconUrl being
+        // absent entirely, falling through to the auto-crop of imageUrl.
+        // A small handful of cards (e.g. Berry, whose illustration box
+        // has ten separate berries arranged in two rows -- fine at card
+        // size, too busy once cropped down to icon size) get a real,
+        // separately-hosted iconUrl instead; those skip the crop
+        // entirely and render as a plain image, same as before.
+        //
+        // Falls back to the generic 'filled' placeholder (uncropped) if
+        // the card itself can't be found at all (data still loading, or
+        // the id no longer exists in the JSON). Returns null only for
+        // "no card equipped," which is what tells computeTeamCardsState()
+        // below there's nothing to show for that slot.
         function cardIconFor(cardId) {
             if (!cardId) return null;
             const card = CARDS_BY_ID[cardId];
-            if (!card) return CARD_SLOT_IMAGES.filled;
-            const icon = card.iconUrl && card.iconUrl !== 'placeholder' ? card.iconUrl : null;
-            return icon || card.imageUrl || CARD_SLOT_IMAGES.filled;
+            if (!card) return { url: CARD_SLOT_IMAGES.filled, crop: null };
+            const hasCustomIcon = card.iconUrl && card.iconUrl !== 'placeholder';
+            if (hasCustomIcon) return { url: card.iconUrl, crop: null };
+            if (card.imageUrl) {
+                const crop = ICON_CROP_BY_CARD_TYPE[card.cardType] || ICON_CROP_BY_CARD_TYPE.default;
+                return { url: card.imageUrl, crop };
+            }
+            return { url: CARD_SLOT_IMAGES.filled, crop: null };
+        }
+
+        // Turns one { url, crop } image (crop guaranteed non-null -- see
+        // the call site in the team-grid render loop) into the actual
+        // wrapper + oversized <img> markup that crops it down to just
+        // the illustration box.
+        //
+        // crop.size/crop.position keep the exact same format/values as
+        // the old background-size/background-position approach (e.g.
+        // "95px 133px" / "50% 19.5%") so nothing in ICON_CROP_BY_CARD_TYPE
+        // needed retuning when this switched from a CSS background to a
+        // real <img> -- this just reproduces the standard CSS
+        // background-position formula by hand:
+        //   offset = (containerSize - imageSize) x (percentage / 100)
+        // using calc() to mix the container's own %-based size with
+        // crop.size's own px (or %) length, and a plain unitless number
+        // for the percentage (CSS calc() can't multiply two %/length
+        // values together, only a length/percentage by a bare number,
+        // which is why position gets divided down to a 0-1 fraction
+        // here rather than staying a "19.5%" string).
+        function cropIconMarkup(img) {
+            const [sizeW, sizeH] = img.crop.size.split(' ');
+            const [posXFrac, posYFrac] = img.crop.position.split(' ').map(p => parseFloat(p) / 100);
+            const style = `width:${sizeW};height:${sizeH};`
+                + `left:calc((100% - ${sizeW}) * ${posXFrac});`
+                + `top:calc((100% - ${sizeH}) * ${posYFrac});`;
+            return `<div class="game-team-slot-cards-img game-team-slot-cards-crop" role="img" aria-label="${img.alt}">`
+                + `<img class="game-team-slot-cards-crop-img" src="${img.url}" alt="${img.alt}" style="${style}" onerror="this.parentElement.style.display='none'">`
+                + `</div>`;
         }
 
         // One badge covers both slots at once -- see the chat this was
@@ -14132,18 +14361,25 @@
         // for both, stacked vertically and growing upward from the
         // same bottom-right anchor (see .game-team-slot-cards.pill in
         // the CSS).
+        //
+        // attachIcon/natureIcon are cardIconFor()'s { url, crop } shape
+        // (or null) -- each image in the returned array keeps its own
+        // crop alongside url/alt so the renderer (see the cardsBadge
+        // markup below) knows whether to draw it as a plain <img> or a
+        // cropped background div. CARD_SLOT_IMAGES.empty has no crop of
+        // its own since it's a generic placeholder icon, not card art.
         function computeTeamCardsState(member, naturesEnabled) {
             const attachIcon = member ? cardIconFor(member.attachCardId) : null;
             const natureIcon = (naturesEnabled && member) ? cardIconFor(member.natureCardId) : null;
             if (attachIcon && natureIcon) {
                 return { pill: true, images: [
-                    { url: attachIcon, alt: 'Attach Card' },
-                    { url: natureIcon, alt: 'Nature Card' },
+                    { url: attachIcon.url, crop: attachIcon.crop, alt: 'Attach Card' },
+                    { url: natureIcon.url, crop: natureIcon.crop, alt: 'Nature Card' },
                 ] };
             }
             const singleIcon = attachIcon || natureIcon;
             return { pill: false, images: [
-                { url: singleIcon || CARD_SLOT_IMAGES.empty, alt: 'Cards' },
+                { url: singleIcon ? singleIcon.url : CARD_SLOT_IMAGES.empty, crop: singleIcon ? singleIcon.crop : null, alt: 'Cards' },
             ] };
         }
 
@@ -14447,15 +14683,17 @@
         // deliberately has no entry for its 'none' id as a result.
         const NO_STATUS_PLACEHOLDER = { id: 'none', name: 'No Status', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/wplcws9dfin0zjm0adxxm/status_none.png?rlkey=gxd4i7p6zrzy3t6qh3hupyrow&st=c4hwidx3&dl=1' };
 
-        // Per-status counter range for the picker's own counter section
-        // (see openTeamStatusOverlay()/renderTeamStatusCounter() and
-        // .game-team-status-counter's own CSS comment) -- only the four
-        // statuses listed here get a counter at all; anything else
-        // (including 'none') hides that section entirely. default is
-        // its own field rather than reusing min, so where the counter
-        // resets to on a fresh selection can be set independently of
-        // how low it's allowed to go afterward -- all four currently
-        // reset to their own min, but don't have to.
+        // Per-status counter range for the Status column's own counter
+        // widget, both here (see openTeamStatusOverlay()/
+        // renderTeamStatusDisplay() and .game-team-detail-status-counter's
+        // own CSS comment) and in the detail pane (see
+        // renderTeamDetailStatusSection()) -- only the four statuses
+        // listed here get a counter at all; anything else (including
+        // 'none') hides that section entirely. default is its own field
+        // rather than reusing min, so where the counter resets to on a
+        // fresh selection can be set independently of how low it's
+        // allowed to go afterward -- all four currently reset to their
+        // own min, but don't have to.
         // faintAtMax marks the three conditions where running the
         // counter all the way up is what faints the member (Burned/
         // Poisoned at their 4th counter, Cursed at its 2nd) -- see
@@ -14495,12 +14733,13 @@
 
         // The two STATUS_CARD_IDS entries with a pair of ids instead of
         // one -- true here is what both gates showing the Status card
-        // panel's own Flip Card button (see renderTeamDetailStatusCard()
-        // below) and what tells every place that just committed a fresh
-        // status onto a member (confirmTeamStatusSelection(),
-        // commitTeamDetailStatus()) whether to give it a fresh
-        // statusCardSide of 1 at all, mirroring how STATUS_COUNTER_CONFIG
-        // already gates statusCounter the same way.
+        // panel's own Flip Card button (see renderTeamDetailStatusCard()/
+        // renderTeamStatusCard() below) and what tells every place that
+        // just committed a fresh status onto a member
+        // (confirmTeamStatusSelection(), commitTeamDetailStatus())
+        // whether to give it a fresh statusCardSide of 1 at all,
+        // mirroring how STATUS_COUNTER_CONFIG already gates statusCounter
+        // the same way.
         const STATUS_TWO_SIDED = { paralyzed: true, sleep: true };
 
         // Resolves a member's status + statusCardSide (1 or 2, meaningless
@@ -14534,52 +14773,107 @@
         let pendingTeamStatusIndex = null;
 
         // The picker's own in-progress choice -- 'none' or a
-        // STATUS_CONDITIONS id, plus whatever the counter section (if
-        // showing at all) is currently set to. Nothing here touches the
+        // STATUS_CONDITIONS id, plus whatever the counter/card side (if
+        // applicable) is currently dialed to. Nothing here touches the
         // member itself until confirmTeamStatusSelection() actually
-        // commits it -- Cancel just discards these two and closes,
+        // commits it -- Cancel just discards these three and closes,
         // same "pick freely, only Confirm writes it back" shape as
-        // gymBadges' own multi-option choose flow.
+        // pendingTeamHpIndex/-Value has for the HP counter prompt.
         let pendingTeamStatusId = null;
         let pendingTeamStatusCounter = 0;
 
+        // The pending pick's own status-card side (1 or 2, meaningless
+        // for anything not in STATUS_TWO_SIDED) -- kept separate from
+        // the member's own statusCardSide precisely so flipping while
+        // just browsing options (see flipTeamStatusCard() below) never
+        // writes anything until the pick is actually confirmed.
+        let pendingTeamStatusCardSide = 1;
 
-        // Redraws just the options list against pendingTeamStatusId --
-        // called on open and again every time the pending selection
-        // changes, so .active always tracks the in-progress choice
-        // rather than the member's own already-committed status.
-        // NO_STATUS_PLACEHOLDER goes first and is what a member with no
-        // status set opens the picker already pointed at, replacing the
-        // old separate "No Status" button next to Cancel.
-        function renderTeamStatusOptions() {
-            const optionsEl = document.getElementById('game-team-status-options');
-            if (!optionsEl) return;
-            optionsEl.innerHTML = [NO_STATUS_PLACEHOLDER, ...STATUS_CONDITIONS].map(s => `
-                <button class="filter-btn game-team-status-choose-btn${s.id === pendingTeamStatusId ? ' active' : ''}" data-status="${s.id}">
-                    ${statusImageMarkup(s, 'game-team-status-choose-img')}
-                    <span>${s.name}</span>
+        // Paints the icon/counter/name for the picker's current pending
+        // choice, and the live status-card panel to match (see
+        // renderTeamStatusCard() just below) -- called on open and again
+        // every time the pending choice or its counter/side changes, so
+        // this always reflects pendingTeamStatusId/-Counter/-CardSide
+        // rather than the member's own still-uncommitted-to status.
+        function renderTeamStatusDisplay() {
+            if (pendingTeamStatusIndex === null) return;
+            const entry = STATUS_CONDITIONS.find(s => s.id === pendingTeamStatusId) || NO_STATUS_PLACEHOLDER;
+            const config = STATUS_COUNTER_CONFIG[pendingTeamStatusId] || null;
+            const iconWrap = document.getElementById('game-team-status-icon-wrap');
+            const counterEl = document.getElementById('game-team-status-counter');
+            const topEl = document.getElementById('game-team-status-top');
+            const nameEl = document.getElementById('game-team-status-name-text');
+            if (iconWrap) iconWrap.innerHTML = statusImageMarkup(entry, 'game-team-detail-status-icon-img');
+            if (topEl) topEl.classList.toggle('game-team-detail-status-top-centered', !config);
+            if (counterEl) counterEl.style.display = config ? '' : 'none';
+            if (config) {
+                const valueEl = document.getElementById('game-team-status-counter-value');
+                if (valueEl) valueEl.textContent = pendingTeamStatusCounter;
+            }
+            if (nameEl) nameEl.textContent = entry.name;
+            renderTeamStatusCard(pendingTeamStatusId, pendingTeamStatusCardSide);
+        }
+
+        // Paints (or hides) the live status-card panel for whichever
+        // status id is currently pending -- shared by
+        // renderTeamStatusDisplay() above and flipTeamStatusCard() below
+        // so the two can never drift out of sync with each other's art.
+        // Looks the card up fresh from CARDS_BY_ID every time
+        // (statusCardIdFor()) rather than caching it, same "always the
+        // live source of truth" convention every other CARDS_BY_ID
+        // lookup in this doc already follows. Flip Card only ever shows
+        // for STATUS_TWO_SIDED's own two entries (Paralyzed, Sleep) --
+        // anything else has just the one card and nothing to flip to.
+        function renderTeamStatusCard(statusId, side) {
+            const panelEl = document.getElementById('game-team-status-card-panel');
+            const imgEl = document.getElementById('game-team-status-card-img');
+            const flipBtn = document.getElementById('game-team-status-card-flip-btn');
+            if (!panelEl) return;
+            if (!statusId || statusId === 'none') {
+                panelEl.classList.remove('visible');
+                return;
+            }
+            const twoSided = !!STATUS_TWO_SIDED[statusId];
+            const cardId = statusCardIdFor(statusId, side === 2 ? 2 : 1);
+            const card = cardId ? CARDS_BY_ID[cardId] : null;
+            if (imgEl) {
+                if (card && card.imageUrl) {
+                    imgEl.src = card.imageUrl;
+                    imgEl.alt = card.name;
+                    imgEl.style.visibility = '';
+                } else {
+                    imgEl.removeAttribute('src');
+                    imgEl.alt = '';
+                    imgEl.style.visibility = 'hidden';
+                }
+            }
+            if (flipBtn) flipBtn.classList.toggle('visible', twoSided);
+            panelEl.classList.add('visible');
+        }
+
+        // Rebuilds the 8-icon strip fresh against pendingTeamStatusId --
+        // called on open and again every time the pending choice changes
+        // (see selectPendingTeamStatus() below), so .active always
+        // tracks the in-progress pick rather than the member's own
+        // still-uncommitted-to status.
+        function renderTeamStatusPickerOptions() {
+            const pickerEl = document.getElementById('game-team-status-picker-inner');
+            if (!pickerEl) return;
+            pickerEl.innerHTML = [NO_STATUS_PLACEHOLDER, ...STATUS_CONDITIONS].map(s => `
+                <button class="game-team-detail-status-picker-btn${s.id === pendingTeamStatusId ? ' active' : ''}" data-status="${s.id}">
+                    ${statusImageMarkup(s, 'game-team-detail-status-picker-img')}
                 </button>
             `).join('');
         }
 
-        // Shows/hides and redraws the counter section against
-        // pendingTeamStatusId/-Counter -- STATUS_COUNTER_CONFIG having
-        // no entry for the pending id (which is always true for 'none',
-        // and for confused/paralyzed/frozen, none of which take a
-        // counter) is what hides the section entirely rather than
-        // showing it empty or at 0.
-        function renderTeamStatusCounter() {
-            const wrap = document.getElementById('game-team-status-counter-wrap');
-            const valueEl = document.getElementById('game-team-status-counter-value');
-            if (!wrap || !valueEl) return;
-            const config = STATUS_COUNTER_CONFIG[pendingTeamStatusId];
-            wrap.classList.toggle('visible', !!config);
-            if (config) valueEl.textContent = pendingTeamStatusCounter;
-        }
-
-        // Builds the options list fresh every time rather than once up
-        // front, since which member (and therefore which status is
-        // already selected, if any) this is for changes on every open.
+        // Builds the picker and paints the pending choice fresh every
+        // time rather than once up front, since which member (and
+        // therefore which status is already selected, if any) this is
+        // for changes on every open. Opens already pointed at the
+        // member's own current status/counter/side, same "resume rather
+        // than reset" starting point the older single-tap version of
+        // this overlay had, and the same "or NO_STATUS_PLACEHOLDER for a
+        // member with no status set" default that's always given.
         function openTeamStatusOverlay(index) {
             const data = getActiveSaveData();
             const member = (data.team.members || [])[index];
@@ -14587,14 +14881,12 @@
             pendingTeamStatusIndex = index;
             pendingTeamStatusId = member.status || 'none';
             const config = STATUS_COUNTER_CONFIG[pendingTeamStatusId];
-            // Resumes the member's own already-set count if theirs is
-            // the pending status reopening on top of itself, rather
-            // than always snapping back to the config's default -- only
-            // a genuine change of status (see selectPendingTeamStatus()
-            // below) should reset it.
             pendingTeamStatusCounter = config ? (member.statusCounter ?? config.default) : 0;
-            renderTeamStatusOptions();
-            renderTeamStatusCounter();
+            pendingTeamStatusCardSide = STATUS_TWO_SIDED[pendingTeamStatusId]
+                ? (member.statusCardSide === 2 ? 2 : 1)
+                : 1;
+            renderTeamStatusDisplay();
+            renderTeamStatusPickerOptions();
             const overlay = document.getElementById('game-team-status-overlay');
             if (overlay) overlay.classList.add('visible');
         }
@@ -14603,45 +14895,60 @@
             pendingTeamStatusIndex = null;
             pendingTeamStatusId = null;
             pendingTeamStatusCounter = 0;
+            pendingTeamStatusCardSide = 1;
             const overlay = document.getElementById('game-team-status-overlay');
             if (overlay) overlay.classList.remove('visible');
         }
 
-        // Switches the picker's own pending choice -- called by every
-        // button in the options list (see the overlay's own click
-        // listener further down), including NO_STATUS_PLACEHOLDER's
-        // 'none' entry same as any real condition. Always resets the
-        // counter to its new status's own default (see
-        // STATUS_COUNTER_CONFIG's own comment) regardless of what it
-        // was on the status just switched away from.
+        // Switches the picker's own pending choice -- called directly by
+        // a single tap on any button in the options list (see the
+        // overlay's own click listener further down), including
+        // NO_STATUS_PLACEHOLDER's 'none' entry same as any real
+        // condition. Resumes the member's own already-set count/side if
+        // this is a tap back onto their own current status, rather than
+        // always snapping to that status's own default/side-1 -- same
+        // "don't make re-selecting your own status look like it reset
+        // something" reasoning openTeamStatusOverlay() above already
+        // follows on a fresh open. Any other status starts fresh at its
+        // own default count and side 1, since there's no "real" count or
+        // side to restore for a status the member doesn't currently
+        // have.
         function selectPendingTeamStatus(statusId) {
-            pendingTeamStatusId = statusId;
+            if (pendingTeamStatusIndex === null) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[pendingTeamStatusIndex];
+            const isRealStatus = !!member && (member.status || 'none') === statusId;
             const config = STATUS_COUNTER_CONFIG[statusId];
-            pendingTeamStatusCounter = config ? config.default : 0;
-            renderTeamStatusOptions();
-            renderTeamStatusCounter();
+
+            pendingTeamStatusId = statusId;
+            pendingTeamStatusCounter = config ? (isRealStatus ? (member.statusCounter ?? config.default) : config.default) : 0;
+            pendingTeamStatusCardSide = STATUS_TWO_SIDED[statusId]
+                ? (isRealStatus && member.statusCardSide === 2 ? 2 : 1)
+                : 1;
+            renderTeamStatusDisplay();
+            renderTeamStatusPickerOptions();
         }
 
         // delta is +1 or -1, from whichever half of
-        // .game-team-status-counter got clicked (see the overlay's own
-        // click listener). No-ops if the pending status doesn't take a
-        // counter at all -- shouldn't be reachable since the section is
-        // hidden in that case, but guards anyway rather than let the
-        // counter silently drift on a status it doesn't apply to.
+        // .game-team-detail-status-counter got clicked (see the
+        // overlay's own click listener). No-ops if the pending status
+        // doesn't take a counter at all -- shouldn't be reachable since
+        // the counter is hidden in that case, but guards anyway rather
+        // than let it silently drift on a status it doesn't apply to.
         function adjustPendingTeamStatusCounter(delta) {
             const config = STATUS_COUNTER_CONFIG[pendingTeamStatusId];
             if (!config) return;
             pendingTeamStatusCounter = Math.max(config.min, Math.min(config.max, pendingTeamStatusCounter + delta));
-            renderTeamStatusCounter();
+            renderTeamStatusDisplay();
         }
 
         // The picker's own Confirm -- the only thing that actually
-        // writes pendingTeamStatusId/-Counter back to the member (see
-        // pendingTeamStatusId's own comment). 'none' maps back to null
-        // the same way the old "No Status" button's setTeamMemberStatus
-        // (null) call did. statusCounter is only ever set for a status
-        // that actually has a STATUS_COUNTER_CONFIG entry -- left
-        // undefined otherwise rather than carrying a stale number
+        // writes pendingTeamStatusId/-Counter/-CardSide back to the
+        // member (see pendingTeamStatusId's own comment). 'none' maps
+        // back to null the same way the old "No Status" button's
+        // setTeamMemberStatus(null) call did. statusCounter/statusCardSide
+        // are only ever set for a status that actually takes one --
+        // left undefined otherwise rather than carrying a stale value
         // around for a status it no longer applies to.
         function confirmTeamStatusSelection() {
             if (pendingTeamStatusIndex === null) return;
@@ -14650,6 +14957,7 @@
             const member = (data.team.members || [])[index];
             const statusId = pendingTeamStatusId;
             const counter = pendingTeamStatusCounter;
+            const side = pendingTeamStatusCardSide;
             closeTeamStatusOverlay();
             if (!member) return;
             const config = STATUS_COUNTER_CONFIG[statusId];
@@ -14658,8 +14966,8 @@
             // 2nd -- see STATUS_COUNTER_CONFIG's own comment) faints the
             // member outright instead of ever writing that status/count
             // combination onto them -- faintTeamMember() already clears
-            // status/statusCounter itself, so there's nothing left here to
-            // set.
+            // status/statusCounter/statusCardSide itself, so there's
+            // nothing left here to set.
             if (config && config.faintAtMax && counter === config.max) {
                 faintTeamMember(index);
                 return;
@@ -14680,11 +14988,27 @@
             }
             member.status = statusId === 'none' ? null : statusId;
             member.statusCounter = config ? counter : undefined;
-            member.statusCardSide = STATUS_TWO_SIDED[statusId] ? 1 : undefined;
+            member.statusCardSide = STATUS_TWO_SIDED[statusId] ? (side === 2 ? 2 : 1) : undefined;
             if (activeSaveSlot !== null) persistGameSaves();
             else if (activeGuestSaveId !== null) persistGameGuestSaves();
             markUnsavedProgressChanged();
             renderTeamGrid();
+        }
+
+        // The status card panel's own Flip Card button -- always a
+        // local, uncommitted flip of pendingTeamStatusCardSide, same
+        // "pick freely, only Confirm writes it back" shape every other
+        // pending field on this overlay already follows; nothing here
+        // ever touches the member directly, unlike the detail pane's own
+        // flipTeamDetailStatusCard() (which has no pending/Confirm step
+        // to stage behind). Only reachable at all while Flip Card itself
+        // is showing, which is already gated to STATUS_TWO_SIDED's own
+        // two statuses.
+        function flipTeamStatusCard() {
+            if (pendingTeamStatusIndex === null) return;
+            if (!STATUS_TWO_SIDED[pendingTeamStatusId]) return;
+            pendingTeamStatusCardSide = pendingTeamStatusCardSide === 2 ? 1 : 2;
+            renderTeamStatusCard(pendingTeamStatusId, pendingTeamStatusCardSide);
         }
 
         // delta is +1 or -1 -- clamped to 0-6 rather than left to wrap or
@@ -14772,19 +15096,38 @@
             return 'Evolve into';
         }
 
-        // Reminder line for a legendary_evolve choice whose card
-        // requirement this app can't actually enforce (gated:false --
-        // Kubfu today, "play and discard" rather than "keep attached")
-        // -- pulls the card's own display name from CARDS_BY_ID
-        // so it can't go stale if that card gets renamed later. Returns
-        // '' for anything else (gated:true targets are already enforced
-        // by the attach check itself, so a reminder would just be
-        // noise; non-legendary categories never call this at all).
-        function legendaryEvolutionReminderHtml(choice) {
-            if (!choice || choice.category !== 'legendary' || choice.gated) return '';
-            const card = choice.cardId ? CARDS_BY_ID[choice.cardId] : null;
-            const cardName = card ? card.name : 'the required';
-            return `<p class="game-team-evolution-reminder">This Evolution requires the use of the ${escapeHtml(cardName)} card.</p>`;
+        // Reminder line for an evolution choice with an item requirement
+        // this app can't actually enforce/track:
+        //   - mega:    needs a Mega Stone attached to the member AND a
+        //              Mega Bracelet in play -- this app has no "cards in
+        //              play" state at all (only per-member attachCardId),
+        //              so neither half of that is ever actually checked.
+        //   - gmax:    needs a Dynamax Band in play -- same "no cards in
+        //              play" gap as mega above.
+        //   - legendary, gated:false (Kubfu today): needs a specific card
+        //              played and discarded rather than kept attached, so
+        //              the usual attachCardId check doesn't apply here
+        //              either -- pulls the card's own display name from
+        //              CARDS_BY_ID so it can't go stale if that card gets
+        //              renamed later.
+        // Returns '' for anything else (gated:true legendary targets are
+        // already enforced by the attach check itself, so a reminder
+        // would just be noise; plain 'evolve' choices have no item
+        // requirement to remind about at all).
+        function evolutionReminderHtml(choice) {
+            if (!choice) return '';
+            if (choice.category === 'mega') {
+                return `<p class="game-team-evolution-reminder">To Mega Evolve this Pok\u00e9mon, it must have a Mega Stone card attached to it and you must have a Mega Bracelet card in play.</p>`;
+            }
+            if (choice.category === 'gmax') {
+                return `<p class="game-team-evolution-reminder">To Gigantamax this Pok\u00e9mon, you must have a Dynamax Band card in play.</p>`;
+            }
+            if (choice.category === 'legendary' && !choice.gated) {
+                const card = choice.cardId ? CARDS_BY_ID[choice.cardId] : null;
+                const cardName = card ? card.name : 'the required';
+                return `<p class="game-team-evolution-reminder">This Evolution requires the use of the ${escapeHtml(cardName)} card.</p>`;
+            }
+            return '';
         }
 
         // Redraws #game-team-evolution-options against
@@ -14825,7 +15168,7 @@
                     <div class="game-team-evolution-single-confirm-wrap">
                         ${imgSrc ? `<img class="game-team-evolution-single-confirm-img" src="${imgSrc}" alt="${escapeHtml(only.name)}">` : ''}
                         <p class="game-team-evolution-single-confirm">${verb} <strong>${escapeHtml(only.name)}</strong>?</p>
-                        ${legendaryEvolutionReminderHtml(only)}
+                        ${evolutionReminderHtml(only)}
                     </div>
                 `;
                 return;
@@ -14855,7 +15198,7 @@
                         <div class="game-team-evolution-options">${buttonsHtml}</div>
                     </div>
                 `;
-            }).join('') + legendaryEvolutionReminderHtml(pendingTeamEvolutionChoice);
+            }).join('') + evolutionReminderHtml(pendingTeamEvolutionChoice);
         }
 
         // Builds the full list of {category, name} evolution options
@@ -14892,7 +15235,7 @@
             // elsewhere in this doc); gated:false (Kubfu) always
             // qualifies, since there's no card *attachment* this app
             // can check for a play-and-discard requirement -- Kubfu's
-            // reminder text (see legendaryEvolutionReminderHtml()) is
+            // reminder text (see evolutionReminderHtml()) is
             // what covers that instead. reverts:true targets follow the
             // same fainted gate as Mega/Gigantamax above (a fainted
             // member can't newly transform); reverts:false targets stay
@@ -15033,7 +15376,7 @@
             // Looks the full option back up (rather than reconstructing
             // a bare {category, name} stub) so gated/reverts/cardId/
             // iconUrl survive the pick -- applyEvolutionChoice()'s own
-            // reverts check and legendaryEvolutionReminderHtml() both
+            // reverts check and evolutionReminderHtml() both
             // need those for a 'legendary' choice.
             const found = pendingTeamEvolutionOptions.find(o => o.category === category && o.name === name);
             pendingTeamEvolutionChoice = found || { category, name };
@@ -15175,7 +15518,7 @@
         // -- called on open and again after every edit from this
         // section (adjustTeamDetailHp()/handleTeamDetailHpIconTap()),
         // same "always rebuilt from the live member, never trusted
-        // stale" convention as renderTeamHpCounter() and its siblings.
+        // stale" convention as renderTeamHpOverlayState() and its siblings.
         //
         // hasCounter (whether this ruleset has any numeric HP concept
         // at all) is deliberately NOT computeTeamHpState()'s own
@@ -15605,10 +15948,9 @@
         }
 
         // Shows what tapping this option a second time would commit --
-        // that status's own icon/name, same as a fresh selection would
-        // land on in confirmTeamStatusSelection()'s older overlay.
-        // Nothing here touches the member itself; see
-        // handleTeamDetailStatusPickerTap() for what actually commits.
+        // that status's own icon/name. Nothing here touches the member
+        // itself; see handleTeamDetailStatusPickerTap() for what
+        // actually commits.
         // The counter value is the one exception: previewing the
         // member's own already-equipped status shows its real current
         // count (member.statusCounter) rather than that status's
@@ -15638,9 +15980,9 @@
         // it opens and again after every first tap (see
         // handleTeamDetailStatusPickerTap() below), same "built fresh
         // every time rather than kept in sync" approach
-        // renderTeamStatusOptions() already takes for the older overlay
-        // this was modeled on. Highlights whichever option a second tap
-        // would confirm -- the armed preview if one exists
+        // renderTeamStatusPickerOptions() takes for the corner-badge
+        // overlay's own mirrored picker. Highlights whichever option a
+        // second tap would confirm -- the armed preview if one exists
         // (teamDetailStatusPendingId), falling back to the member's own
         // already-committed status the moment the strip opens and
         // nothing's been tapped yet.
@@ -15773,17 +16115,18 @@
         // rather than duplicated per caller, since committing is
         // committing no matter which of the two the user reached for.
         // statusId 'none' clears the status entirely, same mapping
-        // confirmTeamStatusSelection() uses for the older overlay's own
-        // NO_STATUS_PLACEHOLDER option. statusCounter always resets to
-        // the newly-picked status's own default (or is left undefined
-        // for a status with no counter at all) rather than carrying
-        // over whatever the previous status's count happened to be --
-        // same reasoning selectPendingTeamStatus() already has for the
-        // older overlay. Skips the fade/slide when statusId is exactly
-        // what was already being previewed (true every time this is
-        // actually reached today, since both callers only ever confirm
-        // an armed preview) -- the icon/counter/name already show this
-        // status, so animating here would just make it disappear and
+        // confirmTeamStatusSelection() uses for the corner-badge
+        // overlay's own NO_STATUS_PLACEHOLDER option. statusCounter
+        // always resets to the newly-picked status's own default (or is
+        // left undefined for a status with no counter at all) rather
+        // than carrying over whatever the previous status's count
+        // happened to be -- same reasoning confirmTeamStatusSelection()
+        // has for the corner-badge overlay. Skips the fade/slide when
+        // statusId is exactly what was already being previewed (true
+        // every time this is actually reached today, since both callers
+        // only ever confirm an armed preview) -- the icon/counter/name
+        // already show this status, so animating here would just make
+        // it disappear and
         // immediately reappear for no visible reason, per the chat this
         // was built in.
         function commitTeamDetailStatus(statusId) {
@@ -16171,7 +16514,7 @@
                     <div class="game-team-evolution-single-confirm-wrap">
                         ${imgSrc ? `<img class="game-team-evolution-single-confirm-img" src="${imgSrc}" alt="${escapeHtml(only.name)}">` : ''}
                         <p class="game-team-evolution-single-confirm">${verb} <strong>${escapeHtml(only.name)}</strong>?</p>
-                        ${legendaryEvolutionReminderHtml(only)}
+                        ${evolutionReminderHtml(only)}
                     </div>
                 `;
             } else {
@@ -16189,7 +16532,7 @@
                             `;
                         }).join('')}
                     </div>
-                    ${legendaryEvolutionReminderHtml(teamDetailEvolutionChoice)}
+                    ${evolutionReminderHtml(teamDetailEvolutionChoice)}
                 `;
             }
 
@@ -19675,6 +20018,13 @@
 
         // Same reasoning again -- this overlay's also a sibling of
         // #game-scroll, not a descendant.
+        // Same staged "Confirm/Cancel row at the bottom" shape as
+        // #game-team-hp-overlay's own listener just below -- the icon is
+        // purely a live preview here now (no tap-to-commit shortcut the
+        // detail pane's own icon has, since there's no armed/unarmed
+        // distinction left to shortcut past), and a tap on any picker
+        // button always just switches the pending pick (see
+        // selectPendingTeamStatus()) rather than needing a second tap.
         document.getElementById('game-team-status-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'game-team-status-overlay' || e.target.closest('.game-team-status-cancel-btn')) {
                 closeTeamStatusOverlay();
@@ -19689,16 +20039,21 @@
             // #game-scroll delegated listener further down for why
             // clientX against the bounding rect rather than two
             // separate elements).
-            const counterEl = e.target.closest('.game-team-status-counter');
-            if (counterEl) {
-                const rect = counterEl.getBoundingClientRect();
+            const statusCounter = e.target.closest('.game-team-detail-status-counter');
+            if (statusCounter) {
+                const rect = statusCounter.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 adjustPendingTeamStatusCounter(clickedRightHalf ? 1 : -1);
                 return;
             }
-            const chooseBtn = e.target.closest('.game-team-status-choose-btn');
-            if (chooseBtn) {
-                selectPendingTeamStatus(chooseBtn.dataset.status);
+            const statusCardFlipBtn = e.target.closest('.game-team-detail-status-card-flip-btn');
+            if (statusCardFlipBtn) {
+                flipTeamStatusCard();
+                return;
+            }
+            const statusPickerBtn = e.target.closest('.game-team-detail-status-picker-btn');
+            if (statusPickerBtn) {
+                selectPendingTeamStatus(statusPickerBtn.dataset.status);
                 return;
             }
         });
@@ -19706,7 +20061,10 @@
         // Same shape as #game-team-status-overlay's own listener above --
         // backdrop/Cancel close, Confirm commits, and the counter is the
         // same "one element, two click zones" shape as
-        // .game-team-status-counter (see its own comment).
+        // .game-team-hp-counter (see its own comment). The icon is
+        // purely a visual indicator here (see renderTeamHpOverlayState()'s
+        // own comment on why there's no revive-via-icon case to wire up
+        // in this overlay), so no click case is needed for it.
         document.getElementById('game-team-hp-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'game-team-hp-overlay' || e.target.closest('.game-team-hp-cancel-btn')) {
                 closeTeamHpOverlay();
