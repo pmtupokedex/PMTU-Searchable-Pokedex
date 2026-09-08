@@ -14262,21 +14262,41 @@
         };
 
         // Per-cardType illustration-box position for the auto-crop
-        // fallback used by cardIconFor() below, as a CSS background-size/
-        // background-position pair -- 'size' is the zoom factor
+        // fallback used by cardIconFor() below, consumed by
+        // cropIconMarkup() -- 'size' is the zoom factor
         // (fullCardDimension / illustrationBoxDimension for both axes)
-        // and 'position' centers that box in view. Item and Event share
-        // one entry since their box sits in the same spot on both
-        // templates; Nature's box sits in the bottom half instead.
-        // 'default' covers any cardType that shows up before it gets its
-        // own entry here. These are placeholder numbers -- tune them
-        // against a real card image, then everything using this table
-        // updates automatically.
+        // and 'position' centers that box in view, same meaning as CSS
+        // background-size/background-position even though these actually
+        // render as a real <img> now (see cropIconMarkup()'s own comment
+        // for why). Item and Event share one entry since their box sits
+        // in the same spot on both templates; Nature's box sits in the
+        // bottom half instead. 'default' covers any cardType that shows
+        // up before it gets its own entry here.
+        //
+        // 'size' MUST stay in a unit relative to the badge itself (%) --
+        // not px. .game-team-slot-cards-img's own box scales fluidly
+        // with the screen (.game-team-grid's 1fr columns, all the way
+        // down), so a fixed px size drifts out of sync with it: the same
+        // 95px meant a ~2.2x zoom against a 43px-wide badge on a wide
+        // desktop panel, but a *larger* zoom against whatever smaller
+        // width that same badge renders at on a narrower one, since only
+        // one side of that ratio was actually scaling. A %-based size
+        // scales together with the badge at any width instead, so the
+        // effective zoom stays constant everywhere. 'position' was
+        // already % and needed no change -- only 'size' had this
+        // problem, since it's the one value being compared against the
+        // badge's own (variable) width/height.
+        //
+        // Tune by opening a real card image, measuring the illustration
+        // box's pixel rect against the full image's own pixel
+        // dimensions, and converting to a percentage from that -- not by
+        // eyeballing a fixed px number against any one on-screen render,
+        // which is exactly what drifted here.
         const ICON_CROP_BY_CARD_TYPE = {
-            Item:   { size: '95px 133px', position: '50% 19.5%' },
-            Event:  { size: '95px 133px', position: '50% 19.5%' },
-            Nature: { size: '140px 196px', position: '50% 76.5%' },
-            default: { size: '95px 133px', position: '50% 19.5%' },
+            Item:   { size: '220.9% 309.3%', position: '50% 19.5%' },
+            Event:  { size: '220.9% 309.3%', position: '50% 19.5%' },
+            Nature: { size: '325.6% 455.8%', position: '50% 76.5%' },
+            default: { size: '220.9% 309.3%', position: '50% 19.5%' },
         };
 
         // Resolves a single equipped card id to the small icon it should
@@ -14322,19 +14342,20 @@
         // wrapper + oversized <img> markup that crops it down to just
         // the illustration box.
         //
-        // crop.size/crop.position keep the exact same format/values as
-        // the old background-size/background-position approach (e.g.
-        // "95px 133px" / "50% 19.5%") so nothing in ICON_CROP_BY_CARD_TYPE
-        // needed retuning when this switched from a CSS background to a
-        // real <img> -- this just reproduces the standard CSS
-        // background-position formula by hand:
+        // crop.size/crop.position stay in the exact same format the old
+        // background-size/background-position approach used (e.g.
+        // "220.9% 309.3%" / "50% 19.5%") -- this just reproduces the
+        // standard CSS background-position formula by hand:
         //   offset = (containerSize - imageSize) x (percentage / 100)
         // using calc() to mix the container's own %-based size with
-        // crop.size's own px (or %) length, and a plain unitless number
-        // for the percentage (CSS calc() can't multiply two %/length
-        // values together, only a length/percentage by a bare number,
-        // which is why position gets divided down to a 0-1 fraction
-        // here rather than staying a "19.5%" string).
+        // crop.size's own length (works with any valid CSS length or
+        // percentage here, though see ICON_CROP_BY_CARD_TYPE's own
+        // comment for why 'size' specifically has to stay a % in
+        // practice against this particular badge), and a plain unitless
+        // number for the percentage (CSS calc() can't multiply two
+        // %/length values together, only a length/percentage by a bare
+        // number, which is why position gets divided down to a 0-1
+        // fraction here rather than staying a "19.5%" string).
         function cropIconMarkup(img) {
             const [sizeW, sizeH] = img.crop.size.split(' ');
             const [posXFrac, posYFrac] = img.crop.position.split(' ').map(p => parseFloat(p) / 100);
