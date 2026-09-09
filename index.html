@@ -1951,6 +1951,141 @@
             text-align: center;
         }
 
+        /* ---- Hand & Decks tool ----
+           One row per deck (see DECK_TOOL_LIST) -- draw pile count,
+           discard pile's top card as a small thumbnail (face-up, same
+           "everyone can see the discard pile" convention real card
+           games use), and a Draw button. See renderDecksScreen(). */
+        .game-decks-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        .game-deck-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 14px;
+            padding: 8px 10px;
+        }
+
+        .game-deck-discard-thumb {
+            width: 40px;
+            height: 40px;
+            object-fit: contain;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            flex-shrink: 0;
+        }
+
+        .game-deck-discard-thumb.empty {
+            visibility: hidden;
+        }
+
+        .game-deck-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .game-deck-name {
+            font-weight: bold;
+            display: block;
+        }
+
+        .game-deck-counts {
+            font-size: 13px;
+            opacity: 0.85;
+            display: block;
+        }
+
+        .game-deck-draw-btn {
+            margin: 0;
+            flex-shrink: 0;
+        }
+
+        .game-hand-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        .game-hand-card {
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 14px;
+            padding: 6px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .game-hand-card-img {
+            width: 100%;
+            height: auto;
+            object-fit: contain;
+            border-radius: 8px;
+        }
+
+        .game-hand-card-name {
+            font-size: 12px;
+            text-align: center;
+        }
+
+        .game-hand-card .filter-btn {
+            width: 100%;
+            box-sizing: border-box;
+            font-size: 12px;
+            padding: 6px 4px;
+        }
+
+        .game-hand-empty {
+            opacity: 0.75;
+            font-style: italic;
+        }
+
+        /* Other connected players' hands, shown as a card-back + count
+           rather than the cards themselves -- nobody but the hand's own
+           owner ever gets sent its actual contents (see
+           wireHostConnection()'s deck-draw/deck-discard handling). */
+        .game-other-hands-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .game-other-hand-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.25);
+            border: 2px solid rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            padding: 6px 10px;
+        }
+
+        .game-card-back {
+            width: 28px;
+            height: 38px;
+            border-radius: 5px;
+            background: repeating-linear-gradient(
+                45deg,
+                #2a3a6b, #2a3a6b 4px,
+                #1c2750 4px, #1c2750 8px
+            );
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            flex-shrink: 0;
+        }
+
+        .game-other-hand-name {
+            flex: 1;
+        }
+
         /* Section labels within the merged main screen ("Saves" /
            "Tools") -- own class rather than reusing .sounds-section-header
            directly, matching how each panel here keeps its own visual
@@ -2348,14 +2483,17 @@
         }
 
         #game-screen-badges[data-readonly="true"] .game-readonly-banner,
-        #game-screen-team[data-readonly="true"] .game-readonly-banner {
+        #game-screen-team[data-readonly="true"] .game-readonly-banner,
+        #game-screen-decks[data-readonly="true"] .game-readonly-banner {
             display: block;
         }
 
         #game-screen-badges[data-readonly="true"] .game-badge-grid,
         #game-screen-badges[data-readonly="true"] .game-badge-extras,
         #game-screen-team[data-readonly="true"] .game-team-grid,
-        #game-screen-team[data-readonly="true"] #game-team-add-btn {
+        #game-screen-team[data-readonly="true"] #game-team-add-btn,
+        #game-screen-decks[data-readonly="true"] .game-deck-draw-btn,
+        #game-screen-decks[data-readonly="true"] .game-hand-discard-btn {
             opacity: 0.55;
             pointer-events: none;
         }
@@ -9587,6 +9725,7 @@
                     <button class="filter-btn" data-target="calc">Attack Calculator</button>
                     <button class="filter-btn" data-target="matchup">Type Matchup</button>
                     <button class="filter-btn" data-target="team">Team Tracker</button>
+                    <button class="filter-btn" data-target="decks">Hand &amp; Decks</button>
                     <button class="filter-btn" data-target="lobby">Multiplayer Lobby</button>
                 </div>
             </div>
@@ -9743,6 +9882,31 @@
                      under its own id/class, same independence reasoning
                      as every other near-identical pair in this doc. -->
                 <div class="game-team-release-banner game-team-trade-status-banner" id="game-team-trade-status-banner"></div>
+            </div>
+
+            <div class="game-screen" id="game-screen-decks">
+                <div class="game-screen-header">
+                    <span class="game-screen-back-wrap">
+                        <span class="game-screen-back-decor"></span>
+                        <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
+                    </span>
+                </div>
+                <p class="game-screen-title">Hand &amp; Decks</p>
+                <p class="game-readonly-banner">Read-Only — connect to this game's Lobby to make changes.</p>
+
+                <!-- One row per deck in DECK_TOOL_LIST -- rebuilt by
+                     renderDecksScreen() any time deck/hand state
+                     changes locally or arrives from the host. -->
+                <div class="game-section-header">Decks</div>
+                <div class="game-decks-list" id="game-decks-list"></div>
+
+                <div class="game-section-header">Your Hand</div>
+                <div class="game-hand-grid" id="game-hand-grid"></div>
+
+                <!-- Only populated while connected to a Lobby -- hidden
+                     entirely in solo play (see renderDecksScreen()). -->
+                <div class="game-section-header" id="game-other-hands-header" style="display: none;">Other Players</div>
+                <div class="game-other-hands-list" id="game-other-hands-list"></div>
             </div>
 
             <div class="game-screen" id="game-screen-lobby">
@@ -12322,6 +12486,21 @@
             });
             if (changed) persistGameSaves();
         })();
+        // Backfills the Hand & Decks tool's own fields onto any save
+        // created before it existed -- hand starts empty same as a
+        // fresh save's own emptySaveScopedData(), decks starts as an
+        // empty object (each deck lazily built the first time it's
+        // drawn from -- see ensureHostDeckStore()/ensureDeckBuilt()).
+        (function migrateHandAndDecks() {
+            let changed = false;
+            gameSaves.forEach(save => {
+                if (!save) return;
+                if (!Array.isArray(save.hand)) { save.hand = []; changed = true; }
+                if (!save.decks || typeof save.decks !== 'object') { save.decks = {}; changed = true; }
+                if (!save.guestHands || typeof save.guestHands !== 'object') { save.guestHands = {}; changed = true; }
+            });
+            if (changed) persistGameSaves();
+        })();
         let activeSaveSlot = loadActiveSaveSlot(gameSaves);
 
         // In-memory-only "unsaved session" -- what Badge Tracker/Team
@@ -12356,7 +12535,14 @@
             // openTeamStatusOverlay() and adjustTeamMemberLevel()) --
             // status is a STATUS_CONDITIONS id or null for "none set
             // yet", level is an integer clamped 0-6.
-            return { badges: { collected: {}, collectedExtras: {} }, team: { members: [] }, pokeCoins: 3 };
+            // hand -- this device's own Hand & Decks cards (see the
+            // Hand & Decks tool below), an array of cards.json ids.
+            // Deliberately NOT decks -- deck draw/discard pile state is
+            // owned by whichever save is actually hosting/soloing the
+            // game, not by every save-scoped bundle equally (see
+            // ensureHostDeckStore()); a guest's own save only ever
+            // needs to remember its own hand.
+            return { badges: { collected: {}, collectedExtras: {} }, team: { members: [] }, pokeCoins: 3, hand: [] };
         }
         let unsavedSessionData = emptySaveScopedData();
         let unsavedSessionTouched = false; // true once it's actually held something worth losing
@@ -12421,6 +12607,22 @@
                 badges: seed.badges,
                 team: seed.team,
                 pokeCoins: seed.pokeCoins,
+                hand: seed.hand,
+                // Draw/discard pile state for every deck this save has
+                // touched -- see ensureHostDeckStore()/DECK_TOOL_LIST.
+                // Only ever read/written on the device actually hosting
+                // (or soloing) this save; a connected guest never has
+                // its own copy, it just mirrors whatever the host last
+                // broadcast (see guestDeckStateCache).
+                decks: {},
+                // Every OTHER player's Hand & Decks hand, keyed by
+                // their own persistent guestClientId (see
+                // getOrCreateGuestClientId()) rather than conn.peer --
+                // durable across that player disconnecting/reconnecting
+                // AND across this host device itself reloading
+                // mid-session, same as decks above. See
+                // ensureGuestHandsStore()/getPeerHandArray().
+                guestHands: {},
             };
             persistGameSaves();
             activeGuestSaveId = null;
@@ -12511,6 +12713,39 @@
             return 'host-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
         }
 
+        // This device's own persistent identity from a HOST's point of
+        // view -- unlike hostSaveId (which identifies a *save*) or
+        // conn.peer (a random id PeerJS mints fresh every connection),
+        // this is the one thing that survives both a reconnect AND the
+        // Host's own device reloading mid-session. Minted once and
+        // cached in this device's own localStorage (not part of any
+        // save, since it's the same identity regardless of which guest
+        // save/hostSaveId it's currently joined to). See finalizeGuestJoin()
+        // (sends it in 'identify') and wireHostConnection() (keys
+        // save.guestHands by it) for what it's actually for -- letting
+        // the Host durably remember *this specific player's* Hand &
+        // Decks hand across drops/reconnects/host-device reloads alike.
+        const GUEST_CLIENT_ID_KEY = 'pmtuGuestClientId';
+        function getOrCreateGuestClientId() {
+            let id = null;
+            try {
+                id = localStorage.getItem(GUEST_CLIENT_ID_KEY);
+            } catch (err) {
+                id = null;
+            }
+            if (!id) {
+                id = 'guestclient-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+                try {
+                    localStorage.setItem(GUEST_CLIENT_ID_KEY, id);
+                } catch (err) {
+                    // No persistence available -- this device will just look
+                    // like a brand-new player to the Host every time (fresh
+                    // empty hand), same as if this were its first-ever join.
+                }
+            }
+            return id;
+        }
+
         function loadGameGuestSaves() {
             let stored = null;
             try {
@@ -12552,6 +12787,18 @@
         }
 
         let gameGuestSaves = loadGameGuestSaves();
+        // Same Hand & Decks backfill as migrateHandAndDecks() above, for
+        // guest saves -- a guest save only ever needs `hand`, never
+        // `decks` (see its own comment on gameGuestSaves[hostSaveId] in
+        // finalizeGuestJoin()).
+        (function migrateGuestHands() {
+            let changed = false;
+            Object.keys(gameGuestSaves).forEach(id => {
+                const save = gameGuestSaves[id];
+                if (save && !Array.isArray(save.hand)) { save.hand = []; changed = true; }
+            });
+            if (changed) persistGameGuestSaves();
+        })();
         // Same Poké Coins backfill as migratePokeCoins() above, just for
         // the guest-save bank instead of the 3 fixed host slots.
         (function migrateGuestPokeCoins() {
@@ -13941,6 +14188,7 @@
                 renderTeamGrid();
                 renderTeamCardsOverlay();
                 renderTeamDetailCardsSection();
+                renderDecksScreen();
             })
             .catch(err => {
                 console.warn('Could not load card data:', err);
@@ -13976,6 +14224,404 @@
             const order = CARD_DECK_ORDER.filter(d => byDeck[d]);
             Object.keys(byDeck).forEach(d => { if (!order.includes(d)) order.push(d); });
             return order.map(deck => ({ deck, cards: byDeck[deck] }));
+        }
+
+        // ==================== Hand & Decks tool ====================
+        //
+        // Virtual replacement for the board game's own physical Event/
+        // Item/etc. decks and each player's hand. Draw/discard pile
+        // *order* is authoritative on exactly one device -- the Host,
+        // or this device alone in solo play -- same "one source of
+        // truth, everyone else mirrors it" shape as Playlist Sync uses
+        // for now-playing state (see broadcastLobbyMusicState()). A
+        // connected guest never computes a shuffle or a draw itself; it
+        // only ever sends a request (deck-draw/deck-discard) and renders
+        // whatever the Host sends back (deck-state/deck-drawn).
+        //
+        // Only 'Event Deck' for now -- see the chat this was scoped in.
+        // Adding another deck later (Item, Shop, TM, etc.) should just
+        // be adding its cardDeck string here; everything below already
+        // works generically off this list. Shop/Reward will eventually
+        // need their own entries once their "buy, don't draw randomly"
+        // rules exist -- not the same mechanic as this list's decks.
+        const DECK_TOOL_LIST = ['Event Deck'];
+
+        // Fisher-Yates -- used once per fresh deck build and again any
+        // time discardPile gets folded back into drawPile (see
+        // drawFromHostDeck() below).
+        function shuffleArray(arr) {
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+
+        // Cards with no `region` (cards.json) are the deck's base set --
+        // always included, every game, every region -- while a card
+        // with one belongs only to a save whose own .region matches
+        // (Safari Ball's own region is an array, ['kanto','johto',
+        // 'sinnoh'], since it's valid in any of those three; everything
+        // else so far is a single string). See buildFreshDrawPile()'s
+        // own comment for why this is checked once, at build time,
+        // rather than re-checked every render.
+        function cardMatchesActiveRegion(card) {
+            if (card.region === undefined || card.region === null) return true;
+            const activeRegion = getActiveRegionForBadges();
+            return Array.isArray(card.region) ? card.region.includes(activeRegion) : card.region === activeRegion;
+        }
+
+        // Expands cards.json's own qty field into that many physical
+        // copies of the same id -- a deck's drawPile/discardPile are
+        // both just flat arrays of ids, duplicates and all, the same
+        // way a real stack of cards would have duplicate faces mixed
+        // through it. Cards with no qty (most of the database, outside
+        // decks like this) default to 1 copy, matching cardIconFor()'s
+        // own "missing qty means one of it" assumption elsewhere.
+        //
+        // Restricted to the base set (region: none) plus whatever's
+        // specific to the active save's own region (see
+        // cardMatchesActiveRegion() above) -- a Kanto game never sees
+        // Paldea's Terastal Phenomenon event, etc. Only ever called
+        // from ensureDeckBuilt() via ensureHostDeckStore(), which is
+        // itself only ever non-null on the Host/solo side, so
+        // getActiveRegionForBadges() here is always reading THIS
+        // device's own active save -- exactly the save this deck
+        // belongs to, never a connected guest's.
+        function buildFreshDrawPile(deckName) {
+            const ids = [];
+            Object.values(CARDS_BY_ID).forEach(c => {
+                if (c.cardDeck !== deckName) return;
+                if (!cardMatchesActiveRegion(c)) return;
+                const copies = typeof c.qty === 'number' && c.qty > 0 ? c.qty : 1;
+                for (let i = 0; i < copies; i++) ids.push(c.id);
+            });
+            return shuffleArray(ids);
+        }
+
+        // The one place that decides whose save's `decks` field is
+        // authoritative for this device right now. Returns null on a
+        // connected guest (it has no authoritative copy -- see
+        // guestDeckStateCache instead) or if there's genuinely no save
+        // to hold it yet (no slot loaded, e.g. mid-creation-form).
+        // Falls back to an in-memory-only object for the same
+        // "unsaved session" case getActiveSaveData() itself covers, so
+        // the tool still works before the player has saved anything --
+        // just without persistence, exactly like unsavedSessionData.
+        let unsavedDeckState = {};
+        function ensureHostDeckStore() {
+            if (lobbyState.role === 'guest') return null;
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
+                if (!gameSaves[activeSaveSlot].decks || typeof gameSaves[activeSaveSlot].decks !== 'object') {
+                    gameSaves[activeSaveSlot].decks = {};
+                }
+                return gameSaves[activeSaveSlot].decks;
+            }
+            return unsavedDeckState;
+        }
+
+        // Lazily builds a deck's drawPile the first time anything asks
+        // for it -- covers both a genuinely new save and CARDS_BY_ID
+        // resolving late (see the CARDS_URL fetch above); calling this
+        // again once a deck already exists is a no-op, it never
+        // reshuffles or resets an in-progress deck.
+        function ensureDeckBuilt(store, deckName) {
+            if (!store) return;
+            if (!store[deckName]) {
+                store[deckName] = { drawPile: [], discardPile: [] };
+            }
+            const deck = store[deckName];
+            if (deck.drawPile.length === 0 && deck.discardPile.length === 0 && Object.keys(CARDS_BY_ID).length) {
+                deck.drawPile = buildFreshDrawPile(deckName);
+            }
+        }
+
+        // Draws exactly one card off the Host's own authoritative
+        // store, reshuffling discardPile back into drawPile first if
+        // drawPile has run out -- the standard "reshuffle when empty"
+        // rule most of this game's own decks use. Returns the drawn
+        // card id, or null if there's genuinely nothing left anywhere
+        // (every copy of every card in this deck is already in some
+        // hand or CARDS_BY_ID hasn't loaded yet).
+        function drawFromHostDeck(deckName) {
+            const store = ensureHostDeckStore();
+            if (!store) return null;
+            ensureDeckBuilt(store, deckName);
+            const deck = store[deckName];
+            if (deck.drawPile.length === 0) {
+                if (deck.discardPile.length === 0) return null;
+                deck.drawPile = shuffleArray(deck.discardPile.splice(0));
+            }
+            return deck.drawPile.pop();
+        }
+
+        // Moves a card id from wherever it currently sits in hand
+        // straight to the top of that deck's discardPile -- this app
+        // has no "wrong card" validation here on purpose, same
+        // trust-the-request stance the trade system already takes with
+        // whatever a connected guest sends.
+        function discardToHostDeck(deckName, cardId) {
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, deckName);
+            store[deckName].discardPile.push(cardId);
+        }
+
+        // ---- Per-player hand storage ----
+        //
+        // This device's OWN hand always lives on getActiveSaveData()
+        // (persisted locally, same as team/badges) regardless of role.
+        // Every OTHER connected player's hand lives on the HOST's own
+        // save too -- save.guestHands, keyed by that player's
+        // persistent guestClientId (see getOrCreateGuestClientId()),
+        // NOT by conn.peer (which PeerJS mints fresh every connection
+        // and can't survive a reconnect). This is what lets a dropped
+        // player's hand -- and the Host's own hand and every deck's
+        // draw/discard piles -- all still be exactly where they were
+        // if that player rejoins later, or if the Host's own device
+        // reloads mid-session.
+        function getLocalHandArray() {
+            const data = getActiveSaveData();
+            if (!Array.isArray(data.hand)) data.hand = [];
+            return data.hand;
+        }
+
+        function persistLocalHand() {
+            if (activeGuestSaveId !== null) persistGameGuestSaves();
+            else if (activeSaveSlot !== null) persistGameSaves();
+        }
+
+        // Same "fall back to an in-memory-only object before there's a
+        // real save to hold it" shape as unsavedDeckState/
+        // ensureHostDeckStore() above.
+        let unsavedGuestHands = {};
+        function ensureGuestHandsStore() {
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
+                if (!gameSaves[activeSaveSlot].guestHands || typeof gameSaves[activeSaveSlot].guestHands !== 'object') {
+                    gameSaves[activeSaveSlot].guestHands = {};
+                }
+                return gameSaves[activeSaveSlot].guestHands;
+            }
+            return unsavedGuestHands;
+        }
+
+        // conn.peer -> that connection's own persistent guestClientId,
+        // once it's identified itself (see wireHostConnection()'s
+        // 'identify' handling) -- null for a connection that hasn't
+        // gotten that far yet, which every caller below treats as "no
+        // hand to touch yet" rather than guessing.
+        function resolveGuestClientIdForPeer(peerId) {
+            const entry = lobbyState.connections.get(peerId);
+            return (entry && entry.guestClientId) || null;
+        }
+
+        // Returns a direct, mutable reference to peerId's own hand
+        // array in save.guestHands -- creating it (empty) the first
+        // time this exact guestClientId is ever seen. Null only if
+        // peerId hasn't sent 'identify' yet.
+        function getPeerHandArray(peerId) {
+            const guestClientId = resolveGuestClientIdForPeer(peerId);
+            if (!guestClientId) return null;
+            const store = ensureGuestHandsStore();
+            if (!Array.isArray(store[guestClientId])) store[guestClientId] = [];
+            return store[guestClientId];
+        }
+
+        // Host-side: applies a draw for whichever player asked --
+        // 'host' for the Host's own device, or a conn.peer id for a
+        // connected guest -- then tells everyone what changed. Called
+        // directly (no network hop) when this device IS the player in
+        // question (solo play, or the Host drawing for itself); called
+        // from wireHostConnection()'s 'deck-draw' handler otherwise.
+        function hostApplyDraw(deckName, peerKey) {
+            const cardId = drawFromHostDeck(deckName);
+            if (cardId === null) return; // nothing left to draw, silently no-op
+            if (peerKey === 'host') {
+                getLocalHandArray().push(cardId);
+                persistLocalHand();
+            } else {
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return; // hasn't identified yet -- ignore a stray request
+                hand.push(cardId);
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'deck-drawn', deck: deckName, cardId });
+            }
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Same shape as hostApplyDraw() above, for discarding a card
+        // already in hand back to the pile.
+        function hostApplyDiscard(deckName, peerKey, cardId) {
+            if (peerKey === 'host') {
+                const hand = getLocalHandArray();
+                const idx = hand.indexOf(cardId);
+                if (idx === -1) return;
+                hand.splice(idx, 1);
+                persistLocalHand();
+            } else {
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return;
+                const idx = hand.indexOf(cardId);
+                if (idx === -1) return;
+                hand.splice(idx, 1);
+                persistGameSaves();
+            }
+            discardToHostDeck(deckName, cardId);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Public counts only -- draw/discard pile sizes and every
+        // player's hand *count*, never hand contents (see
+        // .game-other-hands-list's own CSS comment for why). Sent to
+        // every connected guest, and applied locally so the Host's own
+        // screen redraws off the exact same numbers a guest would see.
+        function broadcastDeckState() {
+            if (lobbyState.role === 'guest') return; // guests only ever receive this, never originate it
+            const store = ensureHostDeckStore();
+            const decks = {};
+            DECK_TOOL_LIST.forEach(deckName => {
+                ensureDeckBuilt(store, deckName);
+                const deck = store ? store[deckName] : { drawPile: [], discardPile: [] };
+                decks[deckName] = {
+                    drawCount: deck.drawPile.length,
+                    discardCount: deck.discardPile.length,
+                    discardTop: deck.discardPile.length ? deck.discardPile[deck.discardPile.length - 1] : null,
+                };
+            });
+            const handCounts = { host: getLocalHandArray().length };
+            if (lobbyState.connections) {
+                lobbyState.connections.forEach((entry, peerId) => {
+                    handCounts[peerId] = (getPeerHandArray(peerId) || []).length;
+                });
+            }
+            const payload = { type: 'deck-state', decks, handCounts };
+            if (lobbyState.connections) {
+                lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
+            }
+            guestDeckStateCache = payload; // so renderDecksScreen() has one code path for host and guest alike
+            renderDecksScreen();
+        }
+
+        // Guest-side mirror of the Host's last broadcastDeckState() --
+        // {decks, handCounts} or null before the first one arrives.
+        let guestDeckStateCache = null;
+
+        // ---- UI-facing entry points (called from the delegated click
+        // listener below) -- branch once here on role so every other
+        // function above never has to ----
+        function requestDrawCard(deckName) {
+            if (isActiveSaveReadOnly()) return; // see applyReadOnlyIndicators()'s own comment
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-draw', deck: deckName });
+                }
+            } else {
+                hostApplyDraw(deckName, 'host');
+            }
+        }
+
+        function requestDiscardCard(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-discard', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyDiscard(deckName, 'host', cardId);
+            }
+        }
+
+        // Rebuilds the whole Hand & Decks screen from whatever's
+        // currently known -- this device's own local deck store (Host/
+        // solo) or guestDeckStateCache (guest) for the Decks list and
+        // everyone-else's counts, and getActiveSaveData().hand for
+        // "Your Hand" either way. Safe to call before CARDS_BY_ID has
+        // loaded or before any deck has ever been drawn from --
+        // everything here falls back to zero/empty rather than
+        // throwing. Called on entering the screen (setGameScreen), and
+        // after every local or networked state change.
+        function renderDecksScreen() {
+            const listEl = document.getElementById('game-decks-list');
+            const handEl = document.getElementById('game-hand-grid');
+            const othersHeaderEl = document.getElementById('game-other-hands-header');
+            const othersListEl = document.getElementById('game-other-hands-list');
+            if (!listEl || !handEl) return;
+
+            const isGuest = lobbyState.role === 'guest';
+            let deckInfo = {};
+            if (isGuest) {
+                deckInfo = (guestDeckStateCache && guestDeckStateCache.decks) || {};
+            } else {
+                const store = ensureHostDeckStore();
+                DECK_TOOL_LIST.forEach(deckName => {
+                    ensureDeckBuilt(store, deckName);
+                    const deck = store ? store[deckName] : { drawPile: [], discardPile: [] };
+                    deckInfo[deckName] = {
+                        drawCount: deck.drawPile.length,
+                        discardCount: deck.discardPile.length,
+                        discardTop: deck.discardPile.length ? deck.discardPile[deck.discardPile.length - 1] : null,
+                    };
+                });
+            }
+
+            listEl.innerHTML = DECK_TOOL_LIST.map(deckName => {
+                const info = deckInfo[deckName] || { drawCount: 0, discardCount: 0, discardTop: null };
+                const topCard = info.discardTop ? CARDS_BY_ID[info.discardTop] : null;
+                const canDraw = (info.drawCount + info.discardCount) > 0;
+                return `
+                    <div class="game-deck-row">
+                        ${topCard && topCard.imageUrl
+                            ? `<img class="game-deck-discard-thumb" src="${topCard.imageUrl}" alt="${escapeHtml(topCard.name)}" title="Top of discard: ${escapeHtml(topCard.name)}">`
+                            : `<span class="game-deck-discard-thumb empty"></span>`}
+                        <span class="game-deck-info">
+                            <span class="game-deck-name">${escapeHtml(deckName)}</span>
+                            <span class="game-deck-counts">${info.drawCount} left \u00b7 ${info.discardCount} discarded</span>
+                        </span>
+                        <button class="filter-btn game-deck-draw-btn" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'}>Draw</button>
+                    </div>
+                `;
+            }).join('');
+
+            const hand = getLocalHandArray();
+            handEl.innerHTML = hand.length ? hand.map(cardId => {
+                const card = CARDS_BY_ID[cardId];
+                const name = card ? card.name : cardId;
+                return `
+                    <div class="game-hand-card">
+                        ${card && card.imageUrl
+                            ? `<img class="game-hand-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">`
+                            : ''}
+                        <span class="game-hand-card-name">${escapeHtml(name)}</span>
+                        <button class="filter-btn exclude game-hand-discard-btn" type="button" data-deck="${escapeHtml((card && card.cardDeck) || DECK_TOOL_LIST[0])}" data-card-id="${escapeHtml(cardId)}">Discard</button>
+                    </div>
+                `;
+            }).join('') : `<p class="game-hand-empty">Your hand is empty. Draw a card from a deck above.</p>`;
+
+            if (othersHeaderEl && othersListEl) {
+                const inLobby = lobbyState.role === 'host' || lobbyState.role === 'guest';
+                othersHeaderEl.style.display = inLobby ? '' : 'none';
+                if (!inLobby) {
+                    othersListEl.innerHTML = '';
+                } else if (isGuest) {
+                    const counts = (guestDeckStateCache && guestDeckStateCache.handCounts) || {};
+                    const selfId = lobbyState.peer ? lobbyState.peer.id : null;
+                    const rows = (lobbyState.players || []).filter(p => p.id !== selfId).map(p => {
+                        const count = counts[p.id] || 0;
+                        return `<div class="game-other-hand-row"><span class="game-card-back"></span><span class="game-other-hand-name">${escapeHtml(p.name)}</span><span>${count}</span></div>`;
+                    });
+                    othersListEl.innerHTML = rows.join('') || '<p class="game-hand-empty">No other players connected.</p>';
+                } else {
+                    const entries = [];
+                    lobbyState.connections.forEach((entry, peerId) => {
+                        const count = (getPeerHandArray(peerId) || []).length;
+                        entries.push(`<div class="game-other-hand-row"><span class="game-card-back"></span><span class="game-other-hand-name">${escapeHtml(entry.name)}</span><span>${count}</span></div>`);
+                    });
+                    othersListEl.innerHTML = entries.join('') || '<p class="game-hand-empty">No other players connected.</p>';
+                }
+            }
         }
 
         // The four evolution-corner icons -- see the chat this was
@@ -17538,9 +18184,16 @@
             const readOnly = isActiveSaveReadOnly();
             const badgeScreen = document.getElementById('game-screen-badges');
             const teamScreen = document.getElementById('game-screen-team');
+            const decksScreen = document.getElementById('game-screen-decks');
             const pokeCoinsSection = document.getElementById('game-pokecoins-section');
             if (badgeScreen) badgeScreen.dataset.readonly = readOnly ? 'true' : 'false';
             if (teamScreen) teamScreen.dataset.readonly = readOnly ? 'true' : 'false';
+            // Hand & Decks is real, mutable state (draw/discard change
+            // this device's own hand and, on the Host/solo side, the
+            // shared deck piles) same as Badges/Team -- same reasoning,
+            // same [data-readonly] CSS convention. See requestDrawCard()/
+            // requestDiscardCard() for the actual mutation guard.
+            if (decksScreen) decksScreen.dataset.readonly = readOnly ? 'true' : 'false';
             // Poké Coins lives on the main screen rather than its own
             // .game-screen (see the HTML comment above
             // #game-pokecoins-section), so it needs its own element
@@ -18621,6 +19274,7 @@
             renderTeamGrid();
             renderMatchupPanel();
             renderPokeCoins();
+            renderDecksScreen();
         }
 
         // Called by any save-scoped tool whenever it mutates badges/team
@@ -18766,6 +19420,7 @@
             const scrollEl = document.getElementById('game-scroll');
             if (scrollEl) scrollEl.scrollTop = 0;
             if (screenId === 'lobby') prefillLobbyHostName();
+            if (screenId === 'decks') renderDecksScreen();
         }
 
         // Auto-fills the Host card's name field from whatever this
@@ -19442,11 +20097,19 @@
                 // every new connection regardless of role.
                 const placeholderName = (conn.metadata && conn.metadata.name) || 'Trainer';
                 lobbyState.connections.set(conn.peer, { conn, name: placeholderName, lastSeen: Date.now() });
+                // guestClientId isn't known yet at this point -- it
+                // arrives with 'identify' below, which is what actually
+                // links this connection to its durable save.guestHands
+                // entry (see resolveGuestClientIdForPeer()).
                 // Hosting requires an active host save (see
                 // startHostingLobby()), so gameSaves[activeSaveSlot] is
                 // guaranteed to exist here.
                 conn.send(buildLobbyWelcomePayload(gameSaves[activeSaveSlot]));
                 refreshLobbyRosterFromHostState();
+                // Gives this brand-new connection the Host's current
+                // Hand & Decks state right away, same reasoning as the
+                // Playlist Sync broadcast just below.
+                broadcastDeckState();
                 // Also gives this brand-new connection (redundantly, but
                 // harmlessly, to everyone else already connected) the
                 // host's *current* Playlist Sync state right away --
@@ -19493,6 +20156,26 @@
                         entry.name = data.name.trim() || 'Trainer';
                         refreshLobbyRosterFromHostState();
                     }
+                    // Links this connection to its durable Hand & Decks
+                    // hand -- see getOrCreateGuestClientId()'s own
+                    // comment for why this (rather than conn.peer) is
+                    // what save.guestHands is actually keyed by. Sends
+                    // back whatever hand this exact player already had
+                    // on file (empty for a genuinely new player, restored
+                    // for one reconnecting mid-game or rejoining a later
+                    // session) so this guest's own local cache reconciles
+                    // to the Host's authoritative copy rather than
+                    // trusting its own possibly-stale localStorage.
+                    if (entry && typeof data.guestClientId === 'string' && data.guestClientId) {
+                        entry.guestClientId = data.guestClientId;
+                        const hand = getPeerHandArray(conn.peer) || [];
+                        if (conn.open) conn.send({ type: 'hand-sync', cards: hand.slice() });
+                        broadcastDeckState();
+                    }
+                } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
+                    hostApplyDraw(data.deck, conn.peer);
+                } else if (data.type === 'deck-discard' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyDiscard(data.deck, conn.peer, data.cardId);
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
                     handleIncomingTradeMessage(data, conn);
                 }
@@ -20128,6 +20811,31 @@
                     renderTeamGrid();
                 } else if (data.type === 'music') {
                     applyGuestMusicMirror(data);
+                } else if (data.type === 'deck-state' && data.decks && data.handCounts) {
+                    // Public counts only (draw/discard sizes, everyone's
+                    // hand *count*) -- see broadcastDeckState()'s own
+                    // comment for why hand contents never travel this way.
+                    guestDeckStateCache = data;
+                    renderDecksScreen();
+                } else if (data.type === 'deck-drawn' && typeof data.cardId === 'string') {
+                    // A card this device itself just drew, addressed to
+                    // this connection specifically (see hostApplyDraw()) --
+                    // added straight to the local hand and persisted the
+                    // same way any other Guest Save field is.
+                    getLocalHandArray().push(data.cardId);
+                    persistLocalHand();
+                    renderDecksScreen();
+                } else if (data.type === 'hand-sync' && Array.isArray(data.cards)) {
+                    // Sent once, right after 'identify' -- the Host's
+                    // authoritative version of this exact hand (see
+                    // wireHostConnection()'s own comment), replacing
+                    // whatever this device's local cache had in case it
+                    // was stale (e.g. this device was offline for part of
+                    // a draw/discard, or this is a brand-new device
+                    // joining a save that already has cards in hand).
+                    getActiveSaveData().hand = data.cards.slice();
+                    persistLocalHand();
+                    renderDecksScreen();
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
                     // Unlike the host side's own handling of this same
                     // prefix (see wireHostConnection()), no `to`-based
@@ -20256,6 +20964,7 @@
                     badges: { collected: {}, collectedExtras: {} },
                     team: { members: [] },
                     pokeCoins: 3,
+                    hand: [],
                 };
             }
             persistGameGuestSaves();
@@ -20277,7 +20986,7 @@
             if (ruleset.region) musicState.activeRegion = ruleset.region;
 
             if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                lobbyState.hostConn.send({ type: 'identify', name: cleanName });
+                lobbyState.hostConn.send({ type: 'identify', name: cleanName, guestClientId: getOrCreateGuestClientId() });
             }
 
             lobbyState.players = [{ id: 'host', name: lobbyState.hostName || 'Host', isHost: true }];
@@ -20311,6 +21020,18 @@
             const navTarget = e.target.closest('[data-target]');
             if (navTarget) {
                 setGameScreen(navTarget.dataset.target);
+                return;
+            }
+
+            const deckDrawBtn = e.target.closest('.game-deck-draw-btn');
+            if (deckDrawBtn) {
+                requestDrawCard(deckDrawBtn.dataset.deck);
+                return;
+            }
+
+            const handDiscardBtn = e.target.closest('.game-hand-discard-btn');
+            if (handDiscardBtn) {
+                requestDiscardCard(handDiscardBtn.dataset.deck, handDiscardBtn.dataset.cardId);
                 return;
             }
 
