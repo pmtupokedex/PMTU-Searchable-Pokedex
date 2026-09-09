@@ -2673,13 +2673,13 @@
         }
 
         /* Trade/Release -- see the chat these were added in.
-           #game-team-trade-btn just pops the standard "Coming Soon"
-           toast for now (see its own click listener) until the real
-           trade flow exists; #game-team-release-btn kicks off release
-           mode (see beginTeamReleaseMode() in the script). Same block
-           width/margin treatment as #game-team-add-btn above, own rule
-           rather than sharing a selector with it since these three
-           won't necessarily always want to change together. */
+           #game-team-trade-btn opens the partner-picker overlay (see
+           openTradePartnerOverlay() in the script); #game-team-release-btn
+           kicks off release mode (see beginTeamReleaseMode() in the
+           script). Same block width/margin treatment as
+           #game-team-add-btn above, own rule rather than sharing a
+           selector with it since these three won't necessarily always
+           want to change together. */
         #game-team-trade-btn,
         #game-team-release-btn {
             display: block;
@@ -2751,6 +2751,17 @@
         }
 
         .game-team-release-banner span {
+            font-size: 14px;
+            font-weight: bold;
+            color: #7a5200;
+        }
+
+        /* No Cancel button in this one (see setTradeStatusMessage()) --
+           .game-team-release-banner's own space-between would otherwise
+           shove its lone text span flush left. */
+        .game-team-trade-status-banner {
+            justify-content: center;
+            text-align: center;
             font-size: 14px;
             font-weight: bold;
             color: #7a5200;
@@ -3492,6 +3503,121 @@
                 -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
                 -1px  0   0 black,                 1px  0   0 black,
                 -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
+        /* Trade a Pok\u00e9mon partner picker -- see
+           openTradePartnerOverlay()/closeTradePartnerOverlay() in the
+           script. Same positioning/backdrop rules as every other Team
+           Tracker overlay above (duplicated for the same independence
+           reasoning as every other pair like this in this doc). */
+        #game-team-trade-partner-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-trade-partner-overlay.visible {
+            display: flex;
+        }
+
+        /* Each option is just a stock .filter-btn (see openTradePartnerOverlay())
+           stacked full-width -- own rule purely for the spacing between
+           them, same reasoning as most other one-off spacing rules in
+           this doc. */
+        #game-team-trade-partner-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 10px 0;
+        }
+
+        /* The trade negotiation itself -- see renderTradeOverlay() in
+           the script for how its several phases (invite-sent/-received/
+           negotiating) are toggled. Same positioning/backdrop rules as
+           every other Team Tracker overlay above. */
+        #game-team-trade-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-trade-overlay.visible {
+            display: flex;
+        }
+
+        /* Shared by both #game-team-trade-sent-text and
+           #game-team-trade-received-text -- renderTradeOverlay() toggles
+           which (if either) is actually shown via inline display, this
+           just covers the look they share. */
+        .game-team-trade-phase-text {
+            text-align: center;
+            font-size: 15px;
+            margin: 10px 0;
+        }
+
+        /* Side-by-side "Your Offer"/"Their Offer" columns, shown once
+           the invite's been accepted (see renderTradeOverlay()). */
+        #game-team-trade-columns {
+            display: flex;
+            gap: 12px;
+            margin: 10px 0;
+        }
+
+        .game-team-trade-column {
+            flex: 1 1 0;
+            min-width: 0;
+            text-align: center;
+        }
+
+        .game-team-trade-column-label {
+            font-size: 13px;
+            font-weight: bold;
+            color: #888;
+            margin: 0 0 6px;
+        }
+
+        /* Holds either tradeOfferCardHtml()'s sprite+name (once a pick
+           exists) or a plain "Waiting..." string (see
+           renderTradeOverlay()) -- fixed min-height so the layout
+           doesn't visibly jump between those two very different-sized
+           states. */
+        .game-team-trade-column-body {
+            min-height: 90px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            color: #888;
+            border: 2px dashed rgba(0, 0, 0, 0.12);
+            border-radius: 10px;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+
+        .game-team-trade-offer-img {
+            width: 64px;
+            height: 64px;
+            object-fit: contain;
+        }
+
+        .game-team-trade-offer-name {
+            font-size: 12px;
+            font-weight: bold;
+            color: #333;
+            margin-top: 4px;
         }
 
         /* Revive confirmation -- see openTeamReviveConfirmOverlay()/
@@ -9599,6 +9725,24 @@
                     <span>Tap a Pok&eacute;mon on your team to release it.</span>
                     <button class="filter-btn exclude" id="game-team-release-cancel-btn">Cancel</button>
                 </div>
+                <!-- Shown instead of Add/Trade/Release while
+                     isTradeSelectingOffer() is true (see the
+                     script) -- every filled .game-team-slot click while
+                     this is visible locks that member in as this
+                     device's offer for the trade in progress, until
+                     confirmed/cancelled via #game-team-trade-overlay
+                     (which reopens immediately after a pick -- see
+                     selectTradeOffer()) or backed out of here directly. -->
+                <div class="game-team-release-banner" id="game-team-trade-select-banner">
+                    <span>Tap a Pok&eacute;mon on your team to offer in the trade.</span>
+                    <button class="filter-btn exclude" id="game-team-trade-select-cancel-btn">Cancel</button>
+                </div>
+                <!-- Brief outcome toast (declined/cancelled/completed) --
+                     see setTradeStatusMessage() in the script. Reuses
+                     .game-team-release-banner's own visual treatment
+                     under its own id/class, same independence reasoning
+                     as every other near-identical pair in this doc. -->
+                <div class="game-team-release-banner game-team-trade-status-banner" id="game-team-trade-status-banner"></div>
             </div>
 
             <div class="game-screen" id="game-screen-lobby">
@@ -9770,6 +9914,61 @@
                 <div class="game-save-slot-actions">
                     <button class="filter-btn game-team-release-confirm-yes-btn">Yes</button>
                     <button class="filter-btn exclude game-team-release-confirm-no-btn">No</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trade a Pok\u00e9mon -- see the chat this was built in.
+             #game-team-trade-btn opens this first (see
+             openTradePartnerOverlay()); tapping a player sends the
+             invite (startTradeInvite()) and hands off to
+             #game-team-trade-overlay below. renderTradeOverlay() rebuilds
+             #game-team-trade-partner-list from lobbyState.players (minus
+             this device itself) every time it's opened, same
+             "rebuilt from live state, never trusted stale" convention as
+             everywhere else in this panel. -->
+        <div id="game-team-trade-partner-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Trade with Who?</p>
+                <div id="game-team-trade-partner-list"></div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude" id="game-team-trade-partner-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- The trade itself, once a partner's picked -- one overlay
+             covers every phase of lobbyState.tradeSession
+             (invite-sent/invite-received/negotiating/awaiting-the-other-
+             side's-confirm) via data-phase, same "one element, several
+             CSS-gated states" shape as #game-lobby's own data-state.
+             Closed entirely (see renderTradeOverlay()) during the one
+             window that isn't a phase of THIS overlay at all -- actively
+             picking an offer, which happens directly on the team grid
+             underneath via #game-team-trade-select-banner instead (see
+             its own comment) -- and reopens the moment a pick is made. -->
+        <div id="game-team-trade-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-team-trade-title">Trade</p>
+                <p class="game-team-trade-phase-text" id="game-team-trade-sent-text">Waiting for a response&hellip;</p>
+                <p class="game-team-trade-phase-text" id="game-team-trade-received-text"></p>
+                <div class="game-save-slot-actions" id="game-team-trade-invite-actions">
+                    <button class="filter-btn game-team-trade-accept-btn">Accept</button>
+                    <button class="filter-btn exclude game-team-trade-decline-btn">Decline</button>
+                </div>
+                <div id="game-team-trade-columns">
+                    <div class="game-team-trade-column">
+                        <p class="game-team-trade-column-label">Your Offer</p>
+                        <div class="game-team-trade-column-body" id="game-team-trade-my-offer"></div>
+                    </div>
+                    <div class="game-team-trade-column">
+                        <p class="game-team-trade-column-label" id="game-team-trade-partner-label">Their Offer</p>
+                        <div class="game-team-trade-column-body" id="game-team-trade-partner-offer">Waiting&hellip;</div>
+                    </div>
+                </div>
+                <div class="game-save-slot-actions" id="game-team-trade-confirm-actions">
+                    <button class="filter-btn game-team-trade-confirm-btn" id="game-team-trade-confirm-btn">Confirm</button>
+                    <button class="filter-btn exclude game-team-trade-cancel-btn">Cancel</button>
                 </div>
             </div>
         </div>
@@ -13150,6 +13349,8 @@
             const naturesEnabled = isNaturesEnabledForActiveSave();
             const replacing = !!teamReplacePendingMember;
             const releasing = !!teamReleaseModeActive;
+            const negotiatingTrade = isTradeNegotiationActive();
+            const selectingTradeOffer = isTradeSelectingOffer();
 
             // Every multi-icon evolution badge (see startEvolutionBadgeCycle()
             // below) owns a running setInterval -- this whole grid gets
@@ -13163,20 +13364,43 @@
             activeEvolutionBadgeIntervals.forEach(id => clearInterval(id));
             activeEvolutionBadgeIntervals = [];
 
-            // Add/Trade/Release all hide together for either mode --
-            // replacing and releasing are mutually exclusive (see
-            // beginTeamReleaseMode()/beginTeamReplaceMode()) so at most
-            // one of the two banners below is ever visible at once.
+            // Add/Trade/Release all hide together for any of the three
+            // modes -- replacing, releasing, and negotiatingTrade are
+            // mutually exclusive by construction (beginTeamReleaseMode()/
+            // beginTeamReplaceMode() each refuse to start over another,
+            // and trading's own start (startTradeInvite()/
+            // handleTradeInviteReceived()) only ever happens via the
+            // Lobby, entirely separately from either) so at most one of
+            // the three banners below is ever visible at once. Trade
+            // stays hidden for the WHOLE negotiation (see
+            // isTradeNegotiationActive()'s own comment), not just while
+            // still picking -- selectingTradeOffer (the narrower window)
+            // only matters for which banner text shows below, since the
+            // trade-select banner specifically is only relevant before a
+            // pick is made.
+            //
+            // Trade a Pok\u00e9mon additionally only ever shows at all with
+            // a live Lobby connection AND at least one other player in
+            // it (lobbyState.players always includes this device itself,
+            // hence >1 rather than >0) AND no trade already in progress
+            // of any kind (covers the invite-sent/invite-received phases
+            // too, not just this active-picking one -- can't have two
+            // trades going at once) AND a live, editable save (same
+            // guard every other mutating control here already has).
+            const canStartTrade = lobbyState.role !== null && lobbyState.players.length > 1
+                && !lobbyState.tradeSession && !isActiveSaveReadOnly();
             const addBtn = document.getElementById('game-team-add-btn');
-            if (addBtn) addBtn.style.display = (replacing || releasing) ? 'none' : '';
+            if (addBtn) addBtn.style.display = (replacing || releasing || negotiatingTrade) ? 'none' : '';
             const tradeBtn = document.getElementById('game-team-trade-btn');
-            if (tradeBtn) tradeBtn.style.display = (replacing || releasing) ? 'none' : '';
+            if (tradeBtn) tradeBtn.style.display = (replacing || releasing || negotiatingTrade || !canStartTrade) ? 'none' : '';
             const releaseBtn = document.getElementById('game-team-release-btn');
-            if (releaseBtn) releaseBtn.style.display = (replacing || releasing) ? 'none' : '';
+            if (releaseBtn) releaseBtn.style.display = (replacing || releasing || negotiatingTrade) ? 'none' : '';
             const replaceBanner = document.getElementById('game-team-replace-banner');
             if (replaceBanner) replaceBanner.classList.toggle('visible', replacing);
             const releaseBanner = document.getElementById('game-team-release-banner');
             if (releaseBanner) releaseBanner.classList.toggle('visible', releasing);
+            const tradeSelectBanner = document.getElementById('game-team-trade-select-banner');
+            if (tradeSelectBanner) tradeSelectBanner.classList.toggle('visible', selectingTradeOffer);
 
             grid.innerHTML = '';
             for (let i = 0; i < 6; i++) {
@@ -13503,6 +13727,46 @@
         // which are hidden -- see renderTeamGrid() -- while release mode
         // is active).
         let teamReleaseModeActive = false;
+
+        // Trade a Pok\u00e9mon's own equivalent of teamReplacePendingMember/
+        // teamReleaseModeActive above -- true for the entire negotiation
+        // window from acceptance through execute/cancel, not just the
+        // "still picking" moment (see isTradeSelectingOffer() just below
+        // for that narrower one). Deliberately broad: blocks every other
+        // mutating control on this screen (HP/status/evolve/attach/
+        // detail-open -- see each of their own guard clauses) for the
+        // whole window a selection could be sitting
+        // offered-but-not-yet-executed, specifically so the Pok\u00e9mon
+        // actually removed at execute time
+        // (see executeTradeIfReady()) can't drift from the snapshot
+        // already sent to the partner via the earlier trade-select
+        // message -- e.g. equipping a different card or changing HP
+        // after picking but before confirming would otherwise let this
+        // device's own roster and the partner's incoming copy disagree
+        // on what was actually offered.
+        //
+        // Deliberately a derived check rather than its own separately-
+        // tracked flag, same reasoning as isTradeSelectingOffer() below.
+        function isTradeNegotiationActive() {
+            return !!(lobbyState.tradeSession && lobbyState.tradeSession.accepted);
+        }
+
+        // The narrower moment within isTradeNegotiationActive() above --
+        // accepted, but this device hasn't picked what to offer yet.
+        // This is specifically what gates
+        // #game-team-trade-select-banner's own visibility, routes a slot
+        // tap to selectTradeOffer() rather than the usual detail view
+        // (see the #game-scroll delegated listener's own
+        // .game-team-slot-hit-zone branch), and keeps
+        // #game-team-trade-overlay itself closed (see
+        // renderTradeOverlay()) -- once mySelection is set this becomes
+        // false, the banner/grid-tap-routing hand back off to
+        // isTradeNegotiationActive()'s broader "just block everything"
+        // behavior, and the overlay reopens showing the Confirm step.
+        function isTradeSelectingOffer() {
+            const session = lobbyState.tradeSession;
+            return !!(session && session.accepted && !session.mySelection);
+        }
 
         // Which slot (index into data.team.members) release mode is
         // currently confirming, and which of the two stages that
@@ -14584,7 +14848,7 @@
         // Same shape as openTeamDetailCardAdd().
         function openTeamCardsOverlayAdd(slot) {
             if (teamCardsOverlayIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             teamCardsOverlayAddingSlot = slot;
             teamCardsOverlayExpandedDecks = new Set();
             renderTeamCardsOverlay();
@@ -14613,7 +14877,7 @@
         // commitTeamMemberCard(). Same shape as selectTeamDetailCardOption().
         function selectTeamCardsOverlayOption(slot, cardId) {
             if (teamCardsOverlayIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             if (!cardId) return;
             commitTeamMemberCard(teamCardsOverlayIndex, slot, cardId);
             teamCardsOverlayAddingSlot = null;
@@ -14624,7 +14888,7 @@
         // commitTeamMemberCard(). Same shape as removeTeamDetailCard().
         function removeTeamCardsOverlayCard(slot) {
             if (teamCardsOverlayIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             commitTeamMemberCard(teamCardsOverlayIndex, slot, null);
             renderTeamCardsOverlay();
         }
@@ -15738,7 +16002,7 @@
         // button itself should be showing at all).
         function adjustTeamDetailLevel(delta) {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             adjustTeamMemberLevel(teamDetailIndex, delta);
             renderTeamDetailLevelSection();
             renderTeamDetailHpSection();
@@ -15870,7 +16134,7 @@
         // Same shape as openTeamCardsOverlayAdd().
         function openTeamDetailCardAdd(slot) {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             teamDetailCardsAddingSlot = slot;
             teamDetailCardsExpandedDecks = new Set();
             renderTeamDetailCardsSection();
@@ -15911,7 +16175,7 @@
         // function correct for both slots rather than branching.
         function selectTeamDetailCardOption(slot, cardId) {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             if (!cardId) return;
             commitTeamMemberCard(teamDetailIndex, slot, cardId);
             teamDetailCardsAddingSlot = null;
@@ -15933,7 +16197,7 @@
         // correct for both slots rather than branching on it.
         function removeTeamDetailCard(slot) {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             commitTeamMemberCard(teamDetailIndex, slot, null);
             renderTeamDetailCardsSection();
             renderTeamDetailHeader();
@@ -16072,7 +16336,7 @@
         // the same rule the other direction.
         function toggleTeamDetailStatusPicker() {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             const data = getActiveSaveData();
             const member = (data.team.members || [])[teamDetailIndex];
             if (!member || member.fainted) return;
@@ -16598,7 +16862,7 @@
                 return;
             }
 
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
 
             if (teamDetailEvolutionCategory === category) {
                 cancelTeamDetailEvolutionPicker();
@@ -18622,6 +18886,41 @@
             // otherwise) received from the host -- what the guest side
             // of the heartbeat check compares against.
             hostConnLastSeen: null,
+            // Trade a Pok\u00e9mon (see the chat this was built in) -- null
+            // whenever no trade is in progress. Both roles use this same
+            // shape regardless of whether this device is the inviter or
+            // the invitee, or whether the trade partner is the Host or
+            // another Guest (see sendTradeMessage()'s own comment for how
+            // that routing is handled transparently either way):
+            //   partnerId/partnerName: the other player's roster id/name
+            //   incoming: true if partner sent the invite, false if this
+            //     device did -- purely for which overlay copy/buttons to
+            //     show, doesn't affect the state machine itself
+            //   accepted: true once the invite has been accepted by
+            //     whichever side received it
+            //   mySelection/partnerSelection: null until each side picks
+            //     which of their own team members to offer -- an object
+            //     `{ index, member }` for mine (index is this member's
+            //     position in *my own* team.members right now, needed to
+            //     remove the right one at execute time -- see
+            //     executeTradeIfReady()) or just `{ member }` for
+            //     partner's (their index means nothing on this device)
+            //   myConfirmed/partnerConfirmed: both must be true before
+            //     either side actually applies the swap -- see
+            //     executeTradeIfReady()
+            tradeSession: null,
+            // Host-only: peer id -> the other peer id it's currently
+            // trading with (mirrored both directions), covering BOTH
+            // Guest\u2194Guest trades the Host isn't itself a party to and
+            // Host\u2194Guest trades it is. Populated/cleared purely by
+            // observing trade-* messages pass through
+            // handleIncomingTradeMessage() -- the Host never joins or
+            // decides a trade this way, it just needs to know "if this
+            // peer drops, who else needs telling" for
+            // handleHostConnectionDrop() below, since it has no other
+            // way to know two Guests it's just relaying for are even
+            // mid-trade at all.
+            tradePairs: new Map(),
         };
 
         // PeerJS/qrcodejs are loaded from CDN <script> tags in <head> --
@@ -18668,13 +18967,18 @@
                 connections: new Map(), hostConn: null, players: [],
                 playerProgress: {}, linkedGuestSaveId: null,
                 heartbeatSendTimer: null, heartbeatCheckTimer: null,
-                hostConnLastSeen: null,
+                hostConnLastSeen: null, tradeSession: null, tradePairs: new Map(),
             };
             const lobbyEl = document.getElementById('game-lobby');
             lobbyEl.dataset.state = 'choice';
             delete lobbyEl.dataset.role;
             document.getElementById('game-lobby-qr').innerHTML = '';
             document.getElementById('game-lobby-players').innerHTML = '';
+            // Trade a Pok\u00e9mon has no meaning without a live connection --
+            // tradeSession is already null from the fresh lobbyState
+            // above, this just makes sure the overlay itself (if it
+            // happened to be open) actually disappears along with it.
+            renderTradeOverlay();
             // Hands the Sounds panel's transport controls and Game Stage
             // back to this device's own local solo state -- while
             // connected, both were driven by the lobby (see Playlist
@@ -18703,6 +19007,14 @@
             }
             syncMusicUIForLobbyRole();
             startLobbyHeartbeat();
+            // Trade a Pok\u00e9mon's button visibility depends on
+            // lobbyState.role/players (see renderTeamGrid()'s own
+            // canStartTrade) -- covers the Host's own case, where hosting
+            // starts with just itself in lobbyState.players and no
+            // roster-changed event fires until a Guest actually joins
+            // (see refreshLobbyRosterFromHostState()/the guest-side
+            // 'roster' handler for that ongoing case).
+            renderTeamGrid();
         }
 
         // ---- Connection keepalive (see the user's report of a stale
@@ -19181,6 +19493,8 @@
                         entry.name = data.name.trim() || 'Trainer';
                         refreshLobbyRosterFromHostState();
                     }
+                } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
+                    handleIncomingTradeMessage(data, conn);
                 }
             });
             conn.on('close', () => handleHostConnectionDrop(conn.peer, conn));
@@ -19197,6 +19511,26 @@
             if (!lobbyState.connections.has(peerId)) return; // already handled by another of the three paths above
             lobbyState.connections.delete(peerId);
             delete lobbyState.playerProgress[peerId];
+            // Trade a Pok\u00e9mon -- if this peer was mid-trade with anyone
+            // (see tradePairs' own comment for why the Host tracks this
+            // at all), that partner has no other way to find out this
+            // side just vanished, since Guest\u2194Guest trades have no
+            // direct connection of their own to notice a drop on. If the
+            // partner is the Host itself, cancel locally the same way
+            // handleTradeCancelReceived() would from a real message
+            // rather than looping one back through sendTradeMessage().
+            const partnerId = lobbyState.tradePairs.get(peerId);
+            if (partnerId) {
+                lobbyState.tradePairs.delete(peerId);
+                lobbyState.tradePairs.delete(partnerId);
+                const cancelMsg = { type: 'trade-cancel', to: partnerId, from: peerId, reason: 'The other player disconnected.' };
+                if (partnerId === 'host') {
+                    processTradeMessage(cancelMsg);
+                } else {
+                    const partnerEntry = lobbyState.connections.get(partnerId);
+                    if (partnerEntry && partnerEntry.conn.open) partnerEntry.conn.send(cancelMsg);
+                }
+            }
             if (conn && conn.open) {
                 try { conn.close(); } catch (err) { /* already gone -- nothing to clean up */ }
             }
@@ -19216,6 +19550,11 @@
             ];
             broadcastLobbyRoster();
             renderLobbyPlayers();
+            // Trade a Pok\u00e9mon's own button only shows with >1 connected
+            // player (see renderTeamGrid()'s own canStartTrade) -- needs
+            // a fresh render any time that count changes, same as the
+            // Lobby screen's own player list just above.
+            renderTeamGrid();
         }
 
         function broadcastLobbyRoster() {
@@ -19264,6 +19603,404 @@
             if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
                 lobbyState.hostConn.send({ type: 'progress', badgeCount, badgePoints });
             }
+        }
+
+        // ---- Trade a Pok\u00e9mon ----
+        //
+        // Lobby-only, live-connection-required feature (see the chat this
+        // was scoped in) -- always a strict 1-for-1 swap between any two
+        // connected players, Host or Guest on either side, requiring both
+        // sides to explicitly confirm before either roster actually
+        // changes. See lobbyState.tradeSession's own comment for the
+        // state shape, and tradePairs' comment (up in lobbyState/
+        // handleHostConnectionDrop) for how a mid-trade disconnect is
+        // handled when the Host isn't one of the two trading.
+        //
+        // This device's own id in lobbyState.players -- 'host' if
+        // hosting, this device's own PeerJS-assigned id if guesting
+        // (which is exactly what the Host sees as conn.peer for this
+        // connection, so it's the right value to compare against
+        // `to`/`from` fields on trade messages). Returns null before a
+        // Peer exists yet, which shouldn't be reachable in practice since
+        // nothing trade-related is even shown until a Lobby is active.
+        function getMyLobbyPlayerId() {
+            if (lobbyState.role === 'host') return 'host';
+            if (lobbyState.role === 'guest' && lobbyState.peer) return lobbyState.peer.id;
+            return null;
+        }
+
+        // This device's own display name as it appears in
+        // lobbyState.players -- both roles already keep that roster in
+        // sync (see refreshLobbyRosterFromHostState()/the 'roster'
+        // message handling in wireGuestConnection()), so this just looks
+        // itself up in it rather than tracking a separate copy. Falls
+        // back to 'Trainer' if the roster hasn't synced yet for some
+        // reason, same default used everywhere else a name is missing.
+        function getOwnLobbyDisplayName() {
+            const myId = getMyLobbyPlayerId();
+            const mine = lobbyState.players.find(p => p.id === myId);
+            return (mine && mine.name) || 'Trainer';
+        }
+
+        // Sends a trade-* message to a specific player id, transparently
+        // handling both possible routes so every other trade function
+        // below can just call this without caring which one applies:
+        //   - This device is the Host: send straight to that peer's own
+        //     connection (or, in the one edge case a Host could ever
+        //     target itself -- it can't actually invite itself to a
+        //     trade, so this is purely defensive -- process it locally).
+        //   - This device is a Guest: always send up to the Host, whether
+        //     the real target is the Host itself or some other Guest --
+        //     either way the Host's own handleIncomingTradeMessage() is
+        //     what actually resolves `to` and relays onward if needed.
+        function sendTradeMessage(toId, payload) {
+            const myId = getMyLobbyPlayerId();
+            if (!myId) return;
+            const message = Object.assign({ to: toId, from: myId }, payload);
+            if (lobbyState.role === 'host') {
+                if (toId === 'host') { processTradeMessage(message); return; }
+                const entry = lobbyState.connections.get(toId);
+                if (entry && entry.conn.open) entry.conn.send(message);
+            } else if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
+                lobbyState.hostConn.send(message);
+            }
+        }
+
+        // Host-only entry point for every trade-* message it receives
+        // (see wireHostConnection()'s own call site) -- resolves whether
+        // this message is actually meant for the Host itself (process
+        // locally, same as a Guest would) or needs forwarding on to
+        // whichever other connection `to` names (a Guest\u2194Guest trade
+        // the Host isn't a party to, just relaying blindly without
+        // inspecting anything beyond `to`). Also the one place that
+        // maintains tradePairs (see its own comment) -- every message
+        // that passes through here, relayed or local, re-pairs
+        // to/from together, and a trade-cancel un-pairs them, so
+        // handleHostConnectionDrop() always has an accurate picture of
+        // who'd need notifying if either side vanishes.
+        function handleIncomingTradeMessage(data, sourceConn) {
+            if (data.type === 'trade-cancel') {
+                lobbyState.tradePairs.delete(data.from);
+                lobbyState.tradePairs.delete(data.to);
+            } else {
+                lobbyState.tradePairs.set(data.from, data.to);
+                lobbyState.tradePairs.set(data.to, data.from);
+            }
+            if (data.to === 'host') {
+                processTradeMessage(data);
+                return;
+            }
+            const entry = lobbyState.connections.get(data.to);
+            if (entry && entry.conn.open) {
+                entry.conn.send(data);
+            } else if (sourceConn && sourceConn.open) {
+                // Named recipient isn't here (already left) -- bounce a
+                // cancel back to whoever sent this rather than letting it
+                // vanish silently.
+                sourceConn.send({ type: 'trade-cancel', to: data.from, from: 'host', reason: 'That player is no longer connected.' });
+            }
+        }
+
+        // Shared dispatcher for a trade-* message this device is the
+        // actual intended recipient of -- reached directly from the
+        // Guest side (see wireGuestConnection(), which never has a
+        // relay decision to make) or from handleIncomingTradeMessage()
+        // above once the Host has resolved that `to` really is itself.
+        function processTradeMessage(data) {
+            if (data.type === 'trade-invite') handleTradeInviteReceived(data);
+            else if (data.type === 'trade-invite-response') handleTradeInviteResponse(data);
+            else if (data.type === 'trade-select') handleTradeSelectReceived(data);
+            else if (data.type === 'trade-confirm') handleTradeConfirmReceived(data);
+            else if (data.type === 'trade-cancel') handleTradeCancelReceived(data);
+        }
+
+        // Entry point for #game-team-trade-partner-overlay -- this device
+        // invites `partnerId` to trade. Only one trade can be in progress
+        // at a time (enforced by the button/overlay never offering this
+        // while tradeSession is already set), so no queuing to worry
+        // about.
+        function startTradeInvite(partnerId, partnerName) {
+            if (lobbyState.tradeSession) return;
+            lobbyState.tradeSession = {
+                partnerId, partnerName, incoming: false, accepted: false,
+                mySelection: null, partnerSelection: null,
+                myConfirmed: false, partnerConfirmed: false,
+            };
+            sendTradeMessage(partnerId, { type: 'trade-invite', fromName: getOwnLobbyDisplayName() });
+            renderTradeOverlay();
+        }
+
+        // A trade invite arrived for this device. If already mid-trade
+        // with someone else (shouldn't normally be reachable -- the
+        // button/overlay hide once tradeSession is set -- but a message
+        // could theoretically cross in transit), decline it immediately
+        // rather than silently dropping it, so the sender isn't left
+        // waiting on a response that'll never come.
+        function handleTradeInviteReceived(data) {
+            if (lobbyState.tradeSession) {
+                sendTradeMessage(data.from, { type: 'trade-invite-response', accepted: false });
+                return;
+            }
+            lobbyState.tradeSession = {
+                partnerId: data.from, partnerName: data.fromName || 'Trainer',
+                incoming: true, accepted: false,
+                mySelection: null, partnerSelection: null,
+                myConfirmed: false, partnerConfirmed: false,
+            };
+            renderTradeOverlay();
+        }
+
+        // #game-team-trade-invite-overlay's own Accept/Decline buttons.
+        function respondToTradeInvite(accepted) {
+            const session = lobbyState.tradeSession;
+            if (!session || !session.incoming) return;
+            sendTradeMessage(session.partnerId, { type: 'trade-invite-response', accepted });
+            if (accepted) {
+                session.accepted = true;
+                renderTradeOverlay();
+            } else {
+                lobbyState.tradeSession = null;
+                renderTradeOverlay();
+            }
+        }
+
+        function handleTradeInviteResponse(data) {
+            const session = lobbyState.tradeSession;
+            if (!session || session.partnerId !== data.from) return;
+            if (!data.accepted) {
+                lobbyState.tradeSession = null;
+                setTradeStatusMessage(`${session.partnerName} declined the trade.`);
+                renderTradeOverlay();
+                return;
+            }
+            session.accepted = true;
+            renderTradeOverlay();
+        }
+
+        // #game-team-trade-overlay's own team-member grid, once accepted
+        // -- locks in (or changes, any time before this device has
+        // confirmed) which of this device's own current team.members
+        // this trade offers. Re-sent on every change since either side
+        // can freely swap their pick right up until they hit Confirm.
+        function selectTradeOffer(index) {
+            const session = lobbyState.tradeSession;
+            if (!session || !session.accepted || session.myConfirmed) return;
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[index];
+            if (!member) return;
+            session.mySelection = { index, member };
+            sendTradeMessage(session.partnerId, { type: 'trade-select', member });
+            renderTradeOverlay();
+        }
+
+        function handleTradeSelectReceived(data) {
+            const session = lobbyState.tradeSession;
+            if (!session || session.partnerId !== data.from) return;
+            session.partnerSelection = { member: data.member };
+            renderTradeOverlay();
+        }
+
+        // #game-team-trade-overlay's own Confirm button -- only enabled
+        // once this device has a selection (see renderTradeOverlay()).
+        // Changing selection after confirming isn't offered (Confirm
+        // replaces the picker with a locked-in summary -- see
+        // renderTradeOverlay()), so there's no "un-confirm" path to
+        // handle here, only Cancel.
+        function confirmTradeSelection() {
+            const session = lobbyState.tradeSession;
+            if (!session || !session.mySelection || session.myConfirmed) return;
+            session.myConfirmed = true;
+            sendTradeMessage(session.partnerId, { type: 'trade-confirm' });
+            executeTradeIfReady();
+            renderTradeOverlay();
+        }
+
+        function handleTradeConfirmReceived(data) {
+            const session = lobbyState.tradeSession;
+            if (!session || session.partnerId !== data.from) return;
+            session.partnerConfirmed = true;
+            executeTradeIfReady();
+            renderTradeOverlay();
+        }
+
+        // Applies the swap on THIS device only, once both sides have
+        // confirmed -- each side does this independently for its own
+        // save, there's no single authority that needs to tell both
+        // "go," since myConfirmed/partnerConfirmed becoming true on one
+        // device always corresponds to the same becoming true (in the
+        // mirrored sense) on the other.
+        //
+        // Re-validates against the *current* live roster rather than
+        // trusting mySelection.member's own snapshot, since some other
+        // change could in principle have happened to this device's team
+        // while the trade was being negotiated (a card equipped, a level
+        // changed, even the member removed entirely by some other flow)
+        // -- mySelection.index is where to look, but the member actually
+        // found there at execute time, not the snapshot taken when it was
+        // first picked, is what actually gets sent away. If it's gone
+        // entirely, or applying the swap would somehow change this
+        // device's own roster count (see the chat this was scoped in --
+        // shouldn't be reachable for a strict 1-for-1 swap, but checked
+        // defensively rather than assumed), the trade is cancelled with a
+        // message instead of executing.
+        function executeTradeIfReady() {
+            const session = lobbyState.tradeSession;
+            if (!session || !session.myConfirmed || !session.partnerConfirmed) return;
+            if (!session.mySelection || !session.partnerSelection) return;
+            const data = getActiveSaveData();
+            const members = data.team.members || [];
+            const outgoing = members[session.mySelection.index];
+            const isSameMember = outgoing && outgoing.dex === session.mySelection.member.dex
+                && outgoing.name === session.mySelection.member.name
+                && outgoing.level === session.mySelection.member.level;
+            if (!outgoing || !isSameMember) {
+                cancelTrade('Your offered Pok\u00e9mon could no longer be found.', true);
+                return;
+            }
+            const countAfter = members.length - 1 + 1; // remove mine, add theirs -- always net zero for a 1-for-1 swap
+            if (countAfter > 6) {
+                cancelTrade('Something went wrong checking your team size.', true);
+                return;
+            }
+            members.splice(session.mySelection.index, 1, session.partnerSelection.member);
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            // No escapeHtml() here -- setTradeStatusMessage() assigns via
+            // .textContent (see its own comment), which already escapes
+            // safely on its own; pre-escaping first would double-encode
+            // anything with an apostrophe (e.g. Farfetch'd) into visible
+            // "&#39;" text instead of a real apostrophe.
+            setTradeStatusMessage(`Traded your ${session.mySelection.member.name} for ${session.partnerName}'s ${session.partnerSelection.member.name}!`);
+            lobbyState.tradePairs.delete(getMyLobbyPlayerId());
+            lobbyState.tradePairs.delete(session.partnerId);
+            lobbyState.tradeSession = null;
+            renderTradeOverlay();
+        }
+
+        // Cancels the current trade from this device's side. notifyPartner
+        // is false only when reacting to a trade-cancel that already came
+        // FROM that partner (see handleTradeCancelReceived() below) --
+        // echoing one back in that case would just bounce forever.
+        function cancelTrade(reason, notifyPartner) {
+            const session = lobbyState.tradeSession;
+            if (!session) return;
+            if (notifyPartner) {
+                sendTradeMessage(session.partnerId, { type: 'trade-cancel', reason });
+            }
+            lobbyState.tradeSession = null;
+            if (reason) setTradeStatusMessage(reason);
+            renderTradeOverlay();
+        }
+
+        function handleTradeCancelReceived(data) {
+            const session = lobbyState.tradeSession;
+            if (!session || session.partnerId !== data.from) return;
+            cancelTrade(data.reason || `${session.partnerName} cancelled the trade.`, false);
+        }
+
+        // Brief on-screen confirmation of the outcome (decline/cancel/
+        // success) -- reuses .game-team-release-banner's own visual
+        // treatment and auto-hide timing under its own id, same
+        // independence reasoning as every other near-identical pair in
+        // this doc, since this one's triggered from a completely
+        // different flow (trade messages arriving asynchronously, not a
+        // direct button tap).
+        let tradeStatusTimer = null;
+        function setTradeStatusMessage(message) {
+            const el = document.getElementById('game-team-trade-status-banner');
+            if (!el) return;
+            clearTimeout(tradeStatusTimer);
+            el.textContent = message;
+            el.classList.add('visible');
+            tradeStatusTimer = setTimeout(() => el.classList.remove('visible'), 4000);
+        }
+
+        // #game-team-trade-btn's own click -- builds the partner list
+        // fresh from lobbyState.players every time (rather than trusting
+        // whatever was there last time this opened), same "rebuilt from
+        // live state" convention as everywhere else in this panel. Not
+        // reachable with fewer than 2 players in the Lobby to begin with
+        // (see renderTeamGrid()'s own canStartTrade, which is what hides
+        // the button itself), but the empty check costs nothing.
+        function openTradePartnerOverlay() {
+            const myId = getMyLobbyPlayerId();
+            const others = lobbyState.players.filter(p => p.id !== myId);
+            if (!others.length) return;
+            document.getElementById('game-team-trade-partner-list').innerHTML = others.map(p => `
+                <button class="filter-btn game-team-trade-partner-option" data-partner-id="${escapeHtml(p.id)}" data-partner-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</button>
+            `).join('');
+            document.getElementById('game-team-trade-partner-overlay').classList.add('visible');
+        }
+
+        function closeTradePartnerOverlay() {
+            document.getElementById('game-team-trade-partner-overlay').classList.remove('visible');
+        }
+
+        // Small sprite+name+level preview for one side of
+        // #game-team-trade-columns -- deliberately minimal compared to
+        // renderTeamGrid()'s own slot art (no fainted/evolution-badge/
+        // attach-card treatment) since this is just enough to recognize
+        // which Pok\u00e9mon is on the table, not a full team-slot rendering.
+        function tradeOfferCardHtml(member) {
+            const artSrc = (member.shiny && hasShinyForm(member.shinysrc)) ? member.shinysrc : member.src;
+            return `<img class="game-team-trade-offer-img" src="${escapeHtml(artSrc || '')}" alt="${escapeHtml(member.name || '')}" onerror="this.style.display='none'">`
+                + `<span class="game-team-trade-offer-name">${escapeHtml(member.name || '')} (Lv. ${member.level || 1})</span>`;
+        }
+
+        // Single source of truth for #game-team-trade-overlay's own
+        // visibility/content, called after every state change anywhere
+        // in the trade flow (see every function above) -- always
+        // rebuilds from lobbyState.tradeSession rather than patching
+        // whatever was already showing, same "always derive, never trust
+        // stale" convention as everywhere else in this panel. Also
+        // refreshes the Team grid unconditionally, since the Trade
+        // button/select-banner's own visibility (canStartTrade/
+        // isTradeSelectingOffer()) depends on tradeSession too --
+        // one call here covers every caller rather than each of them
+        // remembering to call renderTeamGrid() themselves separately.
+        function renderTradeOverlay() {
+            renderTeamGrid();
+            const overlay = document.getElementById('game-team-trade-overlay');
+            const session = lobbyState.tradeSession;
+            // Actively picking an offer happens directly on the team
+            // grid via #game-team-trade-select-banner instead of this
+            // overlay (see its own comment) -- stays closed for that
+            // window and reopens the moment a pick is made (mySelection
+            // becomes non-null, which is exactly what
+            // isTradeSelectingOffer() turning false here means).
+            if (!session || isTradeSelectingOffer()) {
+                overlay.classList.remove('visible');
+                return;
+            }
+            overlay.classList.add('visible');
+            document.getElementById('game-team-trade-title').textContent = `Trade with ${session.partnerName}`;
+            const sentText = document.getElementById('game-team-trade-sent-text');
+            const receivedText = document.getElementById('game-team-trade-received-text');
+            const inviteActions = document.getElementById('game-team-trade-invite-actions');
+            const columns = document.getElementById('game-team-trade-columns');
+            const confirmActions = document.getElementById('game-team-trade-confirm-actions');
+            if (!session.accepted) {
+                columns.style.display = 'none';
+                confirmActions.style.display = 'none';
+                sentText.style.display = session.incoming ? 'none' : '';
+                receivedText.style.display = session.incoming ? '' : 'none';
+                receivedText.textContent = `${session.partnerName} wants to trade with you!`;
+                inviteActions.style.display = session.incoming ? '' : 'none';
+                return;
+            }
+            // Accepted, and not mid-pick (handled/returned above) --
+            // showing the two offers and the Confirm/Cancel step.
+            sentText.style.display = 'none';
+            receivedText.style.display = 'none';
+            inviteActions.style.display = 'none';
+            columns.style.display = '';
+            confirmActions.style.display = '';
+            document.getElementById('game-team-trade-my-offer').innerHTML = session.mySelection ? tradeOfferCardHtml(session.mySelection.member) : '';
+            document.getElementById('game-team-trade-partner-offer').innerHTML = session.partnerSelection ? tradeOfferCardHtml(session.partnerSelection.member) : 'Waiting\u2026';
+            const confirmBtn = document.getElementById('game-team-trade-confirm-btn');
+            confirmBtn.disabled = !session.mySelection || session.myConfirmed;
+            confirmBtn.textContent = session.myConfirmed ? 'Waiting for confirmation\u2026' : 'Confirm';
         }
 
         // Restores this device's own Game Stage from only its own local
@@ -19386,8 +20123,21 @@
                     if (hostEntry) lobbyState.hostName = hostEntry.name;
                     renderLobbyRole();
                     renderLobbyPlayers();
+                    // See refreshLobbyRosterFromHostState()'s own matching
+                    // call for why.
+                    renderTeamGrid();
                 } else if (data.type === 'music') {
                     applyGuestMusicMirror(data);
+                } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
+                    // Unlike the host side's own handling of this same
+                    // prefix (see wireHostConnection()), no `to`-based
+                    // relay check is needed here -- this connection is
+                    // this device's only one, so anything the host sends
+                    // down it was already addressed to this device
+                    // specifically (see sendTradeMessage()/
+                    // handleIncomingTradeMessage() for the host-side
+                    // routing that guarantees that).
+                    processTradeMessage(data);
                 }
             });
             conn.on('close', () => {
@@ -19732,13 +20482,17 @@
                 return;
             }
 
-            // Not wired up yet -- just the standard "Coming Soon" toast
-            // (see showComingSoonToast()) until the real trade flow
-            // exists. No read-only guard: there's nothing here to
-            // actually mutate yet.
+            // Opens the partner-picker overlay -- see
+            // openTradePartnerOverlay(). Same as every other mutating
+            // control here, guarded by isActiveSaveReadOnly(); the
+            // Lobby-connectivity/">1 player"/"no trade already active"
+            // conditions are what actually keep this button hidden in
+            // the first place (see renderTeamGrid()'s own canStartTrade),
+            // so there's nothing further to check here.
             const teamTradeBtn = e.target.closest('#game-team-trade-btn');
             if (teamTradeBtn) {
-                showComingSoonToast();
+                if (isActiveSaveReadOnly()) return;
+                openTradePartnerOverlay();
                 return;
             }
 
@@ -19772,6 +20526,17 @@
                 return;
             }
 
+            // The one way out of trade-select mode besides actually
+            // tapping a slot below and picking an offer -- backs all the
+            // way out of the trade entirely (not just this one step),
+            // notifying the partner same as any other mid-negotiation
+            // cancel (see cancelTrade()).
+            const teamTradeSelectCancelBtn = e.target.closest('#game-team-trade-select-cancel-btn');
+            if (teamTradeSelectCancelBtn) {
+                cancelTrade('You cancelled the trade.', true);
+                return;
+            }
+
             // HP corner -- what a tap does depends on both fainted (see
             // member.fainted's own comment) and the active save's hpRule
             // (see getHpRule()): fainted always opens the revive
@@ -19783,7 +20548,7 @@
             // every other corner, same reasoning.
             const hpBadge = e.target.closest('.game-team-slot-hp');
             if (hpBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
                 const index = Number(hpBadge.dataset.index);
                 const data = getActiveSaveData();
                 const member = (data.team.members || [])[index];
@@ -19808,7 +20573,7 @@
             // Same replace/release-mode block as every other corner.
             const cardsBadge = e.target.closest('.game-team-slot-cards');
             if (cardsBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
                 openTeamCardsOverlay(Number(cardsBadge.dataset.index));
                 return;
             }
@@ -19826,7 +20591,7 @@
             // revived).
             const statusBadge = e.target.closest('.game-team-slot-status');
             if (statusBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
                 const statusIndex = Number(statusBadge.dataset.index);
                 const statusMember = (getActiveSaveData().team.members || [])[statusIndex];
                 if (!statusMember || statusMember.fainted) return;
@@ -19842,7 +20607,7 @@
             // reasoning.
             const levelBadge = e.target.closest('.game-team-slot-level');
             if (levelBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
                 const rect = levelBadge.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 adjustTeamMemberLevel(Number(levelBadge.dataset.index), clickedRightHalf ? 1 : -1);
@@ -19865,7 +20630,7 @@
             // status/level corners above, same reasoning.
             const evolutionBadge = e.target.closest('.game-team-slot-evolution');
             if (evolutionBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
                 const index = Number(evolutionBadge.dataset.index);
                 const data = getActiveSaveData();
                 const member = (data.team.members || [])[index];
@@ -19897,19 +20662,32 @@
             // The hit-zone (see its own CSS comment for why this, and
             // not the slot's full square, is the actual click target)
             // -- what it does depends on teamReplacePendingMember/
-            // teamReleaseModeActive (see their own comments): normally
-            // an empty slot opens the add-a-Pokémon prompt and a filled
+            // teamReleaseModeActive/isTradeNegotiationActive()/
+            // isTradeSelectingOffer() (see their own comments): normally
+            // an empty slot opens the add-a-Pok\u00e9mon prompt and a filled
             // one opens the read-only detail view (openTeamDetailOverlay()
             // -- see its own comment), but with a replacement pending,
             // every filled slot becomes a valid target instead,
             // overwriting that member in place; with release mode
             // active, every filled slot instead opens the two-stage
-            // release confirm for that member (an empty one stays a
-            // no-op either way -- nothing there to release). Read-only
-            // save blocks the mutating paths (replace/release/add) same
-            // as every other mutating control in this panel, but not
-            // the detail view -- viewing a member is never a mutation,
-            // so it stays available even on a read-only save.
+            // release confirm for that member; while still picking a
+            // trade offer (isTradeSelectingOffer()), every filled slot
+            // instead locks that member in as this device's offer (see
+            // selectTradeOffer()); once picked but still mid-negotiation
+            // (isTradeNegotiationActive() true, isTradeSelectingOffer()
+            // now false -- see #game-team-trade-overlay's own Confirm
+            // step instead), every slot is a flat no-op instead of
+            // falling through to the detail view, so the offered member
+            // can't be inspected/edited via that route either (see
+            // isTradeNegotiationActive()'s own comment on why that
+            // matters). An empty slot stays a no-op in the replace/
+            // release/select-offer cases (nothing there to
+            // overwrite-into/release/offer). Read-only save blocks all
+            // four mutating paths (replace/release/trade/add) same as
+            // every other mutating control in this panel, but not the
+            // detail view -- viewing a member is never a mutation, so it
+            // stays available even on a read-only save (outside an
+            // active trade negotiation, per the above).
             const teamSlotHitZone = e.target.closest('.game-team-slot-hit-zone');
             if (teamSlotHitZone) {
                 const teamSlot = teamSlotHitZone.closest('.game-team-slot');
@@ -19932,6 +20710,13 @@
                     openTeamReleaseConfirmOverlay(Number(teamSlot.dataset.index));
                     return;
                 }
+                if (isTradeSelectingOffer()) {
+                    if (isActiveSaveReadOnly()) return;
+                    if (teamSlot.dataset.filled !== 'true') return;
+                    selectTradeOffer(Number(teamSlot.dataset.index));
+                    return;
+                }
+                if (isTradeNegotiationActive()) return;
                 if (teamSlot.dataset.filled === 'true') {
                     openTeamDetailOverlay(Number(teamSlot.dataset.index));
                     return;
@@ -20100,6 +20885,76 @@
                 const rect = counterEl.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 adjustPendingTeamHpValue(clickedRightHalf ? 1 : -1);
+                return;
+            }
+        });
+
+        // Same reasoning again -- this overlay's also a sibling of
+        // #game-scroll, not a descendant. Backdrop tap just closes the
+        // picker with nothing sent -- unlike every Confirm/Cancel-style
+        // overlay above, nothing's actually pending yet at this stage
+        // (no invite's gone out), so there's no partner to notify.
+        document.getElementById('game-team-trade-partner-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-team-trade-partner-overlay' || e.target.closest('#game-team-trade-partner-cancel-btn')) {
+                closeTradePartnerOverlay();
+                return;
+            }
+            const option = e.target.closest('.game-team-trade-partner-option');
+            if (option) {
+                closeTradePartnerOverlay();
+                startTradeInvite(option.dataset.partnerId, option.dataset.partnerName);
+                return;
+            }
+        });
+
+        // Same reasoning again -- this overlay's also a sibling of
+        // #game-scroll, not a descendant. Unlike every other overlay's
+        // backdrop tap above, what it means to "cancel" here depends on
+        // which phase is currently showing (see renderTradeOverlay()),
+        // since a single Cancel/Decline button isn't always on screen --
+        // the invite-sent phase has no button of its own at all (nothing
+        // to tap yet but wait), so backdrop tap is its only way out,
+        // withdrawing the invite same as an explicit cancel would once
+        // one exists. The invite-received phase already has its own
+        // explicit Decline button, mirrored here for the backdrop too;
+        // the negotiating phase already has its own explicit Cancel
+        // button, likewise mirrored. Both notify the partner
+        // (cancelTrade()'s second argument) since a real invite/
+        // negotiation is in progress at either of those two phases --
+        // only invite-sent has no partner-visible state yet to retract
+        // beyond the invite itself, which cancelTrade() sends regardless.
+        document.getElementById('game-team-trade-overlay').addEventListener('click', (e) => {
+            const session = lobbyState.tradeSession;
+            if (e.target.id === 'game-team-trade-overlay') {
+                if (!session) return;
+                if (!session.accepted && session.incoming) {
+                    // Same outcome as tapping Decline -- goes through the
+                    // real trade-invite-response protocol rather than a
+                    // generic cancel, so the inviter's own
+                    // handleTradeInviteResponse() sees exactly what it
+                    // would from the button.
+                    respondToTradeInvite(false);
+                } else if (!session.accepted) {
+                    cancelTrade('You withdrew the trade offer.', true);
+                } else {
+                    cancelTrade('You cancelled the trade.', true);
+                }
+                return;
+            }
+            if (e.target.closest('.game-team-trade-accept-btn')) {
+                respondToTradeInvite(true);
+                return;
+            }
+            if (e.target.closest('.game-team-trade-decline-btn')) {
+                respondToTradeInvite(false);
+                return;
+            }
+            if (e.target.closest('.game-team-trade-confirm-btn')) {
+                confirmTradeSelection();
+                return;
+            }
+            if (e.target.closest('.game-team-trade-cancel-btn')) {
+                cancelTrade('You cancelled the trade.', true);
                 return;
             }
         });
