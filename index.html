@@ -2007,37 +2007,96 @@
             flex-shrink: 0;
         }
 
-        .game-hand-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-            gap: 10px;
+        /* ---- Hand stack (Archidekt-style) ----
+           Cards overlap top-to-bottom, each one covering the lower
+           part of the card behind it and leaving only its name bar
+           showing -- like a fanned stack of physical cards. Hovering
+           or tapping a card (.is-expanded, added by the click handler
+           in the delegated listener; :hover covers desktop for free)
+           pushes every LATER card (i.e. every card currently drawn on
+           top of it) down out of the way so the hovered/tapped one can
+           be read in full. See renderDecksScreen() for the per-card
+           `top`/`z-index` it sets inline (position along the stack --
+           there's no clean way to express "the Nth child sits N *
+           OVERLAP down" in plain CSS without hardcoding every N). */
+        .game-hand-stack {
+            position: relative;
             margin-bottom: 18px;
+            /* Extra breathing room below the resting stack so a card
+               pushed downward on hover/tap doesn't slam straight into
+               whatever section follows -- see the module comment
+               above; this is a transform, not a layout change, so nothing
+               below the .game-hand-stack container reflows to make room
+               for it on its own. */
+            padding-bottom: 260px;
+            display: flex;
+            justify-content: center;
         }
 
         .game-hand-card {
-            background: rgba(0, 0, 0, 0.35);
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            border-radius: 14px;
-            padding: 6px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 6px;
+            position: absolute;
+            width: 252px;
+            height: 352px;
+            background: #1b1f33;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 20px;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.22s ease, box-shadow 0.22s ease;
+        }
+
+        .game-hand-card:hover,
+        .game-hand-card.is-expanded {
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.6);
+        }
+
+        /* The push: every card drawn on top of (i.e. after, in DOM
+           order) the hovered/expanded one slides down by its own full
+           height minus the sliver it normally shows, clearing the
+           hovered card entirely. Cards drawn *behind* it (before it in
+           DOM order) don't need to move -- they were never covering it
+           in the first place, only the reverse. */
+        .game-hand-card:hover ~ .game-hand-card,
+        .game-hand-card.is-expanded ~ .game-hand-card {
+            transform: translateY(325px);
+        }
+
+        .game-hand-card-namebar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 6px 8px;
+            background: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.55) 80%, transparent);
+            font-size: 12px;
+            font-weight: bold;
+            line-height: 1.25;
+            /* Tall enough to always show a full line or two of name
+               even while collapsed -- this height is also OVERLAP, the
+               amount renderDecksScreen() offsets each successive card
+               by, so it lines up with what's actually left showing. */
+            min-height: 36px;
+            box-sizing: border-box;
         }
 
         .game-hand-card-img {
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
-            height: auto;
-            object-fit: contain;
-            border-radius: 8px;
+            height: 100%;
+            object-fit: cover;
         }
 
-        .game-hand-card-name {
-            font-size: 12px;
-            text-align: center;
+        .game-hand-card-discard-wrap {
+            position: absolute;
+            left: 6px;
+            right: 6px;
+            bottom: 6px;
         }
 
-        .game-hand-card .filter-btn {
+        .game-hand-card-discard-wrap .filter-btn {
             width: 100%;
             box-sizing: border-box;
             font-size: 12px;
@@ -9901,7 +9960,7 @@
                 <div class="game-decks-list" id="game-decks-list"></div>
 
                 <div class="game-section-header">Your Hand</div>
-                <div class="game-hand-grid" id="game-hand-grid"></div>
+                <div class="game-hand-stack" id="game-hand-stack"></div>
 
                 <!-- Only populated while connected to a Lobby -- hidden
                      entirely in solo play (see renderDecksScreen()). -->
@@ -14543,9 +14602,16 @@
         // everything here falls back to zero/empty rather than
         // throwing. Called on entering the screen (setGameScreen), and
         // after every local or networked state change.
+        // Must match .game-hand-card's own height and
+        // .game-hand-card-namebar's own min-height in the CSS above --
+        // there's no clean way to share a single number between CSS and
+        // JS here, so if either changes there, change these two to match.
+        const HAND_CARD_HEIGHT = 176;
+        const HAND_CARD_OVERLAP = 36;
+
         function renderDecksScreen() {
             const listEl = document.getElementById('game-decks-list');
-            const handEl = document.getElementById('game-hand-grid');
+            const handEl = document.getElementById('game-hand-stack');
             const othersHeaderEl = document.getElementById('game-other-hands-header');
             const othersListEl = document.getElementById('game-other-hands-list');
             if (!listEl || !handEl) return;
@@ -14585,20 +14651,34 @@
                 `;
             }).join('');
 
+            // Archidekt-style overlapping stack -- see the .game-hand-stack/
+            // .game-hand-card CSS module comment for how the reveal-on-
+            // hover/tap actually works. Each card's resting `top` is just
+            // its index times the overlap amount (image first in each
+            // card's own markup, namebar after, so the namebar always
+            // paints on top of its own card's image -- see the CSS
+            // comment there too); the LAST card is the frontmost/fully-
+            // visible one, same as the top card of a real stack in hand.
             const hand = getLocalHandArray();
-            handEl.innerHTML = hand.length ? hand.map(cardId => {
-                const card = CARDS_BY_ID[cardId];
-                const name = card ? card.name : cardId;
-                return `
-                    <div class="game-hand-card">
-                        ${card && card.imageUrl
-                            ? `<img class="game-hand-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">`
-                            : ''}
-                        <span class="game-hand-card-name">${escapeHtml(name)}</span>
-                        <button class="filter-btn exclude game-hand-discard-btn" type="button" data-deck="${escapeHtml((card && card.cardDeck) || DECK_TOOL_LIST[0])}" data-card-id="${escapeHtml(cardId)}">Discard</button>
-                    </div>
-                `;
-            }).join('') : `<p class="game-hand-empty">Your hand is empty. Draw a card from a deck above.</p>`;
+            if (!hand.length) {
+                handEl.style.height = '';
+                handEl.innerHTML = `<p class="game-hand-empty">Your hand is empty. Draw a card from a deck above.</p>`;
+            } else {
+                handEl.style.height = (HAND_CARD_OVERLAP * (hand.length - 1) + HAND_CARD_HEIGHT) + 'px';
+                handEl.innerHTML = hand.map((cardId, i) => {
+                    const card = CARDS_BY_ID[cardId];
+                    const name = card ? card.name : cardId;
+                    return `
+                        <div class="game-hand-card" style="top: ${i * HAND_CARD_OVERLAP}px; z-index: ${i + 1};" tabindex="0">
+                            ${card && card.imageUrl ? `<img class="game-hand-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}
+                            <span class="game-hand-card-namebar">${escapeHtml(name)}</span>
+                            <span class="game-hand-card-discard-wrap">
+                                <button class="filter-btn exclude game-hand-discard-btn" type="button" data-deck="${escapeHtml((card && card.cardDeck) || DECK_TOOL_LIST[0])}" data-card-id="${escapeHtml(cardId)}">Discard</button>
+                            </span>
+                        </div>
+                    `;
+                }).join('');
+            }
 
             if (othersHeaderEl && othersListEl) {
                 const inLobby = lobbyState.role === 'host' || lobbyState.role === 'guest';
@@ -21032,6 +21112,22 @@
             const handDiscardBtn = e.target.closest('.game-hand-discard-btn');
             if (handDiscardBtn) {
                 requestDiscardCard(handDiscardBtn.dataset.deck, handDiscardBtn.dataset.cardId);
+                return;
+            }
+
+            // Tap-to-expand for touch devices, which have no :hover --
+            // the CSS module comment on .game-hand-card explains the
+            // actual reveal mechanics; this just toggles the class that
+            // triggers the same CSS :hover already does on desktop.
+            // Tapping the same card again (or a different one) collapses
+            // it; there's deliberately no "tap empty space to collapse"
+            // since #game-scroll's own background isn't part of this
+            // delegated listener's matched targets.
+            const handCard = e.target.closest('.game-hand-card');
+            if (handCard) {
+                const wasExpanded = handCard.classList.contains('is-expanded');
+                document.querySelectorAll('.game-hand-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
+                if (!wasExpanded) handCard.classList.add('is-expanded');
                 return;
             }
 
