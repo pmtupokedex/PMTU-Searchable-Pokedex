@@ -1952,10 +1952,11 @@
         }
 
         /* ---- Hand & Decks tool ----
-           One row per deck (see DECK_TOOL_LIST) -- draw pile count,
-           discard pile's top card as a small thumbnail (face-up, same
-           "everyone can see the discard pile" convention real card
-           games use), and a Draw button. See renderDecksScreen(). */
+           One row per deck (see DECK_TOOL_LIST) -- Draw button on the
+           left, draw/discard counts in the middle, and the discard
+           pile's top card as a small thumbnail on the right (face-up,
+           same "everyone can see the discard pile" convention real
+           card games use). See renderDecksScreen(). */
         .game-decks-list {
             display: flex;
             flex-direction: column;
@@ -1973,17 +1974,42 @@
             padding: 8px 10px;
         }
 
-        .game-deck-discard-thumb {
-            width: 40px;
-            height: 40px;
-            object-fit: contain;
+        /* Now a real <button> (opens #game-discard-viewer-overlay via
+           openDiscardViewer(), see the delegated click listener) rather
+           than a plain <img> -- same "paint the art as background-image
+           on a plain button" approach as .game-deck-draw-btn--image
+           above, sized to match it (100x140) so the row reads as two
+           equal card-sized controls bookending the deck's name/counts.
+           .empty (an inert <span>, not a button -- see
+           renderDecksScreen()) keeps the same fixed footprint so the
+           row doesn't reflow depending on whether this deck has ever
+           had anything discarded into it yet. */
+        .game-deck-discard-btn {
+            width: 100px;
+            height: 140px;
+            padding: 0;
+            margin: 0;
+            border: none;
             border-radius: 8px;
-            background: rgba(255, 255, 255, 0.08);
+            background-color: rgba(255, 255, 255, 0.08);
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            overflow: hidden;
             flex-shrink: 0;
+            cursor: pointer;
+            transition: transform 0.12s ease, filter 0.12s ease;
         }
 
-        .game-deck-discard-thumb.empty {
+        .game-deck-discard-btn:hover,
+        .game-deck-discard-btn:focus-visible {
+            transform: translateY(-2px);
+            filter: brightness(1.15);
+        }
+
+        .game-deck-discard-btn.empty {
             visibility: hidden;
+            cursor: default;
         }
 
         .game-deck-info {
@@ -2005,6 +2031,45 @@
         .game-deck-draw-btn {
             margin: 0;
             flex-shrink: 0;
+        }
+
+        /* Card-back variant of the Draw button (Event/Item/Nature --
+           see DECK_BACK_IMAGES) -- same clickable <button> underneath
+           (click handling, `disabled`, keyboard focus all still work
+           exactly as the text version), just painted as a full card
+           instead of a text pill. Deliberately NOT a .filter-btn -- it
+           doesn't take that class's padding/border/background, since
+           the card image supplies its own look entirely. The label
+           moves to `aria-label` in the markup since there's no visible
+           text to read; :focus-visible below stands in for the
+           underlying .filter-btn text states this no longer has. */
+        .game-deck-draw-btn--image {
+            width: 100px;
+            height: 140px;
+            padding: 0;
+            margin: 0;
+            border: none;
+            border-radius: 8px;
+            background-color: transparent;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            overflow: hidden;
+            flex-shrink: 0;
+            cursor: pointer;
+            transition: transform 0.12s ease, filter 0.12s ease;
+        }
+
+        .game-deck-draw-btn--image:not(:disabled):hover,
+        .game-deck-draw-btn--image:not(:disabled):focus-visible {
+            transform: translateY(-2px);
+            filter: brightness(1.15);
+        }
+
+        .game-deck-draw-btn--image:disabled {
+            opacity: 0.4;
+            filter: grayscale(70%);
+            cursor: default;
         }
 
         /* ---- Hand stack (Archidekt-style) ----
@@ -2139,6 +2204,94 @@
         .game-hand-empty {
             opacity: 0.75;
             font-style: italic;
+        }
+
+        /* ---- Discard pile viewer ----
+           Same overlapping-stack mechanics as .game-hand-stack/
+           .game-hand-card above (see that module's own comment for the
+           full reveal-on-hover/tap explanation and why `top`/`z-index`
+           get set inline per card in renderDiscardViewer()) just
+           without a .game-hand-card-options-equivalent panel under any
+           card -- these are read-only, so a hovered/expanded card only
+           needs to push the ones drawn on top of it out of its way,
+           not also clear room for a hidden options box below itself.
+           That's also why the push distance below is shorter than
+           .game-hand-card's own 457px: HAND_CARD_HEIGHT -
+           HAND_CARD_OVERLAP with nothing extra added on top. Lives
+           inside #game-discard-viewer-overlay's own .game-confirm-card,
+           which already caps height/scrolls on overflow (see that
+           class's own comment), so the fixed padding-bottom here only
+           needs to cover the last card's own push, not a whole
+           screen's worth of breathing room the way the in-panel hand
+           stack's does. */
+        .game-discard-stack {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            padding-bottom: 60px;
+        }
+
+        .game-discard-card {
+            position: absolute;
+            width: 252px;
+            height: 352px;
+            cursor: pointer;
+            transition: transform 0.22s ease;
+        }
+
+        .game-discard-card:hover ~ .game-discard-card,
+        .game-discard-card.is-expanded ~ .game-discard-card {
+            transform: translateY(307px);
+        }
+
+        .game-discard-card-face {
+            position: absolute;
+            inset: 0;
+            background: #1b1f33;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 20px;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+            overflow: hidden;
+            transition: box-shadow 0.22s ease;
+        }
+
+        .game-discard-card:hover .game-discard-card-face,
+        .game-discard-card.is-expanded .game-discard-card-face {
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.6);
+        }
+
+        .game-discard-card-img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .game-discard-empty {
+            opacity: 0.75;
+            font-style: italic;
+        }
+
+        /* Backdrop + centering shell -- same positioning/z-index
+           convention as every other #game-*-overlay (e.g.
+           #game-team-cards-overlay above), duplicated rather than
+           shared for the same independence reasoning those all give. */
+        #game-discard-viewer-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-discard-viewer-overlay.visible {
+            display: flex;
         }
 
         /* Other connected players' hands, shown as a card-back + count
@@ -10460,6 +10613,26 @@
             </div>
         </div>
 
+        <!-- Discard pile viewer -- see openDiscardViewer()/
+             closeDiscardViewer()/renderDiscardViewer() in the script.
+             Reuses .game-confirm-card for the same scroll-capped white
+             card shell every overlay above uses, but its content is a
+             .game-discard-stack -- the exact same overlapping-cards
+             look as "Your Hand" on the Decks screen (see
+             .game-hand-stack's own CSS module comment), just read-only:
+             no Play/Discard/Attach options under a card here, since
+             these aren't yours to act on, only look through. Opened by
+             tapping a deck row's own discard-pile thumbnail. -->
+        <div id="game-discard-viewer-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-discard-viewer-title">Discard Pile</p>
+                <div class="game-discard-stack" id="game-discard-viewer-stack"></div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-discard-viewer-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Full-size viewer for a tapped card thumbnail -- see
              .game-team-card-image-viewer's own CSS comment for why this
              is separate from the main Pokédex viewer. Just an image;
@@ -14507,7 +14680,21 @@
         // eventually need their own entries once their "buy, don't draw
         // randomly" rules exist -- not the same mechanic as this list's
         // decks.
-        const DECK_TOOL_LIST = ['Event Deck', 'Item Deck'];
+        const DECK_TOOL_LIST = ['Event Deck', 'Item Deck', 'Nature Deck', 'Reward Item Deck', 'Shop Deck', 'Poké Ball Deck', 'Tera Type Deck', 'TM Deck', 'Type-Enhancer Deck', 'Z-Crystal Deck'];
+
+        // Decks whose Draw button shows the deck's own card-back art
+        // instead of the plain text label -- see renderDecksScreen(),
+        // which falls back to a normal text button for any deck not
+        // listed here. Item's subset decks (Reward Item/Shop/Poké Ball/
+        // Tera Type/TM/Type-Enhancer/Z-Crystal) are meant to get small
+        // icons of their own eventually rather than a full card-back
+        // image; add a second lookup (e.g. DECK_ICON_IMAGES) for those
+        // when that art exists, following the same pattern as this one.
+        const DECK_BACK_IMAGES = {
+            'Event Deck': 'https://dl.dropboxusercontent.com/scl/fi/kdkvhgxmnlx2u1m62blti/_Event-Card-Back.png?rlkey=vsdbkvmaibn7qu0c4qoz4y9l7&st=e4wsmf75&dl=1',
+            'Item Deck': 'https://dl.dropboxusercontent.com/scl/fi/jr484lg60axtj7quw8i76/_Item-Card-Back.png?rlkey=nivq1eu88xbs7bkj9qh2c4k07&st=4pehnjaq&dl=1',
+            'Nature Deck': 'https://dl.dropboxusercontent.com/scl/fi/p5f6sclf6qqehif165cmb/_Nature-Card-Back.png?rlkey=pokzy8e0k2nalq92c720zv15g&st=pnv3j11x&dl=1',
+        };
 
         // Fisher-Yates -- used once per fresh deck build and again any
         // time discardPile gets folded back into drawPile (see
@@ -14776,11 +14963,14 @@
             renderDecksScreen();
         }
 
-        // Public counts only -- draw/discard pile sizes and every
-        // player's hand *count*, never hand contents (see
-        // .game-other-hands-list's own CSS comment for why). Sent to
-        // every connected guest, and applied locally so the Host's own
-        // screen redraws off the exact same numbers a guest would see.
+        // Public counts (plus the discard pile's own full contents --
+        // see #game-discard-viewer-overlay/openDiscardViewer() below;
+        // it's public info, same "everyone can see the discard pile"
+        // convention discardTop already relied on) and every player's
+        // hand *count*, never hand contents (see .game-other-hands-list's
+        // own CSS comment for why). Sent to every connected guest, and
+        // applied locally so the Host's own screen redraws off the
+        // exact same numbers a guest would see.
         function broadcastDeckState() {
             if (lobbyState.role === 'guest') return; // guests only ever receive this, never originate it
             const store = ensureHostDeckStore();
@@ -14792,6 +14982,7 @@
                     drawCount: deck.drawPile.length,
                     discardCount: deck.discardPile.length,
                     discardTop: deck.discardPile.length ? deck.discardPile[deck.discardPile.length - 1] : null,
+                    discardPile: deck.discardPile.slice(),
                 };
             });
             const handCounts = { host: getLocalHandArray().length };
@@ -14993,6 +15184,36 @@
         const HAND_CARD_HEIGHT = 352;
         const HAND_CARD_OVERLAP = 45;
 
+        // Shared by renderDecksScreen() (the row list) and
+        // renderDiscardViewer() (the discard-pile popup) so both read
+        // off one identical {drawCount, discardCount, discardTop,
+        // discardPile} shape regardless of Host/solo (this device's own
+        // deck store) vs guest (guestDeckStateCache, last mirrored from
+        // the Host's own broadcastDeckState()). discardPile is the
+        // full array, oldest first/top-of-pile last -- same "public,
+        // everyone can see the discard pile" convention discardTop
+        // already relied on, see broadcastDeckState()'s own comment.
+        function getDeckInfoMap() {
+            const isGuest = lobbyState.role === 'guest';
+            let deckInfo = {};
+            if (isGuest) {
+                deckInfo = (guestDeckStateCache && guestDeckStateCache.decks) || {};
+            } else {
+                const store = ensureHostDeckStore();
+                DECK_TOOL_LIST.forEach(deckName => {
+                    ensureDeckBuilt(store, deckName);
+                    const deck = store ? store[deckName] : { drawPile: [], discardPile: [] };
+                    deckInfo[deckName] = {
+                        drawCount: deck.drawPile.length,
+                        discardCount: deck.discardPile.length,
+                        discardTop: deck.discardPile.length ? deck.discardPile[deck.discardPile.length - 1] : null,
+                        discardPile: deck.discardPile.slice(),
+                    };
+                });
+            }
+            return deckInfo;
+        }
+
         // Rebuilds the whole Hand & Decks screen from whatever's
         // currently known -- this device's own local deck store (Host/
         // solo) or guestDeckStateCache (guest) for the Decks list and
@@ -15009,37 +15230,28 @@
             const othersListEl = document.getElementById('game-other-hands-list');
             if (!listEl || !handEl) return;
 
+            const deckInfo = getDeckInfoMap();
             const isGuest = lobbyState.role === 'guest';
-            let deckInfo = {};
-            if (isGuest) {
-                deckInfo = (guestDeckStateCache && guestDeckStateCache.decks) || {};
-            } else {
-                const store = ensureHostDeckStore();
-                DECK_TOOL_LIST.forEach(deckName => {
-                    ensureDeckBuilt(store, deckName);
-                    const deck = store ? store[deckName] : { drawPile: [], discardPile: [] };
-                    deckInfo[deckName] = {
-                        drawCount: deck.drawPile.length,
-                        discardCount: deck.discardPile.length,
-                        discardTop: deck.discardPile.length ? deck.discardPile[deck.discardPile.length - 1] : null,
-                    };
-                });
-            }
 
             listEl.innerHTML = DECK_TOOL_LIST.map(deckName => {
-                const info = deckInfo[deckName] || { drawCount: 0, discardCount: 0, discardTop: null };
+                const info = deckInfo[deckName] || { drawCount: 0, discardCount: 0, discardTop: null, discardPile: [] };
                 const topCard = info.discardTop ? CARDS_BY_ID[info.discardTop] : null;
                 const canDraw = (info.drawCount + info.discardCount) > 0;
+                const backImg = DECK_BACK_IMAGES[deckName];
+                const drawBtn = backImg
+                    ? `<button class="game-deck-draw-btn game-deck-draw-btn--image" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'} aria-label="Draw a card from ${escapeHtml(deckName)}" title="Draw a card from ${escapeHtml(deckName)}" style="background-image:url('${backImg}')"></button>`
+                    : `<button class="filter-btn game-deck-draw-btn" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'}>Draw</button>`;
+                const discardBtn = topCard && topCard.imageUrl
+                    ? `<button class="game-deck-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" aria-label="View ${escapeHtml(deckName)} discard pile, ${info.discardCount} card${info.discardCount === 1 ? '' : 's'}" title="View discard pile" style="background-image:url('${topCard.imageUrl}')"></button>`
+                    : `<span class="game-deck-discard-btn empty" aria-hidden="true"></span>`;
                 return `
                     <div class="game-deck-row">
-                        ${topCard && topCard.imageUrl
-                            ? `<img class="game-deck-discard-thumb" src="${topCard.imageUrl}" alt="${escapeHtml(topCard.name)}" title="Top of discard: ${escapeHtml(topCard.name)}">`
-                            : `<span class="game-deck-discard-thumb empty"></span>`}
+                        ${drawBtn}
                         <span class="game-deck-info">
                             <span class="game-deck-name">${escapeHtml(deckName)}</span>
                             <span class="game-deck-counts">${info.drawCount} left \u00b7 ${info.discardCount} discarded</span>
                         </span>
-                        <button class="filter-btn game-deck-draw-btn" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'}>Draw</button>
+                        ${discardBtn}
                     </div>
                 `;
             }).join('');
@@ -15114,9 +15326,77 @@
                     othersListEl.innerHTML = entries.join('') || '<p class="game-hand-empty">No other players connected.</p>';
                 }
             }
+
+            renderDiscardViewer();
         }
 
-        // The four evolution-corner icons -- see the chat this was
+        // Which deck's pile is currently shown in
+        // #game-discard-viewer-overlay -- null while it's closed. Kept
+        // as its own variable (rather than reading the overlay's own
+        // dataset back off the DOM) so renderDiscardViewer() has a
+        // single source of truth to re-render against any time
+        // renderDecksScreen() runs (e.g. someone else discards into
+        // this exact deck while the viewer's open -- see the call at
+        // the bottom of renderDecksScreen()).
+        let discardViewerDeckName = null;
+
+        // Opens the read-only "look at everything in this pile" popup
+        // for one deck -- tapping a deck row's own discard thumbnail
+        // (see .game-deck-discard-btn in renderDecksScreen() above).
+        function openDiscardViewer(deckName) {
+            discardViewerDeckName = deckName;
+            renderDiscardViewer();
+            document.getElementById('game-discard-viewer-overlay').classList.add('visible');
+        }
+
+        function closeDiscardViewer() {
+            discardViewerDeckName = null;
+            document.getElementById('game-discard-viewer-overlay').classList.remove('visible');
+        }
+
+        // Rebuilds the popup's own stack for whichever deck
+        // discardViewerDeckName currently points at -- exact same
+        // overlapping-stack markup/behavior as "Your Hand" in
+        // renderDecksScreen() above (see .game-discard-stack/-card's
+        // own CSS module comment), just without an options panel under
+        // each card, since these aren't yours to Play/Discard/Attach.
+        // No-ops harmlessly if the overlay isn't currently open, so
+        // it's safe to call unconditionally from renderDecksScreen()
+        // any time deck state changes.
+        function renderDiscardViewer() {
+            const overlay = document.getElementById('game-discard-viewer-overlay');
+            const titleEl = document.getElementById('game-discard-viewer-title');
+            const stackEl = document.getElementById('game-discard-viewer-stack');
+            if (!overlay || !titleEl || !stackEl || !discardViewerDeckName) return;
+
+            const deckName = discardViewerDeckName;
+            titleEl.textContent = `${deckName} Discard Pile`;
+
+            const info = getDeckInfoMap()[deckName];
+            const pile = (info && info.discardPile) || [];
+            if (!pile.length) {
+                // Everything just got drawn back out from under this
+                // open viewer (a reshuffle -- see drawFromHostDeck())
+                // rather than the player closing it themselves.
+                stackEl.style.height = '';
+                stackEl.innerHTML = `<p class="game-discard-empty">This discard pile is empty.</p>`;
+                return;
+            }
+
+            stackEl.style.height = (HAND_CARD_OVERLAP * (pile.length - 1) + HAND_CARD_HEIGHT) + 'px';
+            stackEl.innerHTML = pile.map((cardId, i) => {
+                const card = CARDS_BY_ID[cardId];
+                const name = card ? card.name : cardId;
+                return `
+                    <div class="game-discard-card" style="top: ${i * HAND_CARD_OVERLAP}px; z-index: ${i + 1};" tabindex="0">
+                        <div class="game-discard-card-face">
+                            ${card && card.imageUrl ? `<img class="game-discard-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
         // designed in. 'unable' is also renderTeamGrid()'s own inline
         // fallback for a member found in neither POKEMON_BY_NAME nor as
         // an active mega/gmax override, so every filled slot always has
@@ -19911,6 +20191,7 @@
                 closeTeamCardsOverlay();
                 closeTeamCardImageViewer();
                 closeTeamDetailOverlay();
+                closeDiscardViewer();
             }
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
@@ -21562,6 +21843,12 @@
                 return;
             }
 
+            const deckDiscardBtn = e.target.closest('.game-deck-discard-btn');
+            if (deckDiscardBtn) {
+                openDiscardViewer(deckDiscardBtn.dataset.deck);
+                return;
+            }
+
             const handDiscardBtn = e.target.closest('.game-hand-discard-btn');
             if (handDiscardBtn) {
                 requestDiscardCard(handDiscardBtn.dataset.deck, handDiscardBtn.dataset.cardId);
@@ -22334,6 +22621,27 @@
             const cardPick = e.target.closest('[data-card-pick]');
             if (cardPick) {
                 selectTeamCardsOverlayOption(cardPick.dataset.slot, cardPick.dataset.cardPick);
+                return;
+            }
+        });
+
+        // Close on backdrop or the Close button, same as every other
+        // #game-*-overlay. Tap-to-expand for touch devices otherwise --
+        // mirrors the #game-scroll listener's own .game-hand-card
+        // handling (see that comment for the full reasoning), just
+        // scoped to this overlay's own listener since
+        // .game-discard-card lives inside it rather than inside
+        // #game-scroll.
+        document.getElementById('game-discard-viewer-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-discard-viewer-overlay' || e.target.closest('.game-discard-viewer-close-btn')) {
+                closeDiscardViewer();
+                return;
+            }
+            const discardCard = e.target.closest('.game-discard-card');
+            if (discardCard) {
+                const wasExpanded = discardCard.classList.contains('is-expanded');
+                document.querySelectorAll('.game-discard-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
+                if (!wasExpanded) discardCard.classList.add('is-expanded');
                 return;
             }
         });
