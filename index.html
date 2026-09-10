@@ -1526,7 +1526,7 @@
         }
 
         .game-lobby-status.pending {
-            color: #7a5200;
+            color: #ffffff;
         }
 
         /* Host vs. guest banner -- deliberately different colors (blue
@@ -1951,7 +1951,75 @@
             text-align: center;
         }
 
-        /* ---- Hand & Decks tool ----
+        /* ---- Active Card zone (see the chat this was designed in,
+           renderActiveCardZone() for the actual logic) ----
+           Sits above the Decks list -- empty and invisible whenever
+           there's nothing active (renderActiveCardZone() leaves
+           .visible off and innerHTML blank in that case), so it never
+           reserves screen space it isn't using. */
+        .game-active-card-zone {
+            display: none;
+            margin-bottom: 18px;
+        }
+
+        .game-active-card-zone.visible {
+            display: block;
+        }
+
+        .game-active-card-view {
+            display: flex;
+            gap: 14px;
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 16px;
+            padding: 14px;
+        }
+
+        /* The card's own actor, while it's still pending a Discard/
+           Permanent/Shuffle/Attach choice -- left-aligned image, actions
+           to its right. */
+        .game-active-card-view.actor {
+            align-items: center;
+        }
+
+        /* Everyone else -- and the actor too, once the card's already
+           committed (see renderActiveCardZone()'s own comment) -- just
+           views it, centered, with a Dismiss. */
+        .game-active-card-view.centered {
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Same size as a card in hand (see .game-hand-card-img and
+           .game-team-attach-banner-img) so a revealed/played card reads
+           exactly as clearly here as everywhere else it shows up. */
+        .game-active-card-img {
+            width: 252px;
+            height: 352px;
+            object-fit: cover;
+            border-radius: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            flex-shrink: 0;
+        }
+
+        .game-active-card-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .game-active-card-actions .filter-btn {
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0;
+        }
+
+        .game-active-card-view.centered .game-active-card-dismiss-btn {
+            width: 160px;
+        }
+
            One row per deck (see DECK_TOOL_LIST) -- Draw button on the
            left, draw/discard counts in the middle, and the discard
            pile's top card as a small thumbnail on the right (face-up,
@@ -2076,28 +2144,68 @@
            Cards overlap top-to-bottom, each one covering the lower
            part of the card behind it and leaving only its own name
            (already printed at the top of its artwork -- no separate
-           name bar needed) showing. Hovering or tapping a card
-           (.is-expanded, added/removed by the delegated click listener;
-           :hover covers desktop for free) pushes every LATER card (i.e.
-           every card currently drawn on top of it) down out of the way
-           so the hovered/tapped one -- and its options list below it,
-           see .game-hand-card-options further down -- can be read in
-           full. See renderDecksScreen() for the per-card `top`/`z-index`
-           it sets inline (position along the stack -- there's no clean
-           way to express "the Nth child sits N * OVERLAP down" in plain
-           CSS without hardcoding every N). */
+           name bar needed) showing. Hovering a card pushes every LATER
+           card (i.e. every card currently drawn on top of it) down
+           just far enough to read that card's own art in full --
+           :hover covers desktop for free, no JS involved. Clicking or
+           tapping it (.is-expanded, toggled by the delegated click
+           listener; this is what actually reveals its options list, see
+           .game-hand-card-options further down -- hover alone no longer
+           does) pushes those same later cards down further still, far
+           enough to also clear room for that list plus a matching gap
+           below it. See renderDecksScreen() for the per-card
+           `top`/`z-index` it sets inline (position along the stack --
+           there's no clean way to express "the Nth child sits N *
+           OVERLAP down" in plain CSS without hardcoding every N).
+
+           This container's own height is fixed per render (set inline
+           by renderDecksScreen(), see that function's own comment) to
+           just enough room for the LAST (frontmost, most-recently-
+           drawn) card's own options to stay fully visible if IT gets
+           expanded -- not a worst case covering every possible push, on
+           purpose: per the chat this was designed in (an Archidekt-
+           style tradeoff), if an EARLIER card gets expanded instead,
+           pushing later cards down past that fixed height, those later
+           cards are simply allowed to bleed off the bottom edge rather
+           than growing the container to keep showing them. overflow:
+           hidden below is what makes that clipping happen AND, as a
+           side effect, is what stops the pushed cards' transforms from
+           ballooning #game-scroll's own scrollable height the way an
+           unclipped overflow would -- that ballooning was the actual
+           cause of the jitter this whole fixed-height approach exists
+           to fix, clipping the bleed is just as important as the fixed
+           height itself for that.
+
+           background/border/padding below are the same treatment as
+           .game-deck-row above (same colors/radius, just applied to
+           the whole section instead of one row at a time) -- purely
+           cosmetic, so a card that bleeds off the bottom edge reads as
+           "sliding out of its own box" rather than just vanishing
+           against the page background behind it. */
         .game-hand-stack {
             position: relative;
             margin-bottom: 18px;
-            /* Extra breathing room below the resting stack so a card
-               (and its options list) pushed downward on hover/tap
-               doesn't slam straight into whatever section follows --
-               see the module comment above; this is a transform, not a
-               layout change, so nothing below the .game-hand-stack
-               container reflows to make room for it on its own. */
-            padding-bottom: 420px;
             display: flex;
             justify-content: center;
+            overflow: hidden;
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 14px;
+            padding: 10px;
+            width: 246px;
+            align-self: center;
+            /* Overrides the page's own global `* { box-sizing:
+               border-box; }` reset -- without this, the padding/border
+               just added above would eat into the exact content height
+               renderDecksScreen() computes for handEl.style.height
+               (see HAND_OPTIONS_EXPAND_ROOM's own comment for what that
+               number represents), shrinking the room actually reserved
+               for the last card's options by the padding+border total
+               and clipping it a little early. content-box keeps `height`
+               meaning pure content height like the rest of this stack's
+               math already assumes, with padding/border added purely on
+               top as extra visual space. */
+            box-sizing: content-box;
         }
 
         .game-hand-card {
@@ -2108,16 +2216,34 @@
             transition: transform 0.22s ease;
         }
 
-        /* The push: every card drawn on top of (i.e. after, in DOM
-           order) the hovered/expanded one slides down by its own full
-           height minus the sliver it normally shows, PLUS the options
-           list's own height below it, clearing both entirely. Cards
-           drawn *behind* it (before it in DOM order) don't need to
-           move -- they were never covering it in the first place, only
-           the reverse. */
-        .game-hand-card:hover ~ .game-hand-card,
+        /* Two-tier push, both on every card drawn on top of (i.e.
+           after, in DOM order) the hovered/expanded one -- cards drawn
+           *behind* it (before it in DOM order) don't need to move,
+           they were never covering it in the first place, only the
+           reverse. Hover alone only pushes far enough to clear this
+           card's own full height above its normal overlapped sliver
+           (HAND_CARD_HEIGHT - HAND_CARD_OVERLAP) -- there's no options
+           list to make room for yet, since hover no longer shows one
+           (see .game-hand-card-options below). Actually
+           clicking/tapping it (.is-expanded) pushes further still, to
+           also clear the options list once that's showing PLUS one
+           more gap the same size as the one already between the card
+           and its own options list, so the options list doesn't sit
+           flush against the next card's edge: HAND_CARD_HEIGHT -
+           HAND_CARD_OVERLAP + <options margin-top> + <options height>
+           + <options margin-top again> = 352 - 45 + 10 + 140 + 10 =
+           467. Listed in this order (hover's smaller push first) so a
+           card that's both hovered AND expanded -- the normal case
+           right after a click, mouse still sitting on it -- resolves
+           to the larger of the two on equal specificity, source order
+           deciding the tie. Must match HAND_CARD_EXPANDED_PUSH in the
+           script. */
+        .game-hand-card:hover ~ .game-hand-card {
+            transform: translateY(307px);
+        }
+
         .game-hand-card.is-expanded ~ .game-hand-card {
-            transform: translateY(457px);
+            transform: translateY(467px);
         }
 
         /* Everything that actually looks like a card -- clips the
@@ -2156,13 +2282,17 @@
            Put on Top of Deck. Sits below the card (top: 100%, i.e.
            right after its bottom edge), not over top of it, per the
            chat this was designed in -- hidden entirely except for
-           whichever single card is currently hovered/expanded. Fixed
-           height (see the fixed 2x2 .game-hand-card-options-grid it
-           always contains) so the translateY() push above doesn't need
-           to account for variable content -- Attach itself now just
-           hands off to the Team Tracker instead of opening a second
-           view in this same panel (see requestAttachFromHand()'s own
-           comment for why). */
+           whichever single card is currently clicked/tapped
+           (.is-expanded). Deliberately NOT shown on :hover alone (see
+           the chat this was split in) -- these buttons should only
+           appear once the player actually commits to a card by
+           clicking/tapping it, not just from a mouse passing over the
+           stack. Fixed height (see the fixed 2x2
+           .game-hand-card-options-grid it always contains) so the
+           translateY() push above doesn't need to account for variable
+           content -- Attach itself now just hands off to the Team
+           Tracker instead of opening a second view in this same panel
+           (see requestAttachFromHand()'s own comment for why). */
         .game-hand-card-options {
             display: none;
             position: absolute;
@@ -2178,7 +2308,6 @@
             border-radius: 14px;
         }
 
-        .game-hand-card:hover .game-hand-card-options,
         .game-hand-card.is-expanded .game-hand-card-options {
             display: block;
         }
@@ -2209,26 +2338,49 @@
         /* ---- Discard pile viewer ----
            Same overlapping-stack mechanics as .game-hand-stack/
            .game-hand-card above (see that module's own comment for the
-           full reveal-on-hover/tap explanation and why `top`/`z-index`
-           get set inline per card in renderDiscardViewer()) just
-           without a .game-hand-card-options-equivalent panel under any
-           card -- these are read-only, so a hovered/expanded card only
-           needs to push the ones drawn on top of it out of its way,
-           not also clear room for a hidden options box below itself.
-           That's also why the push distance below is shorter than
-           .game-hand-card's own 457px: HAND_CARD_HEIGHT -
-           HAND_CARD_OVERLAP with nothing extra added on top. Lives
+           full reveal-on-hover-vs-click explanation, the fixed-height/
+           overflow:hidden/"let earlier-card pushes bleed off the
+           bottom edge" reasoning, and why `top`/`z-index` get set
+           inline per card in renderDiscardViewer()) -- and now the
+           same two-tier push too: hovering only peeks the card (full
+           art, no buttons); clicking/tapping it (.is-expanded) is what
+           reveals its own options panel underneath (Return to Hand /
+           Shuffle into Deck -- see .game-discard-card-options further
+           down), same "buttons only on an actual click" behavior the
+           chat that split .game-hand-card's own two states settled on,
+           applied here too rather than reintroducing the
+           hover-shows-options pattern for a second set of cards. Lives
            inside #game-discard-viewer-overlay's own .game-confirm-card,
-           which already caps height/scrolls on overflow (see that
-           class's own comment), so the fixed padding-bottom here only
-           needs to cover the last card's own push, not a whole
-           screen's worth of breathing room the way the in-panel hand
-           stack's does. */
+           which already caps height/scrolls on overflow of its own
+           (see that class's own comment) -- the overflow: hidden below
+           is still needed on top of that, since without it a bled-off
+           card's transform would still balloon .game-confirm-card's
+           own scrollHeight the exact same way it would have ballooned
+           #game-scroll's, just one container over.
+
+           background/border/padding/margin-bottom below are the same
+           .game-deck-row-style treatment .game-hand-stack got, for the
+           same reason (a bled-off card should read as sliding out of
+           its own box, not just vanishing) plus the margin-bottom
+           doubles as the missing gap before the Close button beneath
+           it, which previously sat flush against the stack. */
         .game-discard-stack {
             position: relative;
             display: flex;
             justify-content: center;
-            padding-bottom: 60px;
+            overflow: hidden;
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 14px;
+            padding: 10px;
+            margin-bottom: 16px;
+            /* Same reasoning as .game-hand-stack's own comment --
+               overrides the page's global `* { box-sizing: border-box; }`
+               reset so this padding/border adds on top of the exact
+               content height renderDiscardViewer() computes for
+               stackEl.style.height (DISCARD_OPTIONS_EXPAND_ROOM),
+               rather than eating into it. */
+            box-sizing: content-box;
         }
 
         .game-discard-card {
@@ -2239,9 +2391,20 @@
             transition: transform 0.22s ease;
         }
 
-        .game-discard-card:hover ~ .game-discard-card,
-        .game-discard-card.is-expanded ~ .game-discard-card {
+        /* Same two numbers, same reasoning, as .game-hand-card's own
+           hover/expanded push pair above -- just a smaller expanded
+           number, since this card's own options panel below only needs
+           to hold one row of two buttons (70px) rather than two rows of
+           four (140px): 352 - 45 + 10 + 70 + 10 = 397 (that last +10 is
+           the same "gap below the options list, same size as the gap
+           above it" this and .game-hand-card's own push both add now).
+           Must match DISCARD_CARD_EXPANDED_PUSH in the script. */
+        .game-discard-card:hover ~ .game-discard-card {
             transform: translateY(307px);
+        }
+
+        .game-discard-card.is-expanded ~ .game-discard-card {
+            transform: translateY(397px);
         }
 
         .game-discard-card-face {
@@ -2267,6 +2430,46 @@
             width: 100%;
             height: 100%;
             object-fit: cover;
+        }
+
+        /* Return to Hand / Shuffle into Deck -- same "sits below the
+           card, only shown while it's the one currently clicked/tapped"
+           shape as .game-hand-card-options above, just a single row of
+           two buttons (this card's own two possible actions) rather
+           than a 2x2 grid of four. */
+        .game-discard-card-options {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            margin-top: 10px;
+            height: 70px;
+            box-sizing: border-box;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 14px;
+        }
+
+        .game-discard-card.is-expanded .game-discard-card-options {
+            display: block;
+        }
+
+        .game-discard-card-options-grid {
+            height: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .game-discard-card-options-grid .filter-btn {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+            font-size: 12px;
+            padding: 4px;
         }
 
         .game-discard-empty {
@@ -2419,7 +2622,7 @@
         .game-save-progress-banner span {
             font-size: 14px;
             font-weight: bold;
-            color: #7a5200;
+            color: #ffffff;
         }
 
         .game-save-progress-banner .filter-btn {
@@ -3102,7 +3305,7 @@
         .game-team-replace-banner span {
             font-size: 14px;
             font-weight: bold;
-            color: #7a5200;
+            color: #ffffff;
         }
 
         /* #game-team-attach-banner's own layout override -- every other
@@ -3167,7 +3370,7 @@
         .game-team-release-banner span {
             font-size: 14px;
             font-weight: bold;
-            color: #7a5200;
+            color: #ffffff;
         }
 
         /* No Cancel button in this one (see setTradeStatusMessage()) --
@@ -3178,7 +3381,7 @@
             text-align: center;
             font-size: 14px;
             font-weight: bold;
-            color: #7a5200;
+            color: #ffffff;
         }
 
         .game-team-release-banner .filter-btn {
@@ -9804,6 +10007,12 @@
                             <option value="yes">Yes</option>
                         </select>
 
+                        <label for="game-new-virtual-decks-enabled-0">Use Virtual Decks?</label>
+                        <select id="game-new-virtual-decks-enabled-0" class="game-new-virtual-decks-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
                         <div class="game-save-slot-actions">
                             <button class="filter-btn game-create-confirm-btn" data-slot="0">Create</button>
                             <button class="filter-btn game-create-cancel-btn" data-slot="0">Cancel</button>
@@ -9868,6 +10077,12 @@
 
                         <label for="game-new-natures-enabled-1">Use Nature Cards?</label>
                         <select id="game-new-natures-enabled-1" class="game-new-natures-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
+                        <label for="game-new-virtual-decks-enabled-1">Use Virtual Decks?</label>
+                        <select id="game-new-virtual-decks-enabled-1" class="game-new-virtual-decks-enabled-select">
                             <option value="no" selected>No</option>
                             <option value="yes">Yes</option>
                         </select>
@@ -9940,6 +10155,12 @@
                             <option value="yes">Yes</option>
                         </select>
 
+                        <label for="game-new-virtual-decks-enabled-2">Use Virtual Decks?</label>
+                        <select id="game-new-virtual-decks-enabled-2" class="game-new-virtual-decks-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
                         <div class="game-save-slot-actions">
                             <button class="filter-btn game-create-confirm-btn" data-slot="2">Create</button>
                             <button class="filter-btn game-create-cancel-btn" data-slot="2">Cancel</button>
@@ -9997,6 +10218,12 @@
 
                         <label for="game-save-default-natures-enabled">Use Nature Cards?</label>
                         <select id="game-save-default-natures-enabled" class="game-save-default-natures-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
+                        <label for="game-save-default-virtual-decks-enabled">Use Virtual Decks?</label>
+                        <select id="game-save-default-virtual-decks-enabled" class="game-save-default-virtual-decks-enabled-select">
                             <option value="no" selected>No</option>
                             <option value="yes">Yes</option>
                         </select>
@@ -10250,6 +10477,13 @@
                      independence reasoning as every other near-identical
                      pair in this doc. -->
                 <div class="game-team-release-banner game-decks-notice-banner" id="game-decks-notice-banner"></div>
+
+                <!-- Minimized (empty, no visible box) whenever nothing's
+                     active -- see renderActiveCardZone()'s own comment.
+                     Sits above Decks/Your Hand since a revealed/played
+                     card is the most time-sensitive thing on this
+                     screen. -->
+                <div class="game-active-card-zone" id="game-active-card-zone"></div>
 
                 <!-- One row per deck in DECK_TOOL_LIST -- rebuilt by
                      renderDecksScreen() any time deck/hand state
@@ -12897,6 +13131,22 @@
             });
             if (changed) persistGameSaves();
         })();
+        // Backfills the "Use Virtual Decks?" setting onto any save
+        // created before that setting existed -- defaulted to false
+        // (off), same reasoning as migrateNaturesEnabled() above: this
+        // is an opt-in feature for players without physical cards, an
+        // existing save shouldn't suddenly gain the Hand & Decks tool
+        // it never asked for.
+        (function migrateVirtualDecksEnabled() {
+            let changed = false;
+            gameSaves.forEach(save => {
+                if (save && typeof save.virtualDecksEnabled !== 'boolean') {
+                    save.virtualDecksEnabled = false;
+                    changed = true;
+                }
+            });
+            if (changed) persistGameSaves();
+        })();
         // Backfills the Hand & Decks tool's own fields onto any save
         // created before it existed -- hand starts empty same as a
         // fresh save's own emptySaveScopedData(), decks starts as an
@@ -13007,6 +13257,16 @@
                 // shape as pokeCoinsEnabled above. See
                 // isNaturesEnabledForActiveSave().
                 naturesEnabled: !!options.naturesEnabled,
+                // Whether the Hand & Decks tool shows at all for this
+                // save -- an optional house rule, off by default (see
+                // the creation form's own 'no'-selected option), same
+                // shape as naturesEnabled/pokeCoinsEnabled above. Unlike
+                // those two though, this one's intended for players
+                // WITHOUT the physical board game's paper cards, not a
+                // ruleset variant -- the assumption is most saves have
+                // real cards on hand and don't need this at all. See
+                // isVirtualDecksEnabledForActiveSave().
+                virtualDecksEnabled: !!options.virtualDecksEnabled,
                 // Placeholder until the badge tracker exists to actually
                 // derive this for real -- 'early' matches the Sounds
                 // panel's own GAME_STAGE_ORDER labels (see
@@ -13034,6 +13294,14 @@
                 // mid-session, same as decks above. See
                 // ensureGuestHandsStore()/getPeerHandArray().
                 guestHands: {},
+                // The shared Active Card zone's own state -- see
+                // readHostActiveCard()/setHostActiveCard() and the chat
+                // this was designed in. null means the zone is
+                // minimized/empty for everyone; only ever read/written
+                // on the device hosting (or soloing) this save, same
+                // "authoritative on exactly one device" shape as decks/
+                // guestHands above.
+                activeCard: null,
             };
             persistGameSaves();
             activeGuestSaveId = null;
@@ -13247,6 +13515,18 @@
             });
             if (changed) persistGameGuestSaves();
         })();
+        // Same idea as migrateVirtualDecksEnabled() above, for guest saves.
+        (function migrateGuestVirtualDecksEnabled() {
+            let changed = false;
+            Object.keys(gameGuestSaves).forEach(id => {
+                const save = gameGuestSaves[id];
+                if (save && typeof save.virtualDecksEnabled !== 'boolean') {
+                    save.virtualDecksEnabled = false;
+                    changed = true;
+                }
+            });
+            if (changed) persistGameGuestSaves();
+        })();
         let activeGuestSaveId = loadActiveGuestSaveId(gameGuestSaves);
         // Both can't be genuinely active at once -- if somehow both got
         // persisted (shouldn't happen going forward, every mutator below
@@ -13313,6 +13593,7 @@
                 hpRule: '.game-new-hp-rule-select',
                 pokeCoinsEnabled: '.game-new-pokecoins-enabled-select',
                 naturesEnabled: '.game-new-natures-enabled-select',
+                virtualDecksEnabled: '.game-new-virtual-decks-enabled-select',
             };
             Object.entries(fieldMap).forEach(([key, selector]) => {
                 if (!gameSaveDefaults[key]) return;
@@ -13334,6 +13615,7 @@
                 hpRule: '#game-save-default-hp-rule',
                 pokeCoinsEnabled: '#game-save-default-pokecoins-enabled',
                 naturesEnabled: '#game-save-default-natures-enabled',
+                virtualDecksEnabled: '#game-save-default-virtual-decks-enabled',
             };
             Object.entries(fieldMap).forEach(([key, selector]) => {
                 if (!gameSaveDefaults[key]) return;
@@ -14696,6 +14978,16 @@
             'Nature Deck': 'https://dl.dropboxusercontent.com/scl/fi/p5f6sclf6qqehif165cmb/_Nature-Card-Back.png?rlkey=pokzy8e0k2nalq92c720zv15g&st=pnv3j11x&dl=1',
         };
 
+        // Decks whose drawn card reveals immediately into the shared
+        // Active Card zone (see setHostActiveCard()/renderActiveCardZone()
+        // below) instead of going to the drawing player's own hand.
+        // Event Deck's own cards resolve the instant they're drawn --
+        // there's no "hold it and decide later" the way an Item card's
+        // hand allows -- so hostApplyDraw() branches on this rather than
+        // ever pushing an Event card into anyone's hand at all. Anything
+        // not listed here keeps the normal draw-to-hand behavior.
+        const DECK_REVEALS_ON_DRAW = { 'Event Deck': true };
+
         // Fisher-Yates -- used once per fresh deck build and again any
         // time discardPile gets folded back into drawPile (see
         // drawFromHostDeck() below).
@@ -14768,6 +15060,61 @@
                 return gameSaves[activeSaveSlot].decks;
             }
             return unsavedDeckState;
+        }
+
+        // ---- Shared Active Card zone (see the chat this was designed
+        // in) ----
+        //
+        // {cardId, deckName, actorKey, committed, instanceId} or null.
+        // actorKey is 'host' or a conn.peer id, same identity space as
+        // everywhere else in this tool -- whoever drew (Event) or Played/
+        // Attached (Item) this exact card. committed:true means it's
+        // already fully resolved (an Attach that went all the way through
+        // -- see hostApplyRemoveFromHandOnly()) so nobody, including the
+        // actor, gets an action button for it, just Dismiss; committed:
+        // false means it's still awaiting the actor's own Discard/
+        // Permanent/Shuffle/Attach choice (see renderActiveCardZone()).
+        // instanceId is a fresh random string every time this is set,
+        // purely so each viewer's own local activeCardDismissedInstanceId
+        // (see dismissActiveCard()) can tell "a new card took over" apart
+        // from "the exact same card got re-broadcast" without needing any
+        // server-side per-viewer bookkeeping.
+        //
+        // Same "fall back to an in-memory-only value before there's a
+        // real save to hold it" shape as unsavedDeckState above.
+        let unsavedActiveCard = null;
+        function readHostActiveCard() {
+            if (lobbyState.role === 'guest') return null;
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) return gameSaves[activeSaveSlot].activeCard || null;
+            return unsavedActiveCard;
+        }
+
+        function writeHostActiveCard(value) {
+            if (lobbyState.role === 'guest') return;
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
+                gameSaves[activeSaveSlot].activeCard = value;
+                persistGameSaves();
+            } else {
+                unsavedActiveCard = value;
+            }
+        }
+
+        // The one place anything (a draw, a Play, an Attach) puts a new
+        // card into the zone. If the PREVIOUS card was still pending
+        // (nobody had Discarded/made it Permanent/Shuffled it back in
+        // yet) it defaults to Discard rather than just vanishing
+        // untracked -- see the chat this was designed in.
+        function setHostActiveCard(cardId, deckName, actorKey, committed) {
+            const previous = readHostActiveCard();
+            if (previous && !previous.committed) {
+                discardToHostDeck(previous.deckName, previous.cardId);
+            }
+            writeHostActiveCard({
+                cardId, deckName, actorKey, committed,
+                instanceId: 'ac-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+            });
+            broadcastDeckState();
+            renderDecksScreen();
         }
 
         // Lazily builds a deck's drawPile the first time anything asks
@@ -14886,6 +15233,12 @@
         function hostApplyDraw(deckName, peerKey) {
             const cardId = drawFromHostDeck(deckName);
             if (cardId === null) return; // nothing left to draw, silently no-op
+            if (DECK_REVEALS_ON_DRAW[deckName]) {
+                // Never touches any hand at all -- see
+                // DECK_REVEALS_ON_DRAW's own comment.
+                setHostActiveCard(cardId, deckName, peerKey, false);
+                return;
+            }
             if (peerKey === 'host') {
                 getLocalHandArray().push(cardId);
                 persistLocalHand();
@@ -14940,7 +15293,10 @@
         // -- used when a card gets Attached instead (see
         // commitAttachFromHandToMember()). An attached card sits face-up
         // next to its Pokémon, not in a discard pile, so this only ever
-        // removes it from whichever hand currently holds it.
+        // removes it from whichever hand currently holds it, then
+        // announces it into the Active Card zone as already-committed
+        // (see setHostActiveCard()'s own comment on that flag) so every
+        // other player sees what was just attached and to what.
         function hostApplyRemoveFromHandOnly(peerKey, cardId) {
             if (peerKey === 'host') {
                 const hand = getLocalHandArray();
@@ -14959,18 +15315,165 @@
                 const entry = lobbyState.connections.get(peerKey);
                 if (entry && entry.conn.open) entry.conn.send({ type: 'hand-remove', cardId });
             }
+            const card = CARDS_BY_ID[cardId];
+            setHostActiveCard(cardId, (card && card.cardDeck) || '', peerKey, true);
+        }
+
+        // Host-side: the Play button in a hand card's own options grid
+        // (see requestPlayFromHand() below) -- takes the card out of
+        // hand exactly like a Discard would (same peerKey-branching
+        // shape as hostApplyDiscard()), but instead of going straight to
+        // deckName's discard pile, it reveals into the Active Card zone
+        // still pending (committed:false), same as a freshly-drawn Event
+        // card -- see setHostActiveCard()'s own comment on that flag.
+        // The actor decides its final Discard/Permanent/Shuffle/Attach
+        // disposition from the zone itself, not from hand.
+        function hostApplyPlay(deckName, peerKey, cardId) {
+            if (peerKey === 'host') {
+                const hand = getLocalHandArray();
+                const idx = hand.indexOf(cardId);
+                if (idx === -1) return;
+                hand.splice(idx, 1);
+                persistLocalHand();
+            } else {
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return;
+                const idx = hand.indexOf(cardId);
+                if (idx === -1) return;
+                hand.splice(idx, 1);
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'hand-remove', cardId });
+            }
+            setHostActiveCard(cardId, deckName, peerKey, false);
+        }
+
+        // ---- The Active Card zone's own four resolving actions --
+        // Discard/Permanent/Shuffle/Attach -- plus the shared "only the
+        // actual actor may resolve it" guard every one of the first
+        // three uses (Attach's own guard lives in requestAttachFromHand()
+        // instead, since that path also has to work for the ordinary
+        // hand-attach case which has no actor to check against). ----
+
+        // Sends whatever's currently active straight to its own deck's
+        // discard pile and clears the zone for everyone.
+        function hostApplyActiveCardDiscard(peerKey) {
+            const active = readHostActiveCard();
+            if (!active || active.actorKey !== peerKey) return;
+            discardToHostDeck(active.deckName, active.cardId);
+            writeHostActiveCard(null);
             broadcastDeckState();
             renderDecksScreen();
         }
 
-        // Public counts (plus the discard pile's own full contents --
+        // "Permanent" -- the card's effect is considered permanently in
+        // play rather than a one-time use, so it doesn't return to
+        // either pile at all; it's simply removed from circulation for
+        // the rest of the game (no discard-pile reshuffle will ever
+        // bring it back). Clears the zone the same as Discard.
+        function hostApplyActiveCardPermanent(peerKey) {
+            const active = readHostActiveCard();
+            if (!active || active.actorKey !== peerKey) return;
+            writeHostActiveCard(null);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Shuffles the active card back into its own deck's drawPile
+        // instead of discarding it -- e.g. an Event card whose own text
+        // says to do exactly that.
+        function hostApplyActiveCardShuffle(peerKey) {
+            const active = readHostActiveCard();
+            if (!active || active.actorKey !== peerKey) return;
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, active.deckName);
+            store[active.deckName].drawPile.push(active.cardId);
+            shuffleArray(store[active.deckName].drawPile);
+            writeHostActiveCard(null);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // The Attach-from-active-card path's own final step (see
+        // requestAttachFromHand()/commitAttachFromHandToMember()'s
+        // handAttachPendingSource branch) -- the actual equip already
+        // happened locally on the acting player's own device via
+        // commitTeamMemberCard() (team data needs no Host round-trip
+        // either way, see that function's own comment), so all that's
+        // left here is clearing the shared zone.
+        function hostApplyActiveCardResolveAttach(peerKey) {
+            const active = readHostActiveCard();
+            if (!active || active.actorKey !== peerKey) return;
+            writeHostActiveCard(null);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Host-side: pulls one specific card back OUT of deckName's
+        // discardPile (removing its first matching occurrence -- same
+        // "trust the request, don't try to disambiguate duplicate ids"
+        // stance hostApplyDiscard() already takes on the hand side) and
+        // into whichever player asked for it. Reuses the exact same
+        // 'deck-drawn' network message hostApplyDraw() already sends
+        // for a normal draw -- from a connected guest's own point of
+        // view a card landing in its hand is a card landing in its
+        // hand, it doesn't matter whether it came off the top of
+        // drawPile or out of discardPile.
+        function hostApplyReturnDiscardToHand(deckName, peerKey, cardId) {
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, deckName);
+            const discardPile = store[deckName].discardPile;
+            const idx = discardPile.indexOf(cardId);
+            if (idx === -1) return; // already gone -- e.g. two clients raced for the same card
+            discardPile.splice(idx, 1);
+            if (peerKey === 'host') {
+                getLocalHandArray().push(cardId);
+                persistLocalHand();
+            } else {
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return;
+                hand.push(cardId);
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'deck-drawn', deck: deckName, cardId });
+            }
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Host-side: pulls one specific card out of deckName's
+        // discardPile and folds it back into drawPile, reshuffling the
+        // whole thing afterward so it lands somewhere random rather
+        // than predictably on top. Doesn't touch any hand -- unlike
+        // Return to Hand above, this is a deck-only move, so there's no
+        // peerKey/hand-side branch needed, any player's request has the
+        // same effect on this shared pile.
+        function hostApplyShuffleDiscardIntoDraw(deckName, cardId) {
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, deckName);
+            const deck = store[deckName];
+            const idx = deck.discardPile.indexOf(cardId);
+            if (idx === -1) return;
+            deck.discardPile.splice(idx, 1);
+            deck.drawPile.push(cardId);
+            shuffleArray(deck.drawPile);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
         // see #game-discard-viewer-overlay/openDiscardViewer() below;
         // it's public info, same "everyone can see the discard pile"
-        // convention discardTop already relied on) and every player's
-        // hand *count*, never hand contents (see .game-other-hands-list's
-        // own CSS comment for why). Sent to every connected guest, and
-        // applied locally so the Host's own screen redraws off the
-        // exact same numbers a guest would see.
+        // convention discardTop already relied on), every player's hand
+        // *count* (never hand contents -- see .game-other-hands-list's
+        // own CSS comment for why), and the shared Active Card zone's own
+        // state (public by design -- a revealed/played card is meant to
+        // be seen by everyone, see setHostActiveCard()'s own comment).
+        // Sent to every connected guest, and applied locally so the
+        // Host's own screen redraws off the exact same data a guest
+        // would see.
         function broadcastDeckState() {
             if (lobbyState.role === 'guest') return; // guests only ever receive this, never originate it
             const store = ensureHostDeckStore();
@@ -14991,7 +15494,7 @@
                     handCounts[peerId] = (getPeerHandArray(peerId) || []).length;
                 });
             }
-            const payload = { type: 'deck-state', decks, handCounts };
+            const payload = { type: 'deck-state', decks, handCounts, activeCard: readHostActiveCard() };
             if (lobbyState.connections) {
                 lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
             }
@@ -15028,8 +15531,117 @@
             }
         }
 
+        // The Play button in a hand card's own options grid -- see
+        // hostApplyPlay()'s own comment for what actually happens to the
+        // card (reveals into the Active Card zone, still pending).
+        function requestPlayFromHand(cardId) {
+            if (isActiveSaveReadOnly()) return;
+            const card = CARDS_BY_ID[cardId];
+            if (!card) return;
+            const deckName = card.cardDeck || DECK_TOOL_LIST[0];
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-play', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyPlay(deckName, 'host', cardId);
+            }
+        }
+
+        // The discard viewer's own two card actions (see
+        // .game-discard-card-options/renderDiscardViewer() below) --
+        // same guest-sends-a-request/Host-applies-and-broadcasts shape
+        // as requestDrawCard()/requestDiscardCard() above.
+        function requestReturnDiscardToHand(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-discard-to-hand', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyReturnDiscardToHand(deckName, 'host', cardId);
+            }
+        }
+
+        function requestShuffleDiscardIntoDraw(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-shuffle-in', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyShuffleDiscardIntoDraw(deckName, cardId);
+            }
+        }
+
+        // ---- The Active Card zone's own request-side entry points --
+        // called from the delegated click listener, only ever reachable
+        // by the card's own actor (renderActiveCardZone() only renders
+        // these buttons for them in the first place); the Host-side
+        // handlers double-check that anyway (see their own comments) in
+        // case a stale UI ever fires one of these late. ----
+        function requestActiveCardDiscard() {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'active-card-discard' });
+                }
+            } else {
+                hostApplyActiveCardDiscard('host');
+            }
+        }
+
+        function requestActiveCardPermanent() {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'active-card-permanent' });
+                }
+            } else {
+                hostApplyActiveCardPermanent('host');
+            }
+        }
+
+        function requestActiveCardShuffle() {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'active-card-shuffle' });
+                }
+            } else {
+                hostApplyActiveCardShuffle('host');
+            }
+        }
+
+        // Reads whichever the current device actually has -- this
+        // device's own local Host/solo store, or guestDeckStateCache on
+        // a connected guest -- same one-shape-either-way pattern as
+        // getDeckInfoMap(). Never mutates anything.
+        function getActiveCardInfo() {
+            if (lobbyState.role === 'guest') {
+                return (guestDeckStateCache && guestDeckStateCache.activeCard) || null;
+            }
+            return readHostActiveCard();
+        }
+
+        // Which Active Card instanceId (see setHostActiveCard()'s own
+        // comment) THIS device has chosen to stop looking at -- purely
+        // local, never sent anywhere; a brand new card taking over the
+        // zone naturally supersedes this the instant its own different
+        // instanceId no longer matches, no explicit reset needed. Never
+        // set for the card's own actor -- see renderActiveCardZone()'s
+        // own comment on why the actor doesn't get a Dismiss for a still-
+        // pending card, only Discard/Permanent/Shuffle/Attach instead.
+        let activeCardDismissedInstanceId = null;
+        function dismissActiveCard() {
+            const info = getActiveCardInfo();
+            if (info) activeCardDismissedInstanceId = info.instanceId;
+            renderDecksScreen();
+        }
+
         // Which hand card (if any) is currently being attached via the
-        // Team Tracker (see requestAttachFromHand() below) -- mirrors
+        // Team Tracker (see requestAttachFromHand()/
+        // requestAttachFromActiveCard() below) -- mirrors
         // teamReplacePendingMember's own shape (a pending action stashed
         // here, actually carried out once the player taps a slot over
         // on that screen), and is one more mode
@@ -15038,6 +15650,15 @@
         // exclusive with replacing/releasing/trading, same as those
         // three already are with each other.
         let handAttachPendingCardId = null;
+
+        // 'hand' or 'active-card' -- which flow started this attach, so
+        // commitAttachFromHandToMember() knows which one to actually
+        // resolve once a member's picked: 'hand' still needs the normal
+        // hand-removal request (see hostApplyRemoveFromHandOnly()), while
+        // 'active-card' just needs the shared zone cleared (the card
+        // never touched a hand in the first place -- see
+        // requestAttachFromActiveCard() below).
+        let handAttachPendingSource = 'hand';
 
         // Which member index the Attach-from-hand replace confirmation
         // (#game-team-attach-confirm-overlay) is currently open for --
@@ -15070,21 +15691,40 @@
             decksNoticeTimer = setTimeout(() => el.classList.remove('visible'), 4000);
         }
 
-        function requestAttachFromHand(cardId) {
+        // Shared by requestAttachFromHand()/requestAttachFromActiveCard()
+        // below -- the actual "stash it and switch to Team Tracker" step
+        // is identical either way, only the source differs.
+        function beginAttachFlow(cardId, source) {
             if (isActiveSaveReadOnly()) return;
             if (teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             const card = CARDS_BY_ID[cardId];
             if (!card || card.canAttach !== 'yes') return;
             // Nothing to attach ONTO -- rather than switching to a Team
             // Tracker with an empty grid and a banner nobody can act on,
-            // stay put and say so; the card stays in hand.
+            // stay put and say so; the card stays wherever it currently is.
             if (!((getActiveSaveData().team.members || []).length)) {
                 showDecksNotice('You don\u2019t have any team members yet \u2014 add one in Team Tracker first.');
                 return;
             }
             handAttachPendingCardId = cardId;
+            handAttachPendingSource = source;
             setGameScreen('team');
             renderTeamGrid();
+        }
+
+        function requestAttachFromHand(cardId) {
+            beginAttachFlow(cardId, 'hand');
+        }
+
+        // The Active Card zone's own Attach button (see
+        // renderActiveCardZone()) -- only ever shown/reachable by the
+        // card's own actor (see the zone's own actor-vs-everyone-else
+        // split), so unlike requestActiveCardDiscard()/-Permanent()/
+        // -Shuffle() this needs no separate actorKey check of its own:
+        // commitAttachFromHandToMember() eventually routes this to
+        // hostApplyActiveCardResolveAttach(), which re-checks anyway.
+        function requestAttachFromActiveCard(cardId) {
+            beginAttachFlow(cardId, 'active-card');
         }
 
         // The one authoritative way out of Attach-from-hand mode --
@@ -15095,6 +15735,7 @@
         // before a member's ever chosen (Cancel path).
         function exitAttachFromHandMode() {
             handAttachPendingCardId = null;
+            handAttachPendingSource = 'hand';
             closeAttachFromHandConfirmOverlay();
             renderTeamGrid();
         }
@@ -15155,15 +15796,28 @@
         // commitTeamMemberCard() the Team Tracker's own picker already
         // uses -- team data is purely local to this device's own save
         // either way, host or guest, so this half needs no network
-        // round-trip) and takes the card out of hand. The hand-removal
-        // half DOES need the Host's say-so on a guest device (see
-        // hostApplyRemoveFromHandOnly()'s own comment on why this isn't
-        // the same thing as a discard).
+        // round-trip either way) then resolves whichever half DOES need
+        // the Host's say-so, branching on handAttachPendingSource (see
+        // its own comment): a card that came from hand still needs the
+        // normal hand-removal request (see hostApplyRemoveFromHandOnly()'s
+        // own comment on why this isn't the same thing as a discard); a
+        // card that came from the Active Card zone never touched a hand
+        // at all, so there's nothing to remove -- just tell the Host to
+        // clear the zone (see hostApplyActiveCardResolveAttach()).
         function commitAttachFromHandToMember(memberIndex) {
             const cardId = handAttachPendingCardId;
+            const source = handAttachPendingSource;
             if (!cardId) return;
             commitTeamMemberCard(memberIndex, 'attach', cardId);
-            if (lobbyState.role === 'guest') {
+            if (source === 'active-card') {
+                if (lobbyState.role === 'guest') {
+                    if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                        lobbyState.hostConn.send({ type: 'active-card-attach' });
+                    }
+                } else {
+                    hostApplyActiveCardResolveAttach('host');
+                }
+            } else if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
                     lobbyState.hostConn.send({ type: 'deck-attach', cardId });
                 }
@@ -15173,16 +15827,55 @@
             exitAttachFromHandMode();
         }
 
-        // Must match .game-hand-card's own height/CSS `transform`
-        // push amount and .game-hand-card-options's own height in the
-        // CSS above -- there's no clean way to share these numbers
-        // between CSS and JS, so if any of the four change there,
-        // update these two (and the CSS translateY()) to match:
-        //   PUSH = HAND_CARD_HEIGHT - HAND_CARD_OVERLAP
-        //          + <options margin-top> + <options height>
-        //        = 352 - 45 + 10 + 140 = 457
+        // Must match .game-hand-card's own height/CSS `transform` push
+        // amounts and .game-hand-card-options's own height in the CSS
+        // above -- there's no clean way to share these numbers between
+        // CSS and JS, so if any of the four change there, update these
+        // (and the matching CSS translateY()s) to match. Two pushes
+        // (see the chat this was split in): a smaller one while just
+        // hovering, and a larger one once actually clicked/tapped
+        // (.is-expanded), which is the only state that also reveals the
+        // options list underneath, hence the larger number needing room
+        // for it, plus one more gap the same size as the one between
+        // the card and its own options list, so the options list isn't
+        // flush against whatever it pushed down into:
+        //   HOVER PUSH    = HAND_CARD_HEIGHT - HAND_CARD_OVERLAP
+        //                  = 352 - 45 = 307
+        //   EXPANDED PUSH = HAND_CARD_HEIGHT - HAND_CARD_OVERLAP
+        //                    + <options margin-top> + <options height>
+        //                    + <options margin-top again>
+        //                  = 352 - 45 + 10 + 140 + 10 = 467
         const HAND_CARD_HEIGHT = 352;
         const HAND_CARD_OVERLAP = 45;
+
+        // How much extra room .game-hand-stack/.game-discard-stack each
+        // reserve, past the resting stack's own height, so the LAST
+        // (frontmost) card's options can stay fully onscreen if that
+        // specific card gets expanded -- <options margin-top> + <options
+        // height> + <the extra gap below it>, same shape as EXPANDED
+        // PUSH above minus the HAND_CARD_HEIGHT/OVERLAP part (the last
+        // card doesn't need to push anything, there's nothing after it
+        // to push). See renderDecksScreen()/renderDiscardViewer()'s own
+        // comments for why the container is fixed to exactly this,
+        // rather than the full worst-case EXPANDED_PUSH: an EARLIER
+        // card being expanded instead, pushing later cards past this
+        // fixed height, is meant to let those cards bleed off the
+        // bottom edge (see .game-hand-stack's own overflow: hidden)
+        // rather than growing the container to keep chasing them.
+        const HAND_OPTIONS_EXPAND_ROOM = 10 + 140 + 10; // 160
+        const DISCARD_OPTIONS_EXPAND_ROOM = 10 + 70 + 10; // 90
+
+        // Both stacks' cards are position:absolute, so their containing
+        // block is their container's PADDING box, not its content box --
+        // `top: 0` on the first card lands right at the padding's own
+        // outer edge (flush with the border), completely ignoring the
+        // container's own padding rather than sitting inset by it. This
+        // is added to every card's own `top` (and to both containers'
+        // own computed height, so the bottom-side math added for
+        // HAND_OPTIONS_EXPAND_ROOM/DISCARD_OPTIONS_EXPAND_ROOM above
+        // still holds) purely to recreate that missing inset space at
+        // the top of the stack.
+        const STACK_TOP_GAP = 10;
 
         // Shared by renderDecksScreen() (the row list) and
         // renderDiscardViewer() (the discard-pile popup) so both read
@@ -15233,7 +15926,17 @@
             const deckInfo = getDeckInfoMap();
             const isGuest = lobbyState.role === 'guest';
 
-            listEl.innerHTML = DECK_TOOL_LIST.map(deckName => {
+            // Same house rule that already gates the Team Tracker's own
+            // Nature Card slot (see isNaturesEnabledForActiveSave()'s
+            // own comment) -- off by default, so a save that never
+            // opted into Nature Cards doesn't show a deck for them
+            // either. The deck itself still exists in the underlying
+            // store either way (see ensureDeckBuilt()) -- this only
+            // hides the row, it doesn't stop tracking counts for it,
+            // so nothing breaks if the rule gets flipped on mid-game.
+            const visibleDecks = DECK_TOOL_LIST.filter(deckName => deckName !== 'Nature Deck' || isNaturesEnabledForActiveSave());
+
+            listEl.innerHTML = visibleDecks.map(deckName => {
                 const info = deckInfo[deckName] || { drawCount: 0, discardCount: 0, discardTop: null, discardPile: [] };
                 const topCard = info.discardTop ? CARDS_BY_ID[info.discardTop] : null;
                 const canDraw = (info.drawCount + info.discardCount) > 0;
@@ -15272,7 +15975,14 @@
                 handEl.style.height = '';
                 handEl.innerHTML = `<p class="game-hand-empty">Your hand is empty. Draw a card from a deck above.</p>`;
             } else {
-                handEl.style.height = (HAND_CARD_OVERLAP * (hand.length - 1) + HAND_CARD_HEIGHT) + 'px';
+                // Fixed per render regardless of hover/expand state --
+                // see .game-hand-stack's own CSS module comment and
+                // HAND_OPTIONS_EXPAND_ROOM's comment above for why this
+                // exact amount (resting stack height + room for the
+                // LAST card's own options, not a full worst case) and
+                // why a height that instead tracked whatever was
+                // currently hovered/expanded was the actual jitter bug.
+                handEl.style.height = (HAND_CARD_OVERLAP * (hand.length - 1) + HAND_CARD_HEIGHT + HAND_OPTIONS_EXPAND_ROOM + STACK_TOP_GAP) + 'px';
                 handEl.innerHTML = hand.map((cardId, i) => {
                     const card = CARDS_BY_ID[cardId];
                     const name = card ? card.name : cardId;
@@ -15284,9 +15994,12 @@
                     // picking a member right here -- so this options grid
                     // is now the only view this panel ever shows, no more
                     // second "which member?" view swapped in in its place.
+                    // Play reveals the card into the shared Active Card
+                    // zone instead of resolving it right here -- see
+                    // hostApplyPlay()'s own comment.
                     const optionsInner = `
                         <div class="game-hand-card-options-grid">
-                            <button class="filter-btn" type="button" disabled title="Coming soon">Play</button>
+                            <button class="filter-btn game-hand-play-btn" type="button" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Play</button>
                             <button class="filter-btn exclude game-hand-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Discard</button>
                             <button class="filter-btn game-hand-attach-btn" type="button" data-card-id="${escapeHtml(cardId)}" ${canAttach ? '' : 'disabled'} title="${canAttach ? '' : 'This card can\u2019t be attached'}">Attach</button>
                             <button class="filter-btn" type="button" disabled title="Coming soon">Put on Top of Deck</button>
@@ -15294,7 +16007,7 @@
                     `;
 
                     return `
-                        <div class="game-hand-card" style="top: ${i * HAND_CARD_OVERLAP}px; z-index: ${i + 1};" tabindex="0">
+                        <div class="game-hand-card" style="top: ${i * HAND_CARD_OVERLAP + STACK_TOP_GAP}px; z-index: ${i + 1};" tabindex="0">
                             <div class="game-hand-card-face">
                                 ${card && card.imageUrl ? `<img class="game-hand-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}
                             </div>
@@ -15327,7 +16040,62 @@
                 }
             }
 
+            renderActiveCardZone();
             renderDiscardViewer();
+        }
+
+        // The shared Active Card zone -- see the chat this was designed
+        // in, and getActiveCardInfo()/setHostActiveCard()'s own comments
+        // for the underlying state. Minimized (hidden entirely) whenever
+        // there's nothing active, or the viewer's already Dismissed this
+        // exact card (see dismissActiveCard()); otherwise:
+        //   - the card's own actor, while it's still pending
+        //     (!committed), gets it left-aligned with Discard/Permanent/
+        //     Shuffle/Attach (Attach only if the card itself allows it);
+        //   - everyone else -- and the actor too, once it's committed
+        //     (already fully resolved via an Attach that went through --
+        //     nothing left to decide) -- gets it centered with just
+        //     Dismiss.
+        function renderActiveCardZone() {
+            const zoneEl = document.getElementById('game-active-card-zone');
+            if (!zoneEl) return;
+            const info = getActiveCardInfo();
+            if (!info || info.instanceId === activeCardDismissedInstanceId) {
+                zoneEl.classList.remove('visible');
+                zoneEl.innerHTML = '';
+                return;
+            }
+            zoneEl.classList.add('visible');
+            const card = CARDS_BY_ID[info.cardId];
+            const name = (card && card.name) || info.cardId;
+            const imgTag = card && card.imageUrl
+                ? `<img class="game-active-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">`
+                : '';
+            const myId = getMyLobbyPlayerId();
+            const isActor = lobbyState.role === null || info.actorKey === myId;
+            const readOnly = isActiveSaveReadOnly();
+
+            if (isActor && !info.committed) {
+                const canAttach = !readOnly && card && card.canAttach === 'yes';
+                zoneEl.innerHTML = `
+                    <div class="game-active-card-view actor">
+                        ${imgTag}
+                        <div class="game-active-card-actions">
+                            <button class="filter-btn game-active-card-discard-btn" type="button" ${readOnly ? 'disabled' : ''}>Discard</button>
+                            <button class="filter-btn game-active-card-permanent-btn" type="button" ${readOnly ? 'disabled' : ''}>Permanent</button>
+                            <button class="filter-btn game-active-card-shuffle-btn" type="button" ${readOnly ? 'disabled' : ''}>Shuffle</button>
+                            ${canAttach ? `<button class="filter-btn game-active-card-attach-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Attach</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            } else {
+                zoneEl.innerHTML = `
+                    <div class="game-active-card-view centered">
+                        ${imgTag}
+                        <button class="filter-btn exclude game-active-card-dismiss-btn" type="button">Dismiss</button>
+                    </div>
+                `;
+            }
         }
 
         // Which deck's pile is currently shown in
@@ -15340,9 +16108,12 @@
         // the bottom of renderDecksScreen()).
         let discardViewerDeckName = null;
 
-        // Opens the read-only "look at everything in this pile" popup
-        // for one deck -- tapping a deck row's own discard thumbnail
-        // (see .game-deck-discard-btn in renderDecksScreen() above).
+        // Opens the "look at everything in this pile" popup for one
+        // deck -- tapping a deck row's own discard thumbnail (see
+        // .game-deck-discard-btn in renderDecksScreen() above). Not
+        // purely read-only: clicking/tapping a card here reveals Return
+        // to Hand/Shuffle into Deck (see .game-discard-card-options),
+        // same click-only reveal .game-hand-card's own options use.
         function openDiscardViewer(deckName) {
             discardViewerDeckName = deckName;
             renderDiscardViewer();
@@ -15358,11 +16129,10 @@
         // discardViewerDeckName currently points at -- exact same
         // overlapping-stack markup/behavior as "Your Hand" in
         // renderDecksScreen() above (see .game-discard-stack/-card's
-        // own CSS module comment), just without an options panel under
-        // each card, since these aren't yours to Play/Discard/Attach.
-        // No-ops harmlessly if the overlay isn't currently open, so
-        // it's safe to call unconditionally from renderDecksScreen()
-        // any time deck state changes.
+        // own CSS module comment), including each card's own options
+        // panel underneath. No-ops harmlessly if the overlay isn't
+        // currently open, so it's safe to call unconditionally from
+        // renderDecksScreen() any time deck state changes.
         function renderDiscardViewer() {
             const overlay = document.getElementById('game-discard-viewer-overlay');
             const titleEl = document.getElementById('game-discard-viewer-title');
@@ -15375,28 +16145,41 @@
             const info = getDeckInfoMap()[deckName];
             const pile = (info && info.discardPile) || [];
             if (!pile.length) {
-                // Everything just got drawn back out from under this
-                // open viewer (a reshuffle -- see drawFromHostDeck())
-                // rather than the player closing it themselves.
+                // Everything just got pulled back out from under this
+                // open viewer (a reshuffle, a Return to Hand, a Shuffle
+                // into Deck...) rather than the player closing it
+                // themselves.
                 stackEl.style.height = '';
                 stackEl.innerHTML = `<p class="game-discard-empty">This discard pile is empty.</p>`;
                 return;
             }
 
-            stackEl.style.height = (HAND_CARD_OVERLAP * (pile.length - 1) + HAND_CARD_HEIGHT) + 'px';
+            const readOnly = isActiveSaveReadOnly();
+            // Fixed per render, same reasoning/amount-shape as
+            // handEl.style.height in renderDecksScreen() -- see
+            // DISCARD_OPTIONS_EXPAND_ROOM's own comment.
+            stackEl.style.height = (HAND_CARD_OVERLAP * (pile.length - 1) + HAND_CARD_HEIGHT + DISCARD_OPTIONS_EXPAND_ROOM + STACK_TOP_GAP) + 'px';
             stackEl.innerHTML = pile.map((cardId, i) => {
                 const card = CARDS_BY_ID[cardId];
                 const name = card ? card.name : cardId;
+                const optionsInner = `
+                    <div class="game-discard-card-options-grid">
+                        <button class="filter-btn game-discard-return-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Return to Hand</button>
+                        <button class="filter-btn exclude game-discard-shuffle-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Shuffle into Deck</button>
+                    </div>
+                `;
                 return `
-                    <div class="game-discard-card" style="top: ${i * HAND_CARD_OVERLAP}px; z-index: ${i + 1};" tabindex="0">
+                    <div class="game-discard-card" style="top: ${i * HAND_CARD_OVERLAP + STACK_TOP_GAP}px; z-index: ${i + 1};" tabindex="0">
                         <div class="game-discard-card-face">
                             ${card && card.imageUrl ? `<img class="game-discard-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}
                         </div>
+                        <div class="game-discard-card-options">${optionsInner}</div>
                     </div>
                 `;
             }).join('');
         }
 
+        // The four evolution-corner icons -- see the chat this was
         // designed in. 'unable' is also renderTeamGrid()'s own inline
         // fallback for a member found in neither POKEMON_BY_NAME nor as
         // an active mega/gmax override, so every filled slot always has
@@ -19911,6 +20694,44 @@
             return gameSaveDefaults.naturesEnabled === 'yes';
         }
 
+        // Whether the Hand & Decks tool should be reachable at all for
+        // the currently-active save -- same shape as
+        // isNaturesEnabledForActiveSave() just above, including the
+        // off-by-default fallback. Unlike Nature Cards/Poké Coins
+        // though, this doesn't just hide one section of a screen --
+        // see renderVirtualDecksAvailability() below for what actually
+        // reads this.
+        function isVirtualDecksEnabledForActiveSave() {
+            if (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) {
+                return !!gameGuestSaves[activeGuestSaveId].virtualDecksEnabled;
+            }
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
+                return !!gameSaves[activeSaveSlot].virtualDecksEnabled;
+            }
+            return gameSaveDefaults.virtualDecksEnabled === 'yes';
+        }
+
+        // Shows/hides the "Hand & Decks" tile on the Tools menu per
+        // isVirtualDecksEnabledForActiveSave() -- this is an opt-in
+        // feature for players without the physical board game's paper
+        // cards, so a save that never turned it on shouldn't offer a
+        // tool that assumes there's no paper deck to draw from. If the
+        // rule is off AND the player happens to already be sitting on
+        // the Decks screen when this runs (its default just changed
+        // out from under an unsaved session, see the 'change' listener
+        // above -- an already-created save can't have this happen,
+        // its rules are fixed at creation), back out to the main
+        // screen rather than leaving a now-hidden tool's own screen
+        // open with no way back to it via the tile.
+        function renderVirtualDecksAvailability() {
+            const tileEl = document.querySelector('[data-target="decks"]');
+            const enabled = isVirtualDecksEnabledForActiveSave();
+            if (tileEl) tileEl.style.display = enabled ? '' : 'none';
+            if (!enabled && currentGameScreen === 'decks') {
+                setGameScreen('main');
+            }
+        }
+
         // Keeps the counter's number legible as it grows into the fixed
         // width capped in CSS (see .game-pokecoins-counter's own
         // comment) -- 0-999 only ever needs one of three digit-widths,
@@ -20046,6 +20867,7 @@
             renderTeamGrid();
             renderMatchupPanel();
             renderPokeCoins();
+            renderVirtualDecksAvailability();
             renderDecksScreen();
         }
 
@@ -20827,6 +21649,7 @@
                 hpRule: hostSave.hpRule,
                 pokeCoinsEnabled: hostSave.pokeCoinsEnabled,
                 naturesEnabled: hostSave.naturesEnabled,
+                virtualDecksEnabled: hostSave.virtualDecksEnabled,
             };
         }
 
@@ -20958,6 +21781,10 @@
                     hostApplyDraw(data.deck, conn.peer);
                 } else if (data.type === 'deck-discard' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyDiscard(data.deck, conn.peer, data.cardId);
+                } else if (data.type === 'deck-discard-to-hand' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyReturnDiscardToHand(data.deck, conn.peer, data.cardId);
+                } else if (data.type === 'deck-shuffle-in' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyShuffleDiscardIntoDraw(data.deck, data.cardId);
                 } else if (data.type === 'deck-attach' && typeof data.cardId === 'string') {
                     // The Attach itself (which team member, if any) is
                     // purely local to the guest's own device/save -- see
@@ -20965,6 +21792,20 @@
                     // all the Host needs to do here is the hand-removal
                     // half.
                     hostApplyRemoveFromHandOnly(conn.peer, data.cardId);
+                } else if (data.type === 'deck-play' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyPlay(data.deck, conn.peer, data.cardId);
+                } else if (data.type === 'active-card-discard') {
+                    hostApplyActiveCardDiscard(conn.peer);
+                } else if (data.type === 'active-card-permanent') {
+                    hostApplyActiveCardPermanent(conn.peer);
+                } else if (data.type === 'active-card-shuffle') {
+                    hostApplyActiveCardShuffle(conn.peer);
+                } else if (data.type === 'active-card-attach') {
+                    // Same shape as 'deck-attach' above -- the equip
+                    // itself already happened locally on this guest's own
+                    // device (see commitAttachFromHandToMember()'s own
+                    // comment), this just clears the shared zone.
+                    hostApplyActiveCardResolveAttach(conn.peer);
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
                     handleIncomingTradeMessage(data, conn);
                 }
@@ -21682,6 +22523,7 @@
                 hpRule: data.hpRule,
                 pokeCoinsEnabled: data.pokeCoinsEnabled,
                 naturesEnabled: data.naturesEnabled,
+                virtualDecksEnabled: data.virtualDecksEnabled,
             };
             const existing = data.hostSaveId ? gameGuestSaves[data.hostSaveId] : null;
             if (existing) {
@@ -21749,6 +22591,7 @@
                 existing.hpRule = ruleset.hpRule;
                 existing.pokeCoinsEnabled = !!ruleset.pokeCoinsEnabled;
                 existing.naturesEnabled = !!ruleset.naturesEnabled;
+                existing.virtualDecksEnabled = !!ruleset.virtualDecksEnabled;
             } else {
                 gameGuestSaves[hostSaveId] = {
                     hostSaveId,
@@ -21763,6 +22606,7 @@
                     hpRule: ruleset.hpRule,
                     pokeCoinsEnabled: !!ruleset.pokeCoinsEnabled,
                     naturesEnabled: !!ruleset.naturesEnabled,
+                    virtualDecksEnabled: !!ruleset.virtualDecksEnabled,
                     badges: { collected: {}, collectedExtras: {} },
                     team: { members: [] },
                     pokeCoins: 3,
@@ -21820,13 +22664,10 @@
         // temporary Test buttons.
         document.getElementById('game-scroll').addEventListener('click', (e) => {
             // Collapses any expanded/tapped hand card the moment the
-            // user taps anywhere else in the panel -- mirrors what
-            // :hover already does for free on desktop the instant the
-            // pointer leaves a card (see the .game-hand-card CSS module
-            // comment), which touch has no equivalent of on its own.
-            // Skipped when the tap is on a hand card itself (including
-            // its own options panel, nested inside it) since that has
-            // its own handling below instead.
+            // user clicks/taps anywhere else in the panel. Skipped when
+            // the tap is on a hand card itself (including its own
+            // options panel, nested inside it) since that has its own
+            // handling below instead.
             if (!e.target.closest('.game-hand-card')) {
                 document.querySelectorAll('.game-hand-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
             }
@@ -21855,19 +22696,55 @@
                 return;
             }
 
+            const handPlayBtn = e.target.closest('.game-hand-play-btn');
+            if (handPlayBtn) {
+                requestPlayFromHand(handPlayBtn.dataset.cardId);
+                return;
+            }
+
             const handAttachBtn = e.target.closest('.game-hand-attach-btn');
             if (handAttachBtn) {
                 requestAttachFromHand(handAttachBtn.dataset.cardId);
                 return;
             }
 
-            // Tap-to-expand for touch devices, which have no :hover --
-            // the CSS module comment on .game-hand-card explains the
-            // actual reveal mechanics; this just toggles the class that
-            // triggers the same CSS :hover already does on desktop.
-            // Tapping the same card again (or a different one) collapses
-            // it; tapping anywhere else in the panel also collapses it,
-            // see the top of this listener.
+            const activeCardDiscardBtn = e.target.closest('.game-active-card-discard-btn');
+            if (activeCardDiscardBtn) {
+                requestActiveCardDiscard();
+                return;
+            }
+
+            const activeCardPermanentBtn = e.target.closest('.game-active-card-permanent-btn');
+            if (activeCardPermanentBtn) {
+                requestActiveCardPermanent();
+                return;
+            }
+
+            const activeCardShuffleBtn = e.target.closest('.game-active-card-shuffle-btn');
+            if (activeCardShuffleBtn) {
+                requestActiveCardShuffle();
+                return;
+            }
+
+            const activeCardAttachBtn = e.target.closest('.game-active-card-attach-btn');
+            if (activeCardAttachBtn) {
+                requestAttachFromActiveCard(activeCardAttachBtn.dataset.cardId);
+                return;
+            }
+
+            const activeCardDismissBtn = e.target.closest('.game-active-card-dismiss-btn');
+            if (activeCardDismissBtn) {
+                dismissActiveCard();
+                return;
+            }
+
+            // Click/tap-to-expand, on every device now -- see the
+            // .game-hand-card CSS module comment: hovering alone only
+            // peeks the card (full art, no buttons); this is what
+            // actually reveals its options list. Clicking the same
+            // card again (or a different one) collapses it; clicking
+            // anywhere else in the panel also collapses it, see the
+            // top of this listener.
             const handCard = e.target.closest('.game-hand-card');
             if (handCard) {
                 const wasExpanded = handCard.classList.contains('is-expanded');
@@ -21973,6 +22850,9 @@
                     // above, just defaulting true -- see
                     // isNaturesEnabledForActiveSave() in the script.
                     naturesEnabled: slotEl.querySelector('.game-new-natures-enabled-select').value === 'yes',
+                    // Same strict show/hide switch idea again -- see
+                    // isVirtualDecksEnabledForActiveSave() in the script.
+                    virtualDecksEnabled: slotEl.querySelector('.game-new-virtual-decks-enabled-select').value === 'yes',
                 });
                 nameInput.value = '';
                 return;
@@ -22348,6 +23228,22 @@
             }
         });
 
+        // Collapses a clicked/expanded hand card the moment the pointer
+        // starts hovering a DIFFERENT card, rather than leaving it
+        // expanded (and its options showing) until the user clicks
+        // elsewhere. 'mouseover' (which bubbles, unlike 'mouseenter')
+        // delegated the same way the click listener above is -- fires
+        // repeatedly while the pointer moves within a card, but the
+        // .is-expanded check keeps this a no-op once the right card
+        // (or no card at all) already matches, so it only ever actually
+        // changes anything on the one bubble where the hovered card
+        // first changes.
+        document.getElementById('game-scroll').addEventListener('mouseover', (e) => {
+            const handCard = e.target.closest('.game-hand-card');
+            if (!handCard || handCard.classList.contains('is-expanded')) return;
+            document.querySelectorAll('.game-hand-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
+        });
+
         // Separate listener from #game-scroll's own, same reasoning as
         // the badge confirm overlay's listener above -- this overlay is
         // a sibling of #game-scroll, not a descendant, so it needs to
@@ -22626,15 +23522,36 @@
         });
 
         // Close on backdrop or the Close button, same as every other
-        // #game-*-overlay. Tap-to-expand for touch devices otherwise --
-        // mirrors the #game-scroll listener's own .game-hand-card
-        // handling (see that comment for the full reasoning), just
-        // scoped to this overlay's own listener since
-        // .game-discard-card lives inside it rather than inside
-        // #game-scroll.
+        // #game-*-overlay. Click/tap-to-expand a card otherwise, on
+        // every device -- mirrors the #game-scroll listener's own
+        // .game-hand-card handling (see that comment for the full
+        // reasoning: hovering alone only peeks a card, clicking/tapping
+        // it is what actually reveals its options), just scoped to this
+        // overlay's own listener since .game-discard-card lives inside
+        // it rather than inside #game-scroll. The two option buttons
+        // are checked FIRST, before the generic expand-toggle -- both
+        // sit nested inside a .game-discard-card, so without this order
+        // a click on either would also match the card-level
+        // e.target.closest('.game-discard-card') check below and just
+        // re-toggle .is-expanded instead of doing anything. Anything
+        // left over once all of the above fail to match -- blank space
+        // inside the modal shell that isn't the backdrop itself, e.g.
+        // the title or the padding around the stack -- collapses any
+        // expanded card too, same as clicking blank space in the hand
+        // stack already does (see #game-scroll's own listener).
         document.getElementById('game-discard-viewer-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'game-discard-viewer-overlay' || e.target.closest('.game-discard-viewer-close-btn')) {
                 closeDiscardViewer();
+                return;
+            }
+            const returnBtn = e.target.closest('.game-discard-return-btn');
+            if (returnBtn) {
+                requestReturnDiscardToHand(returnBtn.dataset.deck, returnBtn.dataset.cardId);
+                return;
+            }
+            const shuffleBtn = e.target.closest('.game-discard-shuffle-btn');
+            if (shuffleBtn) {
+                requestShuffleDiscardIntoDraw(shuffleBtn.dataset.deck, shuffleBtn.dataset.cardId);
                 return;
             }
             const discardCard = e.target.closest('.game-discard-card');
@@ -22644,6 +23561,16 @@
                 if (!wasExpanded) discardCard.classList.add('is-expanded');
                 return;
             }
+            document.querySelectorAll('.game-discard-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
+        });
+
+        // Same hover-collapses-the-other-card behavior as #game-scroll's
+        // own .game-hand-card listener above -- see that comment for
+        // the full reasoning.
+        document.getElementById('game-discard-viewer-overlay').addEventListener('mouseover', (e) => {
+            const discardCard = e.target.closest('.game-discard-card');
+            if (!discardCard || discardCard.classList.contains('is-expanded')) return;
+            document.querySelectorAll('.game-discard-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
         });
 
         // Tapping anywhere closes it -- the image itself has cursor:
@@ -22927,6 +23854,7 @@
                 'game-save-default-hp-rule': 'hpRule',
                 'game-save-default-pokecoins-enabled': 'pokeCoinsEnabled',
                 'game-save-default-natures-enabled': 'naturesEnabled',
+                'game-save-default-virtual-decks-enabled': 'virtualDecksEnabled',
             };
             const key = defaultFieldMap[e.target.id];
             if (!key) return;
@@ -22938,8 +23866,19 @@
             if (key === 'pokeCoinsEnabled') renderPokeCoins();
             // Same idea for Nature Cards -- only matters if the Team
             // Cards picker happens to be open right now (harmless no-op
-            // otherwise), same reasoning as pokeCoinsEnabled above.
-            if (key === 'naturesEnabled') renderTeamCardsOverlay();
+            // otherwise), same reasoning as pokeCoinsEnabled above. Also
+            // gates the Nature Deck row on the Decks screen now (see
+            // renderDecksScreen()'s own DECK_TOOL_LIST filter), so that
+            // needs the same live refresh.
+            if (key === 'naturesEnabled') {
+                renderTeamCardsOverlay();
+                renderDecksScreen();
+            }
+            // Same idea again for Virtual Decks -- see
+            // renderVirtualDecksAvailability()'s own comment for what
+            // this actually does (show/hide the Hand & Decks tile, and
+            // back out of that screen if it's the one currently open).
+            if (key === 'virtualDecksEnabled') renderVirtualDecksAvailability();
         });
 
         // ---- Audio settings (global + per-category mute & volume) ------
