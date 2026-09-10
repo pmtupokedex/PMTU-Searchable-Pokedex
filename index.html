@@ -2009,26 +2009,28 @@
 
         /* ---- Hand stack (Archidekt-style) ----
            Cards overlap top-to-bottom, each one covering the lower
-           part of the card behind it and leaving only its name bar
-           showing -- like a fanned stack of physical cards. Hovering
-           or tapping a card (.is-expanded, added by the click handler
-           in the delegated listener; :hover covers desktop for free)
-           pushes every LATER card (i.e. every card currently drawn on
-           top of it) down out of the way so the hovered/tapped one can
-           be read in full. See renderDecksScreen() for the per-card
-           `top`/`z-index` it sets inline (position along the stack --
-           there's no clean way to express "the Nth child sits N *
-           OVERLAP down" in plain CSS without hardcoding every N). */
+           part of the card behind it and leaving only its own name
+           (already printed at the top of its artwork -- no separate
+           name bar needed) showing. Hovering or tapping a card
+           (.is-expanded, added/removed by the delegated click listener;
+           :hover covers desktop for free) pushes every LATER card (i.e.
+           every card currently drawn on top of it) down out of the way
+           so the hovered/tapped one -- and its options list below it,
+           see .game-hand-card-options further down -- can be read in
+           full. See renderDecksScreen() for the per-card `top`/`z-index`
+           it sets inline (position along the stack -- there's no clean
+           way to express "the Nth child sits N * OVERLAP down" in plain
+           CSS without hardcoding every N). */
         .game-hand-stack {
             position: relative;
             margin-bottom: 18px;
             /* Extra breathing room below the resting stack so a card
-               pushed downward on hover/tap doesn't slam straight into
-               whatever section follows -- see the module comment
-               above; this is a transform, not a layout change, so nothing
-               below the .game-hand-stack container reflows to make room
-               for it on its own. */
-            padding-bottom: 260px;
+               (and its options list) pushed downward on hover/tap
+               doesn't slam straight into whatever section follows --
+               see the module comment above; this is a transform, not a
+               layout change, so nothing below the .game-hand-stack
+               container reflows to make room for it on its own. */
+            padding-bottom: 420px;
             display: flex;
             justify-content: center;
         }
@@ -2037,47 +2039,43 @@
             position: absolute;
             width: 252px;
             height: 352px;
+            cursor: pointer;
+            transition: transform 0.22s ease;
+        }
+
+        /* The push: every card drawn on top of (i.e. after, in DOM
+           order) the hovered/expanded one slides down by its own full
+           height minus the sliver it normally shows, PLUS the options
+           list's own height below it, clearing both entirely. Cards
+           drawn *behind* it (before it in DOM order) don't need to
+           move -- they were never covering it in the first place, only
+           the reverse. */
+        .game-hand-card:hover ~ .game-hand-card,
+        .game-hand-card.is-expanded ~ .game-hand-card {
+            transform: translateY(457px);
+        }
+
+        /* Everything that actually looks like a card -- clips the
+           artwork to rounded corners. Split out from .game-hand-card
+           itself (which just handles the stack's own position/overlap/
+           push) because .game-hand-card-options below needs to render
+           OUTSIDE this card's own box without being clipped by it, and
+           overflow:hidden on the positioned ancestor would clip it
+           regardless of the options list's own z-index/position. */
+        .game-hand-card-face {
+            position: absolute;
+            inset: 0;
             background: #1b1f33;
             border: 2px solid rgba(255, 255, 255, 0.25);
             border-radius: 20px;
             box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
             overflow: hidden;
-            cursor: pointer;
-            transition: transform 0.22s ease, box-shadow 0.22s ease;
+            transition: box-shadow 0.22s ease;
         }
 
-        .game-hand-card:hover,
-        .game-hand-card.is-expanded {
+        .game-hand-card:hover .game-hand-card-face,
+        .game-hand-card.is-expanded .game-hand-card-face {
             box-shadow: 0 10px 22px rgba(0, 0, 0, 0.6);
-        }
-
-        /* The push: every card drawn on top of (i.e. after, in DOM
-           order) the hovered/expanded one slides down by its own full
-           height minus the sliver it normally shows, clearing the
-           hovered card entirely. Cards drawn *behind* it (before it in
-           DOM order) don't need to move -- they were never covering it
-           in the first place, only the reverse. */
-        .game-hand-card:hover ~ .game-hand-card,
-        .game-hand-card.is-expanded ~ .game-hand-card {
-            transform: translateY(325px);
-        }
-
-        .game-hand-card-namebar {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            padding: 6px 8px;
-            background: linear-gradient(to bottom, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.55) 80%, transparent);
-            font-size: 12px;
-            font-weight: bold;
-            line-height: 1.25;
-            /* Tall enough to always show a full line or two of name
-               even while collapsed -- this height is also OVERLAP, the
-               amount renderDecksScreen() offsets each successive card
-               by, so it lines up with what's actually left showing. */
-            min-height: 36px;
-            box-sizing: border-box;
         }
 
         .game-hand-card-img {
@@ -2089,19 +2087,54 @@
             object-fit: cover;
         }
 
-        .game-hand-card-discard-wrap {
+        /* The selected card's own option list -- Play/Discard/Attach/
+           Put on Top of Deck. Sits below the card (top: 100%, i.e.
+           right after its bottom edge), not over top of it, per the
+           chat this was designed in -- hidden entirely except for
+           whichever single card is currently hovered/expanded. Fixed
+           height (see the fixed 2x2 .game-hand-card-options-grid it
+           always contains) so the translateY() push above doesn't need
+           to account for variable content -- Attach itself now just
+           hands off to the Team Tracker instead of opening a second
+           view in this same panel (see requestAttachFromHand()'s own
+           comment for why). */
+        .game-hand-card-options {
+            display: none;
             position: absolute;
-            left: 6px;
-            right: 6px;
-            bottom: 6px;
+            top: 100%;
+            left: 0;
+            right: 0;
+            margin-top: 10px;
+            height: 140px;
+            box-sizing: border-box;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 14px;
         }
 
-        .game-hand-card-discard-wrap .filter-btn {
+        .game-hand-card:hover .game-hand-card-options,
+        .game-hand-card.is-expanded .game-hand-card-options {
+            display: block;
+        }
+
+        .game-hand-card-options-grid {
+            height: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .game-hand-card-options-grid .filter-btn {
+            margin: 0;
             width: 100%;
+            height: 100%;
             box-sizing: border-box;
             font-size: 12px;
-            padding: 6px 4px;
+            padding: 4px;
         }
+
 
         .game-hand-empty {
             opacity: 0.75;
@@ -2552,7 +2585,8 @@
         #game-screen-team[data-readonly="true"] .game-team-grid,
         #game-screen-team[data-readonly="true"] #game-team-add-btn,
         #game-screen-decks[data-readonly="true"] .game-deck-draw-btn,
-        #game-screen-decks[data-readonly="true"] .game-hand-discard-btn {
+        #game-screen-decks[data-readonly="true"] .game-hand-discard-btn,
+        #game-screen-decks[data-readonly="true"] .game-hand-attach-btn {
             opacity: 0.55;
             pointer-events: none;
         }
@@ -2916,6 +2950,36 @@
             font-size: 14px;
             font-weight: bold;
             color: #7a5200;
+        }
+
+        /* #game-team-attach-banner's own layout override -- every other
+           banner sharing .game-team-replace-banner is a single text row,
+           but this one needs room for a card-sized preview image (see
+           .game-team-attach-banner-img below) above its text/Cancel, so
+           it switches that shared row to a centered column instead. */
+        #game-team-attach-banner {
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        /* Sized the same as an in-hand card (see .game-hand-card's own
+           width/height in the Hand & Decks module above) so the pending
+           card reads exactly as clearly here as it did in hand -- see
+           the chat this was sized in. Hidden entirely (rather than an
+           empty broken-image box) whenever there's no pending card or
+           it has no artwork on file. */
+        .game-team-attach-banner-img {
+            width: 252px;
+            height: 352px;
+            object-fit: cover;
+            border-radius: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.35);
+            flex-shrink: 0;
+            display: none;
+        }
+
+        .game-team-attach-banner-img.visible {
+            display: block;
         }
 
         .game-team-replace-banner .filter-btn {
@@ -3836,6 +3900,65 @@
 
         #game-team-revive-overlay.visible {
             display: flex;
+        }
+
+        /* Attach-from-hand's own replace confirmation -- see
+           requestAttachFromHand()/confirmAttachFromHandReplace() in the
+           script. Same positioning/backdrop rules as every other Team
+           Tracker overlay here, same independence reasoning as every
+           other near-identical pair in this doc. */
+        #game-team-attach-confirm-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-attach-confirm-overlay.visible {
+            display: flex;
+        }
+
+        .game-team-attach-confirm-compare {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+            margin: 4px 0 12px;
+        }
+
+        .game-team-attach-confirm-compare-col {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .game-team-attach-confirm-compare-label {
+            font-size: 12px;
+            font-weight: bold;
+            opacity: 0.8;
+            margin: 0;
+        }
+
+        /* Same size as an in-hand card (see .game-hand-card/
+           .game-team-attach-banner-img above) -- side by side at this
+           size didn't leave either one readable (see the chat this was
+           changed in), so the two now stack vertically instead, each at
+           full size, with #game-team-attach-confirm-overlay's own
+           .game-confirm-card scrolling if both plus the title/buttons
+           don't all fit a shorter screen at once. */
+        .game-team-attach-confirm-compare-img {
+            width: 252px;
+            height: 352px;
+            object-fit: cover;
+            border-radius: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            background: rgba(0, 0, 0, 0.3);
         }
 
         /* Attach/Nature Cards picker -- see openTeamCardsOverlay()/
@@ -9941,6 +10064,20 @@
                      under its own id/class, same independence reasoning
                      as every other near-identical pair in this doc. -->
                 <div class="game-team-release-banner game-team-trade-status-banner" id="game-team-trade-status-banner"></div>
+                <!-- Shown instead of Add/Trade/Release while
+                     handAttachPendingCardId is set (see
+                     requestAttachFromHand() in the script) -- every
+                     filled .game-team-slot click while this is visible
+                     either equips that card directly, or -- if that
+                     member already has a different Attach Card -- opens
+                     #game-team-attach-confirm-overlay first, until one
+                     is chosen or Cancel backs out with the card still in
+                     hand. -->
+                <div class="game-team-replace-banner" id="game-team-attach-banner">
+                    <img class="game-team-attach-banner-img" id="game-team-attach-banner-img" alt="">
+                    <span id="game-team-attach-banner-text">Tap a Pok&eacute;mon to attach this card to.</span>
+                    <button class="filter-btn exclude" id="game-team-attach-cancel-btn">Cancel</button>
+                </div>
             </div>
 
             <div class="game-screen" id="game-screen-decks">
@@ -9952,6 +10089,14 @@
                 </div>
                 <p class="game-screen-title">Hand &amp; Decks</p>
                 <p class="game-readonly-banner">Read-Only — connect to this game's Lobby to make changes.</p>
+                <!-- Brief transient notice -- e.g. "no team members yet"
+                     when Attach can't even get started (see
+                     requestAttachFromHand()/showDecksNotice() in the
+                     script). Reuses .game-team-release-banner's own
+                     visual treatment under its own id/class, same
+                     independence reasoning as every other near-identical
+                     pair in this doc. -->
+                <div class="game-team-release-banner game-decks-notice-banner" id="game-decks-notice-banner"></div>
 
                 <!-- One row per deck in DECK_TOOL_LIST -- rebuilt by
                      renderDecksScreen() any time deck/hand state
@@ -10240,6 +10385,40 @@
                 <div class="game-save-slot-actions">
                     <button class="filter-btn game-team-revive-yes-btn">Yes</button>
                     <button class="filter-btn exclude game-team-revive-no-btn">No</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Attach-from-hand's own replace confirmation -- see
+             requestAttachFromHand()/confirmAttachFromHandReplace() in
+             the script. Only shown when the tapped member already has
+             a DIFFERENT Attach Card equipped (a member with none, or
+             already equipped with this exact card, attaches straight
+             away with no confirmation needed); #game-team-attach-banner
+             stays up underneath the whole time, same "Cancel is its own
+             separate, explicit exit" shape as every other Team Tracker
+             mode here. Reuses .game-confirm-card/-title, single Yes/No,
+             same as #game-team-revive-overlay above -- no two-stage
+             wording needed, this one's easy to shrug off and redo. The
+             two images (filled in by performAttachFromHandToSlot()) let
+             the player directly compare what's leaving against what's
+             coming in before committing. -->
+        <div id="game-team-attach-confirm-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-team-attach-confirm-title">Replace the equipped Attach Card?</p>
+                <div class="game-team-attach-confirm-compare">
+                    <div class="game-team-attach-confirm-compare-col">
+                        <p class="game-team-attach-confirm-compare-label">Current</p>
+                        <img class="game-team-attach-confirm-compare-img" id="game-team-attach-confirm-old-img" alt="">
+                    </div>
+                    <div class="game-team-attach-confirm-compare-col">
+                        <p class="game-team-attach-confirm-compare-label">New</p>
+                        <img class="game-team-attach-confirm-compare-img" id="game-team-attach-confirm-new-img" alt="">
+                    </div>
+                </div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-team-attach-confirm-yes-btn">Yes</button>
+                    <button class="filter-btn exclude game-team-attach-confirm-no-btn">No</button>
                 </div>
             </div>
         </div>
@@ -13657,6 +13836,7 @@
             const releasing = !!teamReleaseModeActive;
             const negotiatingTrade = isTradeNegotiationActive();
             const selectingTradeOffer = isTradeSelectingOffer();
+            const attachingFromHand = !!handAttachPendingCardId;
 
             // Every multi-icon evolution badge (see startEvolutionBadgeCycle()
             // below) owns a running setInterval -- this whole grid gets
@@ -13670,20 +13850,23 @@
             activeEvolutionBadgeIntervals.forEach(id => clearInterval(id));
             activeEvolutionBadgeIntervals = [];
 
-            // Add/Trade/Release all hide together for any of the three
-            // modes -- replacing, releasing, and negotiatingTrade are
-            // mutually exclusive by construction (beginTeamReleaseMode()/
-            // beginTeamReplaceMode() each refuse to start over another,
-            // and trading's own start (startTradeInvite()/
-            // handleTradeInviteReceived()) only ever happens via the
-            // Lobby, entirely separately from either) so at most one of
-            // the three banners below is ever visible at once. Trade
-            // stays hidden for the WHOLE negotiation (see
-            // isTradeNegotiationActive()'s own comment), not just while
-            // still picking -- selectingTradeOffer (the narrower window)
-            // only matters for which banner text shows below, since the
-            // trade-select banner specifically is only relevant before a
-            // pick is made.
+            // Add/Trade/Release all hide together for any of the four
+            // modes -- replacing, releasing, negotiatingTrade, and now
+            // attachingFromHand are mutually exclusive in practice: each
+            // mode's own entry point (beginTeamReleaseMode(),
+            // requestAttachFromHand(), etc.) is only ever reachable via a
+            // button this same visibility logic already hides while any
+            // other mode is active, and every other mutating control on
+            // this screen (trade/HP/evolve/etc.) now also refuses to fire
+            // while handAttachPendingCardId is set, same as they already
+            // did for the other three -- see each of their own guard
+            // clauses. So at most one of the four banners below is ever
+            // visible at once. Trade stays hidden for the WHOLE
+            // negotiation (see isTradeNegotiationActive()'s own comment),
+            // not just while still picking -- selectingTradeOffer (the
+            // narrower window) only matters for which banner text shows
+            // below, since the trade-select banner specifically is only
+            // relevant before a pick is made.
             //
             // Trade a Pok\u00e9mon additionally only ever shows at all with
             // a live Lobby connection AND at least one other player in
@@ -13696,17 +13879,37 @@
             const canStartTrade = lobbyState.role !== null && lobbyState.players.length > 1
                 && !lobbyState.tradeSession && !isActiveSaveReadOnly();
             const addBtn = document.getElementById('game-team-add-btn');
-            if (addBtn) addBtn.style.display = (replacing || releasing || negotiatingTrade) ? 'none' : '';
+            if (addBtn) addBtn.style.display = (replacing || releasing || negotiatingTrade || attachingFromHand) ? 'none' : '';
             const tradeBtn = document.getElementById('game-team-trade-btn');
-            if (tradeBtn) tradeBtn.style.display = (replacing || releasing || negotiatingTrade || !canStartTrade) ? 'none' : '';
+            if (tradeBtn) tradeBtn.style.display = (replacing || releasing || negotiatingTrade || attachingFromHand || !canStartTrade) ? 'none' : '';
             const releaseBtn = document.getElementById('game-team-release-btn');
-            if (releaseBtn) releaseBtn.style.display = (replacing || releasing || negotiatingTrade) ? 'none' : '';
+            if (releaseBtn) releaseBtn.style.display = (replacing || releasing || negotiatingTrade || attachingFromHand) ? 'none' : '';
             const replaceBanner = document.getElementById('game-team-replace-banner');
             if (replaceBanner) replaceBanner.classList.toggle('visible', replacing);
             const releaseBanner = document.getElementById('game-team-release-banner');
             if (releaseBanner) releaseBanner.classList.toggle('visible', releasing);
             const tradeSelectBanner = document.getElementById('game-team-trade-select-banner');
             if (tradeSelectBanner) tradeSelectBanner.classList.toggle('visible', selectingTradeOffer);
+            const attachBanner = document.getElementById('game-team-attach-banner');
+            if (attachBanner) attachBanner.classList.toggle('visible', attachingFromHand);
+            const attachBannerText = document.getElementById('game-team-attach-banner-text');
+            const attachBannerImg = document.getElementById('game-team-attach-banner-img');
+            const pendingCard = attachingFromHand ? CARDS_BY_ID[handAttachPendingCardId] : null;
+            if (attachBannerText) {
+                attachBannerText.textContent = pendingCard
+                    ? `Tap a Pok\u00e9mon to attach ${pendingCard.name} to.`
+                    : 'Tap a Pok\u00e9mon to attach this card to.';
+            }
+            if (attachBannerImg) {
+                if (pendingCard && pendingCard.imageUrl) {
+                    attachBannerImg.src = pendingCard.imageUrl;
+                    attachBannerImg.alt = pendingCard.name || '';
+                    attachBannerImg.classList.add('visible');
+                } else {
+                    attachBannerImg.classList.remove('visible');
+                    attachBannerImg.removeAttribute('src');
+                }
+            }
 
             grid.innerHTML = '';
             for (let i = 0; i < 6; i++) {
@@ -14093,7 +14296,7 @@
         // #game-team-release-btn is hidden whenever a replacement is
         // pending (see renderTeamGrid()), but costs nothing to guard.
         function beginTeamReleaseMode() {
-            if (isActiveSaveReadOnly() || teamReplacePendingMember) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || handAttachPendingCardId) return;
             teamReleaseModeActive = true;
             renderTeamGrid();
         }
@@ -14297,13 +14500,14 @@
         // only ever sends a request (deck-draw/deck-discard) and renders
         // whatever the Host sends back (deck-state/deck-drawn).
         //
-        // Only 'Event Deck' for now -- see the chat this was scoped in.
-        // Adding another deck later (Item, Shop, TM, etc.) should just
-        // be adding its cardDeck string here; everything below already
-        // works generically off this list. Shop/Reward will eventually
-        // need their own entries once their "buy, don't draw randomly"
-        // rules exist -- not the same mechanic as this list's decks.
-        const DECK_TOOL_LIST = ['Event Deck'];
+        // 'Event Deck' and now 'Item Deck' -- see the chat this was
+        // scoped in. Adding another deck later (Shop, TM, etc.) should
+        // just be adding its cardDeck string here; everything below
+        // already works generically off this list. Shop/Reward will
+        // eventually need their own entries once their "buy, don't draw
+        // randomly" rules exist -- not the same mechanic as this list's
+        // decks.
+        const DECK_TOOL_LIST = ['Event Deck', 'Item Deck'];
 
         // Fisher-Yates -- used once per fresh deck build and again any
         // time discardPile gets folded back into drawPile (see
@@ -14526,8 +14730,48 @@
                 if (idx === -1) return;
                 hand.splice(idx, 1);
                 persistGameSaves();
+                // Unlike a draw (see hostApplyDraw()), the request that
+                // triggered this already told THIS device which card to
+                // remove -- but that's the Host's own UI optimistically
+                // assuming the request will succeed for nobody but
+                // itself. A connected guest's own device needs the
+                // mirror image of 'deck-drawn' to actually apply the
+                // same removal to ITS OWN local hand cache; without
+                // this, a guest's hand looks like it never lost the
+                // card until the next full 'hand-sync' (e.g. its next
+                // reconnect) fixes it.
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'hand-remove', cardId });
             }
             discardToHostDeck(deckName, cardId);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Same shape as hostApplyDiscard() above, but for a card
+        // leaving the hand WITHOUT going to either deck's discard pile
+        // -- used when a card gets Attached instead (see
+        // commitAttachFromHandToMember()). An attached card sits face-up
+        // next to its Pokémon, not in a discard pile, so this only ever
+        // removes it from whichever hand currently holds it.
+        function hostApplyRemoveFromHandOnly(peerKey, cardId) {
+            if (peerKey === 'host') {
+                const hand = getLocalHandArray();
+                const idx = hand.indexOf(cardId);
+                if (idx === -1) return;
+                hand.splice(idx, 1);
+                persistLocalHand();
+            } else {
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return;
+                const idx = hand.indexOf(cardId);
+                if (idx === -1) return;
+                hand.splice(idx, 1);
+                persistGameSaves();
+                // See hostApplyDiscard()'s own comment on 'hand-remove'.
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'hand-remove', cardId });
+            }
             broadcastDeckState();
             renderDecksScreen();
         }
@@ -14593,6 +14837,162 @@
             }
         }
 
+        // Which hand card (if any) is currently being attached via the
+        // Team Tracker (see requestAttachFromHand() below) -- mirrors
+        // teamReplacePendingMember's own shape (a pending action stashed
+        // here, actually carried out once the player taps a slot over
+        // on that screen), and is one more mode
+        // renderTeamGrid()/the #game-scroll delegated listener's own
+        // .game-team-slot-hit-zone branch both need to treat as mutually
+        // exclusive with replacing/releasing/trading, same as those
+        // three already are with each other.
+        let handAttachPendingCardId = null;
+
+        // Which member index the Attach-from-hand replace confirmation
+        // (#game-team-attach-confirm-overlay) is currently open for --
+        // only meaningful while that overlay is visible, same shape as
+        // pendingTeamReleaseIndex.
+        let pendingAttachReplaceIndex = null;
+
+        // Entered from the Attach button in a hand card's own option
+        // list (see the #game-scroll delegated listener's own
+        // .game-hand-attach-btn branch) -- stashes which card, then
+        // switches to the Team Tracker so the player picks a Pok\u00e9mon
+        // by tapping it there, same "borrow the Team Tracker's own
+        // picking-by-tap flow" request this was built to. Guarded here
+        // rather than only at the final commit, so a read-only save (or
+        // a card that somehow isn't actually attachable) never even
+        // opens the Team Tracker for this.
+        // Brief transient notice on the Hand & Decks screen itself --
+        // same shape as setTradeStatusMessage()'s own toast (auto-hides
+        // after 4s, restarts the timer if called again before that).
+        // Currently only used by requestAttachFromHand() below for "no
+        // team members yet", but written generically in case a later
+        // notice needs the same treatment.
+        let decksNoticeTimer = null;
+        function showDecksNotice(message) {
+            const el = document.getElementById('game-decks-notice-banner');
+            if (!el) return;
+            clearTimeout(decksNoticeTimer);
+            el.textContent = message;
+            el.classList.add('visible');
+            decksNoticeTimer = setTimeout(() => el.classList.remove('visible'), 4000);
+        }
+
+        function requestAttachFromHand(cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            const card = CARDS_BY_ID[cardId];
+            if (!card || card.canAttach !== 'yes') return;
+            // Nothing to attach ONTO -- rather than switching to a Team
+            // Tracker with an empty grid and a banner nobody can act on,
+            // stay put and say so; the card stays in hand.
+            if (!((getActiveSaveData().team.members || []).length)) {
+                showDecksNotice('You don\u2019t have any team members yet \u2014 add one in Team Tracker first.');
+                return;
+            }
+            handAttachPendingCardId = cardId;
+            setGameScreen('team');
+            renderTeamGrid();
+        }
+
+        // The one authoritative way out of Attach-from-hand mode --
+        // called by #game-team-attach-cancel-btn directly, and by
+        // commitAttachFromHandToMember() once an attach actually goes
+        // through, same "one place unwinds everything" shape as
+        // exitTeamReleaseMode(). The card stays in hand if this fires
+        // before a member's ever chosen (Cancel path).
+        function exitAttachFromHandMode() {
+            handAttachPendingCardId = null;
+            closeAttachFromHandConfirmOverlay();
+            renderTeamGrid();
+        }
+
+        function closeAttachFromHandConfirmOverlay() {
+            pendingAttachReplaceIndex = null;
+            const overlay = document.getElementById('game-team-attach-confirm-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // Called only from the #game-scroll delegated listener's own
+        // .game-team-slot-hit-zone branch, only while
+        // handAttachPendingCardId is set and only for a filled slot (an
+        // empty one has no Attach Card slot to put anything into).
+        // Skips the confirmation entirely for a member with no Attach
+        // Card yet, or one already carrying this exact same card --
+        // there's nothing to lose in either case -- and only opens
+        // #game-team-attach-confirm-overlay when it'd actually replace
+        // a DIFFERENT equipped card.
+        function performAttachFromHandToSlot(memberIndex) {
+            const data = getActiveSaveData();
+            const member = (data.team.members || [])[memberIndex];
+            if (!member) return;
+            if (member.attachCardId && member.attachCardId !== handAttachPendingCardId) {
+                pendingAttachReplaceIndex = memberIndex;
+                const titleEl = document.getElementById('game-team-attach-confirm-title');
+                const oldCard = CARDS_BY_ID[member.attachCardId];
+                const newCard = CARDS_BY_ID[handAttachPendingCardId];
+                if (titleEl) titleEl.textContent = `This will replace ${oldCard ? oldCard.name : 'the currently equipped card'}. Continue?`;
+                const oldImg = document.getElementById('game-team-attach-confirm-old-img');
+                if (oldImg) {
+                    oldImg.src = (oldCard && oldCard.imageUrl) || '';
+                    oldImg.alt = (oldCard && oldCard.name) || '';
+                }
+                const newImg = document.getElementById('game-team-attach-confirm-new-img');
+                if (newImg) {
+                    newImg.src = (newCard && newCard.imageUrl) || '';
+                    newImg.alt = (newCard && newCard.name) || '';
+                }
+                const overlay = document.getElementById('game-team-attach-confirm-overlay');
+                if (overlay) overlay.classList.add('visible');
+                return;
+            }
+            commitAttachFromHandToMember(memberIndex);
+        }
+
+        // Yes on the replace confirmation routes here.
+        function confirmAttachFromHandReplace() {
+            if (pendingAttachReplaceIndex === null) return;
+            const memberIndex = pendingAttachReplaceIndex;
+            closeAttachFromHandConfirmOverlay();
+            commitAttachFromHandToMember(memberIndex);
+        }
+
+        // Shared final step for both the no-confirmation-needed and the
+        // confirmed-replace paths above -- equips handAttachPendingCardId
+        // onto members[memberIndex] (via the exact same
+        // commitTeamMemberCard() the Team Tracker's own picker already
+        // uses -- team data is purely local to this device's own save
+        // either way, host or guest, so this half needs no network
+        // round-trip) and takes the card out of hand. The hand-removal
+        // half DOES need the Host's say-so on a guest device (see
+        // hostApplyRemoveFromHandOnly()'s own comment on why this isn't
+        // the same thing as a discard).
+        function commitAttachFromHandToMember(memberIndex) {
+            const cardId = handAttachPendingCardId;
+            if (!cardId) return;
+            commitTeamMemberCard(memberIndex, 'attach', cardId);
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-attach', cardId });
+                }
+            } else {
+                hostApplyRemoveFromHandOnly('host', cardId);
+            }
+            exitAttachFromHandMode();
+        }
+
+        // Must match .game-hand-card's own height/CSS `transform`
+        // push amount and .game-hand-card-options's own height in the
+        // CSS above -- there's no clean way to share these numbers
+        // between CSS and JS, so if any of the four change there,
+        // update these two (and the CSS translateY()) to match:
+        //   PUSH = HAND_CARD_HEIGHT - HAND_CARD_OVERLAP
+        //          + <options margin-top> + <options height>
+        //        = 352 - 45 + 10 + 140 = 457
+        const HAND_CARD_HEIGHT = 352;
+        const HAND_CARD_OVERLAP = 45;
+
         // Rebuilds the whole Hand & Decks screen from whatever's
         // currently known -- this device's own local deck store (Host/
         // solo) or guestDeckStateCache (guest) for the Decks list and
@@ -14602,13 +15002,6 @@
         // everything here falls back to zero/empty rather than
         // throwing. Called on entering the screen (setGameScreen), and
         // after every local or networked state change.
-        // Must match .game-hand-card's own height and
-        // .game-hand-card-namebar's own min-height in the CSS above --
-        // there's no clean way to share a single number between CSS and
-        // JS here, so if either changes there, change these two to match.
-        const HAND_CARD_HEIGHT = 352;
-        const HAND_CARD_OVERLAP = 45;
-
         function renderDecksScreen() {
             const listEl = document.getElementById('game-decks-list');
             const handEl = document.getElementById('game-hand-stack');
@@ -14654,11 +15047,14 @@
             // Archidekt-style overlapping stack -- see the .game-hand-stack/
             // .game-hand-card CSS module comment for how the reveal-on-
             // hover/tap actually works. Each card's resting `top` is just
-            // its index times the overlap amount (image first in each
-            // card's own markup, namebar after, so the namebar always
-            // paints on top of its own card's image -- see the CSS
-            // comment there too); the LAST card is the frontmost/fully-
-            // visible one, same as the top card of a real stack in hand.
+            // its index times the overlap amount; the LAST card is the
+            // frontmost/fully-visible one, same as the top card of a
+            // real stack in hand. The card's own artwork already prints
+            // its name near the top (see the chat this was simplified
+            // in), so the sliver left showing at rest is just whatever
+            // the art itself shows there -- no separate name bar drawn
+            // over it.
+            const readOnly = isActiveSaveReadOnly();
             const hand = getLocalHandArray();
             if (!hand.length) {
                 handEl.style.height = '';
@@ -14668,13 +15064,29 @@
                 handEl.innerHTML = hand.map((cardId, i) => {
                     const card = CARDS_BY_ID[cardId];
                     const name = card ? card.name : cardId;
+                    const deckName = (card && card.cardDeck) || DECK_TOOL_LIST[0];
+                    const canAttach = !readOnly && card && card.canAttach === 'yes';
+
+                    // Attach hands off to the Team Tracker (see
+                    // requestAttachFromHand()'s own comment) rather than
+                    // picking a member right here -- so this options grid
+                    // is now the only view this panel ever shows, no more
+                    // second "which member?" view swapped in in its place.
+                    const optionsInner = `
+                        <div class="game-hand-card-options-grid">
+                            <button class="filter-btn" type="button" disabled title="Coming soon">Play</button>
+                            <button class="filter-btn exclude game-hand-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Discard</button>
+                            <button class="filter-btn game-hand-attach-btn" type="button" data-card-id="${escapeHtml(cardId)}" ${canAttach ? '' : 'disabled'} title="${canAttach ? '' : 'This card can\u2019t be attached'}">Attach</button>
+                            <button class="filter-btn" type="button" disabled title="Coming soon">Put on Top of Deck</button>
+                        </div>
+                    `;
+
                     return `
                         <div class="game-hand-card" style="top: ${i * HAND_CARD_OVERLAP}px; z-index: ${i + 1};" tabindex="0">
-                            ${card && card.imageUrl ? `<img class="game-hand-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}
-                            <span class="game-hand-card-namebar">${escapeHtml(name)}</span>
-                            <span class="game-hand-card-discard-wrap">
-                                <button class="filter-btn exclude game-hand-discard-btn" type="button" data-deck="${escapeHtml((card && card.cardDeck) || DECK_TOOL_LIST[0])}" data-card-id="${escapeHtml(cardId)}">Discard</button>
-                            </span>
+                            <div class="game-hand-card-face">
+                                ${card && card.imageUrl ? `<img class="game-hand-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}
+                            </div>
+                            <div class="game-hand-card-options">${optionsInner}</div>
                         </div>
                     `;
                 }).join('');
@@ -15574,7 +15986,7 @@
         // Same shape as openTeamDetailCardAdd().
         function openTeamCardsOverlayAdd(slot) {
             if (teamCardsOverlayIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             teamCardsOverlayAddingSlot = slot;
             teamCardsOverlayExpandedDecks = new Set();
             renderTeamCardsOverlay();
@@ -15603,7 +16015,7 @@
         // commitTeamMemberCard(). Same shape as selectTeamDetailCardOption().
         function selectTeamCardsOverlayOption(slot, cardId) {
             if (teamCardsOverlayIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             if (!cardId) return;
             commitTeamMemberCard(teamCardsOverlayIndex, slot, cardId);
             teamCardsOverlayAddingSlot = null;
@@ -15614,7 +16026,7 @@
         // commitTeamMemberCard(). Same shape as removeTeamDetailCard().
         function removeTeamCardsOverlayCard(slot) {
             if (teamCardsOverlayIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             commitTeamMemberCard(teamCardsOverlayIndex, slot, null);
             renderTeamCardsOverlay();
         }
@@ -16728,7 +17140,7 @@
         // button itself should be showing at all).
         function adjustTeamDetailLevel(delta) {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             adjustTeamMemberLevel(teamDetailIndex, delta);
             renderTeamDetailLevelSection();
             renderTeamDetailHpSection();
@@ -16860,7 +17272,7 @@
         // Same shape as openTeamCardsOverlayAdd().
         function openTeamDetailCardAdd(slot) {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             teamDetailCardsAddingSlot = slot;
             teamDetailCardsExpandedDecks = new Set();
             renderTeamDetailCardsSection();
@@ -16901,7 +17313,7 @@
         // function correct for both slots rather than branching.
         function selectTeamDetailCardOption(slot, cardId) {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             if (!cardId) return;
             commitTeamMemberCard(teamDetailIndex, slot, cardId);
             teamDetailCardsAddingSlot = null;
@@ -16923,7 +17335,7 @@
         // correct for both slots rather than branching on it.
         function removeTeamDetailCard(slot) {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             commitTeamMemberCard(teamDetailIndex, slot, null);
             renderTeamDetailCardsSection();
             renderTeamDetailHeader();
@@ -17062,7 +17474,7 @@
         // the same rule the other direction.
         function toggleTeamDetailStatusPicker() {
             if (teamDetailIndex === null) return;
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             const data = getActiveSaveData();
             const member = (data.team.members || [])[teamDetailIndex];
             if (!member || member.fainted) return;
@@ -17588,7 +18000,7 @@
                 return;
             }
 
-            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
 
             if (teamDetailEvolutionCategory === category) {
                 cancelTeamDetailEvolutionPicker();
@@ -19482,9 +19894,18 @@
                     teamReleaseModeActive = false;
                     renderTeamGrid();
                 }
+                if (handAttachPendingCardId) {
+                    // Same "only makes sense while looking at Team
+                    // Tracker" reasoning as teamReplacePendingMember
+                    // above -- the card simply stays in hand, ready to
+                    // try Attach again later.
+                    handAttachPendingCardId = null;
+                    renderTeamGrid();
+                }
                 closeTeamAddPromptOverlay();
                 closeTeamStatusOverlay();
                 closeTeamReleaseConfirmOverlay();
+                closeAttachFromHandConfirmOverlay();
                 closeTeamHpOverlay();
                 closeTeamReviveConfirmOverlay();
                 closeTeamCardsOverlay();
@@ -20256,6 +20677,13 @@
                     hostApplyDraw(data.deck, conn.peer);
                 } else if (data.type === 'deck-discard' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyDiscard(data.deck, conn.peer, data.cardId);
+                } else if (data.type === 'deck-attach' && typeof data.cardId === 'string') {
+                    // The Attach itself (which team member, if any) is
+                    // purely local to the guest's own device/save -- see
+                    // commitAttachFromHandToMember()'s own comment -- so
+                    // all the Host needs to do here is the hand-removal
+                    // half.
+                    hostApplyRemoveFromHandOnly(conn.peer, data.cardId);
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
                     handleIncomingTradeMessage(data, conn);
                 }
@@ -20905,6 +21333,19 @@
                     getLocalHandArray().push(data.cardId);
                     persistLocalHand();
                     renderDecksScreen();
+                } else if (data.type === 'hand-remove' && typeof data.cardId === 'string') {
+                    // Mirror image of 'deck-drawn' above -- a card this
+                    // device itself just discarded or Attached leaving
+                    // its hand, confirmed by the Host (see
+                    // hostApplyDiscard()/hostApplyRemoveFromHandOnly()'s
+                    // own comment on why this confirmation round-trip
+                    // exists rather than just trusting the request
+                    // locally the moment it's sent).
+                    const hand = getLocalHandArray();
+                    const idx = hand.indexOf(data.cardId);
+                    if (idx !== -1) hand.splice(idx, 1);
+                    persistLocalHand();
+                    renderDecksScreen();
                 } else if (data.type === 'hand-sync' && Array.isArray(data.cards)) {
                     // Sent once, right after 'identify' -- the Host's
                     // authoritative version of this exact hand (see
@@ -21097,6 +21538,18 @@
         // instead), the save-progress banner's button, and the two
         // temporary Test buttons.
         document.getElementById('game-scroll').addEventListener('click', (e) => {
+            // Collapses any expanded/tapped hand card the moment the
+            // user taps anywhere else in the panel -- mirrors what
+            // :hover already does for free on desktop the instant the
+            // pointer leaves a card (see the .game-hand-card CSS module
+            // comment), which touch has no equivalent of on its own.
+            // Skipped when the tap is on a hand card itself (including
+            // its own options panel, nested inside it) since that has
+            // its own handling below instead.
+            if (!e.target.closest('.game-hand-card')) {
+                document.querySelectorAll('.game-hand-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
+            }
+
             const navTarget = e.target.closest('[data-target]');
             if (navTarget) {
                 setGameScreen(navTarget.dataset.target);
@@ -21115,14 +21568,19 @@
                 return;
             }
 
+            const handAttachBtn = e.target.closest('.game-hand-attach-btn');
+            if (handAttachBtn) {
+                requestAttachFromHand(handAttachBtn.dataset.cardId);
+                return;
+            }
+
             // Tap-to-expand for touch devices, which have no :hover --
             // the CSS module comment on .game-hand-card explains the
             // actual reveal mechanics; this just toggles the class that
             // triggers the same CSS :hover already does on desktop.
             // Tapping the same card again (or a different one) collapses
-            // it; there's deliberately no "tap empty space to collapse"
-            // since #game-scroll's own background isn't part of this
-            // delegated listener's matched targets.
+            // it; tapping anywhere else in the panel also collapses it,
+            // see the top of this listener.
             const handCard = e.target.closest('.game-hand-card');
             if (handCard) {
                 const wasExpanded = handCard.classList.contains('is-expanded');
@@ -21343,6 +21801,16 @@
                 return;
             }
 
+            // The one way out of Attach-from-hand mode besides actually
+            // tapping a slot below and completing (or backing out of)
+            // its own replace confirmation -- see exitAttachFromHandMode()
+            // in the script. The card stays in hand either way.
+            const teamAttachCancelBtn = e.target.closest('#game-team-attach-cancel-btn');
+            if (teamAttachCancelBtn) {
+                exitAttachFromHandMode();
+                return;
+            }
+
             // The one way out of trade-select mode besides actually
             // tapping a slot below and picking an offer -- backs all the
             // way out of the trade entirely (not just this one step),
@@ -21365,7 +21833,7 @@
             // every other corner, same reasoning.
             const hpBadge = e.target.closest('.game-team-slot-hp');
             if (hpBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
                 const index = Number(hpBadge.dataset.index);
                 const data = getActiveSaveData();
                 const member = (data.team.members || [])[index];
@@ -21390,7 +21858,7 @@
             // Same replace/release-mode block as every other corner.
             const cardsBadge = e.target.closest('.game-team-slot-cards');
             if (cardsBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
                 openTeamCardsOverlay(Number(cardsBadge.dataset.index));
                 return;
             }
@@ -21408,7 +21876,7 @@
             // revived).
             const statusBadge = e.target.closest('.game-team-slot-status');
             if (statusBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
                 const statusIndex = Number(statusBadge.dataset.index);
                 const statusMember = (getActiveSaveData().team.members || [])[statusIndex];
                 if (!statusMember || statusMember.fainted) return;
@@ -21424,7 +21892,7 @@
             // reasoning.
             const levelBadge = e.target.closest('.game-team-slot-level');
             if (levelBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
                 const rect = levelBadge.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 adjustTeamMemberLevel(Number(levelBadge.dataset.index), clickedRightHalf ? 1 : -1);
@@ -21447,7 +21915,7 @@
             // status/level corners above, same reasoning.
             const evolutionBadge = e.target.closest('.game-team-slot-evolution');
             if (evolutionBadge) {
-                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+                if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
                 const index = Number(evolutionBadge.dataset.index);
                 const data = getActiveSaveData();
                 const member = (data.team.members || [])[index];
@@ -21480,16 +21948,17 @@
             // not the slot's full square, is the actual click target)
             // -- what it does depends on teamReplacePendingMember/
             // teamReleaseModeActive/isTradeNegotiationActive()/
-            // isTradeSelectingOffer() (see their own comments): normally
-            // an empty slot opens the add-a-Pok\u00e9mon prompt and a filled
-            // one opens the read-only detail view (openTeamDetailOverlay()
-            // -- see its own comment), but with a replacement pending,
-            // every filled slot becomes a valid target instead,
-            // overwriting that member in place; with release mode
-            // active, every filled slot instead opens the two-stage
-            // release confirm for that member; while still picking a
-            // trade offer (isTradeSelectingOffer()), every filled slot
-            // instead locks that member in as this device's offer (see
+            // isTradeSelectingOffer()/handAttachPendingCardId (see their
+            // own comments): normally an empty slot opens the
+            // add-a-Pok\u00e9mon prompt and a filled one opens the read-only
+            // detail view (openTeamDetailOverlay() -- see its own
+            // comment), but with a replacement pending, every filled
+            // slot becomes a valid target instead, overwriting that
+            // member in place; with release mode active, every filled
+            // slot instead opens the two-stage release confirm for that
+            // member; while still picking a trade offer
+            // (isTradeSelectingOffer()), every filled slot instead locks
+            // that member in as this device's offer (see
             // selectTradeOffer()); once picked but still mid-negotiation
             // (isTradeNegotiationActive() true, isTradeSelectingOffer()
             // now false -- see #game-team-trade-overlay's own Confirm
@@ -21497,14 +21966,17 @@
             // falling through to the detail view, so the offered member
             // can't be inspected/edited via that route either (see
             // isTradeNegotiationActive()'s own comment on why that
-            // matters). An empty slot stays a no-op in the replace/
-            // release/select-offer cases (nothing there to
-            // overwrite-into/release/offer). Read-only save blocks all
-            // four mutating paths (replace/release/trade/add) same as
-            // every other mutating control in this panel, but not the
-            // detail view -- viewing a member is never a mutation, so it
-            // stays available even on a read-only save (outside an
-            // active trade negotiation, per the above).
+            // matters); with a hand-attach pending, every filled slot
+            // instead routes to performAttachFromHandToSlot() (see its
+            // own comment). An empty slot stays a no-op in the replace/
+            // release/select-offer/attach cases (nothing there to
+            // overwrite-into/release/offer/attach-onto). Read-only save
+            // blocks all five mutating paths (replace/release/trade/
+            // attach/add) same as every other mutating control in this
+            // panel, but not the detail view -- viewing a member is
+            // never a mutation, so it stays available even on a
+            // read-only save (outside an active trade negotiation, per
+            // the above).
             const teamSlotHitZone = e.target.closest('.game-team-slot-hit-zone');
             if (teamSlotHitZone) {
                 const teamSlot = teamSlotHitZone.closest('.game-team-slot');
@@ -21531,6 +22003,12 @@
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
                     selectTradeOffer(Number(teamSlot.dataset.index));
+                    return;
+                }
+                if (handAttachPendingCardId) {
+                    if (isActiveSaveReadOnly()) return;
+                    if (teamSlot.dataset.filled !== 'true') return;
+                    performAttachFromHandToSlot(Number(teamSlot.dataset.index));
                     return;
                 }
                 if (isTradeNegotiationActive()) return;
@@ -21635,6 +22113,24 @@
             }
             if (e.target.closest('.game-team-release-confirm-yes-btn')) {
                 confirmTeamReleaseStage();
+                return;
+            }
+        });
+
+        // Same shape again -- this overlay's also a sibling of
+        // #game-scroll, not a descendant. No backs out to attach-picking
+        // mode via closeAttachFromHandConfirmOverlay() (see its own
+        // comment) -- the card stays in hand and #game-team-attach-banner
+        // stays up so the player can tap a different Pok\u00e9mon instead.
+        // Yes routes through confirmAttachFromHandReplace(), which
+        // actually equips the card and removes it from hand.
+        document.getElementById('game-team-attach-confirm-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-team-attach-confirm-overlay' || e.target.closest('.game-team-attach-confirm-no-btn')) {
+                closeAttachFromHandConfirmOverlay();
+                return;
+            }
+            if (e.target.closest('.game-team-attach-confirm-yes-btn')) {
+                confirmAttachFromHandReplace();
                 return;
             }
         });
