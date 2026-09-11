@@ -2031,11 +2031,13 @@
            Event/Item/Nature (MAIN_DECK_NAMES) render directly into
            .game-decks-list; every other deck renders into the
            collapsible .game-extra-decks-list instead (see
-           extraDecksExpanded/.game-extra-decks-toggle-btn below). */
+           extraDecksExpanded/.game-extra-decks-toggle-btn below), two
+           per row, with no discard thumbnail of their own -- they're
+           all subsets of the Item Deck, so their discards fold into
+           the Item Deck's own pile instead (see discardToHostDeck()). */
         .game-decks-list {
             display: flex;
             flex-direction: column;
-            gap: 10px;
             margin-bottom: 18px;
         }
 
@@ -2052,7 +2054,16 @@
             margin: 0 0 10px;
         }
 
+        /* Two per row (per the chat this was changed in) -- these are
+           all subsets of the Item Deck (see MAIN_DECK_NAMES's own
+           comment) and don't carry the extra visual weight a main deck
+           row does (no discard thumbnail -- their discards all land in
+           the Item Deck's own pile instead, see discardToHostDeck()),
+           so a denser 2-column grid reads better than one-per-row. */
         .game-extra-decks-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
             margin-bottom: 18px;
         }
 
@@ -2065,6 +2076,39 @@
             border-radius: 14px;
             padding: 8px 10px;
 		margin-bottom: 4px;
+        }
+
+        /* Extra-deck variant of the row above (see buildDeckRowHtml()'s
+           isExtra branch) -- stacked column instead of the main rows'
+           left-to-right layout, since two of these now sit side by
+           side in a narrower .game-extra-decks-list grid column rather
+           than spanning the panel's full width. No discard thumbnail
+           slot here (extra decks never populate their own discardPile
+           any more), and no bottom margin of its own since the grid's
+           own `gap` already spaces the cells. Order top-to-bottom is
+           name/counts, then Draw, then Shuffle/Look at Top -- see the
+           chat this was requested in. */
+        .game-deck-row--extra {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 8px;
+            margin-bottom: 0;
+        }
+
+        .game-deck-row--extra .game-deck-info {
+            text-align: center;
+        }
+
+        .game-deck-row--extra .game-deck-draw-btn {
+            width: 100%;
+        }
+
+        /* Sits directly in the .game-deck-row--extra column now (not
+           nested under .game-deck-info like the main rows), so the
+           column's own `gap` already provides the spacing above it --
+           .game-deck-utility-btns' own margin-top would just double it. */
+        .game-deck-row--extra .game-deck-utility-btns {
+            margin-top: 0;
         }
 
         /* Now a real <button> (opens #game-discard-viewer-overlay via
@@ -2139,7 +2183,6 @@
 
         .game-deck-utility-btns .filter-btn {
             margin: 0;
-            font-size: 11px;
             padding: 4px 8px;
         }
 
@@ -15296,6 +15339,16 @@
         // not listed here keeps the normal draw-to-hand behavior.
         const DECK_REVEALS_ON_DRAW = { 'Event Deck': true, 'Nature Deck': true };
 
+        // Which decks reshuffle their own discardPile back into
+        // drawPile once drawPile runs dry (see drawFromHostDeck()) --
+        // per the chat this was scoped in, only Event and Nature work
+        // that way. The Item Deck and all of its subset "extra" decks
+        // (see MAIN_DECK_NAMES/DECK_TOOL_LIST) are one-and-done: once
+        // drawPile is empty that deck stays empty for the rest of the
+        // game, it never reshuffles from discardPile even though Item
+        // Deck itself still collects one (via discardToHostDeck()).
+        const DECK_RESHUFFLES_ON_EMPTY = { 'Event Deck': true, 'Nature Deck': true };
+
         // Fisher-Yates -- used once per fresh deck build and again any
         // time discardPile gets folded back into drawPile (see
         // drawFromHostDeck() below).
@@ -15430,14 +15483,31 @@
         // resolving late (see the CARDS_URL fetch above); calling this
         // again once a deck already exists is a no-op, it never
         // reshuffles or resets an in-progress deck.
+        //
+        // deck.built is the actual "has this deck already been dealt
+        // out" marker. Used to key off "both piles are empty" instead
+        // (drawPile.length === 0 && discardPile.length === 0), but that
+        // now legitimately happens mid-game for a one-and-done deck
+        // (see DECK_RESHUFFLES_ON_EMPTY) once it's fully drawn into
+        // hands without anything having been discarded yet -- the old
+        // check mistook that drained-but-valid state for "never built",
+        // and dealt the whole deck out again on the very next draw. See
+        // the chat this was fixed in. A deck from before this flag
+        // existed has no `built` field yet; back-fill it as true the
+        // first time we see it, since it already exists here at all
+        // means the old logic already built it once.
         function ensureDeckBuilt(store, deckName) {
             if (!store) return;
             if (!store[deckName]) {
                 store[deckName] = { drawPile: [], discardPile: [] };
             }
             const deck = store[deckName];
-            if (deck.drawPile.length === 0 && deck.discardPile.length === 0 && Object.keys(CARDS_BY_ID).length) {
+            if (typeof deck.built !== 'boolean') {
+                deck.built = deck.drawPile.length > 0 || deck.discardPile.length > 0;
+            }
+            if (!deck.built && Object.keys(CARDS_BY_ID).length) {
                 deck.drawPile = buildFreshDrawPile(deckName);
+                deck.built = true;
             }
         }
 
@@ -15448,28 +15518,49 @@
         // card id, or null if there's genuinely nothing left anywhere
         // (every copy of every card in this deck is already in some
         // hand or CARDS_BY_ID hasn't loaded yet).
+        // Draws exactly one card off the Host's own authoritative
+        // store, reshuffling discardPile back into drawPile first if
+        // drawPile has run out AND this deck is one of the ones that
+        // reshuffles at all (see DECK_RESHUFFLES_ON_EMPTY -- Item Deck
+        // and its subset decks are one-and-done and skip this entirely,
+        // per the chat this was scoped in). Returns the drawn card id,
+        // or null if there's genuinely nothing left to draw (drawPile's
+        // empty and either this deck doesn't reshuffle, its discardPile
+        // is also empty, or CARDS_BY_ID hasn't loaded yet).
         function drawFromHostDeck(deckName) {
             const store = ensureHostDeckStore();
             if (!store) return null;
             ensureDeckBuilt(store, deckName);
             const deck = store[deckName];
             if (deck.drawPile.length === 0) {
-                if (deck.discardPile.length === 0) return null;
+                if (!DECK_RESHUFFLES_ON_EMPTY[deckName] || deck.discardPile.length === 0) return null;
                 deck.drawPile = shuffleArray(deck.discardPile.splice(0));
             }
             return deck.drawPile.pop();
         }
 
         // Moves a card id from wherever it currently sits in hand
-        // straight to the top of that deck's discardPile -- this app
-        // has no "wrong card" validation here on purpose, same
-        // trust-the-request stance the trade system already takes with
-        // whatever a connected guest sends.
+        // straight to the top of a deck's discardPile -- this app has
+        // no "wrong card" validation here on purpose, same trust-the-
+        // request stance the trade system already takes with whatever
+        // a connected guest sends.
+        //
+        // deckName is the card's ORIGINATING deck (drawPile still
+        // lives there), but every extra deck (see MAIN_DECK_NAMES) is
+        // just a subset of the Item Deck -- per the chat this was
+        // requested in, none of them keep their own discardPile any
+        // more, they all fold into the Item Deck's shared one instead.
+        // Combined with DECK_RESHUFFLES_ON_EMPTY excluding Item Deck
+        // too, the practical effect is that Item Deck and everything
+        // under it are strictly one-and-done: nothing ever reshuffles
+        // back into any of their drawPiles once empty, same as a real
+        // single-pass deck.
         function discardToHostDeck(deckName, cardId) {
             const store = ensureHostDeckStore();
             if (!store) return;
-            ensureDeckBuilt(store, deckName);
-            store[deckName].discardPile.push(cardId);
+            const targetDeckName = MAIN_DECK_NAMES.includes(deckName) ? deckName : 'Item Deck';
+            ensureDeckBuilt(store, targetDeckName);
+            store[targetDeckName].discardPile.push(cardId);
         }
 
         // ---- Per-player hand storage ----
@@ -16597,7 +16688,18 @@
         // discardTop, discardPile} shape, falling back to an empty one
         // here the same way the caller already does for a deck with no
         // recorded state yet).
-        function buildDeckRowHtml(deckName, info) {
+        // isExtra (true for anything not in MAIN_DECK_NAMES) switches
+        // between the two row shapes: a main deck's row is drawBtn -
+        // info - discard thumbnail, left to right; an extra deck's row
+        // is a stacked column (info, then Draw, then Shuffle/Look at
+        // Top) since two of them now sit side by side in the grid (see
+        // .game-deck-row--extra) -- see the chat this was requested in.
+        // Extra decks also skip the discard thumbnail and the
+        // "discarded" count entirely: their cards no longer go into
+        // their own discardPile at all, only into the Item Deck's (see
+        // discardToHostDeck()), so info.discardCount is always 0 for
+        // them and a thumbnail would always render empty.
+        function buildDeckRowHtml(deckName, info, isExtra) {
             info = info || { drawCount: 0, discardCount: 0, discardTop: null, discardPile: [] };
             const topCard = info.discardTop ? CARDS_BY_ID[info.discardTop] : null;
             const canDraw = (info.drawCount + info.discardCount) > 0;
@@ -16605,23 +16707,40 @@
             const drawBtn = backImg
                 ? `<button class="game-deck-draw-btn game-deck-draw-btn--image" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'} aria-label="Draw a card from ${escapeHtml(deckName)}" title="Draw a card from ${escapeHtml(deckName)}" style="background-image:url('${backImg}')"></button>`
                 : `<button class="filter-btn game-deck-draw-btn" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'}>Draw</button>`;
-            const discardBtn = topCard && topCard.imageUrl
-                ? `<button class="game-deck-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" aria-label="View ${escapeHtml(deckName)} discard pile, ${info.discardCount} card${info.discardCount === 1 ? '' : 's'}" title="View discard pile" style="background-image:url('${topCard.imageUrl}')"></button>`
-                : `<span class="game-deck-discard-btn empty" aria-hidden="true"></span>`;
             // Shuffle/Look at Top X -- see requestShuffleDeck()/
             // openDeckLookPrompt() below. Both act on drawPile alone, so
             // both are pointless (and disabled) once it's empty, same
             // as Draw itself already goes disabled at 0 total cards.
+            const utilityBtns = `
+                <span class="game-deck-utility-btns">
+                    <button class="filter-btn exclude game-deck-shuffle-btn" type="button" data-deck="${escapeHtml(deckName)}" ${info.drawCount > 0 ? '' : 'disabled'}>Shuffle</button>
+                    <button class="filter-btn exclude game-deck-look-btn" type="button" data-deck="${escapeHtml(deckName)}" ${info.drawCount > 0 ? '' : 'disabled'}>Look at Top</button>
+                </span>
+            `;
+
+            if (isExtra) {
+                return `
+                    <div class="game-deck-row game-deck-row--extra">
+                        <span class="game-deck-info">
+                            <span class="game-deck-name">${escapeHtml(deckName)}</span>
+                            <span class="game-deck-counts">${info.drawCount} left</span>
+                        </span>
+                        ${drawBtn}
+                        ${utilityBtns}
+                    </div>
+                `;
+            }
+
+            const discardBtn = topCard && topCard.imageUrl
+                ? `<button class="game-deck-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" aria-label="View ${escapeHtml(deckName)} discard pile, ${info.discardCount} card${info.discardCount === 1 ? '' : 's'}" title="View discard pile" style="background-image:url('${topCard.imageUrl}')"></button>`
+                : `<span class="game-deck-discard-btn empty" aria-hidden="true"></span>`;
             return `
                 <div class="game-deck-row">
                     ${drawBtn}
                     <span class="game-deck-info">
                         <span class="game-deck-name">${escapeHtml(deckName)}</span>
                         <span class="game-deck-counts">${info.drawCount} left \u00b7 ${info.discardCount} discarded</span>
-                        <span class="game-deck-utility-btns">
-                            <button class="filter-btn exclude game-deck-shuffle-btn" type="button" data-deck="${escapeHtml(deckName)}" ${info.drawCount > 0 ? '' : 'disabled'}>Shuffle</button>
-                            <button class="filter-btn exclude game-deck-look-btn" type="button" data-deck="${escapeHtml(deckName)}" ${info.drawCount > 0 ? '' : 'disabled'}>Look at Top</button>
-                        </span>
+                        ${utilityBtns}
                     </span>
                     ${discardBtn}
                 </div>
@@ -16660,12 +16779,12 @@
             const mainDecks = visibleDecks.filter(deckName => MAIN_DECK_NAMES.includes(deckName));
             const extraDecks = visibleDecks.filter(deckName => !MAIN_DECK_NAMES.includes(deckName));
 
-            listEl.innerHTML = mainDecks.map(deckName => buildDeckRowHtml(deckName, deckInfo[deckName])).join('');
+            listEl.innerHTML = mainDecks.map(deckName => buildDeckRowHtml(deckName, deckInfo[deckName], false)).join('');
 
             const extraListEl = document.getElementById('game-extra-decks-list');
             const extraToggleBtn = document.getElementById('game-extra-decks-toggle-btn');
             if (extraListEl) {
-                extraListEl.innerHTML = extraDecks.map(deckName => buildDeckRowHtml(deckName, deckInfo[deckName])).join('');
+                extraListEl.innerHTML = extraDecks.map(deckName => buildDeckRowHtml(deckName, deckInfo[deckName], true)).join('');
                 extraListEl.style.display = extraDecksExpanded ? '' : 'none';
             }
             if (extraToggleBtn) {
