@@ -1997,7 +1997,7 @@
             width: 252px;
             height: 352px;
             object-fit: cover;
-            border-radius: 14px;
+            border-radius: 20px;
             border: 2px solid rgba(255, 255, 255, 0.3);
             flex-shrink: 0;
         }
@@ -2040,6 +2040,7 @@
             border: 2px solid rgba(255, 255, 255, 0.2);
             border-radius: 14px;
             padding: 8px 10px;
+		margin-bottom: 4px;
         }
 
         /* Now a real <button> (opens #game-discard-viewer-overlay via
@@ -12090,16 +12091,58 @@
             return null;
         }
 
+        // Splits a single raw chunk of typed text (already separated from
+        // its neighbors by whitespace, and already had any leading '-' or
+        // '+'/'/' grouping peeled off by the caller) into the tag itself
+        // and whether it should match exactly. A chunk wrapped in a
+        // matching pair of quotes -- 'male' or "male", either style, not
+        // mixed -- has the quotes stripped and is marked exact; anything
+        // else is left as free text for the usual fuzzy match. This is
+        // what lets someone type "male" (quoted) to mean only the male
+        // tag, versus male (bare) fuzzy-matching both male and female.
+        function parseSearchSegment(raw) {
+            const quoteChar = raw[0];
+            const isQuoted = (quoteChar === '"' || quoteChar === "'") &&
+                raw.length > 2 && raw[raw.length - 1] === quoteChar;
+            return {
+                tag: isQuoted ? raw.slice(1, -1) : raw,
+                exact: isQuoted,
+            };
+        }
+
+        // Formats a raw chunk into the prefixed string every filter array
+        // actually stores and matchesFilterTag() actually reads --
+        // "exact:tag" for a quoted chunk, "search:tag" otherwise. Kept
+        // separate from parseSearchSegment() above because a couple of
+        // call sites below (single-tag routing) need the bare tag on its
+        // own first, to look up its section, before deciding how to store
+        // it.
+        function toSearchFilterKey(raw) {
+            const { tag, exact } = parseSearchSegment(raw);
+            return (exact ? "exact:" : "search:") + tag;
+        }
+
+        // True for anything parseSearchFilters() put into a filter array
+        // (as opposed to a filter button's own plain, unprefixed tag) --
+        // used to clear out last search's entries before reparsing, since
+        // a filter button's own selections must survive that reset.
+        function isSearchDerived(f) {
+            return f.startsWith("search:") || f.startsWith("exact:");
+        }
+
         function parseSearchFilters() {
-            includeFilters = includeFilters.filter(f => !f.startsWith("search:"));
-            excludeFilters = excludeFilters.filter(f => !f.startsWith("search:"));
+            includeFilters = includeFilters.filter(f => !isSearchDerived(f));
+            excludeFilters = excludeFilters.filter(f => !isSearchDerived(f));
             explicitOrGroups = [];
             explicitAndGroups = [];
             explicitAndExcludeGroups = [];
             Object.keys(sectionFilters).forEach(key => {
-                sectionFilters[key] = sectionFilters[key].filter(f => !f.startsWith("search:"));
+                sectionFilters[key] = sectionFilters[key].filter(f => !isSearchDerived(f));
             });
 
+            // Only the box's own contents get lowercased ahead of parsing
+            // (as before) -- this doesn't disturb the quote characters
+            // above, since toLowerCase() only touches letters.
             const input = document.getElementById('tag-search').value.trim().toLowerCase();
             if (!input) return;
 
@@ -12115,14 +12158,19 @@
                 // whichever operator is actually present wins, with '+'
                 // simply checked first. A token that's only '+' characters
                 // (nothing else) has nothing usable in it, same as a
-                // lone '/' below.
+                // lone '/' below. Quote characters aren't part of either
+                // separator, so a quoted chunk on either side of a '+' or
+                // '/' splits cleanly and keeps its own quotes intact for
+                // toSearchFilterKey() to read below -- "male"+adult and
+                // "male"/"female" both work per-segment.
                 const plusSegments = body.split(/\+/).filter(Boolean);
                 if (plusSegments.length === 0) return;
                 if (plusSegments.length >= 2) {
+                    const keys = plusSegments.map(toSearchFilterKey);
                     if (isExclude) {
-                        explicitAndExcludeGroups.push(plusSegments);
+                        explicitAndExcludeGroups.push(keys);
                     } else {
-                        explicitAndGroups.push(plusSegments);
+                        explicitAndGroups.push(keys);
                     }
                     return;
                 }
@@ -12145,35 +12193,42 @@
                     // separate tokens anyway (-water -ground already means
                     // "hide if either" — this is just a more compact way to
                     // write the same thing in one token).
+                    const keys = segments.map(toSearchFilterKey);
                     if (isExclude) {
-                        segments.forEach(tag => excludeFilters.push("search:" + tag));
+                        keys.forEach(f => excludeFilters.push(f));
                     } else {
-                        explicitOrGroups.push(segments);
+                        explicitOrGroups.push(keys);
                     }
                     return;
                 }
 
                 // No slash — falls through to the existing single-tag
-                // handling exactly as before.
-                const tag = segments[0];
+                // handling exactly as before, just with the quoted-vs-bare
+                // check folded in.
+                const { tag, exact } = parseSearchSegment(segments[0]);
+                const filterKey = (exact ? "exact:" : "search:") + tag;
                 if (isExclude) {
-                    excludeFilters.push("search:" + tag);
+                    excludeFilters.push(filterKey);
                 } else {
                     // If this tag has a button somewhere, fold it into that
                     // section's own bucket so it combines the same way a
                     // click on that button would (AND-within if the section
                     // is toggleable and set to Match:All, OR-within
                     // otherwise) instead of landing in the general
-                    // no-section-at-all pool below.
+                    // no-section-at-all pool below. Routing is by the bare
+                    // tag either way -- a button's own data-tag is always a
+                    // whole exact tag, so quoting "male" to look it up here
+                    // doesn't change which section (if any) it belongs to.
                     const sectionKey = findSectionForTag(tag);
                     if (sectionKey) {
-                        sectionFilters[sectionKey].push("search:" + tag);
+                        sectionFilters[sectionKey].push(filterKey);
                     } else {
-                        includeFilters.push("search:" + tag);
+                        includeFilters.push(filterKey);
                     }
                 }
             });
         }
+
 
         function updateFilters() {
             includeFilters = [];
@@ -12264,13 +12319,39 @@
                 .classList.toggle('back-disabled', nothingToDo);
         }
 
+        // Button-driven filters ("water", "stage1", ...) are always exact —
+        // a button's data-tag is a known, whole tag, and matching it as a
+        // substring against every card's tag list could pull in unrelated
+        // tags that merely contain it (e.g. a "water" button snagging a
+        // hypothetical "saltwater" tag). Typed search terms default to the
+        // opposite: free text, not guaranteed to be a whole tag, so a
+        // fragment like "chu" surfaces Pikachu/Pichu/Raichu without the
+        // player having to know or type the exact tag. Wrapping a typed
+        // term in quotes (see parseSearchSegment()) opts back into exact
+        // matching -- "male" finds only the male tag, where a bare male
+        // also picks up female. Every search-originated filter carries
+        // either the "search:" (fuzzy) or "exact:" (quoted) prefix set by
+        // parseSearchFilters(), including each member of
+        // explicitOrGroups/explicitAndGroups/explicitAndExcludeGroups now,
+        // so no separate signal is needed here to tell those apart from a
+        // plain button tag.
+        function matchesFilterTag(tags, filterTag) {
+            if (filterTag.startsWith("exact:")) {
+                return tags.includes(filterTag.slice("exact:".length));
+            }
+            if (filterTag.startsWith("search:")) {
+                return tags.some(t => t.includes(filterTag.slice("search:".length)));
+            }
+            return tags.includes(filterTag);
+        }
+
         function filterGallery() {
             const cards = document.querySelectorAll('.image-card');
             cards.forEach(card => {
                 const tags = card.dataset.tags.toLowerCase().split(/\s+/);
                 const includeMatch =
                     includeFilters.length === 0 ||
-                    includeFilters.some(f => tags.includes(f.replace("search:", "")));
+                    includeFilters.some(f => matchesFilterTag(tags, f));
 
                 // Every section's bucket must pass on its own (AND across
                 // sections) — within a section, AND-within only applies for
@@ -12281,8 +12362,8 @@
                     if (list.length === 0) return true;
                     const andWithin = key in TOGGLEABLE_SECTIONS && sectionMatchAll[key];
                     return andWithin
-                        ? list.every(f => tags.includes(f.replace("search:", "")))
-                        : list.some(f => tags.includes(f.replace("search:", "")));
+                        ? list.every(f => matchesFilterTag(tags, f))
+                        : list.some(f => matchesFilterTag(tags, f));
                 });
 
                 // Every slash-group must contribute at least one matching
@@ -12291,18 +12372,18 @@
                 // fire/grass" requires (water or ground) AND (fire or
                 // grass).
                 const explicitOrMatch = explicitOrGroups.every(
-                    group => group.some(f => tags.includes(f))
+                    group => group.some(f => matchesFilterTag(tags, f))
                 );
 
                 // Same across-groups AND, but every tag within a '+'-group
                 // must be present (AND-within too) — e.g. "water+ground"
                 // requires the card to have both, not just one.
                 const explicitAndMatch = explicitAndGroups.every(
-                    group => group.every(f => tags.includes(f))
+                    group => group.every(f => matchesFilterTag(tags, f))
                 );
 
                 const excludeMatch =
-                    excludeFilters.some(f => tags.includes(f.replace("search:", "")));
+                    excludeFilters.some(f => matchesFilterTag(tags, f));
 
                 // "-water+ground" only excludes a card that has BOTH —
                 // De Morgan's dual of "-water/ground" (which already
@@ -12312,7 +12393,7 @@
                 // present), same "excluded if any condition fires" logic
                 // excludeMatch itself uses.
                 const explicitAndExcludeMatch = explicitAndExcludeGroups.some(
-                    group => group.every(f => tags.includes(f))
+                    group => group.every(f => matchesFilterTag(tags, f))
                 );
 
                 const hideNoAbilityMatch =
@@ -14984,9 +15065,14 @@
         // Event Deck's own cards resolve the instant they're drawn --
         // there's no "hold it and decide later" the way an Item card's
         // hand allows -- so hostApplyDraw() branches on this rather than
-        // ever pushing an Event card into anyone's hand at all. Anything
+        // ever pushing an Event card into anyone's hand at all. Nature
+        // Deck cards get the same treatment for the same reason (see
+        // the chat this was added in) -- there's no real "hold a Nature
+        // card for later" either, you draw one and it's immediately
+        // either attached (to the Nature Card slot specifically -- see
+        // getAttachSlotForCard()) or discarded/shuffled back. Anything
         // not listed here keeps the normal draw-to-hand behavior.
-        const DECK_REVEALS_ON_DRAW = { 'Event Deck': true };
+        const DECK_REVEALS_ON_DRAW = { 'Event Deck': true, 'Nature Deck': true };
 
         // Fisher-Yates -- used once per fresh deck build and again any
         // time discardPile gets folded back into drawPile (see
@@ -15464,6 +15550,61 @@
             renderDecksScreen();
         }
 
+        // ---- Manually-picked Attach/Nature Cards (see the chat this
+        // was designed in) ----
+        //
+        // The Team Tracker's own picker (selectTeamCardsOverlayOption()/
+        // selectTeamDetailCardOption()) lets a player equip ANY
+        // attachable/Nature card directly, independent of hand or the
+        // Active Card zone -- these two keep that picker's own deck
+        // bookkeeping honest so a manually-picked card still counts as
+        // "in play" rather than materializing from nowhere, the same
+        // way a physical card would have to actually come from
+        // somewhere. Both are gated behind isVirtualDecksEnabledForActiveSave()
+        // at the call site (pullCardForManualAttach()/
+        // discardUnattachedCard() below) -- a save using physical paper
+        // cards has no deck state worth touching for this at all.
+
+        // Removes one specific card from deckName's own drawPile,
+        // falling back to its discardPile if it's not there (e.g. it
+        // was already discarded once this game) -- same "trust the
+        // request, don't disambiguate duplicate ids" stance
+        // hostApplyReturnDiscardToHand() already takes. If the card
+        // isn't findable in either pile (already equipped elsewhere,
+        // or sitting in a different connected player's own hand, which
+        // this device has no visibility into to check) this silently
+        // does nothing rather than blocking the pick -- the equip
+        // itself already went through locally either way (see
+        // pullCardForManualAttach()'s own comment).
+        function hostApplyManualPull(deckName, cardId) {
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, deckName);
+            const deck = store[deckName];
+            let idx = deck.drawPile.indexOf(cardId);
+            if (idx !== -1) {
+                deck.drawPile.splice(idx, 1);
+            } else {
+                idx = deck.discardPile.indexOf(cardId);
+                if (idx !== -1) deck.discardPile.splice(idx, 1);
+            }
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Puts one specific card into deckName's own discardPile --
+        // used when a manually-equipped Attach/Nature Card becomes
+        // unattached (removed outright, or swapped for a different
+        // one), same as setting a physical card back on the discard
+        // pile once it comes off a Pok\u00e9mon. Reuses discardToHostDeck()
+        // (see its own comment), unlike hostApplyDiscard() this never
+        // touches any hand -- the card was never in one to begin with.
+        function hostApplyDiscardUnattached(deckName, cardId) {
+            discardToHostDeck(deckName, cardId);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
         // see #game-discard-viewer-overlay/openDiscardViewer() below;
         // it's public info, same "everyone can see the discard pile"
         // convention discardTop already relied on), every player's hand
@@ -15572,6 +15713,76 @@
             } else {
                 hostApplyShuffleDiscardIntoDraw(deckName, cardId);
             }
+        }
+
+        // Request-side wrappers for hostApplyManualPull()/
+        // hostApplyDiscardUnattached() above -- same guest-sends-a-
+        // request/Host-applies-and-broadcasts shape as every other
+        // deck action here.
+        function requestManualPull(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-manual-pull', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyManualPull(deckName, cardId);
+            }
+        }
+
+        function requestDiscardUnattached(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-return-unattached', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyDiscardUnattached(deckName, cardId);
+            }
+        }
+
+        // The Team Tracker picker's own top-level entry point (see
+        // selectTeamCardsOverlayOption()/selectTeamDetailCardOption())
+        // for actually sourcing a manually-equipped card: checks THIS
+        // device's own hand first and, if a copy's sitting there,
+        // removes it exactly like an ordinary hand-attach would (reusing
+        // the same 'deck-attach'/hostApplyRemoveFromHandOnly() path,
+        // rather than inventing a second way to take a card out of
+        // hand). Falls back to pulling it straight out of its own deck
+        // (requestManualPull()) if no copy is in hand. There's no way to
+        // check another connected player's own hand from here, so a
+        // copy sitting there goes unnoticed and this just pulls from the
+        // deck instead -- see hostApplyManualPull()'s own comment on
+        // that not being treated as an error.
+        function pullCardForManualAttach(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (!card) return;
+            const hand = getLocalHandArray();
+            if (hand.indexOf(cardId) !== -1) {
+                if (lobbyState.role === 'guest') {
+                    if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                        lobbyState.hostConn.send({ type: 'deck-attach', cardId });
+                    }
+                } else {
+                    hostApplyRemoveFromHandOnly('host', cardId);
+                }
+                return;
+            }
+            requestManualPull(card.cardDeck || DECK_TOOL_LIST[0], cardId);
+        }
+
+        // The Team Tracker picker's own counterpart for a card that just
+        // became unattached (removed outright, or swapped for a
+        // different one) -- sends it back to its own deck's discard
+        // pile via requestDiscardUnattached(). No-ops for a cardId
+        // CARDS_BY_ID doesn't recognize (shouldn't happen -- every
+        // equipped card came from a real pick -- but there's no deck
+        // name to look up from one it did).
+        function discardUnattachedCard(cardId) {
+            if (!cardId) return;
+            const card = CARDS_BY_ID[cardId];
+            if (!card) return;
+            requestDiscardUnattached(card.cardDeck || DECK_TOOL_LIST[0], cardId);
         }
 
         // ---- The Active Card zone's own request-side entry points --
@@ -15691,6 +15902,27 @@
             decksNoticeTimer = setTimeout(() => el.classList.remove('visible'), 4000);
         }
 
+        // Which Team Tracker slot a card lands in once actually equipped
+        // -- 'nature' for a Nature Deck card (its own dedicated slot,
+        // member.natureCardId), 'attach' for every other attachable card
+        // (Item Deck and its subsets, member.attachCardId). Shared by
+        // every path that can equip a card WITHOUT going through the
+        // manual picker's own explicit slot argument (hand-attach,
+        // Active-Card-zone-attach -- see beginAttachFlow()/
+        // performAttachFromHandToSlot()/commitAttachFromHandToMember()
+        // below), since none of those know or care which slot they're
+        // headed for until this says so. Fixes a bug where a Nature
+        // card attached this way always landed in the Attach Card slot
+        // instead (see the chat this was found/fixed in) -- the manual
+        // picker itself (selectTeamCardsOverlayOption()/
+        // selectTeamDetailCardOption()) never had this problem, it
+        // already takes an explicit slot argument from whichever of the
+        // picker's own two accordions the player tapped.
+        function getAttachSlotForCard(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            return (card && card.cardDeck === 'Nature Deck') ? 'nature' : 'attach';
+        }
+
         // Shared by requestAttachFromHand()/requestAttachFromActiveCard()
         // below -- the actual "stash it and switch to Team Tracker" step
         // is identical either way, only the source differs.
@@ -15750,19 +15982,22 @@
         // .game-team-slot-hit-zone branch, only while
         // handAttachPendingCardId is set and only for a filled slot (an
         // empty one has no Attach Card slot to put anything into).
-        // Skips the confirmation entirely for a member with no Attach
-        // Card yet, or one already carrying this exact same card --
-        // there's nothing to lose in either case -- and only opens
-        // #game-team-attach-confirm-overlay when it'd actually replace
-        // a DIFFERENT equipped card.
+        // Skips the confirmation entirely for a member with no card
+        // equipped yet in whichever slot this one's headed for (see
+        // getAttachSlotForCard()), or one already carrying this exact
+        // same card -- there's nothing to lose in either case -- and
+        // only opens #game-team-attach-confirm-overlay when it'd
+        // actually replace a DIFFERENT equipped card.
         function performAttachFromHandToSlot(memberIndex) {
             const data = getActiveSaveData();
             const member = (data.team.members || [])[memberIndex];
             if (!member) return;
-            if (member.attachCardId && member.attachCardId !== handAttachPendingCardId) {
+            const slot = getAttachSlotForCard(handAttachPendingCardId);
+            const currentCardId = slot === 'nature' ? member.natureCardId : member.attachCardId;
+            if (currentCardId && currentCardId !== handAttachPendingCardId) {
                 pendingAttachReplaceIndex = memberIndex;
                 const titleEl = document.getElementById('game-team-attach-confirm-title');
-                const oldCard = CARDS_BY_ID[member.attachCardId];
+                const oldCard = CARDS_BY_ID[currentCardId];
                 const newCard = CARDS_BY_ID[handAttachPendingCardId];
                 if (titleEl) titleEl.textContent = `This will replace ${oldCard ? oldCard.name : 'the currently equipped card'}. Continue?`;
                 const oldImg = document.getElementById('game-team-attach-confirm-old-img');
@@ -15792,13 +16027,22 @@
 
         // Shared final step for both the no-confirmation-needed and the
         // confirmed-replace paths above -- equips handAttachPendingCardId
-        // onto members[memberIndex] (via the exact same
-        // commitTeamMemberCard() the Team Tracker's own picker already
-        // uses -- team data is purely local to this device's own save
-        // either way, host or guest, so this half needs no network
-        // round-trip either way) then resolves whichever half DOES need
-        // the Host's say-so, branching on handAttachPendingSource (see
-        // its own comment): a card that came from hand still needs the
+        // onto members[memberIndex], into whichever slot
+        // getAttachSlotForCard() says it belongs in (a Nature Deck card
+        // goes to the Nature Card slot, everything else to the Attach
+        // Card slot -- see that function's own comment for the bug this
+        // fixes) via the exact same commitTeamMemberCard() the Team
+        // Tracker's own picker already uses (team data is purely local
+        // to this device's own save either way, host or guest, so this
+        // half needs no network round-trip either way), discards
+        // whatever card that displaces from that same slot (see
+        // discardUnattachedCard() -- same virtual-deck bookkeeping the
+        // manual picker's own replace/remove paths use,
+        // performAttachFromHandToSlot()'s own confirm step is what
+        // actually displaces something here, an empty slot has nothing
+        // to discard), then resolves whichever half DOES need the
+        // Host's say-so, branching on handAttachPendingSource (see its
+        // own comment): a card that came from hand still needs the
         // normal hand-removal request (see hostApplyRemoveFromHandOnly()'s
         // own comment on why this isn't the same thing as a discard); a
         // card that came from the Active Card zone never touched a hand
@@ -15808,7 +16052,13 @@
             const cardId = handAttachPendingCardId;
             const source = handAttachPendingSource;
             if (!cardId) return;
-            commitTeamMemberCard(memberIndex, 'attach', cardId);
+            const slot = getAttachSlotForCard(cardId);
+            const member = (getActiveSaveData().team.members || [])[memberIndex];
+            const previousCardId = member ? (slot === 'nature' ? member.natureCardId : member.attachCardId) : null;
+            commitTeamMemberCard(memberIndex, slot, cardId);
+            if (previousCardId && previousCardId !== cardId && isVirtualDecksEnabledForActiveSave()) {
+                discardUnattachedCard(previousCardId);
+            }
             if (source === 'active-card') {
                 if (lobbyState.role === 'guest') {
                     if (lobbyState.hostConn && lobbyState.hostConn.open) {
@@ -15973,7 +16223,7 @@
             const hand = getLocalHandArray();
             if (!hand.length) {
                 handEl.style.height = '';
-                handEl.innerHTML = `<p class="game-hand-empty">Your hand is empty. Draw a card from a deck above.</p>`;
+                handEl.innerHTML = `<p class="game-hand-empty">Your hand is empty.</p>`;
             } else {
                 // Fixed per render regardless of hover/expand state --
                 // see .game-hand-stack's own CSS module comment and
@@ -17076,21 +17326,38 @@
         // A card tapped from within the accordion's own expanded body --
         // picking a real card commits it immediately via
         // commitTeamMemberCard(). Same shape as selectTeamDetailCardOption().
+        // Also sources/displaces the card against the virtual deck
+        // system (see pullCardForManualAttach()/discardUnattachedCard())
+        // when this save has that turned on -- skipped entirely for a
+        // reselect of the exact same card already equipped, since
+        // nothing actually changed hands.
         function selectTeamCardsOverlayOption(slot, cardId) {
             if (teamCardsOverlayIndex === null) return;
             if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             if (!cardId) return;
+            const member = (getActiveSaveData().team.members || [])[teamCardsOverlayIndex];
+            const previousCardId = member ? (slot === 'attach' ? member.attachCardId : member.natureCardId) : null;
+            const changed = previousCardId !== cardId;
             commitTeamMemberCard(teamCardsOverlayIndex, slot, cardId);
+            if (changed && isVirtualDecksEnabledForActiveSave()) {
+                if (previousCardId) discardUnattachedCard(previousCardId);
+                pullCardForManualAttach(cardId);
+            }
             teamCardsOverlayAddingSlot = null;
             renderTeamCardsOverlay();
         }
 
         // Remove Card tap -- unequips that slot immediately via
         // commitTeamMemberCard(). Same shape as removeTeamDetailCard().
+        // Sends the outgoing card to its own deck's discard pile (see
+        // discardUnattachedCard()) when this save uses virtual decks.
         function removeTeamCardsOverlayCard(slot) {
             if (teamCardsOverlayIndex === null) return;
             if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
+            const member = (getActiveSaveData().team.members || [])[teamCardsOverlayIndex];
+            const previousCardId = member ? (slot === 'attach' ? member.attachCardId : member.natureCardId) : null;
             commitTeamMemberCard(teamCardsOverlayIndex, slot, null);
+            if (previousCardId && isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(previousCardId);
             renderTeamCardsOverlay();
         }
 
@@ -18378,7 +18645,14 @@
             if (teamDetailIndex === null) return;
             if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             if (!cardId) return;
+            const member = (getActiveSaveData().team.members || [])[teamDetailIndex];
+            const previousCardId = member ? (slot === 'attach' ? member.attachCardId : member.natureCardId) : null;
+            const changed = previousCardId !== cardId;
             commitTeamMemberCard(teamDetailIndex, slot, cardId);
+            if (changed && isVirtualDecksEnabledForActiveSave()) {
+                if (previousCardId) discardUnattachedCard(previousCardId);
+                pullCardForManualAttach(cardId);
+            }
             teamDetailCardsAddingSlot = null;
             renderTeamDetailCardsSection();
             renderTeamDetailHeader();
@@ -18395,11 +18669,16 @@
         // which touches HP/species art/the Evolution column same as
         // that does -- Nature Card removal never can, but re-running all
         // three either way costs nothing and keeps this one function
-        // correct for both slots rather than branching on it.
+        // correct for both slots rather than branching on it. Also
+        // sends the outgoing card to its own deck's discard pile (see
+        // discardUnattachedCard()) when this save uses virtual decks.
         function removeTeamDetailCard(slot) {
             if (teamDetailIndex === null) return;
             if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
+            const member = (getActiveSaveData().team.members || [])[teamDetailIndex];
+            const previousCardId = member ? (slot === 'attach' ? member.attachCardId : member.natureCardId) : null;
             commitTeamMemberCard(teamDetailIndex, slot, null);
+            if (previousCardId && isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(previousCardId);
             renderTeamDetailCardsSection();
             renderTeamDetailHeader();
             renderTeamDetailHpSection();
@@ -21785,6 +22064,10 @@
                     hostApplyReturnDiscardToHand(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-shuffle-in' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyShuffleDiscardIntoDraw(data.deck, data.cardId);
+                } else if (data.type === 'deck-manual-pull' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyManualPull(data.deck, data.cardId);
+                } else if (data.type === 'deck-return-unattached' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyDiscardUnattached(data.deck, data.cardId);
                 } else if (data.type === 'deck-attach' && typeof data.cardId === 'string') {
                     // The Attach itself (which team member, if any) is
                     // purely local to the guest's own device/save -- see
