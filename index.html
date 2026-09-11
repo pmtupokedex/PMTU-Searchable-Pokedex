@@ -1894,7 +1894,8 @@
             gap: 10px;
         }
         .game-save-new-form select,
-        .game-save-defaults-card select {
+        .game-save-defaults-card select,
+        .game-new-name-input {
             font-size: 15px;
             padding: 8px 10px;
             border-radius: 8px;
@@ -2020,15 +2021,38 @@
             width: 160px;
         }
 
+        /* ---- Hand & Decks tool ----
            One row per deck (see DECK_TOOL_LIST) -- Draw button on the
-           left, draw/discard counts in the middle, and the discard
-           pile's top card as a small thumbnail on the right (face-up,
-           same "everyone can see the discard pile" convention real
-           card games use). See renderDecksScreen(). */
+           left, draw/discard counts plus the Shuffle/Look at Top
+           utility buttons in the middle, and the discard pile's top
+           card as a small thumbnail on the right (face-up, same
+           "everyone can see the discard pile" convention real card
+           games use). See renderDecksScreen()/buildDeckRowHtml().
+           Event/Item/Nature (MAIN_DECK_NAMES) render directly into
+           .game-decks-list; every other deck renders into the
+           collapsible .game-extra-decks-list instead (see
+           extraDecksExpanded/.game-extra-decks-toggle-btn below). */
         .game-decks-list {
             display: flex;
             flex-direction: column;
             gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        /* Full-width so it reads as a section control rather than
+           another deck row -- same dark box treatment as .game-deck-row
+           itself (below) for visual consistency, but its own arrow
+           glyph (\u25b8/\u25be, set in renderDecksScreen()) is the only
+           thing that actually indicates it's a toggle. */
+        .game-extra-decks-toggle-btn {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            text-align: left;
+            margin: 0 0 10px;
+        }
+
+        .game-extra-decks-list {
             margin-bottom: 18px;
         }
 
@@ -2095,6 +2119,28 @@
             font-size: 13px;
             opacity: 0.85;
             display: block;
+        }
+
+        /* Shuffle/Look at Top -- see buildDeckRowHtml() in the script.
+           Small text buttons rather than another pair of card-sized
+           image buttons like Draw/discard-thumb above: these are
+           infrequent utility actions, not the two things a player does
+           on every turn, so they shouldn't compete for the same visual
+           weight. Stacked vertically (per the chat this was changed
+           in) rather than side by side, sitting right under the deck
+           name/counts within the same .game-deck-info column. */
+        .game-deck-utility-btns {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 6px;
+            margin-top: 6px;
+        }
+
+        .game-deck-utility-btns .filter-btn {
+            margin: 0;
+            font-size: 11px;
+            padding: 4px 8px;
         }
 
         .game-deck-draw-btn {
@@ -2495,6 +2541,157 @@
         }
 
         #game-discard-viewer-overlay.visible {
+            display: flex;
+        }
+
+        /* ---- "Look at Top X Cards" ----
+           Same overlapping-stack/click-to-reveal-options shell as
+           .game-discard-stack/.game-discard-card above (see that
+           module's own comment for the full mechanics -- fixed height,
+           overflow: hidden letting an earlier card's push bleed off the
+           bottom edge, the dark box treatment, all identical here) --
+           just a 3-button options row (Top of Deck/Bottom of Deck/Add
+           to Hand) instead of 2, and its cards come from a local
+           snapshot (deckLookViewerCards) rather than tracking live deck
+           state the way the discard viewer's own stack does, since
+           "the top X cards" stops meaning anything stable the moment
+           one of them gets acted on -- see renderDeckLookViewer()'s own
+           comment. One other deliberate difference from every other
+           stack in this tool: deckLookViewerCards is ordered top-FIRST
+           (see hostApplyLookRequest()'s own .reverse()) rather than
+           top-last, so the card nearest the top of this overlapping
+           pile visually is the one furthest back/most covered here,
+           not the frontmost one -- backwards from hand/discard, but it
+           matches reading the list top-to-bottom as "closest to the
+           top of the deck first," which is what testers' own intuition
+           expected (see the chat this was changed in). */
+        .game-deck-look-stack {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            overflow: hidden;
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 14px;
+            padding: 10px;
+            margin-bottom: 16px;
+            box-sizing: content-box;
+        }
+
+        .game-deck-look-card {
+            position: absolute;
+            width: 252px;
+            height: 352px;
+            cursor: pointer;
+            transition: transform 0.22s ease;
+        }
+
+        .game-deck-look-card:hover ~ .game-deck-look-card {
+            transform: translateY(307px);
+        }
+
+        .game-deck-look-card.is-expanded ~ .game-deck-look-card {
+            transform: translateY(397px);
+        }
+
+        .game-deck-look-card-face {
+            position: absolute;
+            inset: 0;
+            background: #1b1f33;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 20px;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+            overflow: hidden;
+            transition: box-shadow 0.22s ease;
+        }
+
+        .game-deck-look-card:hover .game-deck-look-card-face,
+        .game-deck-look-card.is-expanded .game-deck-look-card-face {
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.6);
+        }
+
+        .game-deck-look-card-img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .game-deck-look-card-options {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            margin-top: 10px;
+            height: 70px;
+            box-sizing: border-box;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 14px;
+        }
+
+        .game-deck-look-card.is-expanded .game-deck-look-card-options {
+            display: block;
+        }
+
+        .game-deck-look-card-options-grid {
+            height: 100%;
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 6px;
+        }
+
+        .game-deck-look-card-options-grid .filter-btn {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+            font-size: 10.5px;
+            padding: 2px;
+        }
+
+        .game-deck-look-empty {
+            opacity: 0.75;
+            font-style: italic;
+        }
+
+        /* A plain text prompt, not another card stack -- see
+           openDeckLookPrompt() in the script. */
+        .game-deck-look-prompt-input {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 12px 0;
+            padding: 10px 12px;
+            font-size: 16px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.08);
+            border: 2px solid rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+
+        /* Backdrop + centering shell -- same convention as every other
+           #game-*-overlay, duplicated rather than shared for the same
+           independence reasoning those all give. */
+        #game-deck-look-prompt-overlay,
+        #game-deck-look-viewer-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-deck-look-prompt-overlay.visible,
+        #game-deck-look-viewer-overlay.visible {
             display: flex;
         }
 
@@ -9968,12 +10165,6 @@
                             <option value="" disabled selected>Loading Regions&hellip;</option>
                         </select>
 
-                        <label for="game-new-rule-0">Badge Rule</label>
-                        <select id="game-new-rule-0" class="game-new-rule-select">
-                            <option value="count">Badge Count</option>
-                            <option value="points">Badge Points</option>
-                        </select>
-
                         <label for="game-new-length-0">Game Length</label>
                         <select id="game-new-length-0" class="game-new-length-select">
                             <option value="short">Short</option>
@@ -10040,12 +10231,6 @@
                         <label for="game-new-region-1">Region</label>
                         <select id="game-new-region-1" class="game-new-region-select">
                             <option value="" disabled selected>Loading Regions&hellip;</option>
-                        </select>
-
-                        <label for="game-new-rule-1">Badge Rule</label>
-                        <select id="game-new-rule-1" class="game-new-rule-select">
-                            <option value="count">Badge Count</option>
-                            <option value="points">Badge Points</option>
                         </select>
 
                         <label for="game-new-length-1">Game Length</label>
@@ -10116,12 +10301,6 @@
                             <option value="" disabled selected>Loading Regions&hellip;</option>
                         </select>
 
-                        <label for="game-new-rule-2">Badge Rule</label>
-                        <select id="game-new-rule-2" class="game-new-rule-select">
-                            <option value="count">Badge Count</option>
-                            <option value="points">Badge Points</option>
-                        </select>
-
                         <label for="game-new-length-2">Game Length</label>
                         <select id="game-new-length-2" class="game-new-length-select">
                             <option value="short">Short</option>
@@ -10182,12 +10361,6 @@
                     <div class="game-section-header game-collapsible-header" id="game-save-defaults-header">Default Save Settings</div>
                     <div id="game-save-defaults-body">
                         <p class="game-save-slot-meta">Applied automatically to new saves below &mdash; still changeable per-save at creation time.</p>
-
-                        <label for="game-save-default-rule">Badge Rule</label>
-                        <select id="game-save-default-rule" class="game-save-default-rule-select">
-                            <option value="count">Badge Count</option>
-                            <option value="points">Badge Points</option>
-                        </select>
 
                         <label for="game-save-default-length">Game Length</label>
                         <select id="game-save-default-length" class="game-save-default-length-select">
@@ -10491,6 +10664,14 @@
                      changes locally or arrives from the host. -->
                 <div class="game-section-header">Decks</div>
                 <div class="game-decks-list" id="game-decks-list"></div>
+
+                <!-- Every DECK_TOOL_LIST entry not in MAIN_DECK_NAMES --
+                     collapsed by default (see extraDecksExpanded/
+                     toggleExtraDecksSection() in the script). Same row
+                     markup/behavior as the main three above, just
+                     tucked away since these come up far less often. -->
+                <button class="filter-btn exclude game-extra-decks-toggle-btn" id="game-extra-decks-toggle-btn" type="button"></button>
+                <div class="game-decks-list game-extra-decks-list" id="game-extra-decks-list" style="display: none;"></div>
 
                 <div class="game-section-header">Your Hand</div>
                 <div class="game-hand-stack" id="game-hand-stack"></div>
@@ -10864,6 +11045,40 @@
                 <div class="game-discard-stack" id="game-discard-viewer-stack"></div>
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude game-discard-viewer-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- "Look at Top X Cards" -- see openDeckLookPrompt()/
+             closeDeckLookPrompt()/confirmDeckLookPrompt() in the
+             script. Just asks how many; nothing about the deck itself
+             changes until this is confirmed AND the player acts on one
+             of the revealed cards' own buttons in the viewer below. -->
+        <div id="game-deck-look-prompt-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-deck-look-prompt-title">Look at Top Cards</p>
+                <input type="text" inputmode="numeric" pattern="[0-9]*" class="game-deck-look-prompt-input" id="game-deck-look-prompt-input" placeholder="Number of cards" aria-label="Number of cards to look at">
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-deck-look-prompt-confirm-btn">Look</button>
+                    <button class="filter-btn exclude game-deck-look-prompt-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- The peeked cards themselves -- see openDeckLookViewer()/
+             closeDeckLookViewer()/renderDeckLookViewer() in the script.
+             Same overlapping-stack shell as the discard viewer above,
+             but this one's own per-card options are Top of Deck/Bottom
+             of Deck/Add to Hand (see .game-deck-look-card-options)
+             rather than Return to Hand/Shuffle into Deck -- and closing
+             this without tapping any of them leaves the deck completely
+             untouched, per the chat this was designed in. -->
+        <div id="game-deck-look-viewer-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-deck-look-viewer-title">Top Cards</p>
+                <div class="game-deck-look-stack" id="game-deck-look-viewer-stack"></div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-deck-look-viewer-close-btn">Close</button>
                 </div>
             </div>
         </div>
@@ -11551,6 +11766,26 @@
         const soundsPanel = document.getElementById('sounds-panel');
         const discordPanel = document.getElementById('discord-panel');
         const gamePanel = document.getElementById('game-panel');
+
+        // Whether the most recent mousedown/touchstart anywhere on the
+        // page landed inside the filter panel -- recomputed fresh on
+        // every single one, so it always reflects where the *current*
+        // press-and-release cycle began by the time its matching 'click'
+        // fires. Exists solely so gallery/body's own "click empty space
+        // closes the panel" listeners (further down) can tell a genuine
+        // click on the gallery apart from a click-and-drag text
+        // selection that started on something inside the panel (e.g. the
+        // search box) and merely happened to release over the gallery --
+        // browsers still fire a 'click' targeting the release point in
+        // that case, even though nobody was ever trying to click away
+        // from the panel.
+        let outsideClickDragOriginatedInPanel = false;
+        document.addEventListener('mousedown', (e) => {
+            outsideClickDragOriginatedInPanel = panel.contains(e.target);
+        });
+        document.addEventListener('touchstart', (e) => {
+            outsideClickDragOriginatedInPanel = panel.contains(e.target);
+        });
 
         const pokedexPanel = document.getElementById("pokedex-panel");
 
@@ -13322,7 +13557,6 @@
                 // session; this identifies the save.
                 hostSaveId: generateHostSaveId(),
                 region: options.region, // one of the ids populateGameRegionOptions() pulled from music-tracks.json
-                stageRule: options.stageRule, // 'count' | 'points'
                 gameLength: options.gameLength, // 'short' | 'medium' | 'long' -- see GAME_LENGTH_STAGE_THRESHOLDS
                 typeEffectivenessRule: options.typeEffectivenessRule, // for the future Type Matchup tool
                 hpRule: options.hpRule, // for the future Team Tracker
@@ -13458,7 +13692,7 @@
         // free -- a plain object can't hold two entries under the same
         // key), and editable in exactly one respect (playerName) rather
         // than carrying the host save's full rule-setting form. Everything
-        // else on a guest save (region/stageRule/gameLength/
+        // else on a guest save (region/gameLength/
         // typeEffectivenessRule/hpRule) is a cached copy of the host's own
         // values, refreshed on every successful connection (see
         // finalizeGuestJoin()) purely so this save can still be viewed
@@ -13629,7 +13863,7 @@
         // seemed more likely to be wrong than helpful. Easy to add if
         // that assumption turns out wrong in practice.
         //
-        // Shape: { stageRule?, gameLength?, typeEffectivenessRule?,
+        // Shape: { gameLength?, typeEffectivenessRule?,
         // hpRule? } -- any field can simply be absent, which
         // applyGameSaveDefaultsToForm() below treats as "leave that
         // select on whatever its own HTML `selected` default already
@@ -13668,7 +13902,6 @@
         // option) rather than forcing a value.
         function applyGameSaveDefaultsToForm(slotEl) {
             const fieldMap = {
-                stageRule: '.game-new-rule-select',
                 gameLength: '.game-new-length-select',
                 typeEffectivenessRule: '.game-new-type-rule-select',
                 hpRule: '.game-new-hp-rule-select',
@@ -13690,7 +13923,6 @@
         // initial-calls block at the very end of the script).
         function renderGameSaveDefaultsForm() {
             const fieldMap = {
-                stageRule: '#game-save-default-rule',
                 gameLength: '#game-save-default-length',
                 typeEffectivenessRule: '#game-save-default-type-rule',
                 hpRule: '#game-save-default-hp-rule',
@@ -13796,42 +14028,39 @@
             return tier + 2;
         }
 
-        // Badge-count/Badge-point thresholds for crossing into each game
-        // stage, per Game Length. Early is always the starting point
-        // (0 badges/0 points) for every length.
+        // Badge-point thresholds for crossing into each game stage, per
+        // Game Length. Early is always the starting point (0 points) for
+        // every length.
         const GAME_LENGTH_STAGE_THRESHOLDS = {
             short: {
-                early: { badges: 0, points: 0 },
-                mid:   { badges: 1, points: 3 },
-                late:  { badges: 3, points: 12 },
-                end:   { badges: 4, points: 18 },
+                early: { points: 0 },
+                mid:   { points: 3 },
+                late:  { points: 12 },
+                end:   { points: 18 },
             },
             medium: {
-                early: { badges: 0, points: 0 },
-                mid:   { badges: 2, points: 7 },
-                late:  { badges: 4, points: 18 },
-                end:   { badges: 6, points: 32 },
+                early: { points: 0 },
+                mid:   { points: 7 },
+                late:  { points: 18 },
+                end:   { points: 32 },
             },
             long: {
-                early: { badges: 0, points: 0 },
-                mid:   { badges: 2, points: 7 },
-                late:  { badges: 5, points: 25 },
-                end:   { badges: 8, points: 52 },
+                early: { points: 0 },
+                mid:   { points: 7 },
+                late:  { points: 25 },
+                end:   { points: 52 },
             },
         };
 
         // Walks GAME_STAGE_ORDER (see the Sounds panel's script further
-        // down) forward, returning the latest stage whose threshold has
-        // actually been met -- badges or points, whichever the save's own
-        // stageRule says to use. Called by the Badge Tracker below every
-        // time a badge is collected/removed.
-        function deriveGameStage(gameLength, stageRule, badgeCount, badgePoints) {
+        // down) forward, returning the latest stage whose points
+        // threshold has actually been met. Called by the Badge Tracker
+        // below every time a badge is collected/removed.
+        function deriveGameStage(gameLength, badgePoints) {
             const thresholds = GAME_LENGTH_STAGE_THRESHOLDS[gameLength] || GAME_LENGTH_STAGE_THRESHOLDS.medium;
-            const key = stageRule === 'points' ? 'points' : 'badges';
-            const value = stageRule === 'points' ? badgePoints : badgeCount;
             let stage = 'early';
             GAME_STAGE_ORDER.forEach(candidate => {
-                if (value >= thresholds[candidate][key]) stage = candidate;
+                if (badgePoints >= thresholds[candidate].points) stage = candidate;
             });
             return stage;
         }
@@ -14006,25 +14235,13 @@
             return cachedRealRegionList[0] || 'kanto';
         }
 
-        // Only ever reads data.badges.collected (the main tiered
-        // badges) -- data.badges.collectedExtras (villain/Elite Four/
-        // Path of Legends/Starfall Street) is deliberately never
-        // touched here, since those don't count toward either total.
-        function computeBadgeCount(data) {
-            return Object.values(data.badges.collected || {})
-                .reduce((sum, optionId) => sum + getBadgeTiersForOptionId(optionId).length, 0);
-        }
-
-        // Distinct from computeBadgeCount above on purpose, even though
-        // they agree everywhere except Orange Islands. computeBadgeCount
-        // is tier-weighted (each Tier a collected badge covers adds one
-        // toward the total), which deriveGameStage's stage thresholds are
-        // calibrated against -- that stays as-is. What the readout below
-        // actually wants is simpler: how many badge buttons has the
-        // player collected, full stop. data.badges.collected is already
-        // one entry per collected slot regardless of how many Tiers that
-        // slot spans (see collectBadge()), so its own length is exactly
-        // that -- no need to reach into each option's Tier data at all.
+        // Simple count of collected badge slots -- data.badges.collected
+        // is already one entry per collected slot regardless of how many
+        // Tiers that slot spans (see collectBadge()), so its own length
+        // is exactly that. Only ever reads data.badges.collected (the
+        // main tiered badges) -- data.badges.collectedExtras (villain/
+        // Elite Four/Path of Legends/Starfall Street) is deliberately
+        // never touched here, since those don't count toward the total.
         function computeCollectedBadgeCount(data) {
             return Object.keys(data.badges.collected || {}).length;
         }
@@ -14277,13 +14494,9 @@
         function renderBadgeStageReadout(data) {
             const el = document.getElementById('game-badge-stage-readout');
             if (!el) return;
-            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
             const badgeCount = computeCollectedBadgeCount(data);
-            let text = `${badgeCount} Badge${badgeCount === 1 ? '' : 's'}`;
-            if (save && save.stageRule === 'points') {
-                text += ` (${computeBadgePoints(data)} Points)`;
-            }
-            el.textContent = text;
+            const badgePoints = computeBadgePoints(data);
+            el.textContent = `${badgeCount} Badge${badgeCount === 1 ? '' : 's'} (${badgePoints} Points)`;
         }
 
         // Team Tracker's own frame grid -- same Token-Border.png artwork
@@ -15045,6 +15258,15 @@
         // decks.
         const DECK_TOOL_LIST = ['Event Deck', 'Item Deck', 'Nature Deck', 'Reward Item Deck', 'Shop Deck', 'Poké Ball Deck', 'Tera Type Deck', 'TM Deck', 'Type-Enhancer Deck', 'Z-Crystal Deck'];
 
+        // The three decks shown directly on the Decks screen -- every
+        // other entry in DECK_TOOL_LIST goes in the collapsible "Extra
+        // Decks" section instead (see renderDecksScreen()'s own split,
+        // extraDecksExpanded/toggleExtraDecksSection()). Shop Deck and
+        // Reward Item Deck are both flagged for a bigger functional
+        // rework later (see the chat this was noted in) but stay
+        // grouped with the rest of the extras for now.
+        const MAIN_DECK_NAMES = ['Event Deck', 'Item Deck', 'Nature Deck'];
+
         // Decks whose Draw button shows the deck's own card-back art
         // instead of the plain text label -- see renderDecksScreen(),
         // which falls back to a normal text button for any deck not
@@ -15550,6 +15772,135 @@
             renderDecksScreen();
         }
 
+        // Host-side: the deck row's own Shuffle button -- reshuffles
+        // deckName's drawPile in place. Doesn't touch discardPile at
+        // all (that's what Shuffle into Deck, on a discard-pile card
+        // itself, is for -- see hostApplyShuffleDiscardIntoDraw() above),
+        // and doesn't touch any hand, so there's no peerKey branch
+        // needed, any player's request has the same effect on this
+        // shared pile.
+        function hostApplyShuffleDeck(deckName) {
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, deckName);
+            shuffleArray(store[deckName].drawPile);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // ---- "Look at Top X Cards" (see the chat this was designed
+        // in) ----
+        //
+        // Lets a player privately peek at the top of a deck without
+        // reordering it -- opening the peek (hostApplyLookRequest()
+        // below) is deliberately NOT broadcast the way every other deck
+        // action here is: drawPile's own order/contents are secret from
+        // everyone (only counts are public, see getDeckInfoMap()'s own
+        // comment), so revealing it has to go to exactly the one
+        // requesting connection, never everyone. The peek itself changes
+        // nothing; only actually tapping one of the revealed cards' own
+        // three actions below (Top of Deck/Bottom of Deck/Add to Hand)
+        // touches real deck state, same as any other deck action.
+
+        // Host-side: reads the top `count` cards (clamped to however
+        // many actually exist) off deckName's own drawPile, reversed so
+        // the FIRST entry is the real top card -- drawPile's own array
+        // order has the top card LAST (see drawFromHostDeck()'s own
+        // pop()), which matches every other stack in this tool (hand/
+        // discard, both rendering their own last entry as the frontmost
+        // one) but reads backwards for a peek specifically shown as a
+        // reading-order list: testers kept assuming the first card
+        // shown was the top of the deck (see the chat this was fixed
+        // in), so this reverses it once, here, rather than asking every
+        // caller to remember to. Sent straight back to the requester
+        // alone (never broadcast -- see the module comment above):
+        // openDeckLookViewer() locally if the Host itself asked, or a
+        // private 'deck-look-result' to just that one connection
+        // otherwise.
+        function hostApplyLookRequest(deckName, peerKey, count) {
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, deckName);
+            const deck = store[deckName];
+            const n = Math.max(0, Math.min(count, deck.drawPile.length));
+            const cards = n ? deck.drawPile.slice(-n).reverse() : [];
+            if (peerKey === 'host') {
+                openDeckLookViewer(deckName, cards);
+            } else {
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'deck-look-result', deck: deckName, cards });
+            }
+        }
+
+        // The peeked view's own three per-card actions -- unlike the
+        // peek itself, these DO change real, shared deck state, so all
+        // three broadcast same as any other deck action. Trusts the
+        // request the same way every other deck action here does; if
+        // the card's since moved (someone else drew it, it got
+        // reshuffled out from under this peek, etc.) this just silently
+        // no-ops rather than erroring, same "already gone" handling
+        // hostApplyReturnDiscardToHand() takes.
+
+        // Moves cardId to the very top of the deck -- the top is
+        // whatever pop() would return next, i.e. the END of the array
+        // (see drawFromHostDeck()), so "moving to top" means removing it
+        // from wherever it sits and pushing it back onto that same end.
+        function hostApplyLookMoveToTop(deckName, cardId) {
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, deckName);
+            const deck = store[deckName];
+            const idx = deck.drawPile.indexOf(cardId);
+            if (idx === -1) return;
+            deck.drawPile.splice(idx, 1);
+            deck.drawPile.push(cardId);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Same idea, opposite end -- the bottom of the deck is index 0.
+        function hostApplyLookMoveToBottom(deckName, cardId) {
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, deckName);
+            const deck = store[deckName];
+            const idx = deck.drawPile.indexOf(cardId);
+            if (idx === -1) return;
+            deck.drawPile.splice(idx, 1);
+            deck.drawPile.unshift(cardId);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Takes cardId straight out of drawPile and into whichever
+        // player was doing the looking -- same peerKey-branching shape
+        // (and the same 'deck-drawn' message reused for the guest side,
+        // see hostApplyReturnDiscardToHand()'s own comment on why) as
+        // every other "a card lands in a hand" path here, it doesn't
+        // matter to the receiving client which pile it came out of.
+        function hostApplyLookAddToHand(deckName, peerKey, cardId) {
+            const store = ensureHostDeckStore();
+            if (!store) return;
+            ensureDeckBuilt(store, deckName);
+            const deck = store[deckName];
+            const idx = deck.drawPile.indexOf(cardId);
+            if (idx === -1) return;
+            deck.drawPile.splice(idx, 1);
+            if (peerKey === 'host') {
+                getLocalHandArray().push(cardId);
+                persistLocalHand();
+            } else {
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return;
+                hand.push(cardId);
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'deck-drawn', deck: deckName, cardId });
+            }
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
         // ---- Manually-picked Attach/Nature Cards (see the chat this
         // was designed in) ----
         //
@@ -15712,6 +16063,74 @@
                 }
             } else {
                 hostApplyShuffleDiscardIntoDraw(deckName, cardId);
+            }
+        }
+
+        // The deck row's own Shuffle button.
+        function requestShuffleDeck(deckName) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-shuffle', deck: deckName });
+                }
+            } else {
+                hostApplyShuffleDeck(deckName);
+            }
+        }
+
+        // Request-side wrapper for hostApplyLookRequest() above -- the
+        // one deck action here that deliberately does NOT go through
+        // the normal "Host applies, then broadcasts to everyone" shape,
+        // see that function's own comment. openDeckLookViewer() itself
+        // (Host/solo) or the eventual 'deck-look-result' (guest, see
+        // the wireHostConnection()/network-listener changes) is what
+        // actually shows the peeked cards -- this just sends the ask.
+        function requestLookAtTopCards(deckName, count) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-look-request', deck: deckName, count });
+                }
+            } else {
+                hostApplyLookRequest(deckName, 'host', count);
+            }
+        }
+
+        // Request-side wrappers for the peeked view's own three actions
+        // (hostApplyLookMoveToTop()/-ToBottom()/-AddToHand() above) --
+        // same guest-sends-a-request/Host-applies-and-broadcasts shape
+        // as every other deck action here, unlike the peek request
+        // itself just above.
+        function requestLookMoveToTop(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-look-to-top', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyLookMoveToTop(deckName, cardId);
+            }
+        }
+
+        function requestLookMoveToBottom(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-look-to-bottom', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyLookMoveToBottom(deckName, cardId);
+            }
+        }
+
+        function requestLookAddToHand(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-look-to-hand', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyLookAddToHand(deckName, 'host', cardId);
             }
         }
 
@@ -16157,6 +16576,58 @@
             return deckInfo;
         }
 
+        // Whether the collapsible "Extra Decks" section (see
+        // MAIN_DECK_NAMES's own comment) is currently open -- purely a
+        // display toggle, not persisted, so it resets closed on next
+        // load/reload same as every other collapsed-by-default UI state
+        // in this tool (e.g. teamCardsOverlayExpandedDecks).
+        let extraDecksExpanded = false;
+
+        function toggleExtraDecksSection() {
+            extraDecksExpanded = !extraDecksExpanded;
+            renderDecksScreen();
+        }
+
+        // Builds one deck row's own markup -- shared by the main-three
+        // list and the Extra Decks list in renderDecksScreen() below,
+        // since both are the exact same row shape either way, just
+        // filtered to a different subset of DECK_TOOL_LIST. info is
+        // whatever getDeckInfoMap()[deckName] resolved to (see that
+        // function's own comment for the {drawCount, discardCount,
+        // discardTop, discardPile} shape, falling back to an empty one
+        // here the same way the caller already does for a deck with no
+        // recorded state yet).
+        function buildDeckRowHtml(deckName, info) {
+            info = info || { drawCount: 0, discardCount: 0, discardTop: null, discardPile: [] };
+            const topCard = info.discardTop ? CARDS_BY_ID[info.discardTop] : null;
+            const canDraw = (info.drawCount + info.discardCount) > 0;
+            const backImg = DECK_BACK_IMAGES[deckName];
+            const drawBtn = backImg
+                ? `<button class="game-deck-draw-btn game-deck-draw-btn--image" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'} aria-label="Draw a card from ${escapeHtml(deckName)}" title="Draw a card from ${escapeHtml(deckName)}" style="background-image:url('${backImg}')"></button>`
+                : `<button class="filter-btn game-deck-draw-btn" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'}>Draw</button>`;
+            const discardBtn = topCard && topCard.imageUrl
+                ? `<button class="game-deck-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" aria-label="View ${escapeHtml(deckName)} discard pile, ${info.discardCount} card${info.discardCount === 1 ? '' : 's'}" title="View discard pile" style="background-image:url('${topCard.imageUrl}')"></button>`
+                : `<span class="game-deck-discard-btn empty" aria-hidden="true"></span>`;
+            // Shuffle/Look at Top X -- see requestShuffleDeck()/
+            // openDeckLookPrompt() below. Both act on drawPile alone, so
+            // both are pointless (and disabled) once it's empty, same
+            // as Draw itself already goes disabled at 0 total cards.
+            return `
+                <div class="game-deck-row">
+                    ${drawBtn}
+                    <span class="game-deck-info">
+                        <span class="game-deck-name">${escapeHtml(deckName)}</span>
+                        <span class="game-deck-counts">${info.drawCount} left \u00b7 ${info.discardCount} discarded</span>
+                        <span class="game-deck-utility-btns">
+                            <button class="filter-btn exclude game-deck-shuffle-btn" type="button" data-deck="${escapeHtml(deckName)}" ${info.drawCount > 0 ? '' : 'disabled'}>Shuffle</button>
+                            <button class="filter-btn exclude game-deck-look-btn" type="button" data-deck="${escapeHtml(deckName)}" ${info.drawCount > 0 ? '' : 'disabled'}>Look at Top</button>
+                        </span>
+                    </span>
+                    ${discardBtn}
+                </div>
+            `;
+        }
+
         // Rebuilds the whole Hand & Decks screen from whatever's
         // currently known -- this device's own local deck store (Host/
         // solo) or guestDeckStateCache (guest) for the Decks list and
@@ -16186,28 +16657,20 @@
             // so nothing breaks if the rule gets flipped on mid-game.
             const visibleDecks = DECK_TOOL_LIST.filter(deckName => deckName !== 'Nature Deck' || isNaturesEnabledForActiveSave());
 
-            listEl.innerHTML = visibleDecks.map(deckName => {
-                const info = deckInfo[deckName] || { drawCount: 0, discardCount: 0, discardTop: null, discardPile: [] };
-                const topCard = info.discardTop ? CARDS_BY_ID[info.discardTop] : null;
-                const canDraw = (info.drawCount + info.discardCount) > 0;
-                const backImg = DECK_BACK_IMAGES[deckName];
-                const drawBtn = backImg
-                    ? `<button class="game-deck-draw-btn game-deck-draw-btn--image" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'} aria-label="Draw a card from ${escapeHtml(deckName)}" title="Draw a card from ${escapeHtml(deckName)}" style="background-image:url('${backImg}')"></button>`
-                    : `<button class="filter-btn game-deck-draw-btn" type="button" data-deck="${escapeHtml(deckName)}" ${canDraw ? '' : 'disabled'}>Draw</button>`;
-                const discardBtn = topCard && topCard.imageUrl
-                    ? `<button class="game-deck-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" aria-label="View ${escapeHtml(deckName)} discard pile, ${info.discardCount} card${info.discardCount === 1 ? '' : 's'}" title="View discard pile" style="background-image:url('${topCard.imageUrl}')"></button>`
-                    : `<span class="game-deck-discard-btn empty" aria-hidden="true"></span>`;
-                return `
-                    <div class="game-deck-row">
-                        ${drawBtn}
-                        <span class="game-deck-info">
-                            <span class="game-deck-name">${escapeHtml(deckName)}</span>
-                            <span class="game-deck-counts">${info.drawCount} left \u00b7 ${info.discardCount} discarded</span>
-                        </span>
-                        ${discardBtn}
-                    </div>
-                `;
-            }).join('');
+            const mainDecks = visibleDecks.filter(deckName => MAIN_DECK_NAMES.includes(deckName));
+            const extraDecks = visibleDecks.filter(deckName => !MAIN_DECK_NAMES.includes(deckName));
+
+            listEl.innerHTML = mainDecks.map(deckName => buildDeckRowHtml(deckName, deckInfo[deckName])).join('');
+
+            const extraListEl = document.getElementById('game-extra-decks-list');
+            const extraToggleBtn = document.getElementById('game-extra-decks-toggle-btn');
+            if (extraListEl) {
+                extraListEl.innerHTML = extraDecks.map(deckName => buildDeckRowHtml(deckName, deckInfo[deckName])).join('');
+                extraListEl.style.display = extraDecksExpanded ? '' : 'none';
+            }
+            if (extraToggleBtn) {
+                extraToggleBtn.textContent = `${extraDecksExpanded ? '\u25be' : '\u25b8'} Extra Decks (${extraDecks.length})`;
+            }
 
             // Archidekt-style overlapping stack -- see the .game-hand-stack/
             // .game-hand-card CSS module comment for how the reveal-on-
@@ -16427,6 +16890,172 @@
                     </div>
                 `;
             }).join('');
+        }
+
+        // ---- "Look at Top X Cards" UI ----
+        //
+        // Two separate overlays, never open at the same time: the
+        // prompt (just asks how many) and the viewer (shows what got
+        // revealed). See hostApplyLookRequest()/requestLookAtTopCards()
+        // for the actual networking -- everything below is purely
+        // client-side display/input handling.
+
+        // Which deck the prompt overlay is currently asking about --
+        // separate from deckLookViewerDeckName below since the two
+        // overlays are never open together.
+        let deckLookPromptDeckName = null;
+
+        // Opens the "how many cards?" prompt for one deck -- tapping a
+        // deck row's own Look at Top button (see .game-deck-look-btn in
+        // buildDeckRowHtml()).
+        function openDeckLookPrompt(deckName) {
+            deckLookPromptDeckName = deckName;
+            const titleEl = document.getElementById('game-deck-look-prompt-title');
+            if (titleEl) titleEl.textContent = `Look at Top Cards of ${deckName}`;
+            const inputEl = document.getElementById('game-deck-look-prompt-input');
+            if (inputEl) inputEl.value = '';
+            document.getElementById('game-deck-look-prompt-overlay').classList.add('visible');
+            if (inputEl) inputEl.focus();
+        }
+
+        // Backs out with nothing sent to the Host at all -- per the
+        // chat this was designed in, the player should always be able
+        // to back out of this without anything changing, and that
+        // starts with not even asking in the first place.
+        function closeDeckLookPrompt() {
+            deckLookPromptDeckName = null;
+            document.getElementById('game-deck-look-prompt-overlay').classList.remove('visible');
+        }
+
+        // Reads the prompt's own number and, once it's a real positive
+        // whole number, sends the actual peek request
+        // (requestLookAtTopCards()) -- clamping to however many cards
+        // the deck actually has left happens Host-side (see
+        // hostApplyLookRequest()'s own comment), this only rejects
+        // outright garbage (blank, zero, negative, non-numeric) with a
+        // banner via showDecksNotice() rather than silently doing
+        // nothing.
+        function confirmDeckLookPrompt() {
+            const deckName = deckLookPromptDeckName;
+            if (!deckName) return;
+            const inputEl = document.getElementById('game-deck-look-prompt-input');
+            const raw = inputEl ? inputEl.value.trim() : '';
+            const count = parseInt(raw, 10);
+            if (!raw || !Number.isInteger(count) || count <= 0 || String(count) !== raw) {
+                showDecksNotice('Enter a positive whole number.');
+                return;
+            }
+            closeDeckLookPrompt();
+            requestLookAtTopCards(deckName, count);
+        }
+
+        // Which deck the viewer overlay is currently showing, and the
+        // actual peeked cards themselves -- a local SNAPSHOT (top-FIRST
+        // order -- see hostApplyLookRequest()'s own .reverse(), the
+        // opposite convention from the hand/discard stacks, which both
+        // render their own LAST entry as the top/frontmost one) of
+        // whatever hostApplyLookRequest() sent back, not a live read of
+        // the deck's current top-X the way discardViewerDeckName's own
+        // stack tracks the live discard pile. It has to be a snapshot:
+        // "the top X cards" stops meaning anything stable the moment
+        // ANY of them gets acted on (moving card #2 to the top changes
+        // what "top X" even refers to), so acting on one of them here
+        // just removes that one entry from this local array instead of
+        // re-deriving the whole list -- see the three action functions
+        // below.
+        let deckLookViewerDeckName = null;
+        let deckLookViewerCards = [];
+
+        // Opens the viewer with exactly the cards hostApplyLookRequest()
+        // sent -- either called directly (Host/solo, see
+        // hostApplyLookRequest()'s own branch) or off the 'deck-look-
+        // result' network message (guest, see the wireHostConnection()
+        // listener).
+        function openDeckLookViewer(deckName, cards) {
+            deckLookViewerDeckName = deckName;
+            deckLookViewerCards = cards.slice();
+            renderDeckLookViewer();
+            document.getElementById('game-deck-look-viewer-overlay').classList.add('visible');
+        }
+
+        // Just hides the overlay -- whatever's still sitting in
+        // deckLookViewerCards at this point was never acted on, so the
+        // deck itself is completely untouched for those cards, exactly
+        // the "back out without making changes" the chat this was
+        // designed in asked for.
+        function closeDeckLookViewer() {
+            deckLookViewerDeckName = null;
+            deckLookViewerCards = [];
+            document.getElementById('game-deck-look-viewer-overlay').classList.remove('visible');
+        }
+
+        // Rebuilds the viewer's own stack from deckLookViewerCards --
+        // same overlapping-stack markup as the discard viewer's own
+        // renderDiscardViewer(), see .game-deck-look-stack's own CSS
+        // module comment for how this differs (snapshot data, 3-button
+        // options instead of 2). No-ops harmlessly if the overlay isn't
+        // currently open. Unlike renderDiscardViewer(), this is never
+        // called from renderDecksScreen() -- there's no live state to
+        // resync against, deckLookViewerCards only ever changes via the
+        // three action handlers below, each of which re-renders this
+        // itself right after splicing the acted-on card out.
+        function renderDeckLookViewer() {
+            const overlay = document.getElementById('game-deck-look-viewer-overlay');
+            const titleEl = document.getElementById('game-deck-look-viewer-title');
+            const stackEl = document.getElementById('game-deck-look-viewer-stack');
+            if (!overlay || !titleEl || !stackEl || !deckLookViewerDeckName) return;
+
+            const deckName = deckLookViewerDeckName;
+            titleEl.textContent = `Top of ${deckName}`;
+
+            if (!deckLookViewerCards.length) {
+                stackEl.style.height = '';
+                stackEl.innerHTML = `<p class="game-deck-look-empty">Nothing left to look at -- close this and draw as normal.</p>`;
+                return;
+            }
+
+            const readOnly = isActiveSaveReadOnly();
+            // Same amount-shape as renderDiscardViewer()'s own
+            // stackEl.style.height -- see DISCARD_OPTIONS_EXPAND_ROOM's
+            // comment, this options panel is the same 70px tall, just 3
+            // columns instead of 2.
+            stackEl.style.height = (HAND_CARD_OVERLAP * (deckLookViewerCards.length - 1) + HAND_CARD_HEIGHT + DISCARD_OPTIONS_EXPAND_ROOM + STACK_TOP_GAP) + 'px';
+            stackEl.innerHTML = deckLookViewerCards.map((cardId, i) => {
+                const card = CARDS_BY_ID[cardId];
+                const name = card ? card.name : cardId;
+                const optionsInner = `
+                    <div class="game-deck-look-card-options-grid">
+                        <button class="filter-btn game-deck-look-top-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Top of Deck</button>
+                        <button class="filter-btn game-deck-look-bottom-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Bottom of Deck</button>
+                        <button class="filter-btn exclude game-deck-look-hand-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Add to Hand</button>
+                    </div>
+                `;
+                return `
+                    <div class="game-deck-look-card" style="top: ${i * HAND_CARD_OVERLAP + STACK_TOP_GAP}px; z-index: ${i + 1};" tabindex="0">
+                        <div class="game-deck-look-card-face">
+                            ${card && card.imageUrl ? `<img class="game-deck-look-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}
+                        </div>
+                        <div class="game-deck-look-card-options">${optionsInner}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // The viewer's own three per-card actions -- each fires the
+        // matching network request (requestLookMoveToTop()/-ToBottom()/
+        // -AddToHand()) AND removes that one card from this local
+        // snapshot immediately rather than waiting on a round trip, same
+        // "optimistic, Host confirms silently" trust every other deck
+        // action here already extends to its own requester.
+        function resolveDeckLookCard(cardId, action) {
+            const deckName = deckLookViewerDeckName;
+            if (!deckName) return;
+            const idx = deckLookViewerCards.indexOf(cardId);
+            if (idx !== -1) deckLookViewerCards.splice(idx, 1);
+            if (action === 'top') requestLookMoveToTop(deckName, cardId);
+            else if (action === 'bottom') requestLookMoveToBottom(deckName, cardId);
+            else if (action === 'hand') requestLookAddToHand(deckName, cardId);
+            renderDeckLookViewer();
         }
 
         // The four evolution-corner icons -- see the chat this was
@@ -19848,7 +20477,7 @@
         // real Gameplay Companion needs to make). Villain/Elite Four/Path
         // of Legends/Starfall Street changes still run through here too,
         // since they're still progress worth saving even though
-        // computeBadgeCount()/computeBadgePoints() themselves ignore
+        // computeBadgePoints() itself ignores
         // them.
         //
         // Lobby-aware (see GAME_PANEL_NOTES.md's Leading-Player Stage
@@ -19873,23 +20502,20 @@
             markUnsavedProgressChanged();
             renderBadgeGrid();
             const data = getActiveSaveData();
-            const badgeCount = computeBadgeCount(data);
             const badgePoints = computeBadgePoints(data);
 
             if (lobbyState.role === 'guest') {
-                reportLobbyProgress(badgeCount, badgePoints);
+                reportLobbyProgress(badgePoints);
                 return;
             }
             if (lobbyState.role === 'host') {
-                lobbyState.playerProgress.host = { badgeCount, badgePoints };
+                lobbyState.playerProgress.host = { badgePoints };
                 recomputeLobbyLeadingStage();
                 return;
             }
             const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
             setActiveGameStage(deriveGameStage(
                 save ? save.gameLength : 'medium',
-                save ? save.stageRule : 'count',
-                badgeCount,
                 badgePoints
             ));
         }
@@ -21293,6 +21919,8 @@
                 closeTeamCardImageViewer();
                 closeTeamDetailOverlay();
                 closeDiscardViewer();
+                closeDeckLookPrompt();
+                closeDeckLookViewer();
             }
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
@@ -21402,7 +22030,7 @@
             connections: new Map(), // host-only: peer id -> { conn, name }
             hostConn: null,      // guest-only: this device's DataConnection to the host
             players: [],         // shared roster shape: [{ id, name, isHost }]
-            // Host-only: peer id -> { badgeCount, badgePoints }, keyed
+            // Host-only: peer id -> { badgePoints }, keyed
             // the same way `connections` is, plus a synthetic 'host' key
             // for the host's own progress. See reportLobbyProgress()/
             // recomputeLobbyLeadingStage() below (Leading-Player Stage).
@@ -21889,7 +22517,6 @@
                 // change or a guest to join. See recomputeLobbyLeadingStage().
                 const hostData = getActiveSaveData();
                 lobbyState.playerProgress.host = {
-                    badgeCount: computeBadgeCount(hostData),
                     badgePoints: computeBadgePoints(hostData),
                 };
                 enterActiveLobbyState();
@@ -21922,7 +22549,6 @@
                 hostSaveId: hostSave.hostSaveId,
                 hostName: lobbyState.hostName,
                 region: hostSave.region,
-                stageRule: hostSave.stageRule,
                 gameLength: hostSave.gameLength,
                 typeEffectivenessRule: hostSave.typeEffectivenessRule,
                 hpRule: hostSave.hpRule,
@@ -21962,7 +22588,6 @@
             lobbyState.playerProgress = {};
             const hostData = getActiveSaveData();
             lobbyState.playerProgress.host = {
-                badgeCount: computeBadgeCount(hostData),
                 badgePoints: computeBadgePoints(hostData),
             };
             recomputeLobbyLeadingStage();
@@ -22029,8 +22654,8 @@
                     // which broadcasts the result the same way. See
                     // requestMusicTransportAction()/applyMusicTransportAction().
                     applyMusicTransportAction(data.action);
-                } else if (data.type === 'progress' && typeof data.badgeCount === 'number' && typeof data.badgePoints === 'number') {
-                    lobbyState.playerProgress[conn.peer] = { badgeCount: data.badgeCount, badgePoints: data.badgePoints };
+                } else if (data.type === 'progress' && typeof data.badgePoints === 'number') {
+                    lobbyState.playerProgress[conn.peer] = { badgePoints: data.badgePoints };
                     recomputeLobbyLeadingStage();
                 } else if (data.type === 'identify' && typeof data.name === 'string') {
                     // The real name, now that the guest has resolved who
@@ -22064,6 +22689,16 @@
                     hostApplyReturnDiscardToHand(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-shuffle-in' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyShuffleDiscardIntoDraw(data.deck, data.cardId);
+                } else if (data.type === 'deck-shuffle' && typeof data.deck === 'string') {
+                    hostApplyShuffleDeck(data.deck);
+                } else if (data.type === 'deck-look-request' && typeof data.deck === 'string' && typeof data.count === 'number') {
+                    hostApplyLookRequest(data.deck, conn.peer, data.count);
+                } else if (data.type === 'deck-look-to-top' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyLookMoveToTop(data.deck, data.cardId);
+                } else if (data.type === 'deck-look-to-bottom' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyLookMoveToBottom(data.deck, data.cardId);
+                } else if (data.type === 'deck-look-to-hand' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyLookAddToHand(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-manual-pull' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyManualPull(data.deck, data.cardId);
                 } else if (data.type === 'deck-return-unattached' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -22162,30 +22797,26 @@
         // ---- Leading-Player Stage (see GAME_PANEL_NOTES.md §3) ----
         //
         // Host-only: recomputes which connected player -- including the
-        // host itself -- is furthest along, using whichever metric this
-        // save's own stageRule actually cares about (badges or points),
+        // host itself -- is furthest along by badge points,
         // and pushes the result into the Sounds panel via
         // setActiveGameStage() -- the same "one call" hook
         // deriveGameStage() has always fed (see afterBadgeChange()
         // below), just now driven by the whole lobby's progress instead
-        // of only this device's own. The ruleset itself (gameLength/
-        // stageRule) still comes from the *host's* own active save --
-        // there's only one Sounds panel actually playing music, and it's
-        // the host's, so it's the host's rules that decide when it
-        // changes stage. A guest's own local Game Stage is deliberately
-        // left alone while connected (see afterBadgeChange()) since only
-        // the host's device is the one actually playing anything.
+        // of only this device's own. The ruleset itself (gameLength)
+        // still comes from the *host's* own active save -- there's only
+        // one Sounds panel actually playing music, and it's the host's,
+        // so it's the host's rules that decide when it changes stage. A
+        // guest's own local Game Stage is deliberately left alone while
+        // connected (see afterBadgeChange()) since only the host's device
+        // is the one actually playing anything.
         function recomputeLobbyLeadingStage() {
             if (lobbyState.role !== 'host') return;
             const progressList = Object.values(lobbyState.playerProgress);
             if (progressList.length === 0) return;
             const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
-            const leadingBadgeCount = Math.max(...progressList.map(p => p.badgeCount || 0));
             const leadingBadgePoints = Math.max(...progressList.map(p => p.badgePoints || 0));
             setActiveGameStage(deriveGameStage(
                 save ? save.gameLength : 'medium',
-                save ? save.stageRule : 'count',
-                leadingBadgeCount,
                 leadingBadgePoints
             ));
         }
@@ -22195,9 +22826,9 @@
         // resolved (see finalizeGuestJoin() -- not simply on connection
         // open, since which save's progress to report isn't known until
         // then) and again from afterBadgeChange() any time it changes.
-        function reportLobbyProgress(badgeCount, badgePoints) {
+        function reportLobbyProgress(badgePoints) {
             if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
-                lobbyState.hostConn.send({ type: 'progress', badgeCount, badgePoints });
+                lobbyState.hostConn.send({ type: 'progress', badgePoints });
             }
         }
 
@@ -22614,8 +23245,6 @@
             const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
             setActiveGameStage(deriveGameStage(
                 save ? save.gameLength : 'medium',
-                save ? save.stageRule : 'count',
-                computeBadgeCount(data),
                 computeBadgePoints(data)
             ));
         }
@@ -22738,6 +23367,13 @@
                     getLocalHandArray().push(data.cardId);
                     persistLocalHand();
                     renderDecksScreen();
+                } else if (data.type === 'deck-look-result' && typeof data.deck === 'string' && Array.isArray(data.cards)) {
+                    // The private reply to this device's own
+                    // requestLookAtTopCards() -- see
+                    // hostApplyLookRequest()'s own comment on why this
+                    // is the one deck message that only ever goes to
+                    // the one connection that asked, never broadcast.
+                    openDeckLookViewer(data.deck, data.cards);
                 } else if (data.type === 'hand-remove' && typeof data.cardId === 'string') {
                     // Mirror image of 'deck-drawn' above -- a card this
                     // device itself just discarded or Attached leaving
@@ -22800,7 +23436,6 @@
             lobbyState.hostName = data.hostName;
             lobbyState.hostRuleset = {
                 region: data.region,
-                stageRule: data.stageRule,
                 gameLength: data.gameLength,
                 typeEffectivenessRule: data.typeEffectivenessRule,
                 hpRule: data.hpRule,
@@ -22868,7 +23503,6 @@
                 existing.hostNameCache = lobbyState.hostName;
                 existing.lastPlayed = now;
                 existing.region = ruleset.region;
-                existing.stageRule = ruleset.stageRule;
                 existing.gameLength = ruleset.gameLength;
                 existing.typeEffectivenessRule = ruleset.typeEffectivenessRule;
                 existing.hpRule = ruleset.hpRule;
@@ -22883,7 +23517,6 @@
                     createdAt: now,
                     lastPlayed: now,
                     region: ruleset.region,
-                    stageRule: ruleset.stageRule,
                     gameLength: ruleset.gameLength,
                     typeEffectivenessRule: ruleset.typeEffectivenessRule,
                     hpRule: ruleset.hpRule,
@@ -22929,7 +23562,7 @@
             // away, rather than waiting for the first badge change after
             // joining.
             const data = getActiveSaveData();
-            reportLobbyProgress(computeBadgeCount(data), computeBadgePoints(data));
+            reportLobbyProgress(computeBadgePoints(data));
         }
 
         function leaveLobby() {
@@ -22970,6 +23603,24 @@
             const deckDiscardBtn = e.target.closest('.game-deck-discard-btn');
             if (deckDiscardBtn) {
                 openDiscardViewer(deckDiscardBtn.dataset.deck);
+                return;
+            }
+
+            const extraDecksToggleBtn = e.target.closest('.game-extra-decks-toggle-btn');
+            if (extraDecksToggleBtn) {
+                toggleExtraDecksSection();
+                return;
+            }
+
+            const deckShuffleBtn = e.target.closest('.game-deck-shuffle-btn');
+            if (deckShuffleBtn) {
+                requestShuffleDeck(deckShuffleBtn.dataset.deck);
+                return;
+            }
+
+            const deckLookBtn = e.target.closest('.game-deck-look-btn');
+            if (deckLookBtn) {
+                openDeckLookPrompt(deckLookBtn.dataset.deck);
                 return;
             }
 
@@ -23118,7 +23769,6 @@
                 createSave(Number(confirmBtn.dataset.slot), {
                     name: nameInput.value.trim(),
                     region: regionSelect.value,
-                    stageRule: slotEl.querySelector('.game-new-rule-select').value,
                     gameLength: slotEl.querySelector('.game-new-length-select').value,
                     typeEffectivenessRule: slotEl.querySelector('.game-new-type-rule-select').value,
                     hpRule: slotEl.querySelector('.game-new-hp-rule-select').value,
@@ -23856,6 +24506,67 @@
             document.querySelectorAll('.game-discard-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
         });
 
+        // "Look at Top X Cards" prompt -- Cancel or the backdrop backs
+        // out with nothing sent (see closeDeckLookPrompt()'s own
+        // comment); Look/Enter confirms. No card-stack mechanics here,
+        // it's just a text input.
+        document.getElementById('game-deck-look-prompt-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-deck-look-prompt-overlay' || e.target.closest('.game-deck-look-prompt-cancel-btn')) {
+                closeDeckLookPrompt();
+                return;
+            }
+            if (e.target.closest('.game-deck-look-prompt-confirm-btn')) {
+                confirmDeckLookPrompt();
+            }
+        });
+
+        document.getElementById('game-deck-look-prompt-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') confirmDeckLookPrompt();
+        });
+
+        // The peeked-cards viewer -- exact same shape as
+        // #game-discard-viewer-overlay's own listener just above (see
+        // its comment for the full reasoning on ordering/blank-space
+        // deselect), just resolving through resolveDeckLookCard()
+        // instead of calling the request functions directly, since this
+        // one also has to update the local snapshot (see that
+        // function's own comment).
+        document.getElementById('game-deck-look-viewer-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-deck-look-viewer-overlay' || e.target.closest('.game-deck-look-viewer-close-btn')) {
+                closeDeckLookViewer();
+                return;
+            }
+            const topBtn = e.target.closest('.game-deck-look-top-btn');
+            if (topBtn) {
+                resolveDeckLookCard(topBtn.dataset.cardId, 'top');
+                return;
+            }
+            const bottomBtn = e.target.closest('.game-deck-look-bottom-btn');
+            if (bottomBtn) {
+                resolveDeckLookCard(bottomBtn.dataset.cardId, 'bottom');
+                return;
+            }
+            const handBtn = e.target.closest('.game-deck-look-hand-btn');
+            if (handBtn) {
+                resolveDeckLookCard(handBtn.dataset.cardId, 'hand');
+                return;
+            }
+            const lookCard = e.target.closest('.game-deck-look-card');
+            if (lookCard) {
+                const wasExpanded = lookCard.classList.contains('is-expanded');
+                document.querySelectorAll('.game-deck-look-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
+                if (!wasExpanded) lookCard.classList.add('is-expanded');
+                return;
+            }
+            document.querySelectorAll('.game-deck-look-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
+        });
+
+        document.getElementById('game-deck-look-viewer-overlay').addEventListener('mouseover', (e) => {
+            const lookCard = e.target.closest('.game-deck-look-card');
+            if (!lookCard || lookCard.classList.contains('is-expanded')) return;
+            document.querySelectorAll('.game-deck-look-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
+        });
+
         // Tapping anywhere closes it -- the image itself has cursor:
         // default (see its own CSS comment) but no separate stopPropagation,
         // so a tap on the image closes it too, same as tapping the
@@ -24131,7 +24842,6 @@
         // preferences in this app (audio settings, filters, etc.).
         document.getElementById('game-scroll').addEventListener('change', (e) => {
             const defaultFieldMap = {
-                'game-save-default-rule': 'stageRule',
                 'game-save-default-length': 'gameLength',
                 'game-save-default-type-rule': 'typeEffectivenessRule',
                 'game-save-default-hp-rule': 'hpRule',
@@ -27435,9 +28145,16 @@
         }
 
         // Clicking empty space in the gallery (not on a card/image) closes
-        // the magnify panel if it's open.
+        // the magnify panel if it's open. Guarded by
+        // outsideClickDragOriginatedInPanel: a click-and-drag to
+        // highlight text inside the search box (or anywhere else in
+        // #filter-panel) that happens to release over the gallery still
+        // fires a native 'click' here targeting the gallery -- without
+        // the guard that would close the panel out from under someone
+        // who was only ever trying to select text, not click away from
+        // it. See that flag's own comment below for how it's tracked.
         gallery.addEventListener('click', (e) => {
-            if (e.target === gallery) closeOpenPanels();
+            if (e.target === gallery && !outsideClickDragOriginatedInPanel) closeOpenPanels();
         });
 
         // Gallery-side half of the team-add flow -- see
@@ -27500,8 +28217,13 @@
         // since gallery isn't an ancestor of body. Catching a direct click
         // on body itself closes the panel from that seam too, without
         // needing to chase down and eliminate every such rounding gap.
+        // See gallery's own click listener above for why this is guarded
+        // by outsideClickDragOriginatedInPanel too -- a drag-select
+        // released over this same body seam is just as capable of
+        // triggering a spurious click here as it is over the gallery
+        // itself.
         document.body.addEventListener('click', (e) => {
-            if (e.target === document.body) closeOpenPanels();
+            if (e.target === document.body && !outsideClickDragOriginatedInPanel) closeOpenPanels();
         });
 
         document.querySelectorAll('.filter-section-header').forEach(header => {
