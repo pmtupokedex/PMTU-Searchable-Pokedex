@@ -2021,6 +2021,124 @@
             width: 160px;
         }
 
+        /* ---- Permanent Cards panel (see the chat this was designed
+           in, renderDecksScreen()'s own Permanent Cards section) ----
+           Sits at the very bottom of the Decks screen, below Your
+           Hand/Other Players (moved there per the chat this was
+           requested in) -- once a card's Discard/Permanent/Shuffle/
+           Attach choice resolves to Permanent (see
+           hostApplyActiveCardPermanent()), it lands here and stays for
+           the rest of the game; there's no Discard/Return path back out
+           of this panel the way Hand has. Unlike the Active Card zone,
+           this section never collapses to nothing -- it's always shown
+           (with an empty-state message, same convention as
+           .game-hand-empty) so it's obvious the panel exists even
+           before anything's landed in it. Three cards per row (see
+           .game-permanent-card-thumb below) rather than flex-wrapped
+           fixed-width thumbs, so a row of cards fills the panel's full
+           width instead of leaving empty space on the right. */
+        .game-permanent-cards-list {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 14px;
+            padding: 10px;
+            box-sizing: border-box;
+            margin-bottom: 18px;
+        }
+
+        /* Each thumb now fills its 1-of-3 grid column (rather than a
+           fixed 100x140) -- aspect-ratio keeps the same card
+           proportions (100:140, i.e. 5:7) as it scales, instead of a
+           hardcoded pixel height. Not an overlapping stack like Your
+           Hand, since every one of them needs to stay simultaneously
+           visible rather than being thumbed through one at a time.
+           Clicking one opens it full size instead (see
+           openPermanentCardViewer()). The art itself is a real <img>
+           (.game-permanent-card-thumb-img below), not a CSS
+           background-image, matching every other card render in the
+           app (.game-hand-card-img, .game-active-card-img, etc.) --
+           browsers downscale a real <img> more smoothly than a
+           background-image painted onto a small box, and
+           background-image was the blocky/pixelated culprit here. */
+        .game-permanent-card-thumb {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 100 / 140;
+            padding: 0;
+            margin: 0;
+            border: none;
+            border-radius: 8px;
+            background-color: rgba(255, 255, 255, 0.08);
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.12s ease, filter 0.12s ease;
+        }
+
+        .game-permanent-card-thumb:hover,
+        .game-permanent-card-thumb:focus-visible {
+            transform: translateY(-2px);
+            filter: brightness(1.15);
+        }
+
+        .game-permanent-card-thumb-img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .game-permanent-cards-empty {
+            grid-column: 1 / -1;
+            opacity: 0.75;
+            font-style: italic;
+        }
+
+        /* Full-size viewer -- one card at a time, formatted like a
+           single .game-shop-menu-item (card face on top, its own
+           action panel below), per the chat this was designed in. Only
+           one placeholder button for now; more get filled in later. */
+        .game-permanent-card-viewer-face {
+            display: block;
+            position: relative;
+            width: 252px;
+            max-width: 100%;
+            aspect-ratio: 252 / 352;
+            margin: 0 auto 16px;
+            background: #1b1f33;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 20px;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+            overflow: hidden;
+        }
+
+        .game-permanent-card-viewer-img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #game-permanent-card-viewer-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-permanent-card-viewer-overlay.visible {
+            display: flex;
+        }
+
         /* ---- Hand & Decks tool ----
            One row per deck (see DECK_TOOL_LIST) -- Draw button on the
            left, draw/discard counts plus the Shuffle/Look at Top
@@ -2099,9 +2217,15 @@
             text-align: center;
         }
 
+        /* No longer stretched full-width (per the chat this was
+           changed in) -- these three buttons size to their own content
+           now, centered in the column like .game-deck-info above them,
+           rather than spanning the same width the Shuffle/Look at Top
+           utility row below still does. */
         .game-deck-row--extra .game-deck-draw-btn,
-        .game-deck-row--extra .game-deck-reward-btn {
-            width: 100%;
+        .game-deck-row--extra .game-deck-reward-btn,
+        .game-deck-row--extra .game-deck-shop-btn {
+            align-self: center;
         }
 
         /* Sits directly in the .game-deck-row--extra column now (not
@@ -2114,15 +2238,20 @@
 
         /* Now a real <button> (opens #game-discard-viewer-overlay via
            openDiscardViewer(), see the delegated click listener) rather
-           than a plain <img> -- same "paint the art as background-image
-           on a plain button" approach as .game-deck-draw-btn--image
-           above, sized to match it (100x140) so the row reads as two
-           equal card-sized controls bookending the deck's name/counts.
-           .empty (an inert <span>, not a button -- see
-           renderDecksScreen()) keeps the same fixed footprint so the
-           row doesn't reflow depending on whether this deck has ever
-           had anything discarded into it yet. */
+           than a plain <img> -- sized to match .game-deck-draw-btn--image
+           (100x140) so the row reads as two equal card-sized controls
+           bookending the deck's name/counts. .empty (an inert <span>,
+           not a button -- see renderDecksScreen()) keeps the same
+           fixed footprint so the row doesn't reflow depending on
+           whether this deck has ever had anything discarded into it
+           yet. The art itself is a real <img>
+           (.game-deck-discard-btn-img below), not a CSS
+           background-image -- same fix, and same reasoning, as
+           .game-permanent-card-thumb/.game-permanent-card-thumb-img
+           above: a background-image painted onto a small box scales
+           blockier than a real <img> does. */
         .game-deck-discard-btn {
+            position: relative;
             width: 100px;
             height: 140px;
             padding: 0;
@@ -2130,9 +2259,6 @@
             border: none;
             border-radius: 8px;
             background-color: rgba(255, 255, 255, 0.08);
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
             overflow: hidden;
             flex-shrink: 0;
             cursor: pointer;
@@ -2143,6 +2269,14 @@
         .game-deck-discard-btn:focus-visible {
             transform: translateY(-2px);
             filter: brightness(1.15);
+        }
+
+        .game-deck-discard-btn-img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
 
         .game-deck-discard-btn.empty {
@@ -2554,6 +2688,15 @@
             gap: 8px;
         }
 
+        /* Event/Nature discards (see deckSkipsReturnToHand()) only ever
+           show Shuffle into Deck, no Return to Hand -- collapses the
+           grid to a single column so that one remaining button fills
+           the whole row instead of sitting in the left cell with an
+           empty cell beside it. */
+        .game-discard-card-options-grid--single {
+            grid-template-columns: 1fr;
+        }
+
         .game-discard-card-options-grid .filter-btn {
             margin: 0;
             width: 100%;
@@ -2561,6 +2704,26 @@
             box-sizing: border-box;
             font-size: 12px;
             padding: 4px;
+        }
+
+        /* Key Items (see cardIsKeyItem()) shown in place of the
+           Return to Hand/Shuffle into Deck buttons -- per the chat
+           this was requested in, neither action is available for
+           these once discarded, so there's nothing to grid two
+           buttons for. */
+        .game-discard-card-options-grid--locked {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .game-discard-key-item-note {
+            opacity: 0.75;
+            font-style: italic;
+            font-size: 12px;
+            padding: 0 6px;
+            color: #ffffff;
         }
 
         .game-discard-empty {
@@ -2593,55 +2756,85 @@
            card list here uses (.game-discard-stack/.game-deck-look-stack)
            -- see the chat this was designed in: the player needs to
            see every option at a glance to pick the right one, not peel
-           through a pile one at a time. A plain wrapping grid instead,
-           scrollable on its own so the Close button and title stay put
-           regardless of how many cards a given reward deck has. */
+           through a pile one at a time. Same outer container chrome as
+           .game-deck-look-stack (background/border/border-radius/
+           padding) for visual consistency with the rest of this panel,
+           per the chat this was tried in -- just a plain vertical flow
+           of cards inside it instead of that stack's absolute-position
+           overlap, and scrollable on its own so the Close button and
+           title stay put regardless of how many cards a given reward
+           deck has. */
         .game-reward-menu-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-            gap: 10px;
-            max-height: 55vh;
-            overflow-y: auto;
-            padding: 4px 2px;
-            margin-bottom: 4px;
-        }
-
-        .game-reward-menu-item {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 6px;
+            gap: 14px;
+            max-height: 55vh;
+            overflow-y: auto;
             background: rgba(0, 0, 0, 0.35);
             border: 2px solid rgba(255, 255, 255, 0.2);
-            border-radius: 10px;
-            padding: 8px 6px;
+            border-radius: 14px;
+            padding: 10px;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+        }
+
+        /* The card's own visual chrome -- deliberately copied from
+           .game-hand-card/.game-hand-card-face (and
+           .game-deck-look-card/-face, identical to it) verbatim
+           (background, border, border-radius, box-shadow) rather than
+           reinvented, per the chat this was tried in: whatever was
+           jagged about the bare-image version, this exact pattern is
+           already proven not to have that problem elsewhere in this
+           same panel. No hover transform any more (see the chat this
+           was dropped in) -- these don't move at all now, just flow
+           one after another in .game-reward-menu-grid's own vertical
+           list rather than the hand/look stacks' position:absolute
+           overlap. */
+        .game-reward-menu-item {
+            display: block;
+            width: 252px;
+            max-width: 100%;
+            aspect-ratio: 252 / 352;
+            background: none;
+            border: none;
+            padding: 0;
             cursor: pointer;
-            transition: transform 0.12s ease, filter 0.12s ease;
+            flex-shrink: 0;
         }
 
-        .game-reward-menu-item:not(:disabled):hover,
-        .game-reward-menu-item:not(:disabled):focus-visible {
-            transform: translateY(-2px);
-            filter: brightness(1.15);
-        }
-
-        .game-reward-menu-item-img {
+        .game-reward-menu-item-face {
+            display: block;
+            position: relative;
             width: 100%;
-            aspect-ratio: 5 / 7;
-            object-fit: cover;
-            border-radius: 6px;
+            height: 100%;
+            background: #1b1f33;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 20px;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+            overflow: hidden;
+            transition: box-shadow 0.22s ease;
         }
 
-        .game-reward-menu-item-name {
-            font-size: 12px;
-            font-weight: bold;
-            text-align: center;
-            color: #fff;
-            line-height: 1.25;
+        .game-reward-menu-item:not(:disabled):hover .game-reward-menu-item-face,
+        .game-reward-menu-item:not(:disabled):focus-visible .game-reward-menu-item-face {
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.6);
+        }
+
+        /* Plain fill of .game-reward-menu-item-face above -- no
+           border-radius of its own (see .game-hand-card-img, the
+           element this is copied from), exact same position:absolute/
+           inset:0/object-fit:cover shape. */
+        .game-reward-menu-item-img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
 
         /* Already-claimed oneTime cards (see getLocalOneTimeClaims()) --
-           sorted to the end of the grid by renderRewardMenu() rather
+           sorted to the end of the list by renderRewardMenu() rather
            than removed outright, so it stays visible that this reward
            exists and that THIS player already has one, just no longer
            actionable. */
@@ -2671,6 +2864,163 @@
         }
 
         #game-reward-menu-overlay.visible {
+            display: flex;
+        }
+
+        /* Gain Reward confirmation -- see the chat this was added in
+           (a plain accidental-tap guard, one stage, unlike the Team
+           Tracker's two-stage release confirm). Sits above
+           #game-reward-menu-overlay itself (higher z-index, same
+           reasoning as #game-team-card-image-viewer's own comment
+           above) since it opens on top of it rather than replacing it
+           -- the menu stays visible/dimmed underneath so Cancel just
+           drops straight back into picking. */
+        #game-reward-confirm-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 30;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-reward-confirm-overlay.visible {
+            display: flex;
+        }
+
+        /* ---- "Shop for Items" menu ----
+           Same outer chrome/reasoning as .game-reward-menu-grid right
+           above (every card listed at a glance, scrollable, no
+           overlapping-stack peel-through) but each card carries its own
+           always-visible action panel underneath it instead of being a
+           single click target -- see the chat this was designed in.
+           There's no confirm-overlay step here the way Gain Reward has
+           one: Buy/Take are already a single deliberate tap on a
+           clearly-labeled button, not a bare card face that could be
+           mis-tapped while scrolling. */
+        .game-shop-menu-grid {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+            max-height: 55vh;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 14px;
+            padding: 10px;
+            margin-bottom: 16px;
+            box-sizing: border-box;
+        }
+
+        /* One card + its own action panel, flowing one after another
+           in .game-shop-menu-grid's vertical list -- same width as
+           .game-reward-menu-item so the two menus read consistently. */
+        .game-shop-menu-item {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 8px;
+            width: 252px;
+            max-width: 100%;
+            flex-shrink: 0;
+        }
+
+        /* Card art itself -- same treatment as .game-reward-menu-item-face
+           verbatim (this module's card is never a <button> in its own
+           right, so no cursor/hover state to carry over). */
+        .game-shop-menu-item-face {
+            display: block;
+            position: relative;
+            width: 100%;
+            aspect-ratio: 252 / 352;
+            background: #1b1f33;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 20px;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+            overflow: hidden;
+        }
+
+        .game-shop-menu-item-img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* The always-visible action panel below every card -- same
+           "Cost buys it, Take is free" pair the chat this was designed
+           in settled on. Deliberately NOT the hidden-until-clicked
+           .game-hand-card-options treatment -- these need to be visible
+           by default so the player can compare every card's cost at a
+           glance while shopping, not commit to expanding one at a time. */
+        .game-shop-menu-item-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        /* Poké Coins disabled for the active save (see
+           isPokeCoinsEnabledForActiveSave()) -- renderShopMenu() drops
+           the Buy button from the markup entirely rather than just
+           disabling it, so Take gets the full row to itself instead of
+           sitting alone in a two-column grid. */
+        .game-shop-menu-item-actions--take-only {
+            grid-template-columns: 1fr;
+        }
+
+        .game-shop-menu-item-actions .filter-btn {
+            margin: 0;
+            width: 100%;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }
+
+        /* Disabled either by read-only mode or (Buy only) not having
+           enough Poké Coins on hand right now -- see renderShopMenu().
+           Same dimmed/no-pointer treatment as every other disabled
+           .filter-btn in this tool. */
+        .game-shop-menu-item-actions .filter-btn:disabled {
+            opacity: 0.45;
+            cursor: default;
+        }
+
+        .game-shop-buy-btn-icon {
+            width: 16px;
+            height: 16px;
+            object-fit: contain;
+            flex-shrink: 0;
+        }
+
+        .game-shop-menu-empty {
+            opacity: 0.75;
+            font-style: italic;
+        }
+
+        /* Backdrop + centering shell -- same convention as every other
+           #game-*-overlay (see #game-discard-viewer-overlay above). */
+        #game-shop-menu-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-shop-menu-overlay.visible {
             display: flex;
         }
 
@@ -10810,6 +11160,17 @@
                      entirely in solo play (see renderDecksScreen()). -->
                 <div class="game-section-header" id="game-other-hands-header" style="display: none;">Other Players</div>
                 <div class="game-other-hands-list" id="game-other-hands-list"></div>
+
+                <!-- Cards resolved as "Permanent" from the Active Card
+                     zone above (see hostApplyActiveCardPermanent()) land
+                     here and stay for the rest of the game -- rebuilt by
+                     renderDecksScreen() alongside everything else on
+                     this screen. Always shown, even empty (see its own
+                     CSS module comment). Sits at the very bottom of the
+                     panel, below Your Hand/Other Players, per the chat
+                     this was moved in. -->
+                <div class="game-section-header">Permanent Cards</div>
+                <div class="game-permanent-cards-list" id="game-permanent-cards-list"></div>
             </div>
 
             <div class="game-screen" id="game-screen-lobby">
@@ -11196,6 +11557,58 @@
                 <div class="game-reward-menu-grid" id="game-reward-menu-grid"></div>
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude game-reward-menu-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Plain accidental-tap guard on top of the menu above -- see
+             openRewardGainConfirm()/confirmRewardGain() in the script. -->
+        <div id="game-reward-confirm-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-reward-confirm-title">Gain this card?</p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-reward-confirm-yes-btn">Yes</button>
+                    <button class="filter-btn exclude game-reward-confirm-no-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- "Shop for Items" menu -- see openShopMenu()/closeShopMenu()/
+             renderShopMenu() in the script. Only used by DECK_SHOP_MENU
+             decks (Shop Deck for now). Same "list every card at a
+             glance" layout as the Gain Reward menu above, but every
+             card carries its own always-visible two-button panel
+             (Buy for its Poké Coin cost, or Take for free) instead of
+             the card itself being the click target -- no separate
+             confirm step, tapping Buy/Take is already the deliberate
+             action. -->
+        <div id="game-shop-menu-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-shop-menu-title">Shop for Items</p>
+                <div class="game-shop-menu-grid" id="game-shop-menu-grid"></div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-shop-menu-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Full-size viewer for one Permanent Cards panel card -- see
+             openPermanentCardViewer()/closePermanentCardViewer()/
+             renderPermanentCardViewer() in the script. Formatted like a
+             single Shop menu item (card face, then its own action panel
+             below) per the chat this was designed in -- just one
+             placeholder button for now, more to follow. -->
+        <div id="game-permanent-card-viewer-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-permanent-card-viewer-title"></p>
+                <span class="game-permanent-card-viewer-face">
+                    <img class="game-permanent-card-viewer-img" id="game-permanent-card-viewer-img" src="" alt="">
+                </span>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-permanent-card-placeholder-btn" type="button">Placeholder</button>
+                </div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-permanent-card-viewer-close-btn">Close</button>
                 </div>
             </div>
         </div>
@@ -15476,6 +15889,18 @@
         // no longer means anything for a deck listed here.
         const DECK_GAIN_REWARD_MENU = { 'Reward Item Deck': true };
 
+        // Decks whose Draw button becomes a "Shop for Items" button
+        // instead -- opens a menu (see openShopMenu()/renderShopMenu())
+        // listing every card in the deck individually, alphabetically,
+        // same "no shuffled drawPile behind it any more" shape as
+        // DECK_GAIN_REWARD_MENU just above. Unlike that menu though,
+        // every card here shows its own always-visible Buy/Take panel
+        // rather than opening a single Yes/Cancel confirm -- see the
+        // chat this was designed in. Supply is unlimited the same way
+        // DECK_GAIN_REWARD_MENU's cards are (qty in cards.json no
+        // longer means anything for a deck listed in either lookup).
+        const DECK_SHOP_MENU = { 'Shop Deck': true };
+
         // Fisher-Yates -- used once per fresh deck build and again any
         // time discardPile gets folded back into drawPile (see
         // drawFromHostDeck() below).
@@ -15499,6 +15924,30 @@
             if (card.region === undefined || card.region === null) return true;
             const activeRegion = getActiveRegionForBadges();
             return Array.isArray(card.region) ? card.region.includes(activeRegion) : card.region === activeRegion;
+        }
+
+        // Event Deck and Nature Deck discards skip "Return to Hand" --
+        // per the chat this was requested in -- while still keeping
+        // "Shuffle into Deck" available. Checked both in
+        // renderDiscardViewer() (so the button never even renders for
+        // these two piles) and again in hostApplyReturnDiscardToHand()
+        // itself (so a stale client can't bypass the UI and ask
+        // directly), same trust-but-verify shape as the keyItem/oneTime
+        // checks above.
+        function deckSkipsReturnToHand(deckName) {
+            return deckName === 'Event Deck' || deckName === 'Nature Deck';
+        }
+
+        // A `"keyItem": "yes"` card (Master Ball, Dynamax Band, etc.)
+        // is permanently stuck in the discard pile once it lands there
+        // -- no Return to Hand, no Shuffle into Deck (see the chat
+        // this was requested in). Checked both in renderDiscardViewer()
+        // (so the buttons never even render for one) and again in
+        // hostApplyReturnDiscardToHand()/hostApplyShuffleDiscardIntoDraw()
+        // themselves (so a stale client can't bypass the UI and ask
+        // directly), same trust-but-verify shape as the oneTime cap.
+        function cardIsKeyItem(card) {
+            return !!card && card.keyItem === 'yes';
         }
 
         // Expands cards.json's own qty field into that many physical
@@ -15750,6 +16199,82 @@
             return store[guestClientId];
         }
 
+        // ---- Permanent Cards panel storage (see the chat this was
+        // designed in) ----
+        //
+        // Exact same shape/reasoning as the hand storage just above --
+        // this device's OWN permanent cards live on getActiveSaveData()
+        // (persisted locally regardless of role, and kept in sync via
+        // 'permanent-sync'/'permanent-added' below), every OTHER
+        // connected player's live on the HOST's own save instead, keyed
+        // by that player's persistent guestClientId. Once a card lands
+        // here (see hostApplyActiveCardPermanent()) it never leaves --
+        // there's no discard/return mutator the way hand has, only
+        // getters and the one push in hostApplyActiveCardPermanent()
+        // itself.
+        function getLocalPermanentArray() {
+            const data = getActiveSaveData();
+            if (!Array.isArray(data.permanentCards)) data.permanentCards = [];
+            return data.permanentCards;
+        }
+
+        function persistLocalPermanent() {
+            if (activeGuestSaveId !== null) persistGameGuestSaves();
+            else if (activeSaveSlot !== null) persistGameSaves();
+        }
+
+        // Same "fall back to an in-memory-only object before there's a
+        // real save to hold it" shape as unsavedGuestHands above.
+        let unsavedGuestPermanentCards = {};
+        function ensureGuestPermanentStore() {
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
+                if (!gameSaves[activeSaveSlot].guestPermanentCards || typeof gameSaves[activeSaveSlot].guestPermanentCards !== 'object') {
+                    gameSaves[activeSaveSlot].guestPermanentCards = {};
+                }
+                return gameSaves[activeSaveSlot].guestPermanentCards;
+            }
+            return unsavedGuestPermanentCards;
+        }
+
+        function getPeerPermanentArray(peerId) {
+            const guestClientId = resolveGuestClientIdForPeer(peerId);
+            if (!guestClientId) return null;
+            const store = ensureGuestPermanentStore();
+            if (!Array.isArray(store[guestClientId])) store[guestClientId] = [];
+            return store[guestClientId];
+        }
+
+        // Dept. Store Sale (see the chat this was requested in) is a
+        // one-of -- only a single copy exists in the deck -- so at most
+        // one player can ever have it in their Permanent Cards panel at
+        // once. Identified by name rather than a cards.json field, same
+        // "hardcode the one specific card/deck this rule cares about"
+        // approach as deckSkipsReturnToHand() above.
+        function cardIsDeptStoreSale(card) {
+            return !!card && card.name === 'Dept. Store Sale';
+        }
+
+        // Host-side only: which player (by the same identity keys
+        // broadcastDeckState() already uses for handCounts -- 'host' or
+        // a connected guest's peerId) currently has Dept. Store Sale in
+        // their Permanent Cards panel, or null if nobody does. Checked
+        // fresh every broadcast rather than cached -- Permanent Cards
+        // has no removal mutator yet (see getLocalPermanentArray()'s
+        // own comment), so this doubles as the "costs return to normal
+        // once the card leaves the zone" behavior for free: there's no
+        // separate flag to remember to clear, the discount just stops
+        // showing up once the card's no longer in anyone's array.
+        function findDeptStoreSaleHolder() {
+            if (getLocalPermanentArray().some(id => cardIsDeptStoreSale(CARDS_BY_ID[id]))) return 'host';
+            if (lobbyState.connections) {
+                for (const peerId of lobbyState.connections.keys()) {
+                    const arr = getPeerPermanentArray(peerId);
+                    if (arr && arr.some(id => cardIsDeptStoreSale(CARDS_BY_ID[id]))) return peerId;
+                }
+            }
+            return null;
+        }
+
         // ---- Per-player one-time-reward claims (see the chat this was
         // added in) ----
         //
@@ -15884,6 +16409,41 @@
             renderRewardMenu(); // no-op unless this exact menu is open -- see its own comment
         }
 
+        // Same shape as hostApplyGainReward() just above, for a
+        // DECK_SHOP_MENU deck's own "Shop for Items" menu -- the player
+        // picked cardId themselves (via either its Buy or Take button,
+        // see requestBuyShopCard()/requestTakeShopCard()), so there's
+        // no drawPile/discardPile involved here either. Unlike
+        // hostApplyGainReward() there's no oneTime cap to re-check --
+        // no Shop Deck card is tagged oneTime (see cards.json) -- and
+        // no Poké Coin deduction happens here either: the cost was
+        // already paid (or waived, for Take) purely locally on the
+        // buying device by the caller before this ever runs, since
+        // Poké Coins is a per-device tracker, never networked the way
+        // hands/decks are (see isPokeCoinsEnabledForActiveSave()'s own
+        // comment). This function's only job is putting the card in
+        // the right hand.
+        function hostApplyShopAcquire(deckName, peerKey, cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (!card || card.cardDeck !== deckName) return; // stale menu / unknown card -- ignore
+            if (peerKey === 'host') {
+                getLocalHandArray().push(cardId);
+                persistLocalHand();
+            } else {
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return; // hasn't identified yet -- ignore a stray request
+                hand.push(cardId);
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                // Reuses 'deck-drawn' -- same reasoning as
+                // hostApplyGainReward()'s own comment on this.
+                if (entry && entry.conn.open) entry.conn.send({ type: 'deck-drawn', deck: deckName, cardId });
+            }
+            broadcastDeckState();
+            renderDecksScreen();
+            renderShopMenu(); // no-op unless this exact menu is open -- see its own comment
+        }
+
         // Same shape as hostApplyDraw() above, for discarding a card
         // already in hand back to the pile.
         function hostApplyDiscard(deckName, peerKey, cardId) {
@@ -15998,12 +16558,32 @@
 
         // "Permanent" -- the card's effect is considered permanently in
         // play rather than a one-time use, so it doesn't return to
-        // either pile at all; it's simply removed from circulation for
-        // the rest of the game (no discard-pile reshuffle will ever
-        // bring it back). Clears the zone the same as Discard.
+        // either pile at all; instead it's pushed into peerKey's own
+        // Permanent Cards panel (see getLocalPermanentArray()/
+        // getPeerPermanentArray()), where it stays, visible, for the
+        // rest of the game -- no discard-pile reshuffle, and no
+        // mutator anywhere that removes a card from this array once
+        // it's landed. Clears the zone the same as Discard.
         function hostApplyActiveCardPermanent(peerKey) {
             const active = readHostActiveCard();
             if (!active || active.actorKey !== peerKey) return;
+            const card = CARDS_BY_ID[active.cardId];
+            if (!card || card.canPermanent !== 'yes') return;
+            if (peerKey === 'host') {
+                getLocalPermanentArray().push(active.cardId);
+                persistLocalPermanent();
+            } else {
+                const permanent = getPeerPermanentArray(peerKey);
+                if (permanent) {
+                    permanent.push(active.cardId);
+                    persistGameSaves();
+                    const entry = lobbyState.connections.get(peerKey);
+                    // Mirrors the card straight into this guest's own
+                    // local cache -- see 'permanent-added' handling in
+                    // the guest-side message switch further down.
+                    if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-added', cardId: active.cardId });
+                }
+            }
             writeHostActiveCard(null);
             broadcastDeckState();
             renderDecksScreen();
@@ -16051,6 +16631,8 @@
         // hand, it doesn't matter whether it came off the top of
         // drawPile or out of discardPile.
         function hostApplyReturnDiscardToHand(deckName, peerKey, cardId) {
+            if (cardIsKeyItem(CARDS_BY_ID[cardId])) return; // Key Items are stuck once discarded -- see cardIsKeyItem()
+            if (deckSkipsReturnToHand(deckName)) return; // Event/Nature discards skip Return to Hand -- see deckSkipsReturnToHand()
             const store = ensureHostDeckStore();
             if (!store) return;
             ensureDeckBuilt(store, deckName);
@@ -16081,6 +16663,7 @@
         // peerKey/hand-side branch needed, any player's request has the
         // same effect on this shared pile.
         function hostApplyShuffleDiscardIntoDraw(deckName, cardId) {
+            if (cardIsKeyItem(CARDS_BY_ID[cardId])) return; // Key Items are stuck once discarded -- see cardIsKeyItem()
             const store = ensureHostDeckStore();
             if (!store) return;
             ensureDeckBuilt(store, deckName);
@@ -16308,7 +16891,7 @@
                     handCounts[peerId] = (getPeerHandArray(peerId) || []).length;
                 });
             }
-            const payload = { type: 'deck-state', decks, handCounts, activeCard: readHostActiveCard() };
+            const payload = { type: 'deck-state', decks, handCounts, activeCard: readHostActiveCard(), deptStoreSaleHolder: findDeptStoreSaleHolder() };
             if (lobbyState.connections) {
                 lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
             }
@@ -16356,6 +16939,83 @@
             } else {
                 hostApplyDiscard(deckName, 'host', cardId);
             }
+        }
+
+        // Shared by requestBuyShopCard()/requestTakeShopCard() below --
+        // both ultimately just need cardId in the right hand, they only
+        // differ in whether a Poké Coin cost gets paid first. Same
+        // role-based routing as requestGainReward() -- a connected
+        // guest asks the Host, the Host (or solo play) applies directly.
+        function acquireShopCard(deckName, cardId) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-shop-acquire', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyShopAcquire(deckName, 'host', cardId);
+            }
+        }
+
+        // This device's own identity key in the same 'host'/peerId shape
+        // broadcastDeckState()'s handCounts and deptStoreSaleHolder use
+        // -- host and solo play both bucket under 'host' (see
+        // getLocalPermanentArray()'s own comment), only a connected
+        // guest uses its own peer id.
+        function getMyPermanentIdentityKey() {
+            return lobbyState.role === 'guest' ? getMyLobbyPlayerId() : 'host';
+        }
+
+        // Dept. Store Sale (see cardIsDeptStoreSale()/
+        // findDeptStoreSaleHolder()) discounts Poké Coin shop costs
+        // while it sits in someone's Permanent Cards panel -- 50% off
+        // for whoever's holding it, 25% off for everyone else, no
+        // discount if nobody has it (or before the first deck-state
+        // broadcast arrives). 1 = full price.
+        function getPokeCoinDiscountFactor() {
+            const holder = guestDeckStateCache && guestDeckStateCache.deptStoreSaleHolder;
+            if (!holder) return 1;
+            return holder === getMyPermanentIdentityKey() ? 0.5 : 0.75;
+        }
+
+        // A card's actual Poké Coin cost after the Dept. Store Sale
+        // discount (see getPokeCoinDiscountFactor()) is applied and
+        // rounded up -- shared by renderShopMenu()'s own displayed
+        // price and requestBuyShopCard()'s actual deduction below, so
+        // the two can never drift apart.
+        function getShopCardCost(card) {
+            const base = typeof card.pokeCoinCost === 'number' ? card.pokeCoinCost : 0;
+            return Math.ceil(base * getPokeCoinDiscountFactor());
+        }
+
+        // The Shop menu's own Buy button (see .game-shop-buy-btn in
+        // renderShopMenu()). Poké Coins is purely a per-device tracker
+        // (see isPokeCoinsEnabledForActiveSave()'s own comment), so the
+        // cost is deducted right here, on THIS device alone, regardless
+        // of Host/guest/solo role -- there's no server round trip for
+        // the coin spend itself, only for landing the card in the
+        // right hand afterward. Re-checks both the read-only guard and
+        // the balance server-... er, locally -- same trust-but-verify
+        // shape as every other mutator here, since renderShopMenu()
+        // already disables this exact button once either is true, but
+        // a stale click already in flight shouldn't be able to sneak
+        // a purchase through anyway.
+        function requestBuyShopCard(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            const card = CARDS_BY_ID[cardId];
+            if (!card) return;
+            const cost = getShopCardCost(card);
+            const data = getActiveSaveData();
+            const balance = typeof data.pokeCoins === 'number' ? data.pokeCoins : 3;
+            if (balance < cost) return; // not enough Poké Coins -- button should already be disabled
+            adjustPokeCoins(-cost);
+            acquireShopCard(deckName, cardId);
+        }
+
+        // The Shop menu's own Take button -- identical to Buy above
+        // minus the Poké Coin cost entirely.
+        function requestTakeShopCard(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            acquireShopCard(deckName, cardId);
         }
 
         // The Play button in a hand card's own options grid -- see
@@ -16964,6 +17624,17 @@
                 `;
             }
 
+            if (isExtra && DECK_SHOP_MENU[deckName]) {
+                return `
+                    <div class="game-deck-row game-deck-row--extra">
+                        <span class="game-deck-info">
+                            <span class="game-deck-name">${escapeHtml(deckName)}</span>
+                        </span>
+                        <button class="filter-btn game-deck-shop-btn" type="button" data-deck="${escapeHtml(deckName)}">Shop for Items</button>
+                    </div>
+                `;
+            }
+
             const topCard = info.discardTop ? CARDS_BY_ID[info.discardTop] : null;
             const canDraw = (info.drawCount + info.discardCount) > 0;
             const backImg = DECK_BACK_IMAGES[deckName];
@@ -16995,7 +17666,7 @@
             }
 
             const discardBtn = topCard && topCard.imageUrl
-                ? `<button class="game-deck-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" aria-label="View ${escapeHtml(deckName)} discard pile, ${info.discardCount} card${info.discardCount === 1 ? '' : 's'}" title="View discard pile" style="background-image:url('${topCard.imageUrl}')"></button>`
+                ? `<button class="game-deck-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" aria-label="View ${escapeHtml(deckName)} discard pile, ${info.discardCount} card${info.discardCount === 1 ? '' : 's'}" title="View discard pile"><img class="game-deck-discard-btn-img" src="${topCard.imageUrl}" alt="${escapeHtml(topCard.name || '')}"></button>`
                 : `<span class="game-deck-discard-btn empty" aria-hidden="true"></span>`;
             return `
                 <div class="game-deck-row">
@@ -17024,7 +17695,27 @@
             const handEl = document.getElementById('game-hand-stack');
             const othersHeaderEl = document.getElementById('game-other-hands-header');
             const othersListEl = document.getElementById('game-other-hands-list');
+            const permanentListEl = document.getElementById('game-permanent-cards-list');
             if (!listEl || !handEl) return;
+
+            // Permanent Cards panel -- plain small thumbnails, every one
+            // simultaneously visible (no overlapping stack the way Your
+            // Hand uses), since nothing here is ever picked up again;
+            // see hostApplyActiveCardPermanent()'s own comment. Same
+            // empty-state message convention as .game-hand-empty.
+            if (permanentListEl) {
+                const permanentCards = getLocalPermanentArray();
+                if (!permanentCards.length) {
+                    permanentListEl.innerHTML = `<p class="game-permanent-cards-empty">No Permanent cards yet.</p>`;
+                } else {
+                    permanentListEl.innerHTML = permanentCards.map(cardId => {
+                        const card = CARDS_BY_ID[cardId];
+                        const name = card ? card.name : cardId;
+                        const img = card && card.imageUrl ? `<img class="game-permanent-card-thumb-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : '';
+                        return `<button class="game-permanent-card-thumb" type="button" data-card-id="${escapeHtml(cardId)}" aria-label="View ${escapeHtml(name)}" title="${escapeHtml(name)}">${img}</button>`;
+                    }).join('');
+                }
+            }
 
             const deckInfo = getDeckInfoMap();
             const isGuest = lobbyState.role === 'guest';
@@ -17172,12 +17863,13 @@
 
             if (isActor && !info.committed) {
                 const canAttach = !readOnly && card && card.canAttach === 'yes';
+                const canPermanent = !readOnly && card && card.canPermanent === 'yes';
                 zoneEl.innerHTML = `
                     <div class="game-active-card-view actor">
                         ${imgTag}
                         <div class="game-active-card-actions">
                             <button class="filter-btn game-active-card-discard-btn" type="button" ${readOnly ? 'disabled' : ''}>Discard</button>
-                            <button class="filter-btn game-active-card-permanent-btn" type="button" ${readOnly ? 'disabled' : ''}>Permanent</button>
+                            ${canPermanent ? `<button class="filter-btn game-active-card-permanent-btn" type="button">Permanent</button>` : ''}
                             <button class="filter-btn game-active-card-shuffle-btn" type="button" ${readOnly ? 'disabled' : ''}>Shuffle</button>
                             ${canAttach ? `<button class="filter-btn game-active-card-attach-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Attach</button>` : ''}
                         </div>
@@ -17257,9 +17949,15 @@
             stackEl.innerHTML = pile.map((cardId, i) => {
                 const card = CARDS_BY_ID[cardId];
                 const name = card ? card.name : cardId;
-                const optionsInner = `
-                    <div class="game-discard-card-options-grid">
-                        <button class="filter-btn game-discard-return-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Return to Hand</button>
+                const optionsInner = cardIsKeyItem(card)
+                    ? `
+                    <div class="game-discard-card-options-grid game-discard-card-options-grid--locked">
+                        <span class="game-discard-key-item-note">Key Items can't be reclaimed from the discard pile.</span>
+                    </div>
+                `
+                    : `
+                    <div class="game-discard-card-options-grid${deckSkipsReturnToHand(deckName) ? ' game-discard-card-options-grid--single' : ''}">
+                        ${deckSkipsReturnToHand(deckName) ? '' : `<button class="filter-btn game-discard-return-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Return to Hand</button>`}
                         <button class="filter-btn exclude game-discard-shuffle-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Shuffle into Deck</button>
                     </div>
                 `;
@@ -17293,6 +17991,37 @@
         function closeRewardMenu() {
             rewardMenuDeckName = null;
             document.getElementById('game-reward-menu-overlay').classList.remove('visible');
+        }
+
+        // The pending {deckName, cardId} between a menu tap and the
+        // Yes/Cancel confirm below -- null while the confirm isn't
+        // open. Plain accidental-tap guard, per the chat this was
+        // added in -- no server round trip happens until Yes.
+        let pendingRewardGain = null;
+
+        function openRewardGainConfirm(deckName, cardId) {
+            const card = CARDS_BY_ID[cardId];
+            pendingRewardGain = { deckName, cardId };
+            const titleEl = document.getElementById('game-reward-confirm-title');
+            if (titleEl) titleEl.textContent = `Gain ${card ? card.name : 'this card'}?`;
+            const overlay = document.getElementById('game-reward-confirm-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        // Cancel, the backdrop, or the confirm firing successfully all
+        // route here -- drops back to the still-open menu underneath
+        // with nothing sent.
+        function closeRewardGainConfirm() {
+            pendingRewardGain = null;
+            const overlay = document.getElementById('game-reward-confirm-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        function confirmRewardGain() {
+            if (!pendingRewardGain) return;
+            const { deckName, cardId } = pendingRewardGain;
+            requestGainReward(deckName, cardId);
+            closeRewardGainConfirm();
         }
 
         // Rebuilds the menu's own grid for whichever deck
@@ -17340,11 +18069,146 @@
                 const isClaimed = card.oneTime === 'yes' && claimed.includes(card.id);
                 return `
                     <button class="game-reward-menu-item" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(card.id)}" ${(isClaimed || readOnly) ? 'disabled' : ''} aria-label="Gain ${escapeHtml(card.name)}" title="${isClaimed ? 'Already claimed' : 'Gain ' + escapeHtml(card.name)}">
-                        ${card.imageUrl ? `<img class="game-reward-menu-item-img" src="${card.imageUrl}" alt="${escapeHtml(card.name)}">` : ''}
-                        <span class="game-reward-menu-item-name">${escapeHtml(card.name)}</span>
+                        <span class="game-reward-menu-item-face">
+                            ${card.imageUrl ? `<img class="game-reward-menu-item-img" src="${card.imageUrl}" alt="${escapeHtml(card.name)}">` : ''}
+                        </span>
                     </button>
                 `;
             }).join('');
+        }
+
+        // ---- "Shop for Items" menu (see the chat this was designed
+        // in) ----
+        //
+        // Which DECK_SHOP_MENU deck the overlay is currently showing --
+        // same single-source-of-truth shape as rewardMenuDeckName above.
+        let shopMenuDeckName = null;
+
+        // Opens the menu for one DECK_SHOP_MENU deck -- tapping that
+        // deck's own "Shop for Items" button (see .game-deck-shop-btn
+        // in buildDeckRowHtml()).
+        function openShopMenu(deckName) {
+            shopMenuDeckName = deckName;
+            renderShopMenu();
+            document.getElementById('game-shop-menu-overlay').classList.add('visible');
+        }
+
+        function closeShopMenu() {
+            shopMenuDeckName = null;
+            document.getElementById('game-shop-menu-overlay').classList.remove('visible');
+        }
+
+        // Rebuilds the menu's own grid for whichever deck
+        // shopMenuDeckName currently points at -- same "every card in
+        // cards.json with this cardDeck" source as renderRewardMenu()
+        // (no drawPile/discardPile behind a DECK_SHOP_MENU deck any
+        // more), sorted alphabetically. Each card gets its own Buy
+        // button (labeled with its pokeCoinCost, disabled if read-only
+        // OR this device's own Poké Coin balance can't cover it) and
+        // Take button (disabled only if read-only). No-ops harmlessly
+        // if the overlay isn't currently open, same as renderRewardMenu(),
+        // so it's safe to call any time the balance or hand might have
+        // changed underneath it.
+        function renderShopMenu() {
+            const overlay = document.getElementById('game-shop-menu-overlay');
+            const titleEl = document.getElementById('game-shop-menu-title');
+            const gridEl = document.getElementById('game-shop-menu-grid');
+            if (!overlay || !titleEl || !gridEl || !shopMenuDeckName) return;
+
+            const deckName = shopMenuDeckName;
+            titleEl.textContent = deckName;
+
+            const cards = Object.values(CARDS_BY_ID)
+                .filter(c => c.cardDeck === deckName && cardMatchesActiveRegion(c))
+                .sort((a, b) => a.name.localeCompare(b.name));
+
+            if (!cards.length) {
+                gridEl.innerHTML = `<p class="game-shop-menu-empty">No cards found for this deck.</p>`;
+                return;
+            }
+
+            const readOnly = isActiveSaveReadOnly();
+            const coinsEnabled = isPokeCoinsEnabledForActiveSave();
+            const saveData = getActiveSaveData();
+            const balance = typeof saveData.pokeCoins === 'number' ? saveData.pokeCoins : 3;
+
+            gridEl.innerHTML = cards.map(card => {
+                const cost = getShopCardCost(card);
+                const canAfford = balance >= cost;
+                // Buy only shows up at all once the save's own "Use
+                // Poké Coins?" house rule is turned on (see
+                // isPokeCoinsEnabledForActiveSave()) -- a save that
+                // never opted into tracking coins has nothing for a
+                // cost button to spend, so Take is the only option.
+                // .game-shop-menu-item-actions--take-only switches the
+                // grid to a single column so Take doesn't sit stranded
+                // in a two-column layout with nothing beside it.
+                const buyBtn = coinsEnabled ? `
+                            <button class="filter-btn game-shop-buy-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(card.id)}" ${(readOnly || !canAfford) ? 'disabled' : ''} aria-label="Buy ${escapeHtml(card.name)} for ${cost} Pok\u00e9 Coins" title="${!canAfford ? 'Not enough Pok\u00e9 Coins' : 'Buy for ' + cost}">
+                                <img class="game-shop-buy-btn-icon" src="https://dl.dropboxusercontent.com/scl/fi/o63sd5nvfxkf6xj3yokv9/pokecoin-sm.png?rlkey=u9o5o0sz8trg9lnb1zbyeftmm&st=oso6uy1c&dl=1" alt="">
+                                <span>${cost}</span>
+                            </button>` : '';
+                return `
+                    <div class="game-shop-menu-item">
+                        <span class="game-shop-menu-item-face">
+                            ${card.imageUrl ? `<img class="game-shop-menu-item-img" src="${card.imageUrl}" alt="${escapeHtml(card.name)}">` : ''}
+                        </span>
+                        <div class="game-shop-menu-item-actions${coinsEnabled ? '' : ' game-shop-menu-item-actions--take-only'}">
+                            ${buyBtn}
+                            <button class="filter-btn exclude game-shop-take-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(card.id)}" ${readOnly ? 'disabled' : ''} aria-label="Take ${escapeHtml(card.name)}">Take</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // ---- Permanent Cards panel viewer (see the chat this was
+        // designed in) ----
+        //
+        // Which card the overlay is currently showing full-size --
+        // just a cardId, since the card itself never gets acted on from
+        // here yet (only Placeholder below, to be replaced later).
+        let permanentCardViewerCardId = null;
+
+        // Opens the full-size viewer for one card in the Permanent
+        // Cards panel -- tapping its own thumbnail (see
+        // .game-permanent-card-thumb in renderDecksScreen()).
+        function openPermanentCardViewer(cardId) {
+            permanentCardViewerCardId = cardId;
+            renderPermanentCardViewer();
+            document.getElementById('game-permanent-card-viewer-overlay').classList.add('visible');
+        }
+
+        function closePermanentCardViewer() {
+            permanentCardViewerCardId = null;
+            document.getElementById('game-permanent-card-viewer-overlay').classList.remove('visible');
+        }
+
+        // Fills in the viewer's own title/image for whichever card
+        // permanentCardViewerCardId currently points at -- formatted
+        // like a single .game-shop-menu-item (card face, then its own
+        // action panel below it), per the chat this was designed in.
+        // Only a single Placeholder button lives in that panel for now
+        // (see the HTML comment above #game-permanent-card-viewer-overlay);
+        // real actions get filled in later. No-ops harmlessly if the
+        // overlay isn't currently open, same as renderShopMenu().
+        function renderPermanentCardViewer() {
+            const overlay = document.getElementById('game-permanent-card-viewer-overlay');
+            const titleEl = document.getElementById('game-permanent-card-viewer-title');
+            const imgEl = document.getElementById('game-permanent-card-viewer-img');
+            if (!overlay || !titleEl || !imgEl || !permanentCardViewerCardId) return;
+
+            const card = CARDS_BY_ID[permanentCardViewerCardId];
+            titleEl.textContent = card ? card.name : permanentCardViewerCardId;
+            if (card && card.imageUrl) {
+                imgEl.src = card.imageUrl;
+                imgEl.alt = card.name;
+                imgEl.style.display = '';
+            } else {
+                imgEl.src = '';
+                imgEl.alt = '';
+                imgEl.style.display = 'none';
+            }
         }
 
         // ---- "Look at Top X Cards" UI ----
@@ -22166,6 +23030,10 @@
             }
             markUnsavedProgressChanged();
             renderPokeCoins();
+            // Keeps the Shop menu's own Buy buttons' disabled state
+            // (see renderShopMenu()) in sync with the balance that just
+            // changed -- no-ops harmlessly if that menu isn't open.
+            renderShopMenu();
         }
 
         // Swaps the value span for the text input, pre-filled and
@@ -23134,6 +24002,11 @@
                         entry.guestClientId = data.guestClientId;
                         const hand = getPeerHandArray(conn.peer) || [];
                         if (conn.open) conn.send({ type: 'hand-sync', cards: hand.slice() });
+                        // Same reconciliation, same reasoning, for this
+                        // guestClientId's own Permanent Cards panel (see
+                        // getPeerPermanentArray()).
+                        const permanent = getPeerPermanentArray(conn.peer) || [];
+                        if (conn.open) conn.send({ type: 'permanent-sync', cards: permanent.slice() });
                         // Same reconciliation as 'hand-sync' just above,
                         // for this guestClientId's own one-time-reward
                         // claims (see getPeerOneTimeClaims()) -- the
@@ -23149,6 +24022,8 @@
                     hostApplyDraw(data.deck, conn.peer);
                 } else if (data.type === 'deck-gain-reward' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyGainReward(data.deck, conn.peer, data.cardId);
+                } else if (data.type === 'deck-shop-acquire' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyShopAcquire(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-discard' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyDiscard(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-discard-to-hand' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -23883,6 +24758,22 @@
                     getActiveSaveData().hand = data.cards.slice();
                     persistLocalHand();
                     renderDecksScreen();
+                } else if (data.type === 'permanent-added' && typeof data.cardId === 'string') {
+                    // A card this device itself just made Permanent from
+                    // the Active Card zone, confirmed by the Host (see
+                    // hostApplyActiveCardPermanent()) -- added straight
+                    // to the local Permanent Cards panel and persisted
+                    // the same way any other Guest Save field is.
+                    getLocalPermanentArray().push(data.cardId);
+                    persistLocalPermanent();
+                    renderDecksScreen();
+                } else if (data.type === 'permanent-sync' && Array.isArray(data.cards)) {
+                    // Same "Host's authoritative copy wins" reconciliation
+                    // as 'hand-sync' above, sent alongside it right after
+                    // 'identify'.
+                    getActiveSaveData().permanentCards = data.cards.slice();
+                    persistLocalPermanent();
+                    renderDecksScreen();
                 } else if (data.type === 'one-time-claims-sync' && data.claims && typeof data.claims === 'object') {
                     // Same "Host's authoritative copy wins" reconciliation
                     // as 'hand-sync' just above, sent alongside it right
@@ -24100,6 +24991,18 @@
             const deckRewardBtn = e.target.closest('.game-deck-reward-btn');
             if (deckRewardBtn) {
                 openRewardMenu(deckRewardBtn.dataset.deck);
+                return;
+            }
+
+            const deckShopBtn = e.target.closest('.game-deck-shop-btn');
+            if (deckShopBtn) {
+                openShopMenu(deckShopBtn.dataset.deck);
+                return;
+            }
+
+            const permanentCardThumb = e.target.closest('.game-permanent-card-thumb');
+            if (permanentCardThumb) {
+                openPermanentCardViewer(permanentCardThumb.dataset.cardId);
                 return;
             }
 
@@ -25020,7 +25923,50 @@
             }
             const rewardItem = e.target.closest('.game-reward-menu-item');
             if (rewardItem && !rewardItem.disabled) {
-                requestGainReward(rewardItem.dataset.deck, rewardItem.dataset.cardId);
+                openRewardGainConfirm(rewardItem.dataset.deck, rewardItem.dataset.cardId);
+            }
+        });
+
+        // Yes/Cancel/backdrop for the accidental-tap guard above.
+        document.getElementById('game-reward-confirm-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-reward-confirm-overlay' || e.target.closest('.game-reward-confirm-no-btn')) {
+                closeRewardGainConfirm();
+                return;
+            }
+            if (e.target.closest('.game-reward-confirm-yes-btn')) {
+                confirmRewardGain();
+            }
+        });
+
+        // "Shop for Items" menu -- backdrop/Close dismiss with nothing
+        // sent, same as every other overlay. No confirm step here (see
+        // the CSS module comment above #game-shop-menu-overlay) --
+        // Buy/Take fire straight from their own already-disabled-when-
+        // appropriate buttons (see renderShopMenu()).
+        document.getElementById('game-shop-menu-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-shop-menu-overlay' || e.target.closest('.game-shop-menu-close-btn')) {
+                closeShopMenu();
+                return;
+            }
+            const buyBtn = e.target.closest('.game-shop-buy-btn');
+            if (buyBtn && !buyBtn.disabled) {
+                requestBuyShopCard(buyBtn.dataset.deck, buyBtn.dataset.cardId);
+                return;
+            }
+            const takeBtn = e.target.closest('.game-shop-take-btn');
+            if (takeBtn && !takeBtn.disabled) {
+                requestTakeShopCard(takeBtn.dataset.deck, takeBtn.dataset.cardId);
+            }
+        });
+
+        // Permanent Cards panel's own full-size viewer -- backdrop/
+        // Close dismiss, same as every other overlay. Placeholder
+        // button is inert for now (see the HTML comment above
+        // #game-permanent-card-viewer-overlay) -- no handler wired up
+        // until its real behavior is decided.
+        document.getElementById('game-permanent-card-viewer-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-permanent-card-viewer-overlay' || e.target.closest('.game-permanent-card-viewer-close-btn')) {
+                closePermanentCardViewer();
             }
         });
 
