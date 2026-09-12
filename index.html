@@ -2099,7 +2099,8 @@
             text-align: center;
         }
 
-        .game-deck-row--extra .game-deck-draw-btn {
+        .game-deck-row--extra .game-deck-draw-btn,
+        .game-deck-row--extra .game-deck-reward-btn {
             width: 100%;
         }
 
@@ -2584,6 +2585,92 @@
         }
 
         #game-discard-viewer-overlay.visible {
+            display: flex;
+        }
+
+        /* ---- "Gain Reward" menu ----
+           Deliberately NOT the overlapping-stack treatment every other
+           card list here uses (.game-discard-stack/.game-deck-look-stack)
+           -- see the chat this was designed in: the player needs to
+           see every option at a glance to pick the right one, not peel
+           through a pile one at a time. A plain wrapping grid instead,
+           scrollable on its own so the Close button and title stay put
+           regardless of how many cards a given reward deck has. */
+        .game-reward-menu-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+            max-height: 55vh;
+            overflow-y: auto;
+            padding: 4px 2px;
+            margin-bottom: 4px;
+        }
+
+        .game-reward-menu-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 8px 6px;
+            cursor: pointer;
+            transition: transform 0.12s ease, filter 0.12s ease;
+        }
+
+        .game-reward-menu-item:not(:disabled):hover,
+        .game-reward-menu-item:not(:disabled):focus-visible {
+            transform: translateY(-2px);
+            filter: brightness(1.15);
+        }
+
+        .game-reward-menu-item-img {
+            width: 100%;
+            aspect-ratio: 5 / 7;
+            object-fit: cover;
+            border-radius: 6px;
+        }
+
+        .game-reward-menu-item-name {
+            font-size: 12px;
+            font-weight: bold;
+            text-align: center;
+            color: #fff;
+            line-height: 1.25;
+        }
+
+        /* Already-claimed oneTime cards (see getLocalOneTimeClaims()) --
+           sorted to the end of the grid by renderRewardMenu() rather
+           than removed outright, so it stays visible that this reward
+           exists and that THIS player already has one, just no longer
+           actionable. */
+        .game-reward-menu-item:disabled {
+            opacity: 0.4;
+            filter: grayscale(70%);
+            cursor: default;
+        }
+
+        .game-reward-menu-empty {
+            opacity: 0.75;
+            font-style: italic;
+        }
+
+        /* Backdrop + centering shell -- same convention as every other
+           #game-*-overlay (see #game-discard-viewer-overlay above). */
+        #game-reward-menu-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-reward-menu-overlay.visible {
             display: flex;
         }
 
@@ -11092,6 +11179,27 @@
             </div>
         </div>
 
+        <!-- "Gain Reward" menu -- see openRewardMenu()/closeRewardMenu()/
+             renderRewardMenu() in the script. Only used by
+             DECK_GAIN_REWARD_MENU decks (Reward Item Deck for now).
+             Unlike every other card list in this tool, these are
+             listed individually rather than overlapping in a stack --
+             the whole point is picking exactly one by sight, not
+             thumbing through a pile -- sorted alphabetically, with any
+             oneTime card THIS player has already claimed (see
+             getLocalOneTimeClaims()) sorted to the end and grayed out
+             rather than removed outright, so it's still visible that
+             it exists and was already claimed. -->
+        <div id="game-reward-menu-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-reward-menu-title">Gain Reward</p>
+                <div class="game-reward-menu-grid" id="game-reward-menu-grid"></div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-reward-menu-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
         <!-- "Look at Top X Cards" -- see openDeckLookPrompt()/
              closeDeckLookPrompt()/confirmDeckLookPrompt() in the
              script. Just asks how many; nothing about the deck itself
@@ -15349,6 +15457,25 @@
         // Deck itself still collects one (via discardToHostDeck()).
         const DECK_RESHUFFLES_ON_EMPTY = { 'Event Deck': true, 'Nature Deck': true };
 
+        // Decks whose Draw button becomes a "Gain Reward" button
+        // instead -- opens a menu (see openRewardMenu()/
+        // renderRewardMenu()) listing every card in the deck
+        // individually, alphabetically, so the player picks exactly
+        // which one they're owed rather than drawing at random. These
+        // decks also skip the Shuffle/Look at Top buttons entirely
+        // (see buildDeckRowHtml()) -- there's no shuffled drawPile
+        // left to act on, per the chat this was redesigned in.
+        //
+        // A card tagged `"oneTime": "yes"` in cards.json can only ever
+        // be picked once per player per game -- purely a per-player
+        // cap (see getLocalOneTimeClaims()/getPeerOneTimeClaims()),
+        // other players are entirely unaffected by it and there's no
+        // shared supply limit on top of it. Everything else (any
+        // `"oneTime": "no"` card, and every card in these decks once
+        // Shop Deck joins this list) is unlimited -- qty in cards.json
+        // no longer means anything for a deck listed here.
+        const DECK_GAIN_REWARD_MENU = { 'Reward Item Deck': true };
+
         // Fisher-Yates -- used once per fresh deck build and again any
         // time discardPile gets folded back into drawPile (see
         // drawFromHostDeck() below).
@@ -15623,6 +15750,59 @@
             return store[guestClientId];
         }
 
+        // ---- Per-player one-time-reward claims (see the chat this was
+        // added in) ----
+        //
+        // Exact same shape/reasoning as the hand storage just above --
+        // this device's OWN claims live on getActiveSaveData()
+        // (persisted locally regardless of role), every OTHER
+        // connected player's claims live on the HOST's own save
+        // instead, keyed by deckName then by that player's persistent
+        // guestClientId, so a dropped/reconnecting guest (or a Host
+        // reload) doesn't lose track of which oneTime cards it's
+        // already picked. Whether a given cardId actually needs to be
+        // tracked at all is decided at the call site (hostApplyDraw()
+        // etc. only ever push a oneTime:'yes' card's id in here) --
+        // these two getters/setters don't care what's in the array.
+        function getLocalOneTimeClaims(deckName) {
+            const data = getActiveSaveData();
+            if (!data.oneTimeClaims || typeof data.oneTimeClaims !== 'object') data.oneTimeClaims = {};
+            if (!Array.isArray(data.oneTimeClaims[deckName])) data.oneTimeClaims[deckName] = [];
+            return data.oneTimeClaims[deckName];
+        }
+
+        function persistLocalOneTimeClaims() {
+            if (activeGuestSaveId !== null) persistGameGuestSaves();
+            else if (activeSaveSlot !== null) persistGameSaves();
+        }
+
+        // Same "fall back to an in-memory-only object before there's a
+        // real save to hold it" shape as unsavedGuestHands above.
+        let unsavedGuestOneTimeClaims = {};
+        function ensureGuestOneTimeClaimsStore() {
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
+                if (!gameSaves[activeSaveSlot].guestOneTimeClaims || typeof gameSaves[activeSaveSlot].guestOneTimeClaims !== 'object') {
+                    gameSaves[activeSaveSlot].guestOneTimeClaims = {};
+                }
+                return gameSaves[activeSaveSlot].guestOneTimeClaims;
+            }
+            return unsavedGuestOneTimeClaims;
+        }
+
+        // Returns a direct, mutable reference to peerId's own claimed-
+        // ids array for deckName, creating it (empty) the first time
+        // this exact guestClientId/deckName pair is ever seen. Null
+        // only if peerId hasn't sent 'identify' yet -- same guard
+        // getPeerHandArray() above already takes.
+        function getPeerOneTimeClaims(peerId, deckName) {
+            const guestClientId = resolveGuestClientIdForPeer(peerId);
+            if (!guestClientId) return null;
+            const store = ensureGuestOneTimeClaimsStore();
+            if (!store[guestClientId] || typeof store[guestClientId] !== 'object') store[guestClientId] = {};
+            if (!Array.isArray(store[guestClientId][deckName])) store[guestClientId][deckName] = [];
+            return store[guestClientId][deckName];
+        }
+
         // Host-side: applies a draw for whichever player asked --
         // 'host' for the Host's own device, or a conn.peer id for a
         // connected guest -- then tells everyone what changed. Called
@@ -15651,6 +15831,57 @@
             }
             broadcastDeckState();
             renderDecksScreen();
+        }
+
+        // Same shape as hostApplyDraw() above, but for a
+        // DECK_GAIN_REWARD_MENU deck's own "Gain Reward" menu -- the
+        // player picked cardId themselves (see requestGainReward()),
+        // there's no drawPile/discardPile involved at all any more.
+        // Trusts deckName/cardId came from a real click on that deck's
+        // own menu the same way every other deck action here trusts
+        // its caller, but still re-checks the oneTime cap server-side
+        // (via the Host's own authoritative claims store) rather than
+        // just believing the request, since two rapid clicks/a stale
+        // client could otherwise double-claim.
+        function hostApplyGainReward(deckName, peerKey, cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (!card || card.cardDeck !== deckName) return; // stale menu / unknown card -- ignore
+            const isOneTime = card.oneTime === 'yes';
+            if (peerKey === 'host') {
+                if (isOneTime) {
+                    const claims = getLocalOneTimeClaims(deckName);
+                    if (claims.includes(cardId)) return; // already have this one -- no-op
+                    claims.push(cardId);
+                    persistLocalOneTimeClaims();
+                }
+                getLocalHandArray().push(cardId);
+                persistLocalHand();
+            } else {
+                if (isOneTime) {
+                    const claims = getPeerOneTimeClaims(peerKey, deckName);
+                    if (!claims) return; // hasn't identified yet -- ignore a stray request
+                    if (claims.includes(cardId)) return;
+                    claims.push(cardId);
+                    persistGameSaves();
+                }
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return;
+                hand.push(cardId);
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                // Reuses 'deck-drawn' -- from the receiving guest's own
+                // point of view a card landing in its hand is a card
+                // landing in its hand, same reasoning
+                // hostApplyReturnDiscardToHand() already gives for
+                // reusing it. That handler also mirrors the oneTime
+                // claim into the guest's own local cache (see its own
+                // comment) so its menu still renders correctly grayed
+                // out without a round trip back to the Host.
+                if (entry && entry.conn.open) entry.conn.send({ type: 'deck-drawn', deck: deckName, cardId });
+            }
+            broadcastDeckState();
+            renderDecksScreen();
+            renderRewardMenu(); // no-op unless this exact menu is open -- see its own comment
         }
 
         // Same shape as hostApplyDraw() above, for discarding a card
@@ -16100,6 +16331,19 @@
                 }
             } else {
                 hostApplyDraw(deckName, 'host');
+            }
+        }
+
+        // The Gain Reward menu's own per-card pick -- see
+        // openRewardMenu()/renderRewardMenu() below.
+        function requestGainReward(deckName, cardId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-gain-reward', deck: deckName, cardId });
+                }
+            } else {
+                hostApplyGainReward(deckName, 'host', cardId);
             }
         }
 
@@ -16691,16 +16935,35 @@
         // isExtra (true for anything not in MAIN_DECK_NAMES) switches
         // between the two row shapes: a main deck's row is drawBtn -
         // info - discard thumbnail, left to right; an extra deck's row
-        // is a stacked column (info, then Draw, then Shuffle/Look at
-        // Top) since two of them now sit side by side in the grid (see
-        // .game-deck-row--extra) -- see the chat this was requested in.
-        // Extra decks also skip the discard thumbnail and the
-        // "discarded" count entirely: their cards no longer go into
-        // their own discardPile at all, only into the Item Deck's (see
-        // discardToHostDeck()), so info.discardCount is always 0 for
-        // them and a thumbnail would always render empty.
+        // is a stacked column since two of them now sit side by side
+        // in the grid (see .game-deck-row--extra) -- see the chat this
+        // was requested in. Extra decks also skip the discard
+        // thumbnail and the "discarded" count entirely: their cards no
+        // longer go into their own discardPile at all, only into the
+        // Item Deck's (see discardToHostDeck()), so info.discardCount
+        // is always 0 for them and a thumbnail would always render
+        // empty.
+        //
+        // DECK_GAIN_REWARD_MENU decks (Reward Item Deck) are a third,
+        // even simpler shape on top of that: just the name and a
+        // single "Gain Reward" button, no counts and no Shuffle/Look
+        // at Top -- there's no shuffled drawPile behind this deck any
+        // more for a count to describe, see openRewardMenu() for what
+        // the button actually opens.
         function buildDeckRowHtml(deckName, info, isExtra) {
             info = info || { drawCount: 0, discardCount: 0, discardTop: null, discardPile: [] };
+
+            if (isExtra && DECK_GAIN_REWARD_MENU[deckName]) {
+                return `
+                    <div class="game-deck-row game-deck-row--extra">
+                        <span class="game-deck-info">
+                            <span class="game-deck-name">${escapeHtml(deckName)}</span>
+                        </span>
+                        <button class="filter-btn game-deck-reward-btn" type="button" data-deck="${escapeHtml(deckName)}">Gain Reward</button>
+                    </div>
+                `;
+            }
+
             const topCard = info.discardTop ? CARDS_BY_ID[info.discardTop] : null;
             const canDraw = (info.drawCount + info.discardCount) > 0;
             const backImg = DECK_BACK_IMAGES[deckName];
@@ -17007,6 +17270,79 @@
                         </div>
                         <div class="game-discard-card-options">${optionsInner}</div>
                     </div>
+                `;
+            }).join('');
+        }
+
+        // ---- "Gain Reward" menu (see the chat this was designed in) ----
+        //
+        // Which DECK_GAIN_REWARD_MENU deck the overlay is currently
+        // showing -- null while closed. Same single-source-of-truth
+        // shape as discardViewerDeckName above.
+        let rewardMenuDeckName = null;
+
+        // Opens the menu for one DECK_GAIN_REWARD_MENU deck -- tapping
+        // that deck's own "Gain Reward" button (see
+        // .game-deck-reward-btn in buildDeckRowHtml()).
+        function openRewardMenu(deckName) {
+            rewardMenuDeckName = deckName;
+            renderRewardMenu();
+            document.getElementById('game-reward-menu-overlay').classList.add('visible');
+        }
+
+        function closeRewardMenu() {
+            rewardMenuDeckName = null;
+            document.getElementById('game-reward-menu-overlay').classList.remove('visible');
+        }
+
+        // Rebuilds the menu's own grid for whichever deck
+        // rewardMenuDeckName currently points at. Unlike every other
+        // card list in this tool, every eligible card in the deck is
+        // listed here regardless of whether anyone's ever drawn it --
+        // there's no drawPile/discardPile behind a
+        // DECK_GAIN_REWARD_MENU deck any more (see
+        // hostApplyGainReward()), so "what's in this deck" just means
+        // "every card in cards.json with this cardDeck", read straight
+        // off CARDS_BY_ID. Sorted alphabetically by name; any
+        // oneTime:'yes' card THIS device's own player has already
+        // claimed (see getLocalOneTimeClaims()) is moved to the end of
+        // that alphabetical order and rendered disabled/grayed rather
+        // than removed, so it's still visible that it exists. No-ops
+        // harmlessly if the overlay isn't currently open, same as
+        // renderDiscardViewer() above, so it's safe to call
+        // unconditionally any time local claims might have changed.
+        function renderRewardMenu() {
+            const overlay = document.getElementById('game-reward-menu-overlay');
+            const titleEl = document.getElementById('game-reward-menu-title');
+            const gridEl = document.getElementById('game-reward-menu-grid');
+            if (!overlay || !titleEl || !gridEl || !rewardMenuDeckName) return;
+
+            const deckName = rewardMenuDeckName;
+            titleEl.textContent = deckName;
+
+            const claimed = getLocalOneTimeClaims(deckName);
+            const cards = Object.values(CARDS_BY_ID)
+                .filter(c => c.cardDeck === deckName && cardMatchesActiveRegion(c))
+                .sort((a, b) => {
+                    const aClaimed = a.oneTime === 'yes' && claimed.includes(a.id);
+                    const bClaimed = b.oneTime === 'yes' && claimed.includes(b.id);
+                    if (aClaimed !== bClaimed) return aClaimed ? 1 : -1;
+                    return a.name.localeCompare(b.name);
+                });
+
+            if (!cards.length) {
+                gridEl.innerHTML = `<p class="game-reward-menu-empty">No cards found for this deck.</p>`;
+                return;
+            }
+
+            const readOnly = isActiveSaveReadOnly();
+            gridEl.innerHTML = cards.map(card => {
+                const isClaimed = card.oneTime === 'yes' && claimed.includes(card.id);
+                return `
+                    <button class="game-reward-menu-item" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(card.id)}" ${(isClaimed || readOnly) ? 'disabled' : ''} aria-label="Gain ${escapeHtml(card.name)}" title="${isClaimed ? 'Already claimed' : 'Gain ' + escapeHtml(card.name)}">
+                        ${card.imageUrl ? `<img class="game-reward-menu-item-img" src="${card.imageUrl}" alt="${escapeHtml(card.name)}">` : ''}
+                        <span class="game-reward-menu-item-name">${escapeHtml(card.name)}</span>
+                    </button>
                 `;
             }).join('');
         }
@@ -22798,10 +23134,21 @@
                         entry.guestClientId = data.guestClientId;
                         const hand = getPeerHandArray(conn.peer) || [];
                         if (conn.open) conn.send({ type: 'hand-sync', cards: hand.slice() });
+                        // Same reconciliation as 'hand-sync' just above,
+                        // for this guestClientId's own one-time-reward
+                        // claims (see getPeerOneTimeClaims()) -- the
+                        // whole per-deck object at once rather than one
+                        // deck at a time, since there's no live overlay
+                        // open yet to target a single deck's claims to.
+                        const claimsStore = ensureGuestOneTimeClaimsStore();
+                        const claims = (claimsStore[data.guestClientId] && typeof claimsStore[data.guestClientId] === 'object') ? claimsStore[data.guestClientId] : {};
+                        if (conn.open) conn.send({ type: 'one-time-claims-sync', claims: JSON.parse(JSON.stringify(claims)) });
                         broadcastDeckState();
                     }
                 } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
                     hostApplyDraw(data.deck, conn.peer);
+                } else if (data.type === 'deck-gain-reward' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyGainReward(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-discard' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyDiscard(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-discard-to-hand' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -23485,7 +23832,26 @@
                     // same way any other Guest Save field is.
                     getLocalHandArray().push(data.cardId);
                     persistLocalHand();
+                    // hostApplyGainReward() reuses this same message for
+                    // a Gain Reward menu pick -- if what just landed is
+                    // a oneTime:'yes' card, mirror that claim into this
+                    // device's own local cache too (see
+                    // getLocalOneTimeClaims()) so its own copy of the
+                    // menu renders that card grayed out immediately,
+                    // without waiting on anything else from the Host. A
+                    // harmless no-op for every ordinary (non-reward,
+                    // non-oneTime) draw, since CARDS_BY_ID[cardId].oneTime
+                    // just won't be 'yes' for those.
+                    if (typeof data.deck === 'string') {
+                        const card = CARDS_BY_ID[data.cardId];
+                        if (card && card.oneTime === 'yes') {
+                            const claims = getLocalOneTimeClaims(data.deck);
+                            if (!claims.includes(data.cardId)) claims.push(data.cardId);
+                            persistLocalOneTimeClaims();
+                        }
+                    }
                     renderDecksScreen();
+                    renderRewardMenu(); // no-op unless this exact menu is open
                 } else if (data.type === 'deck-look-result' && typeof data.deck === 'string' && Array.isArray(data.cards)) {
                     // The private reply to this device's own
                     // requestLookAtTopCards() -- see
@@ -23517,6 +23883,18 @@
                     getActiveSaveData().hand = data.cards.slice();
                     persistLocalHand();
                     renderDecksScreen();
+                } else if (data.type === 'one-time-claims-sync' && data.claims && typeof data.claims === 'object') {
+                    // Same "Host's authoritative copy wins" reconciliation
+                    // as 'hand-sync' just above, sent alongside it right
+                    // after 'identify' -- replaces this device's whole
+                    // local oneTimeClaims object (see
+                    // getLocalOneTimeClaims()) with the Host's record of
+                    // what this exact player has already claimed, across
+                    // every DECK_GAIN_REWARD_MENU deck at once.
+                    getActiveSaveData().oneTimeClaims = data.claims;
+                    persistLocalOneTimeClaims();
+                    renderDecksScreen();
+                    renderRewardMenu(); // no-op unless this exact menu is open
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
                     // Unlike the host side's own handling of this same
                     // prefix (see wireHostConnection()), no `to`-based
@@ -23716,6 +24094,12 @@
             const deckDrawBtn = e.target.closest('.game-deck-draw-btn');
             if (deckDrawBtn) {
                 requestDrawCard(deckDrawBtn.dataset.deck);
+                return;
+            }
+
+            const deckRewardBtn = e.target.closest('.game-deck-reward-btn');
+            if (deckRewardBtn) {
+                openRewardMenu(deckRewardBtn.dataset.deck);
                 return;
             }
 
@@ -24623,6 +25007,21 @@
             const discardCard = e.target.closest('.game-discard-card');
             if (!discardCard || discardCard.classList.contains('is-expanded')) return;
             document.querySelectorAll('.game-discard-card.is-expanded').forEach(el => el.classList.remove('is-expanded'));
+        });
+
+        // "Gain Reward" menu -- backdrop/Close dismiss with nothing
+        // sent, same as every other overlay; picking a card (its
+        // button is already disabled client-side if already claimed,
+        // see renderRewardMenu()) sends the actual request.
+        document.getElementById('game-reward-menu-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-reward-menu-overlay' || e.target.closest('.game-reward-menu-close-btn')) {
+                closeRewardMenu();
+                return;
+            }
+            const rewardItem = e.target.closest('.game-reward-menu-item');
+            if (rewardItem && !rewardItem.disabled) {
+                requestGainReward(rewardItem.dataset.deck, rewardItem.dataset.cardId);
+            }
         });
 
         // "Look at Top X Cards" prompt -- Cancel or the backdrop backs
