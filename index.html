@@ -2003,6 +2003,41 @@
             flex-shrink: 0;
         }
 
+        /* A Permanent card that got a Color chosen for it (see
+           cardNeedsNoteColor()/the Permanent button's swatch picker in
+           renderActiveCardZone()) gets a small dot painted over its own
+           image -- roughly 30% down, right-aligned, 10% of the card's
+           own height -- so the chosen color reads at a glance wherever
+           that card shows up in the Permanent Cards panel: the thumb
+           grid and the full-size viewer (see
+           .game-permanent-card-thumb/.game-permanent-card-viewer-face's
+           own uses of this same class). Color and Permanent are
+           committed together in one step now (see the chat this was
+           changed in), so this never shows up on the Active Card zone
+           itself -- by the time a color exists, the card's already
+           moved on to Permanent. Sits on a position:relative wrapper
+           around the <img>, same reasoning as every other overlay badge
+           in this doc. Colors are generic placeholders for now -- exact
+           hex values TBD, per the chat this was designed in. */
+        .game-note-color-dot {
+            position: absolute;
+            top: 21%;
+            right: 2%;
+            height: 18%;
+            aspect-ratio: 1 / 1;
+            border-radius: 50%;
+            border: 2px solid rgba(0, 0, 0, 0.6);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        .game-note-color-dot--pink { background: #fd787d; }
+        .game-note-color-dot--green { background: #378e2f; }
+        .game-note-color-dot--blue { background: #2c3eaa; }
+        .game-note-color-dot--yellow { background: #fdca01; }
+        .game-note-color-dot--red { background: #e63233; }
+
         .game-active-card-actions {
             display: flex;
             flex-direction: column;
@@ -2222,6 +2257,46 @@
         #game-permanent-card-viewer-overlay.visible {
             display: flex;
         }
+
+        /* ---- Note Color picker (see the chat this was designed in) ----
+           Same overlay shape as #game-permanent-card-viewer-overlay
+           right above -- backdrop dims the Decks screen, .game-confirm-card
+           holds the actual content, Cancel/backdrop dismisses with
+           nothing chosen (see the click listener further down). */
+        #game-note-color-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-note-color-overlay.visible {
+            display: flex;
+        }
+
+        .game-note-color-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        /* Same .filter-btn base (shape/border/shadow/uppercase text)
+           everywhere else in this doc uses, just with background/text
+           color swapped per swatch -- same "override just the color
+           properties" approach as .filter-btn.exclude. Generic
+           placeholder colors for now; exact hex values TBD, per the
+           chat this was designed in. */
+        .game-note-color-swatch-btn--pink { background-color: #fd787d; color: #3a0026; }
+        .game-note-color-swatch-btn--green { background-color: #378e2f; color: #06280a; }
+        .game-note-color-swatch-btn--blue { background-color: #2c3eaa; color: #ffffff; }
+        .game-note-color-swatch-btn--yellow { background-color: #fdca01; color: #3a2e00; }
+        .game-note-color-swatch-btn--red { background-color: #e63233; color: #ffffff; }
 
         /* ---- Hand & Decks tool ----
            One row per deck (see DECK_TOOL_LIST) -- Draw button on the
@@ -11694,6 +11769,7 @@
                 <p class="game-confirm-title" id="game-permanent-card-viewer-title"></p>
                 <span class="game-permanent-card-viewer-face">
                     <img class="game-permanent-card-viewer-img" id="game-permanent-card-viewer-img" src="" alt="">
+                    <span class="game-note-color-dot" id="game-permanent-card-viewer-dot" style="display: none;"></span>
                 </span>
                 <div class="game-permanent-card-viewer-counter-row" id="game-permanent-card-viewer-counter-row">
                     <span class="game-permanent-card-viewer-counter-label">Counter</span>
@@ -11706,6 +11782,28 @@
                 </div>
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude game-permanent-card-viewer-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Color picker, opened from the Active Card zone's own
+             Permanent button when the card needs one (see
+             cardNeedsNoteColor()'s own use in that click handler,
+             rather than a separate standalone Color button) -- one
+             swatch per NOTE_COLORS entry, styled like every other
+             .filter-btn but recolored per swatch (see
+             .game-note-color-swatch-btn's own CSS module -- exact hex
+             values TBD, per the chat this was designed in). Picking one
+             commits both the color and the move to Permanent in the
+             same request (see requestActiveCardPermanent()); Cancel/
+             backdrop just closes it, leaving the card right where it
+             was, not Permanent. -->
+        <div id="game-note-color-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Choose a Color</p>
+                <div class="game-note-color-grid" id="game-note-color-grid"></div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-note-color-cancel-btn" type="button">Cancel</button>
                 </div>
             </div>
         </div>
@@ -16133,6 +16231,21 @@
             }
         }
 
+        // Generic placeholder colors for the Color button (see the chat
+        // this was designed in) -- exact hex values TBD, these are just
+        // stand-ins for now (see .game-note-color-swatch-btn's own CSS
+        // module).
+        const NOTE_COLORS = ['pink', 'green', 'blue', 'yellow', 'red'];
+
+        // A `"noteColor": "yes"` card (cards.json) needs a color picked
+        // via the Active Card zone's own Color button before it can be
+        // made Permanent -- see hostApplyActiveCardPermanent()'s own
+        // guard and .game-active-card-permanent-btn's disabled state in
+        // renderActiveCardZone().
+        function cardNeedsNoteColor(card) {
+            return !!card && card.noteColor === 'yes';
+        }
+
         // The one place anything (a draw, a Play, an Attach) puts a new
         // card into the zone. If the PREVIOUS card was still pending
         // (nobody had Discarded/made it Permanent/Shuffled it back in
@@ -16340,13 +16453,14 @@
 
         function normalizePermanentEntry(entry) {
             if (typeof entry === 'string') {
-                return { instanceId: generatePermanentInstanceId(), cardId: entry, counter: getDefaultPermanentCounter(CARDS_BY_ID[entry]) };
+                return { instanceId: generatePermanentInstanceId(), cardId: entry, counter: getDefaultPermanentCounter(CARDS_BY_ID[entry]), noteColor: null };
             }
             if (entry && typeof entry === 'object') {
                 return {
                     instanceId: (typeof entry.instanceId === 'string' && entry.instanceId) ? entry.instanceId : generatePermanentInstanceId(),
                     cardId: entry.cardId,
                     counter: typeof entry.counter === 'number' ? entry.counter : getDefaultPermanentCounter(CARDS_BY_ID[entry.cardId]),
+                    noteColor: (typeof entry.noteColor === 'string' && NOTE_COLORS.includes(entry.noteColor)) ? entry.noteColor : null,
                 };
             }
             return entry;
@@ -16721,12 +16835,24 @@
         // rest of the game -- no discard-pile reshuffle, and no
         // mutator anywhere that removes a card from this array once
         // it's landed. Clears the zone the same as Discard.
-        function hostApplyActiveCardPermanent(peerKey) {
+        // Cards.json cards with canPermanent: "yes" (see the Permanent
+        // button in renderActiveCardZone()) can move here from the
+        // Active Card zone. If the card also needs a Color (see
+        // cardNeedsNoteColor()), the Permanent button opens the swatch
+        // picker instead of committing right away (see the chat this
+        // was changed in) -- color arrives as a param here, picked and
+        // committed to Permanent in the same round trip rather than a
+        // separate standalone Color button/action, so there's no
+        // in-between state where a color's been chosen but the card
+        // hasn't actually moved yet.
+        function hostApplyActiveCardPermanent(peerKey, color) {
             const active = readHostActiveCard();
             if (!active || active.actorKey !== peerKey) return;
             const card = CARDS_BY_ID[active.cardId];
             if (!card || card.canPermanent !== 'yes') return;
-            const newEntry = { instanceId: generatePermanentInstanceId(), cardId: active.cardId, counter: getDefaultPermanentCounter(card) };
+            const noteColor = NOTE_COLORS.includes(color) ? color : null;
+            if (cardNeedsNoteColor(card) && !noteColor) return; // must pick a Color first -- see the swatch overlay this opens instead of committing directly
+            const newEntry = { instanceId: generatePermanentInstanceId(), cardId: active.cardId, counter: getDefaultPermanentCounter(card), noteColor };
             if (peerKey === 'host') {
                 getLocalPermanentArray().push(newEntry);
                 persistLocalPermanent();
@@ -17435,14 +17561,21 @@
             }
         }
 
-        function requestActiveCardPermanent() {
+        // Permanent button in the Active Card zone -- color is only
+        // passed when the card needed one (see cardNeedsNoteColor()'s
+        // own use in renderActiveCardZone()'s click handling, which
+        // opens the swatch picker instead of calling this directly in
+        // that case, then calls this again once a swatch is tapped).
+        function requestActiveCardPermanent(color) {
             if (isActiveSaveReadOnly()) return;
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                    lobbyState.hostConn.send({ type: 'active-card-permanent' });
+                    const payload = { type: 'active-card-permanent' };
+                    if (color) payload.color = color;
+                    lobbyState.hostConn.send(payload);
                 }
             } else {
-                hostApplyActiveCardPermanent('host');
+                hostApplyActiveCardPermanent('host', color);
             }
         }
 
@@ -17964,7 +18097,8 @@
                         const card = CARDS_BY_ID[entry.cardId];
                         const name = card ? card.name : entry.cardId;
                         const img = card && card.imageUrl ? `<img class="game-permanent-card-thumb-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : '';
-                        return `<button class="game-permanent-card-thumb" type="button" data-instance-id="${escapeHtml(entry.instanceId)}" aria-label="View ${escapeHtml(name)}" title="${escapeHtml(name)}">${img}</button>`;
+                        const dot = entry.noteColor ? `<span class="game-note-color-dot game-note-color-dot--${entry.noteColor}"></span>` : '';
+                        return `<button class="game-permanent-card-thumb" type="button" data-instance-id="${escapeHtml(entry.instanceId)}" aria-label="View ${escapeHtml(name)}" title="${escapeHtml(name)}">${img}${dot}</button>`;
                     }).join('');
                 }
             }
@@ -18089,7 +18223,12 @@
         // exact card (see dismissActiveCard()); otherwise:
         //   - the card's own actor, while it's still pending
         //     (!committed), gets it left-aligned with Discard/Permanent/
-        //     Shuffle/Attach (Attach only if the card itself allows it);
+        //     Shuffle/Attach (Attach only if the card itself allows it).
+        //     Permanent opens the Color swatch picker instead of
+        //     committing directly when the card needs one (see
+        //     cardNeedsNoteColor()'s own use in the click handler
+        //     further down) rather than showing a separate Color
+        //     button here;
         //   - everyone else -- and the actor too, once it's committed
         //     (already fully resolved via an Attach that went through --
         //     nothing left to decide) -- gets it centered with just
@@ -18135,6 +18274,27 @@
                     </div>
                 `;
             }
+        }
+
+        // Color picker overlay -- opened from the Active Card zone's
+        // own Permanent button when the card needs one (see
+        // cardNeedsNoteColor()) -- populates one swatch button per
+        // NOTE_COLORS entry fresh on every open, same "build straight
+        // into the HTML" approach as renderShopMenu()'s own grid, since
+        // there's no per-card state here to preserve between opens.
+        function openNoteColorPicker() {
+            const gridEl = document.getElementById('game-note-color-grid');
+            if (gridEl) {
+                gridEl.innerHTML = NOTE_COLORS.map(color => {
+                    const label = color.charAt(0).toUpperCase() + color.slice(1);
+                    return `<button class="filter-btn game-note-color-swatch-btn game-note-color-swatch-btn--${color}" type="button" data-color="${color}">${label}</button>`;
+                }).join('');
+            }
+            document.getElementById('game-note-color-overlay').classList.add('visible');
+        }
+
+        function closeNoteColorPicker() {
+            document.getElementById('game-note-color-overlay').classList.remove('visible');
         }
 
         // Which deck's pile is currently shown in
@@ -18455,9 +18615,10 @@
             const overlay = document.getElementById('game-permanent-card-viewer-overlay');
             const titleEl = document.getElementById('game-permanent-card-viewer-title');
             const imgEl = document.getElementById('game-permanent-card-viewer-img');
+            const dotEl = document.getElementById('game-permanent-card-viewer-dot');
             const counterRowEl = document.getElementById('game-permanent-card-viewer-counter-row');
             const counterValueEl = document.getElementById('game-permanent-card-viewer-counter-value');
-            if (!overlay || !titleEl || !imgEl || !counterRowEl || !counterValueEl || !permanentCardViewerInstanceId) return;
+            if (!overlay || !titleEl || !imgEl || !dotEl || !counterRowEl || !counterValueEl || !permanentCardViewerInstanceId) return;
 
             const permanentEntry = getLocalPermanentArray().find(entry => entry.instanceId === permanentCardViewerInstanceId);
             if (!permanentEntry) {
@@ -18476,6 +18637,13 @@
                 imgEl.alt = '';
                 imgEl.style.display = 'none';
             }
+
+            // Same note-color dot as the Active Card zone/thumb grid
+            // (see .game-note-color-dot's own comment) -- className
+            // reset each render since the color can differ card to
+            // card.
+            dotEl.className = 'game-note-color-dot' + (permanentEntry.noteColor ? ` game-note-color-dot--${permanentEntry.noteColor}` : '');
+            dotEl.style.display = permanentEntry.noteColor ? '' : 'none';
 
             // Counter row only shows up for cards opted into it (see
             // cardHasPermanentCounter()) -- most Permanent cards won't
@@ -24336,7 +24504,7 @@
                 } else if (data.type === 'active-card-discard') {
                     hostApplyActiveCardDiscard(conn.peer);
                 } else if (data.type === 'active-card-permanent') {
-                    hostApplyActiveCardPermanent(conn.peer);
+                    hostApplyActiveCardPermanent(conn.peer, data.color);
                 } else if (data.type === 'permanent-discard' && typeof data.instanceId === 'string') {
                     hostApplyPermanentDiscard(conn.peer, data.instanceId);
                 } else if (data.type === 'permanent-counter-adjust' && typeof data.instanceId === 'string' && typeof data.delta === 'number') {
@@ -25360,7 +25528,19 @@
 
             const activeCardPermanentBtn = e.target.closest('.game-active-card-permanent-btn');
             if (activeCardPermanentBtn) {
-                requestActiveCardPermanent();
+                // Cards that need a Color (see cardNeedsNoteColor()) get
+                // the swatch picker instead of committing right away --
+                // see its own click listener further down, which calls
+                // requestActiveCardPermanent(color) once a swatch is
+                // tapped. Everything else commits immediately, same as
+                // before.
+                const info = getActiveCardInfo();
+                const card = info && CARDS_BY_ID[info.cardId];
+                if (card && cardNeedsNoteColor(card)) {
+                    openNoteColorPicker();
+                } else {
+                    requestActiveCardPermanent();
+                }
                 return;
             }
 
@@ -26284,6 +26464,27 @@
                 const rect = counter.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 requestPermanentCounterAdjust(permanentCardViewerInstanceId, clickedRightHalf ? 1 : -1);
+            }
+        });
+
+        // Note Color picker -- opened from the Active Card zone's own
+        // Permanent button when the card needs a color (see
+        // cardNeedsNoteColor()'s own use in that click handler).
+        // Backdrop/Cancel dismisses with nothing chosen -- the card
+        // stays put in the Active Card zone, not Permanent, same as
+        // just not pressing Permanent at all. Tapping a swatch commits
+        // both the color AND the move to Permanent in one request (see
+        // requestActiveCardPermanent()) rather than a separate
+        // standalone color-setting step.
+        document.getElementById('game-note-color-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-note-color-overlay' || e.target.closest('.game-note-color-cancel-btn')) {
+                closeNoteColorPicker();
+                return;
+            }
+            const swatchBtn = e.target.closest('.game-note-color-swatch-btn');
+            if (swatchBtn) {
+                requestActiveCardPermanent(swatchBtn.dataset.color);
+                closeNoteColorPicker();
             }
         });
 
