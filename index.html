@@ -2099,8 +2099,10 @@
 
         /* Full-size viewer -- one card at a time, formatted like a
            single .game-shop-menu-item (card face on top, its own
-           action panel below), per the chat this was designed in. Only
-           one placeholder button for now; more get filled in later. */
+           counter and action panel below), per the chat this was
+           designed in. Discard is the first of what's meant to grow
+           into a full action panel (see .game-save-slot-actions rows
+           in the HTML). */
         .game-permanent-card-viewer-face {
             display: block;
             position: relative;
@@ -2121,6 +2123,88 @@
             width: 100%;
             height: 100%;
             object-fit: cover;
+        }
+
+        /* Same left-half-decrements/right-half-increments tap-zone
+           pill affordance as the Team Tracker's own counters (Level/
+           HP/Status -- see .game-team-detail-level-counter's own
+           comment), duplicated rather than shared since this one has
+           no level-die artwork or HP/status-specific logic behind it,
+           same independence convention as everywhere else in this doc.
+           Starting value comes from cards.json's own permanentCounters
+           field (getDefaultPermanentCounter()), floored at 0 (see
+           hostApplyPermanentCounterAdjust()) since there's no ceiling
+           field to clamp against. */
+        .game-permanent-card-viewer-counter-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin: 0 0 16px;
+        }
+
+        .game-permanent-card-viewer-counter-label {
+            font-size: 13px;
+            font-weight: bold;
+            color: #FFF;
+            opacity: 0.85;
+        }
+
+        .game-permanent-card-viewer-counter {
+            position: relative;
+            width: 90px;
+            aspect-ratio: 2.5 / 1;
+            border: 3px solid white;
+            border-radius: 999px;
+            background: rgba(0, 0, 0, 0.4);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            line-height: 1;
+            font-weight: bold;
+            color: #F0FF43;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
+        .game-permanent-card-viewer-counter::before,
+        .game-permanent-card-viewer-counter::after {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 14px;
+            font-weight: bold;
+            line-height: 1;
+            color: #FFF;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+            pointer-events: none;
+        }
+
+        .game-permanent-card-viewer-counter::before {
+            content: "-";
+            left: 10px;
+        }
+
+        .game-permanent-card-viewer-counter::after {
+            content: "+";
+            right: 10px;
+        }
+
+        /* Read-only saves (see isActiveSaveReadOnly()) shouldn't be able
+           to tap this -- same dimmed/inert treatment as a disabled
+           .filter-btn elsewhere, applied here by class since this isn't
+           a real <button>. */
+        .game-permanent-card-viewer-counter--disabled {
+            cursor: default;
+            opacity: 0.5;
+            pointer-events: none;
         }
 
         #game-permanent-card-viewer-overlay {
@@ -11596,16 +11680,29 @@
              openPermanentCardViewer()/closePermanentCardViewer()/
              renderPermanentCardViewer() in the script. Formatted like a
              single Shop menu item (card face, then its own action panel
-             below) per the chat this was designed in -- just one
-             placeholder button for now, more to follow. -->
+             below) per the chat this was designed in. The counter row
+             (see .game-permanent-card-viewer-counter's own comment)
+             only shows up for cards.json cards that actually have a
+             permanentCounters field -- hidden by renderPermanentCardViewer()
+             for anything else -- and starts from that same field's
+             value (getDefaultPermanentCounter()).
+             Discard is the first button in what's meant to grow into a
+             full action panel, same "one .game-save-slot-actions row
+             per group of buttons" shape as the two rows below it. -->
         <div id="game-permanent-card-viewer-overlay">
             <div class="game-confirm-card">
                 <p class="game-confirm-title" id="game-permanent-card-viewer-title"></p>
                 <span class="game-permanent-card-viewer-face">
                     <img class="game-permanent-card-viewer-img" id="game-permanent-card-viewer-img" src="" alt="">
                 </span>
+                <div class="game-permanent-card-viewer-counter-row" id="game-permanent-card-viewer-counter-row">
+                    <span class="game-permanent-card-viewer-counter-label">Counter</span>
+                    <div class="game-permanent-card-viewer-counter" id="game-permanent-card-viewer-counter">
+                        <span id="game-permanent-card-viewer-counter-value">0</span>
+                    </div>
+                </div>
                 <div class="game-save-slot-actions">
-                    <button class="filter-btn game-permanent-card-placeholder-btn" type="button">Placeholder</button>
+                    <button class="filter-btn exclude game-permanent-card-discard-btn" type="button">Discard</button>
                 </div>
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude game-permanent-card-viewer-close-btn">Close</button>
@@ -16207,14 +16304,73 @@
         // (persisted locally regardless of role, and kept in sync via
         // 'permanent-sync'/'permanent-added' below), every OTHER
         // connected player's live on the HOST's own save instead, keyed
-        // by that player's persistent guestClientId. Once a card lands
-        // here (see hostApplyActiveCardPermanent()) it never leaves --
-        // there's no discard/return mutator the way hand has, only
-        // getters and the one push in hostApplyActiveCardPermanent()
-        // itself.
+        // by that player's persistent guestClientId.
+        //
+        // Each entry is {instanceId, cardId, counter} -- instanceId is
+        // this one physical card's own identity (see
+        // generatePermanentInstanceId()), separate from cardId, because
+        // nothing stops the same card showing up in the same player's
+        // panel more than once, and each copy needs its own counter
+        // (see the chat this was added in) rather than sharing one.
+        // Older saves only ever stored a bare cardId string here (from
+        // before counters/Discard existed) -- normalizePermanentEntry()/
+        // normalizePermanentArrayInPlace() below heal those in place the
+        // next time this array's read, defaulting counter to 0 since
+        // there's no way to recover what a pre-existing card's starting
+        // count "should" have been.
+        function generatePermanentInstanceId() {
+            return 'perm-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        }
+
+        // A card's own starting counter value (cards.json's
+        // permanentCounters field) -- 0 if the card has none, same
+        // "missing field means zero/off" fallback as every other
+        // optional cards.json field in this doc.
+        function getDefaultPermanentCounter(card) {
+            return (card && typeof card.permanentCounters === 'number') ? card.permanentCounters : 0;
+        }
+
+        // Whether this card's counter row shows up at all in the viewer
+        // (see renderPermanentCardViewer()) -- just whether cards.json
+        // has a permanentCounters field on this card at all, not a
+        // separate yes/no flag. Most Permanent cards won't have one.
+        function cardHasPermanentCounter(card) {
+            return !!card && typeof card.permanentCounters === 'number';
+        }
+
+        function normalizePermanentEntry(entry) {
+            if (typeof entry === 'string') {
+                return { instanceId: generatePermanentInstanceId(), cardId: entry, counter: getDefaultPermanentCounter(CARDS_BY_ID[entry]) };
+            }
+            if (entry && typeof entry === 'object') {
+                return {
+                    instanceId: (typeof entry.instanceId === 'string' && entry.instanceId) ? entry.instanceId : generatePermanentInstanceId(),
+                    cardId: entry.cardId,
+                    counter: typeof entry.counter === 'number' ? entry.counter : getDefaultPermanentCounter(CARDS_BY_ID[entry.cardId]),
+                };
+            }
+            return entry;
+        }
+
+        // Heals any legacy string entries in place (see
+        // normalizePermanentEntry()'s own comment) and reports whether
+        // it actually changed anything, so callers only persist when
+        // there was something to persist.
+        function normalizePermanentArrayInPlace(arr) {
+            let changed = false;
+            for (let i = 0; i < arr.length; i++) {
+                if (typeof arr[i] === 'string') {
+                    arr[i] = normalizePermanentEntry(arr[i]);
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+
         function getLocalPermanentArray() {
             const data = getActiveSaveData();
             if (!Array.isArray(data.permanentCards)) data.permanentCards = [];
+            if (normalizePermanentArrayInPlace(data.permanentCards)) persistLocalPermanent();
             return data.permanentCards;
         }
 
@@ -16241,6 +16397,7 @@
             if (!guestClientId) return null;
             const store = ensureGuestPermanentStore();
             if (!Array.isArray(store[guestClientId])) store[guestClientId] = [];
+            if (normalizePermanentArrayInPlace(store[guestClientId])) persistGameSaves();
             return store[guestClientId];
         }
 
@@ -16258,18 +16415,18 @@
         // broadcastDeckState() already uses for handCounts -- 'host' or
         // a connected guest's peerId) currently has Dept. Store Sale in
         // their Permanent Cards panel, or null if nobody does. Checked
-        // fresh every broadcast rather than cached -- Permanent Cards
-        // has no removal mutator yet (see getLocalPermanentArray()'s
-        // own comment), so this doubles as the "costs return to normal
-        // once the card leaves the zone" behavior for free: there's no
-        // separate flag to remember to clear, the discount just stops
-        // showing up once the card's no longer in anyone's array.
+        // fresh every broadcast rather than cached, so this doubles as
+        // the "costs return to normal once the card leaves the zone"
+        // behavior for free: there's no separate flag to remember to
+        // clear, the discount just stops showing up once the card's no
+        // longer in anyone's array (e.g. Discarded -- see
+        // hostApplyPermanentDiscard()).
         function findDeptStoreSaleHolder() {
-            if (getLocalPermanentArray().some(id => cardIsDeptStoreSale(CARDS_BY_ID[id]))) return 'host';
+            if (getLocalPermanentArray().some(entry => cardIsDeptStoreSale(CARDS_BY_ID[entry.cardId]))) return 'host';
             if (lobbyState.connections) {
                 for (const peerId of lobbyState.connections.keys()) {
                     const arr = getPeerPermanentArray(peerId);
-                    if (arr && arr.some(id => cardIsDeptStoreSale(CARDS_BY_ID[id]))) return peerId;
+                    if (arr && arr.some(entry => cardIsDeptStoreSale(CARDS_BY_ID[entry.cardId]))) return peerId;
                 }
             }
             return null;
@@ -16569,24 +16726,86 @@
             if (!active || active.actorKey !== peerKey) return;
             const card = CARDS_BY_ID[active.cardId];
             if (!card || card.canPermanent !== 'yes') return;
+            const newEntry = { instanceId: generatePermanentInstanceId(), cardId: active.cardId, counter: getDefaultPermanentCounter(card) };
             if (peerKey === 'host') {
-                getLocalPermanentArray().push(active.cardId);
+                getLocalPermanentArray().push(newEntry);
                 persistLocalPermanent();
             } else {
                 const permanent = getPeerPermanentArray(peerKey);
                 if (permanent) {
-                    permanent.push(active.cardId);
+                    permanent.push(newEntry);
                     persistGameSaves();
                     const entry = lobbyState.connections.get(peerKey);
                     // Mirrors the card straight into this guest's own
                     // local cache -- see 'permanent-added' handling in
                     // the guest-side message switch further down.
-                    if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-added', cardId: active.cardId });
+                    if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-added', entry: newEntry });
                 }
             }
             writeHostActiveCard(null);
             broadcastDeckState();
             renderDecksScreen();
+        }
+
+        // Permanent Cards panel's own Discard button (see
+        // .game-permanent-card-discard-btn in the viewer overlay) --
+        // pulls one specific card, by instanceId, back OUT of whichever
+        // player's Permanent Cards array it's in, and puts it in its
+        // own deck's discard pile same as any other discard
+        // (discardToHostDeck() -- so it becomes visible/reclaimable the
+        // normal way, not lost). This is the only way a card leaves
+        // Permanent Cards once it lands there -- see
+        // findDeptStoreSaleHolder()'s own comment on why that alone is
+        // enough for Dept. Store Sale's discount to turn itself back
+        // off, no separate bookkeeping needed.
+        function hostApplyPermanentDiscard(peerKey, instanceId) {
+            const arr = peerKey === 'host' ? getLocalPermanentArray() : getPeerPermanentArray(peerKey);
+            if (!arr) return;
+            const idx = arr.findIndex(entry => entry.instanceId === instanceId);
+            if (idx === -1) return; // already gone -- e.g. a stale viewer still open after another device removed it
+            const [removed] = arr.splice(idx, 1);
+            const card = CARDS_BY_ID[removed.cardId];
+            if (peerKey === 'host') {
+                persistLocalPermanent();
+                if (permanentCardViewerInstanceId === instanceId) closePermanentCardViewer();
+            } else {
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                // Mirror image of 'permanent-added' -- see
+                // hostApplyActiveCardPermanent()'s own comment on why
+                // the owning guest needs this pushed to it directly
+                // rather than waiting on its next full 'permanent-sync'.
+                if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-removed', instanceId });
+            }
+            discardToHostDeck((card && card.cardDeck) || DECK_TOOL_LIST[0], removed.cardId);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Permanent Cards panel's own counter (see
+        // .game-permanent-card-viewer-counter in the viewer overlay) --
+        // delta is +1 or -1, from whichever half got clicked (see the
+        // overlay's own click listener further down). Clamped to a
+        // floor of 0 -- there's no cards.json field for a ceiling, so
+        // this only ever guards against going negative, same
+        // "can't go below zero" floor every other counter in this doc
+        // (HP, Level, Status) already enforces.
+        function hostApplyPermanentCounterAdjust(peerKey, instanceId, delta) {
+            const arr = peerKey === 'host' ? getLocalPermanentArray() : getPeerPermanentArray(peerKey);
+            if (!arr) return;
+            const target = arr.find(entry => entry.instanceId === instanceId);
+            if (!target) return;
+            if (!cardHasPermanentCounter(CARDS_BY_ID[target.cardId])) return; // this card's viewer never shows a counter to tap in the first place
+            target.counter = Math.max(0, target.counter + delta);
+            if (peerKey === 'host') {
+                persistLocalPermanent();
+            } else {
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-counter-update', instanceId, counter: target.counter });
+            }
+            renderDecksScreen();
+            renderPermanentCardViewer(); // no-op unless this exact card's viewer is open
         }
 
         // Shuffles the active card back into its own deck's drawPile
@@ -17227,6 +17446,39 @@
             }
         }
 
+        // The Permanent Cards viewer's own Discard button (see
+        // .game-permanent-card-discard-btn) -- this is always THIS
+        // device's own card (the viewer only ever opens off
+        // .game-permanent-card-thumb in this device's own panel), so
+        // peerKey is always 'host' from this device's own point of
+        // view; hostApplyPermanentDiscard() sorts out whether that
+        // means the actual Host or a connected guest once the request
+        // lands.
+        function requestPermanentDiscard(instanceId) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'permanent-discard', instanceId });
+                }
+            } else {
+                hostApplyPermanentDiscard('host', instanceId);
+            }
+        }
+
+        // The Permanent Cards viewer's own counter (see
+        // .game-permanent-card-viewer-counter) -- delta is +1 or -1,
+        // same role-based routing as requestPermanentDiscard() above.
+        function requestPermanentCounterAdjust(instanceId, delta) {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'permanent-counter-adjust', instanceId, delta });
+                }
+            } else {
+                hostApplyPermanentCounterAdjust('host', instanceId, delta);
+            }
+        }
+
         function requestActiveCardShuffle() {
             if (isActiveSaveReadOnly()) return;
             if (lobbyState.role === 'guest') {
@@ -17708,11 +17960,11 @@
                 if (!permanentCards.length) {
                     permanentListEl.innerHTML = `<p class="game-permanent-cards-empty">No Permanent cards yet.</p>`;
                 } else {
-                    permanentListEl.innerHTML = permanentCards.map(cardId => {
-                        const card = CARDS_BY_ID[cardId];
-                        const name = card ? card.name : cardId;
+                    permanentListEl.innerHTML = permanentCards.map(entry => {
+                        const card = CARDS_BY_ID[entry.cardId];
+                        const name = card ? card.name : entry.cardId;
                         const img = card && card.imageUrl ? `<img class="game-permanent-card-thumb-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : '';
-                        return `<button class="game-permanent-card-thumb" type="button" data-card-id="${escapeHtml(cardId)}" aria-label="View ${escapeHtml(name)}" title="${escapeHtml(name)}">${img}</button>`;
+                        return `<button class="game-permanent-card-thumb" type="button" data-instance-id="${escapeHtml(entry.instanceId)}" aria-label="View ${escapeHtml(name)}" title="${escapeHtml(name)}">${img}</button>`;
                     }).join('');
                 }
             }
@@ -18166,40 +18418,55 @@
         // designed in) ----
         //
         // Which card the overlay is currently showing full-size --
-        // just a cardId, since the card itself never gets acted on from
-        // here yet (only Placeholder below, to be replaced later).
-        let permanentCardViewerCardId = null;
+        // an instanceId (see generatePermanentInstanceId()), not a
+        // cardId, since the same card can appear in the panel more than
+        // once and each copy now has its own Discard/counter state to
+        // act on independently.
+        let permanentCardViewerInstanceId = null;
 
         // Opens the full-size viewer for one card in the Permanent
         // Cards panel -- tapping its own thumbnail (see
-        // .game-permanent-card-thumb in renderDecksScreen()).
-        function openPermanentCardViewer(cardId) {
-            permanentCardViewerCardId = cardId;
+        // .game-permanent-card-thumb in renderDecksScreen()). Always
+        // one of THIS device's own cards -- the panel never shows any
+        // other player's -- so looking it up in getLocalPermanentArray()
+        // below is always the right array to search.
+        function openPermanentCardViewer(instanceId) {
+            permanentCardViewerInstanceId = instanceId;
             renderPermanentCardViewer();
             document.getElementById('game-permanent-card-viewer-overlay').classList.add('visible');
         }
 
         function closePermanentCardViewer() {
-            permanentCardViewerCardId = null;
+            permanentCardViewerInstanceId = null;
             document.getElementById('game-permanent-card-viewer-overlay').classList.remove('visible');
         }
 
-        // Fills in the viewer's own title/image for whichever card
-        // permanentCardViewerCardId currently points at -- formatted
-        // like a single .game-shop-menu-item (card face, then its own
-        // action panel below it), per the chat this was designed in.
-        // Only a single Placeholder button lives in that panel for now
-        // (see the HTML comment above #game-permanent-card-viewer-overlay);
-        // real actions get filled in later. No-ops harmlessly if the
-        // overlay isn't currently open, same as renderShopMenu().
+        // Fills in the viewer's own title/image/counter for whichever
+        // entry permanentCardViewerInstanceId currently points at --
+        // formatted like a single .game-shop-menu-item (card face, then
+        // its own action panel below it), per the chat this was
+        // designed in. Closes itself out if the entry's gone missing
+        // (e.g. Discarded from another device, or by this same request's
+        // own host round-trip -- see hostApplyPermanentDiscard()) rather
+        // than showing a viewer for a card that no longer exists. No-ops
+        // harmlessly if the overlay isn't currently open, same as
+        // renderShopMenu().
         function renderPermanentCardViewer() {
             const overlay = document.getElementById('game-permanent-card-viewer-overlay');
             const titleEl = document.getElementById('game-permanent-card-viewer-title');
             const imgEl = document.getElementById('game-permanent-card-viewer-img');
-            if (!overlay || !titleEl || !imgEl || !permanentCardViewerCardId) return;
+            const counterRowEl = document.getElementById('game-permanent-card-viewer-counter-row');
+            const counterValueEl = document.getElementById('game-permanent-card-viewer-counter-value');
+            if (!overlay || !titleEl || !imgEl || !counterRowEl || !counterValueEl || !permanentCardViewerInstanceId) return;
 
-            const card = CARDS_BY_ID[permanentCardViewerCardId];
-            titleEl.textContent = card ? card.name : permanentCardViewerCardId;
+            const permanentEntry = getLocalPermanentArray().find(entry => entry.instanceId === permanentCardViewerInstanceId);
+            if (!permanentEntry) {
+                closePermanentCardViewer();
+                return;
+            }
+
+            const card = CARDS_BY_ID[permanentEntry.cardId];
+            titleEl.textContent = card ? card.name : permanentEntry.cardId;
             if (card && card.imageUrl) {
                 imgEl.src = card.imageUrl;
                 imgEl.alt = card.name;
@@ -18209,6 +18476,19 @@
                 imgEl.alt = '';
                 imgEl.style.display = 'none';
             }
+
+            // Counter row only shows up for cards opted into it (see
+            // cardHasPermanentCounter()) -- most Permanent cards won't
+            // have any use for one.
+            const showCounter = cardHasPermanentCounter(card);
+            counterRowEl.style.display = showCounter ? '' : 'none';
+            if (showCounter) counterValueEl.textContent = permanentEntry.counter;
+
+            const readOnly = isActiveSaveReadOnly();
+            const discardBtn = overlay.querySelector('.game-permanent-card-discard-btn');
+            if (discardBtn) discardBtn.disabled = readOnly;
+            const counterEl = document.getElementById('game-permanent-card-viewer-counter');
+            if (counterEl) counterEl.classList.toggle('game-permanent-card-viewer-counter--disabled', readOnly);
         }
 
         // ---- "Look at Top X Cards" UI ----
@@ -24057,6 +24337,10 @@
                     hostApplyActiveCardDiscard(conn.peer);
                 } else if (data.type === 'active-card-permanent') {
                     hostApplyActiveCardPermanent(conn.peer);
+                } else if (data.type === 'permanent-discard' && typeof data.instanceId === 'string') {
+                    hostApplyPermanentDiscard(conn.peer, data.instanceId);
+                } else if (data.type === 'permanent-counter-adjust' && typeof data.instanceId === 'string' && typeof data.delta === 'number') {
+                    hostApplyPermanentCounterAdjust(conn.peer, data.instanceId, data.delta);
                 } else if (data.type === 'active-card-shuffle') {
                     hostApplyActiveCardShuffle(conn.peer);
                 } else if (data.type === 'active-card-attach') {
@@ -24758,15 +25042,35 @@
                     getActiveSaveData().hand = data.cards.slice();
                     persistLocalHand();
                     renderDecksScreen();
-                } else if (data.type === 'permanent-added' && typeof data.cardId === 'string') {
+                } else if (data.type === 'permanent-added' && data.entry && typeof data.entry.cardId === 'string') {
                     // A card this device itself just made Permanent from
                     // the Active Card zone, confirmed by the Host (see
                     // hostApplyActiveCardPermanent()) -- added straight
                     // to the local Permanent Cards panel and persisted
                     // the same way any other Guest Save field is.
-                    getLocalPermanentArray().push(data.cardId);
+                    getLocalPermanentArray().push(normalizePermanentEntry(data.entry));
                     persistLocalPermanent();
                     renderDecksScreen();
+                } else if (data.type === 'permanent-removed' && typeof data.instanceId === 'string') {
+                    // Mirror image of 'permanent-added' above -- a card
+                    // this device itself just Discarded from its
+                    // Permanent Cards panel, confirmed by the Host (see
+                    // hostApplyPermanentDiscard()).
+                    const permanentArr = getLocalPermanentArray();
+                    const idx = permanentArr.findIndex(entry => entry.instanceId === data.instanceId);
+                    if (idx !== -1) permanentArr.splice(idx, 1);
+                    persistLocalPermanent();
+                    if (permanentCardViewerInstanceId === data.instanceId) closePermanentCardViewer();
+                    renderDecksScreen();
+                } else if (data.type === 'permanent-counter-update' && typeof data.instanceId === 'string' && typeof data.counter === 'number') {
+                    // Mirror image of a counter tap on this device's own
+                    // Permanent Cards viewer, confirmed by the Host (see
+                    // hostApplyPermanentCounterAdjust()).
+                    const target = getLocalPermanentArray().find(entry => entry.instanceId === data.instanceId);
+                    if (target) target.counter = data.counter;
+                    persistLocalPermanent();
+                    renderDecksScreen();
+                    renderPermanentCardViewer(); // no-op unless this exact card's viewer is open
                 } else if (data.type === 'permanent-sync' && Array.isArray(data.cards)) {
                     // Same "Host's authoritative copy wins" reconciliation
                     // as 'hand-sync' above, sent alongside it right after
@@ -25002,7 +25306,7 @@
 
             const permanentCardThumb = e.target.closest('.game-permanent-card-thumb');
             if (permanentCardThumb) {
-                openPermanentCardViewer(permanentCardThumb.dataset.cardId);
+                openPermanentCardViewer(permanentCardThumb.dataset.instanceId);
                 return;
             }
 
@@ -25960,13 +26264,26 @@
         });
 
         // Permanent Cards panel's own full-size viewer -- backdrop/
-        // Close dismiss, same as every other overlay. Placeholder
-        // button is inert for now (see the HTML comment above
-        // #game-permanent-card-viewer-overlay) -- no handler wired up
-        // until its real behavior is decided.
+        // Close dismiss, same as every other overlay. Discard removes
+        // the card entirely (see requestPermanentDiscard()); the
+        // counter's left/right-half tap zones adjust it by -1/+1 (see
+        // requestPermanentCounterAdjust()), same rect-based half-split
+        // as .game-team-detail-level-counter's own click handling.
         document.getElementById('game-permanent-card-viewer-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'game-permanent-card-viewer-overlay' || e.target.closest('.game-permanent-card-viewer-close-btn')) {
                 closePermanentCardViewer();
+                return;
+            }
+            const discardBtn = e.target.closest('.game-permanent-card-discard-btn');
+            if (discardBtn && permanentCardViewerInstanceId) {
+                requestPermanentDiscard(permanentCardViewerInstanceId);
+                return;
+            }
+            const counter = e.target.closest('.game-permanent-card-viewer-counter');
+            if (counter && permanentCardViewerInstanceId) {
+                const rect = counter.getBoundingClientRect();
+                const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
+                requestPermanentCounterAdjust(permanentCardViewerInstanceId, clickedRightHalf ? 1 : -1);
             }
         });
 
