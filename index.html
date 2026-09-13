@@ -2170,6 +2170,35 @@
            field (getDefaultPermanentCounter()), floored at 0 (see
            hostApplyPermanentCounterAdjust()) since there's no ceiling
            field to clamp against. */
+        /* The gallery token chosen for a cardNeedsPokemonChoice() card
+           (see confirmPermanentPickSelection()), shown beneath the
+           card's own face. Sized/styled to match
+           .game-team-detail-img exactly (same 250x250 contain, no
+           frame/background of its own) per the chat this was changed
+           in, rather than something card-frame-shaped, since this is a
+           supplementary picture of the Pokémon itself, not another
+           card. Hidden entirely (see renderPermanentCardViewer()) for
+           any card that isn't this kind, and for one that is but has
+           no pokemonPick yet (which shouldn't normally happen, since
+           choosing one is required before Permanent commits at all --
+           see hostApplyActiveCardPermanent()'s own guard). */
+        .game-permanent-card-viewer-pokemon-row {
+            display: flex;
+            justify-content: center;
+            margin: 0 0 16px;
+        }
+
+        /* Same 250x250/object-fit: contain as .game-team-detail-img --
+           duplicated rather than shared for the same independence
+           reasoning as everywhere else in this doc. */
+        .game-permanent-card-viewer-pokemon-img {
+            width: 250px;
+            height: 250px;
+            object-fit: contain;
+            display: block;
+            margin: 0 auto;
+        }
+
         .game-permanent-card-viewer-counter-row {
             display: flex;
             align-items: center;
@@ -2293,7 +2322,7 @@
            placeholder colors for now; exact hex values TBD, per the
            chat this was designed in. */
         .game-note-color-swatch-btn--pink { background-color: #fd787d; color: #3a0026; }
-        .game-note-color-swatch-btn--green { background-color: #378e2f; color: #06280a; }
+        .game-note-color-swatch-btn--green { background-color: #378e2f; color: #ffffff; }
         .game-note-color-swatch-btn--blue { background-color: #2c3eaa; color: #ffffff; }
         .game-note-color-swatch-btn--yellow { background-color: #fdca01; color: #3a2e00; }
         .game-note-color-swatch-btn--red { background-color: #e63233; color: #ffffff; }
@@ -6652,6 +6681,42 @@
             margin: 0;
         }
 
+        /* Same body-level fixed overlay as #gallery-team-add-confirm-overlay
+           above, just for the Permanent Cards panel's own "choose a
+           Pokémon" flow (see beginPermanentPickMode()) -- duplicated
+           rather than shared since the two flows are otherwise
+           unrelated and can't both be open at once anyway. */
+        #gallery-permanent-pick-confirm-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 6000;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #gallery-permanent-pick-confirm-overlay.visible {
+            display: flex;
+        }
+
+        .gallery-permanent-pick-confirm-frame {
+            width: 280px;
+            margin: 0 auto 14px;
+        }
+
+        .gallery-permanent-pick-confirm-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .gallery-permanent-pick-confirm-actions .filter-btn {
+            margin: 0;
+        }
+
         /* Persistent reminder that gallery clicks are being intercepted
            for team-building right now (see beginTeamAddMode()/
            exitTeamAddMode() in the script) -- doubles as the mobile cue
@@ -6715,6 +6780,55 @@
            .image-card itself, same split .image-card's own "No
            cursor:pointer here" comment already explains. */
         body.team-add-mode .image-card .hit-zone {
+            cursor: copy;
+        }
+
+        /* Same shape as #team-add-mode-banner/its cursor rule right
+           above, just for the Permanent Cards panel's own "choose a
+           Pokémon" mode (see beginPermanentPickMode()) -- duplicated
+           rather than shared since the two modes are otherwise
+           unrelated and can't both be active at once anyway. */
+        #permanent-pick-mode-banner {
+            display: none;
+            position: fixed;
+            top: calc(94% - 1in);
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 6000;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            max-width: min(92vw, 420px);
+            padding: 0.6em 1em 0.6em 1.4em;
+            background: rgba(0, 0, 0, 0.85);
+            border-radius: 999px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+            color: #fff;
+            font-family: 'Calibri', 'Trebuchet MS', sans-serif;
+            font-weight: bold;
+            font-size: 14px;
+            text-align: center;
+        }
+
+        body.permanent-pick-mode #permanent-pick-mode-banner {
+            display: flex;
+        }
+
+        #permanent-pick-mode-banner-cancel-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            border-radius: 999px;
+            color: #fff;
+            font-family: inherit;
+            font-weight: bold;
+            font-size: 0.85em;
+            padding: 0.4em 0.9em;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        body.permanent-pick-mode .image-card .hit-zone {
             cursor: copy;
         }
 
@@ -11771,11 +11885,28 @@
                     <img class="game-permanent-card-viewer-img" id="game-permanent-card-viewer-img" src="" alt="">
                     <span class="game-note-color-dot" id="game-permanent-card-viewer-dot" style="display: none;"></span>
                 </span>
+                <!-- Only shown for cardNeedsPokemonChoice() cards that
+                     actually have a pokemonPick (see the chat this was
+                     designed in) -- the gallery token chosen for this
+                     card, displayed beneath the card face itself rather
+                     than replacing it, since the card art and the chosen
+                     Pokémon are both worth seeing at once here. -->
+                <div class="game-permanent-card-viewer-pokemon-row" id="game-permanent-card-viewer-pokemon-row" style="display: none;">
+                    <img class="game-permanent-card-viewer-pokemon-img" id="game-permanent-card-viewer-pokemon-img" src="" alt="">
+                </div>
                 <div class="game-permanent-card-viewer-counter-row" id="game-permanent-card-viewer-counter-row">
                     <span class="game-permanent-card-viewer-counter-label">Counter</span>
                     <div class="game-permanent-card-viewer-counter" id="game-permanent-card-viewer-counter">
                         <span id="game-permanent-card-viewer-counter-value">0</span>
                     </div>
+                </div>
+                <!-- Only shown alongside a pokemonPick (see
+                     addPermanentPokemonToTeam()) -- same "add or queue a
+                     replacement" behavior as Team Tracker's own Add a
+                     Pokémon button, just sourced from this card's own
+                     chosen Pokémon instead of a fresh gallery pick. -->
+                <div class="game-save-slot-actions" id="game-permanent-card-add-to-team-row" style="display: none;">
+                    <button class="filter-btn game-permanent-card-add-to-team-btn" type="button">Add to Team</button>
                 </div>
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude game-permanent-card-discard-btn" type="button">Discard</button>
@@ -12168,6 +12299,28 @@
         </div>
     </div>
 
+    <!-- Gallery-side half of the Permanent Cards panel's own "choose a
+         Pokémon" flow -- see beginPermanentPickMode()/
+         exitPermanentPickMode()/openGalleryPermanentPickConfirm()/
+         confirmPermanentPickSelection() in the script. Body-level like
+         #gallery-team-add-confirm-overlay above, same reasoning. No
+         shiny checkbox here -- unlike a team member, a Permanent card's
+         own pokemonPick is just a picture, so there's no separate shiny
+         art to choose between. -->
+    <div id="gallery-permanent-pick-confirm-overlay">
+        <div class="game-confirm-card">
+            <p class="game-confirm-title">Choose This Pokémon?</p>
+            <div class="game-team-slot gallery-permanent-pick-confirm-frame">
+                <img class="game-team-slot-img" id="gallery-permanent-pick-confirm-img" alt="">
+            </div>
+            <div class="gallery-permanent-pick-confirm-actions">
+                <button class="filter-btn gallery-permanent-pick-confirm-choose-btn">Choose This Pokémon.</button>
+                <button class="filter-btn gallery-permanent-pick-confirm-keep-btn">Keep Searching for a Pokémon.</button>
+                <button class="filter-btn exclude gallery-permanent-pick-confirm-cancel-btn">Don't Choose a Pokémon.</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Persistent "you're in team-add mode" cue -- see
          beginTeamAddMode()/exitTeamAddMode() in the script, and
          #team-add-mode-banner's own CSS comment for why this exists
@@ -12175,6 +12328,18 @@
     <div id="team-add-mode-banner">
         <span>Tap a Pok&eacute;mon to add it to your team.</span>
         <button type="button" id="team-add-mode-banner-cancel-btn">Cancel</button>
+    </div>
+
+    <!-- Same idea as #team-add-mode-banner above, for the Permanent
+         Cards panel's own "choose a Pokémon" flow -- see
+         beginPermanentPickMode()/exitPermanentPickMode() in the
+         script. Duplicated rather than shared with the team-add banner
+         (see the chat this was designed in) since the two modes are
+         otherwise unrelated and can't ever be active at the same
+         time anyway. -->
+    <div id="permanent-pick-mode-banner">
+        <span>Tap a Pok&eacute;mon to choose it.</span>
+        <button type="button" id="permanent-pick-mode-banner-cancel-btn">Cancel</button>
     </div>
 
     <div class="gallery-container" id="gallery"></div>
@@ -13042,6 +13207,12 @@
                         openGalleryTeamAddConfirm(img);
                         return;
                     }
+                    // Same idea, for the Permanent Cards panel's own
+                    // pick mode (see beginPermanentPickMode()).
+                    if (permanentPickModeActive) {
+                        openGalleryPermanentPickConfirm(img);
+                        return;
+                    }
                     if (galleryClickLocked) return; // mid pulse-then-open or close-then-recenter-then-pulse -- ignore until it settles
                     if (card.classList.contains('active-in-viewer')) {
                         closeImageViewer();
@@ -13307,7 +13478,8 @@
                 discordPanel.classList.contains('open') ||
                 gamePanel.classList.contains('open') ||
                 document.body.classList.contains('viewer-open') ||
-                teamAddModeActive;
+                teamAddModeActive ||
+                permanentPickModeActive;
             const nothingToDo = !anyPanelOpen && !filtersActive();
             document.getElementById('nav-bottom-btn-back')
                 .classList.toggle('back-disabled', nothingToDo);
@@ -16246,6 +16418,19 @@
             return !!card && card.noteColor === 'yes';
         }
 
+        // A `"choosePokemon": "fossil"` card (cards.json) needs a
+        // specific Pokémon picked from the gallery before it can be
+        // made Permanent -- the value is a gallery filter tag (see
+        // #unique-properties-section in the HTML), applied
+        // automatically the same way beginTeamAddMode() auto-applies
+        // Starter, so the person only sees Pokémon that actually match.
+        // Deliberately generic -- any future card can set this to any
+        // other tag in that section, not just "fossil" -- see the chat
+        // this was designed in.
+        function cardNeedsPokemonChoice(card) {
+            return !!card && typeof card.choosePokemon === 'string' && card.choosePokemon.length > 0;
+        }
+
         // The one place anything (a draw, a Play, an Attach) puts a new
         // card into the zone. If the PREVIOUS card was still pending
         // (nobody had Discarded/made it Permanent/Shuffled it back in
@@ -16453,7 +16638,7 @@
 
         function normalizePermanentEntry(entry) {
             if (typeof entry === 'string') {
-                return { instanceId: generatePermanentInstanceId(), cardId: entry, counter: getDefaultPermanentCounter(CARDS_BY_ID[entry]), noteColor: null };
+                return { instanceId: generatePermanentInstanceId(), cardId: entry, counter: getDefaultPermanentCounter(CARDS_BY_ID[entry]), noteColor: null, pokemonPick: null };
             }
             if (entry && typeof entry === 'object') {
                 return {
@@ -16461,6 +16646,13 @@
                     cardId: entry.cardId,
                     counter: typeof entry.counter === 'number' ? entry.counter : getDefaultPermanentCounter(CARDS_BY_ID[entry.cardId]),
                     noteColor: (typeof entry.noteColor === 'string' && NOTE_COLORS.includes(entry.noteColor)) ? entry.noteColor : null,
+                    pokemonPick: (entry.pokemonPick && typeof entry.pokemonPick === 'object' && typeof entry.pokemonPick.src === 'string' && entry.pokemonPick.src)
+                        ? {
+                            src: entry.pokemonPick.src,
+                            name: typeof entry.pokemonPick.name === 'string' ? entry.pokemonPick.name : '',
+                            dex: typeof entry.pokemonPick.dex === 'string' ? entry.pokemonPick.dex : '',
+                        }
+                        : null,
                 };
             }
             return entry;
@@ -16837,22 +17029,38 @@
         // it's landed. Clears the zone the same as Discard.
         // Cards.json cards with canPermanent: "yes" (see the Permanent
         // button in renderActiveCardZone()) can move here from the
-        // Active Card zone. If the card also needs a Color (see
-        // cardNeedsNoteColor()), the Permanent button opens the swatch
-        // picker instead of committing right away (see the chat this
-        // was changed in) -- color arrives as a param here, picked and
-        // committed to Permanent in the same round trip rather than a
-        // separate standalone Color button/action, so there's no
-        // in-between state where a color's been chosen but the card
-        // hasn't actually moved yet.
-        function hostApplyActiveCardPermanent(peerKey, color) {
+        // Active Card zone. If the card needs a specific Pokémon (see
+        // cardNeedsPokemonChoice()) or a Color (see cardNeedsNoteColor()),
+        // the Permanent button hands off to the gallery or opens the
+        // swatch picker instead of committing right away (see the chat
+        // both of these were changed/added in) -- either way, the pick
+        // arrives as a param here and gets committed to Permanent in the
+        // same round trip rather than a separate standalone action, so
+        // there's no in-between state where something's been chosen but
+        // the card hasn't actually moved yet. A card is never expected
+        // to need both -- pokemonPick wins if somehow both fields are
+        // set, since its own noteColor (derived from the chosen token's
+        // own color tag -- see confirmPermanentPickSelection()) simply
+        // overwrites whatever a manually-chosen color would have been.
+        function hostApplyActiveCardPermanent(peerKey, color, pokemonPick) {
             const active = readHostActiveCard();
             if (!active || active.actorKey !== peerKey) return;
             const card = CARDS_BY_ID[active.cardId];
             if (!card || card.canPermanent !== 'yes') return;
-            const noteColor = NOTE_COLORS.includes(color) ? color : null;
-            if (cardNeedsNoteColor(card) && !noteColor) return; // must pick a Color first -- see the swatch overlay this opens instead of committing directly
-            const newEntry = { instanceId: generatePermanentInstanceId(), cardId: active.cardId, counter: getDefaultPermanentCounter(card), noteColor };
+            let noteColor = NOTE_COLORS.includes(color) ? color : null;
+            let resolvedPokemonPick = null;
+            if (cardNeedsPokemonChoice(card)) {
+                if (!pokemonPick || typeof pokemonPick.src !== 'string' || !pokemonPick.src) return; // must pick a Pokémon first -- see the gallery hand-off this opens instead of committing directly
+                resolvedPokemonPick = {
+                    src: pokemonPick.src,
+                    name: typeof pokemonPick.name === 'string' ? pokemonPick.name : '',
+                    dex: typeof pokemonPick.dex === 'string' ? pokemonPick.dex : '',
+                };
+                noteColor = NOTE_COLORS.includes(pokemonPick.noteColor) ? pokemonPick.noteColor : null;
+            } else if (cardNeedsNoteColor(card) && !noteColor) {
+                return; // must pick a Color first -- see the swatch overlay this opens instead of committing directly
+            }
+            const newEntry = { instanceId: generatePermanentInstanceId(), cardId: active.cardId, counter: getDefaultPermanentCounter(card), noteColor, pokemonPick: resolvedPokemonPick };
             if (peerKey === 'host') {
                 getLocalPermanentArray().push(newEntry);
                 persistLocalPermanent();
@@ -17566,16 +17774,20 @@
         // own use in renderActiveCardZone()'s click handling, which
         // opens the swatch picker instead of calling this directly in
         // that case, then calls this again once a swatch is tapped).
-        function requestActiveCardPermanent(color) {
+        // pokemonPick is the same idea for cardNeedsPokemonChoice()
+        // cards -- see confirmPermanentPickSelection() for what it
+        // contains and where it comes from.
+        function requestActiveCardPermanent(color, pokemonPick) {
             if (isActiveSaveReadOnly()) return;
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
                     const payload = { type: 'active-card-permanent' };
                     if (color) payload.color = color;
+                    if (pokemonPick) payload.pokemonPick = pokemonPick;
                     lobbyState.hostConn.send(payload);
                 }
             } else {
-                hostApplyActiveCardPermanent('host', color);
+                hostApplyActiveCardPermanent('host', color, pokemonPick);
             }
         }
 
@@ -18616,9 +18828,11 @@
             const titleEl = document.getElementById('game-permanent-card-viewer-title');
             const imgEl = document.getElementById('game-permanent-card-viewer-img');
             const dotEl = document.getElementById('game-permanent-card-viewer-dot');
+            const pokemonRowEl = document.getElementById('game-permanent-card-viewer-pokemon-row');
+            const pokemonImgEl = document.getElementById('game-permanent-card-viewer-pokemon-img');
             const counterRowEl = document.getElementById('game-permanent-card-viewer-counter-row');
             const counterValueEl = document.getElementById('game-permanent-card-viewer-counter-value');
-            if (!overlay || !titleEl || !imgEl || !dotEl || !counterRowEl || !counterValueEl || !permanentCardViewerInstanceId) return;
+            if (!overlay || !titleEl || !imgEl || !dotEl || !pokemonRowEl || !pokemonImgEl || !counterRowEl || !counterValueEl || !permanentCardViewerInstanceId) return;
 
             const permanentEntry = getLocalPermanentArray().find(entry => entry.instanceId === permanentCardViewerInstanceId);
             if (!permanentEntry) {
@@ -18645,6 +18859,26 @@
             dotEl.className = 'game-note-color-dot' + (permanentEntry.noteColor ? ` game-note-color-dot--${permanentEntry.noteColor}` : '');
             dotEl.style.display = permanentEntry.noteColor ? '' : 'none';
 
+            // The chosen gallery token (see cardNeedsPokemonChoice()/
+            // confirmPermanentPickSelection()) -- only ever set on a
+            // card that needed one, but keyed off the entry's own
+            // pokemonPick rather than the card's own flag, so this
+            // still renders correctly even if a future edit to
+            // cards.json removed choosePokemon from a card after the
+            // fact.
+            const addToTeamRowEl = document.getElementById('game-permanent-card-add-to-team-row');
+            if (permanentEntry.pokemonPick) {
+                pokemonImgEl.src = permanentEntry.pokemonPick.src;
+                pokemonImgEl.alt = permanentEntry.pokemonPick.name;
+                pokemonRowEl.style.display = '';
+                if (addToTeamRowEl) addToTeamRowEl.style.display = '';
+            } else {
+                pokemonImgEl.src = '';
+                pokemonImgEl.alt = '';
+                pokemonRowEl.style.display = 'none';
+                if (addToTeamRowEl) addToTeamRowEl.style.display = 'none';
+            }
+
             // Counter row only shows up for cards opted into it (see
             // cardHasPermanentCounter()) -- most Permanent cards won't
             // have any use for one.
@@ -18655,6 +18889,8 @@
             const readOnly = isActiveSaveReadOnly();
             const discardBtn = overlay.querySelector('.game-permanent-card-discard-btn');
             if (discardBtn) discardBtn.disabled = readOnly;
+            const addToTeamBtn = overlay.querySelector('.game-permanent-card-add-to-team-btn');
+            if (addToTeamBtn) addToTeamBtn.disabled = readOnly;
             const counterEl = document.getElementById('game-permanent-card-viewer-counter');
             if (counterEl) counterEl.classList.toggle('game-permanent-card-viewer-counter--disabled', readOnly);
         }
@@ -21890,6 +22126,134 @@
             if (overlay) overlay.classList.add('visible');
         }
 
+        // ---- Permanent Cards panel's own "choose a Pokémon" picker
+        // mode (see the chat this was designed in) ----
+        //
+        // Same shape as Team Tracker's own team-add mode just above --
+        // closes the game panel, hands off to the gallery, force-
+        // applies one specific #unique-properties-section filter tag
+        // (cardNeedsPokemonChoice()'s own choosePokemon value, e.g.
+        // "fossil") the same way beginTeamAddMode() force-applies
+        // Starter -- and lands the eventual pick on a Permanent card's
+        // own pokemonPick field instead of a team roster slot. Kept
+        // entirely separate from teamAddModeActive/its own functions
+        // rather than generalizing the two into one shared mode -- the
+        // two can never be active at the same time (each only starts
+        // from its own screen, with the game panel already closed
+        // either way), so there'd be nothing to actually share beyond
+        // the shape, and keeping them apart means a bug in one mode's
+        // exit/lock handling can't possibly bleed into the other's.
+        let permanentPickModeActive = false;
+
+        // Whether beginPermanentPickMode() actually found and locked a
+        // filter button -- mirrors teamAddStarterLockActive's own
+        // reasoning, just unconditional here (every choosePokemon card
+        // forces its tag, there's no "only sometimes" the way Starter's
+        // roster-empty check has).
+        let permanentPickLockActive = false;
+
+        // Which tag got locked, so exitPermanentPickMode() can find the
+        // exact same button again to unlock -- unlike Starter, this
+        // isn't a single hardcoded string.
+        let permanentPickLockedTag = null;
+
+        // The actual gallery <img> tapped, same role as
+        // teamAddCandidateImg -- read back by
+        // confirmPermanentPickSelection() once the player confirms.
+        let permanentPickCandidateImg = null;
+
+        function beginPermanentPickMode(tag) {
+            permanentPickModeActive = true;
+            permanentPickLockedTag = tag;
+            document.body.classList.add('permanent-pick-mode');
+            const tagBtn = document.querySelector(`#unique-properties-section .filter-btn[data-tag="${tag}"]`);
+            if (tagBtn) {
+                permanentPickLockActive = true;
+                tagBtn.classList.remove('exclude');
+                tagBtn.classList.add('include', 'game-team-corner-locked');
+                updateFilters();
+            } else {
+                // No button for this tag (a cards.json typo, or a tag
+                // that isn't a real filter) -- still enters pick mode
+                // rather than silently failing outright, just without
+                // narrowing the gallery down for the player.
+                filterGallery();
+            }
+            refreshBackButtonState();
+        }
+
+        function exitPermanentPickMode() {
+            if (!permanentPickModeActive) return;
+            permanentPickModeActive = false;
+            permanentPickCandidateImg = null;
+            document.body.classList.remove('permanent-pick-mode');
+            const confirmOverlay = document.getElementById('gallery-permanent-pick-confirm-overlay');
+            if (confirmOverlay) confirmOverlay.classList.remove('visible');
+
+            if (permanentPickLockActive) {
+                permanentPickLockActive = false;
+                const tagBtn = document.querySelector(`#unique-properties-section .filter-btn[data-tag="${permanentPickLockedTag}"]`);
+                if (tagBtn) tagBtn.classList.remove('include', 'game-team-corner-locked');
+                updateFilters();
+            } else {
+                filterGallery();
+            }
+            permanentPickLockedTag = null;
+            refreshBackButtonState();
+        }
+
+        // img is the actual gallery <img> that was clicked -- same
+        // "stash the live element, don't copy it out yet" reasoning as
+        // openGalleryTeamAddConfirm().
+        function openGalleryPermanentPickConfirm(img) {
+            permanentPickCandidateImg = img;
+            const frameImg = document.getElementById('gallery-permanent-pick-confirm-img');
+            if (frameImg) {
+                frameImg.src = img.src;
+                frameImg.alt = img.alt || '';
+            }
+            const overlay = document.getElementById('gallery-permanent-pick-confirm-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        // "Keep Searching for a Pokémon." lands here -- same reasoning
+        // as closeGalleryTeamAddConfirm(): closes just this overlay,
+        // deliberately leaving permanentPickModeActive itself alone, so
+        // the next gallery tap reopens this same confirm for whatever's
+        // tapped next.
+        function closeGalleryPermanentPickConfirm() {
+            permanentPickCandidateImg = null;
+            const overlay = document.getElementById('gallery-permanent-pick-confirm-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // "Choose This Pokémon." -- the one path that actually finishes
+        // the Permanent move. The chosen token's own color (see
+        // #color-section's tags -- pink/green/blue/yellow/red) becomes
+        // this card's noteColor, same dot as a manually-chosen Color
+        // (see .game-note-color-dot); a token tagged with none of the
+        // five (Legendary/Mega/etc, rather than a base color) just
+        // ends up with no dot; there's nothing else to fall back to.
+        function confirmPermanentPickSelection() {
+            const img = permanentPickCandidateImg;
+            if (!img) {
+                exitPermanentPickMode();
+                return;
+            }
+            const cardEl = img.closest('.image-card');
+            const tags = cardEl && cardEl.dataset.tags ? cardEl.dataset.tags.split(' ') : [];
+            const pokemonPick = {
+                src: img.src,
+                name: img.alt || '',
+                dex: img.dataset.dex || '',
+                noteColor: NOTE_COLORS.find(c => tags.includes(c)) || null,
+            };
+            exitPermanentPickMode();
+            requestActiveCardPermanent(null, pokemonPick);
+            openGamePanel();
+            setGameScreen('decks');
+        }
+
         function closeTeamAddPromptOverlay() {
             const overlay = document.getElementById('game-team-add-prompt-overlay');
             if (overlay) overlay.classList.remove('visible');
@@ -21964,63 +22328,107 @@
         // beginTeamReplaceMode() instead, which leaves the actual
         // placement up to the player rather than guessing who they'd
         // want overwritten.
+        // Builds a full team member from just the handful of fields
+        // that actually differ per source (dex/name/src/shinysrc/shiny)
+        // and either pushes it straight onto the roster or, if it's
+        // already full, hands off to beginTeamReplaceMode() -- exactly
+        // what confirmTeamAddSelection() used to do inline for a
+        // gallery pick, pulled out so addPermanentPokemonToTeam() (see
+        // the chat this was designed in) can reuse the same "add or
+        // queue a replacement" behavior for a Permanent card's own
+        // pokemonPick instead of building it a second time. Caller is
+        // responsible for its own isActiveSaveReadOnly() guard and
+        // whatever screen/panel navigation makes sense for where it's
+        // called from -- this only ever touches the roster data itself.
+        function addOrQueueTeamMember(memberSource) {
+            const member = {
+                dex: memberSource.dex || '',
+                name: memberSource.name || '',
+                src: memberSource.src,
+                shinysrc: memberSource.shinysrc || '',
+                shiny: !!memberSource.shiny,
+                // status/level both start at their own "nothing set
+                // yet" value -- see STATUS_CONDITIONS/
+                // openTeamStatusOverlay() and adjustTeamMemberLevel()
+                // in the script for how each is edited afterward.
+                status: null,
+                level: 0,
+                // fainted starts false, same "no data model yet"
+                // shape as status above. hp only actually means
+                // anything for the alt1/alt2 hpRules (see
+                // getTeamMemberHp()'s own comment for why reading it
+                // never assumes it's set even so) -- set to a fresh
+                // max here under whatever hpRule is active right now
+                // just for a clean starting value, at level 0 (alt2's
+                // own max is exactly this species' own token_level at
+                // that level).
+                fainted: false,
+                // Attach/Nature card slots -- both start empty. null
+                // rather than absent so every read can just check
+                // truthiness without an extra "in" check, same
+                // convention as status above. Holds a
+                // CARDS_BY_ID key (a card's own id), not the
+                // card object itself, so the equipped card's data
+                // always reflects whatever's currently in
+                // cards.json rather than a stale snapshot from
+                // whenever it was equipped.
+                attachCardId: null,
+                natureCardId: null,
+            };
+            const hpRuleAtAdd = getHpRule(getActiveSaveData());
+            const hpMaxAtAdd = getTeamMemberHpMax(member, hpRuleAtAdd);
+            if (hpMaxAtAdd !== null) member.hp = hpMaxAtAdd;
+
+            const data = getActiveSaveData();
+            if (!data.team.members) data.team.members = [];
+            if (data.team.members.length < 6) {
+                data.team.members.push(member);
+                if (activeSaveSlot !== null) persistGameSaves();
+                else if (activeGuestSaveId !== null) persistGameGuestSaves();
+                markUnsavedProgressChanged();
+            } else {
+                beginTeamReplaceMode(member);
+            }
+        }
+
         function confirmTeamAddSelection() {
             const img = teamAddCandidateImg;
-            let member = null;
+            let memberSource = null;
             if (img && !isActiveSaveReadOnly()) {
                 const shinyCheckbox = document.getElementById('gallery-team-add-confirm-shiny-checkbox');
                 const shiny = !!(shinyCheckbox && shinyCheckbox.checked && hasShinyForm(img.dataset.shinysrc));
-                member = {
+                memberSource = {
                     dex: img.dataset.dex || '',
                     name: img.alt || '',
                     src: img.src,
                     shinysrc: img.dataset.shinysrc || '',
                     shiny,
-                    // status/level both start at their own "nothing set
-                    // yet" value -- see STATUS_CONDITIONS/
-                    // openTeamStatusOverlay() and adjustTeamMemberLevel()
-                    // in the script for how each is edited afterward.
-                    status: null,
-                    level: 0,
-                    // fainted starts false, same "no data model yet"
-                    // shape as status above. hp only actually means
-                    // anything for the alt1/alt2 hpRules (see
-                    // getTeamMemberHp()'s own comment for why reading it
-                    // never assumes it's set even so) -- set to a fresh
-                    // max here under whatever hpRule is active right now
-                    // just for a clean starting value, at level 0 (alt2's
-                    // own max is exactly this species' own token_level at
-                    // that level).
-                    fainted: false,
-                    // Attach/Nature card slots -- both start empty. null
-                    // rather than absent so every read can just check
-                    // truthiness without an extra "in" check, same
-                    // convention as status above. Holds a
-                    // CARDS_BY_ID key (a card's own id), not the
-                    // card object itself, so the equipped card's data
-                    // always reflects whatever's currently in
-                    // cards.json rather than a stale snapshot from
-                    // whenever it was equipped.
-                    attachCardId: null,
-                    natureCardId: null,
                 };
-                const hpRuleAtAdd = getHpRule(getActiveSaveData());
-                const hpMaxAtAdd = getTeamMemberHpMax(member, hpRuleAtAdd);
-                if (hpMaxAtAdd !== null) member.hp = hpMaxAtAdd;
             }
             exitTeamAddMode();
-            if (member) {
-                const data = getActiveSaveData();
-                if (!data.team.members) data.team.members = [];
-                if (data.team.members.length < 6) {
-                    data.team.members.push(member);
-                    if (activeSaveSlot !== null) persistGameSaves();
-                    else if (activeGuestSaveId !== null) persistGameGuestSaves();
-                    markUnsavedProgressChanged();
-                } else {
-                    beginTeamReplaceMode(member);
-                }
-            }
+            if (memberSource) addOrQueueTeamMember(memberSource);
+            openGamePanel();
+            setGameScreen('team');
+            renderTeamGrid();
+        }
+
+        // Permanent Cards panel's own "Add to Team" button (see
+        // .game-permanent-card-add-to-team-btn) -- only ever shown for
+        // a cardNeedsPokemonChoice() card that's already landed in
+        // Permanent with its own pokemonPick (see
+        // renderPermanentCardViewer()). Reuses
+        // addOrQueueTeamMember() -- same "push if there's room,
+        // otherwise beginTeamReplaceMode()" behavior as picking a
+        // Pokémon straight off the gallery via Team Tracker's own Add a
+        // Pokémon button, just sourced from this card's own pokemonPick
+        // instead of a live gallery <img> (see the chat this was
+        // designed in). No shiny art is stored on a pokemonPick, so
+        // this always adds the regular (non-shiny) form.
+        function addPermanentPokemonToTeam(pokemonPick) {
+            if (isActiveSaveReadOnly()) return;
+            if (!pokemonPick || !pokemonPick.src) return;
+            addOrQueueTeamMember({ dex: pokemonPick.dex, name: pokemonPick.name, src: pokemonPick.src, shinysrc: '', shiny: false });
+            closePermanentCardViewer();
             openGamePanel();
             setGameScreen('team');
             renderTeamGrid();
@@ -24504,7 +24912,7 @@
                 } else if (data.type === 'active-card-discard') {
                     hostApplyActiveCardDiscard(conn.peer);
                 } else if (data.type === 'active-card-permanent') {
-                    hostApplyActiveCardPermanent(conn.peer, data.color);
+                    hostApplyActiveCardPermanent(conn.peer, data.color, data.pokemonPick);
                 } else if (data.type === 'permanent-discard' && typeof data.instanceId === 'string') {
                     hostApplyPermanentDiscard(conn.peer, data.instanceId);
                 } else if (data.type === 'permanent-counter-adjust' && typeof data.instanceId === 'string' && typeof data.delta === 'number') {
@@ -25528,15 +25936,27 @@
 
             const activeCardPermanentBtn = e.target.closest('.game-active-card-permanent-btn');
             if (activeCardPermanentBtn) {
+                // Cards that need a specific Pokémon (see
+                // cardNeedsPokemonChoice()) hand off to the gallery
+                // instead of committing right away -- the game panel
+                // closes, the gallery filters down to that card's own
+                // choosePokemon tag, and confirmPermanentPickSelection()
+                // finishes the Permanent move once something's picked.
                 // Cards that need a Color (see cardNeedsNoteColor()) get
-                // the swatch picker instead of committing right away --
-                // see its own click listener further down, which calls
+                // the swatch picker instead -- see its own click
+                // listener further down, which calls
                 // requestActiveCardPermanent(color) once a swatch is
                 // tapped. Everything else commits immediately, same as
-                // before.
+                // before. A card is never expected to need both at
+                // once -- if cards.json ever set both fields on the same
+                // card, the Pokémon-choice flow takes priority (see
+                // hostApplyActiveCardPermanent()'s own comment).
                 const info = getActiveCardInfo();
                 const card = info && CARDS_BY_ID[info.cardId];
-                if (card && cardNeedsNoteColor(card)) {
+                if (card && cardNeedsPokemonChoice(card)) {
+                    closeGamePanel();
+                    beginPermanentPickMode(card.choosePokemon);
+                } else if (card && cardNeedsNoteColor(card)) {
                     openNoteColorPicker();
                 } else {
                     requestActiveCardPermanent();
@@ -26457,6 +26877,12 @@
             const discardBtn = e.target.closest('.game-permanent-card-discard-btn');
             if (discardBtn && permanentCardViewerInstanceId) {
                 requestPermanentDiscard(permanentCardViewerInstanceId);
+                return;
+            }
+            const addToTeamBtn = e.target.closest('.game-permanent-card-add-to-team-btn');
+            if (addToTeamBtn && permanentCardViewerInstanceId) {
+                const entry = getLocalPermanentArray().find(e2 => e2.instanceId === permanentCardViewerInstanceId);
+                if (entry && entry.pokemonPick) addPermanentPokemonToTeam(entry.pokemonPick);
                 return;
             }
             const counter = e.target.closest('.game-permanent-card-viewer-counter');
@@ -28018,6 +28444,7 @@
             // needs its own explicit exit here, same as the back button's
             // own handler further down.
             exitTeamAddMode();
+            exitPermanentPickMode();
             closeFilterPanel();
             closeSoundsPanel();
             closeDiscordPanel();
@@ -28075,6 +28502,9 @@
                 // as the branch above -- "on the gallery screen" from the
                 // chat this was decided in just falls out of that.
                 exitTeamAddMode();
+            } else if (permanentPickModeActive) {
+                // Same reasoning as teamAddModeActive just above.
+                exitPermanentPickMode();
             } else if (filtersActive()) {
                 // Nothing open, but a filter is active (Search button is
                 // in its state-2 look) — same clear as the filter panel's
@@ -30167,6 +30597,23 @@
             }
         });
 
+        // Same shape as the team-add confirm listener just above, for
+        // the Permanent Cards panel's own "choose a Pokémon" flow.
+        document.getElementById('gallery-permanent-pick-confirm-overlay').addEventListener('click', (e) => {
+            if (e.target.closest('.gallery-permanent-pick-confirm-choose-btn')) {
+                confirmPermanentPickSelection();
+                return;
+            }
+            if (e.target.closest('.gallery-permanent-pick-confirm-keep-btn')) {
+                closeGalleryPermanentPickConfirm();
+                return;
+            }
+            if (e.target.id === 'gallery-permanent-pick-confirm-overlay' || e.target.closest('.gallery-permanent-pick-confirm-cancel-btn')) {
+                exitPermanentPickMode();
+                return;
+            }
+        });
+
         // Live preview -- toggling the checkbox swaps the confirm card's
         // own image between teamAddCandidateImg's regular and shiny art
         // immediately, same idea as setShinyShowing() elsewhere, so the
@@ -30185,6 +30632,11 @@
         // clicked a gallery image first.
         document.getElementById('team-add-mode-banner-cancel-btn').addEventListener('click', () => {
             exitTeamAddMode();
+        });
+
+        // Same idea, for the Permanent Cards panel's own pick mode.
+        document.getElementById('permanent-pick-mode-banner-cancel-btn').addEventListener('click', () => {
+            exitPermanentPickMode();
         });
 
         // The listener above only ever fires for clicks landing inside
