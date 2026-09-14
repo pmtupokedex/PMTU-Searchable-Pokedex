@@ -4184,6 +4184,13 @@
             justify-content: center;
         }
 
+        /* Same reasoning, for the pending-replacement banner's own
+           Pokémon portrait (see .game-team-replace-banner-img below). */
+        #game-team-replace-banner {
+            flex-direction: column;
+            justify-content: center;
+        }
+
         /* Sized the same as an in-hand card (see .game-hand-card's own
            width/height in the Hand & Decks module above) so the pending
            card reads exactly as clearly here as it did in hand -- see
@@ -4201,6 +4208,27 @@
         }
 
         .game-team-attach-banner-img.visible {
+            display: block;
+        }
+
+        /* Same show/hide pattern as .game-team-attach-banner-img above,
+           just a Pokémon portrait rather than a card -- sized like
+           .game-team-detail-img (contain, not cover, no card-shaped
+           frame) since a pending team member is a token image, not
+           artwork with its own fixed aspect ratio to preserve via
+           cropping. Duplicated rather than sharing .game-team-attach-banner-img
+           itself, same independence reasoning as everywhere else in
+           this doc -- the two previews are sized for entirely different
+           kinds of image. */
+        .game-team-replace-banner-img {
+            width: 250px;
+            height: 250px;
+            object-fit: contain;
+            flex-shrink: 0;
+            display: none;
+        }
+
+        .game-team-replace-banner-img.visible {
             display: block;
         }
 
@@ -11334,14 +11362,23 @@
                 <button class="filter-btn" id="game-team-add-btn">Add a Pok&eacute;mon</button>
                 <button class="filter-btn" id="game-team-trade-btn">Trade a Pok&eacute;mon</button>
                 <button class="filter-btn" id="game-team-release-btn">Release a Pok&eacute;mon</button>
-                <!-- Reached only when confirmTeamAddSelection() finds the
-                     roster already full (see its own comment) -- every
-                     .game-team-slot click while this is visible replaces
-                     that member instead of doing nothing, until one is
-                     chosen or Cancel discards the pending Pokémon. -->
+                <!-- Reached only when addOrQueueTeamMember() finds the
+                     roster already full (see beginTeamReplaceMode()'s own
+                     comment) -- every .game-team-slot click while this is
+                     visible replaces that member instead of doing
+                     nothing, until one is chosen or "Don't replace a
+                     Pokémon." discards the pending Pokémon (and the
+                     Permanent card it came from, if any -- see
+                     teamReplacePendingSourceInstanceId's own comment).
+                     Image preview follows the same show/hide pattern as
+                     #game-team-attach-banner-img, just sized for a
+                     Pokémon portrait instead of a card (see
+                     .game-team-replace-banner-img's own CSS comment) --
+                     see renderTeamGrid()'s own comment. -->
                 <div class="game-team-replace-banner" id="game-team-replace-banner">
+                    <img class="game-team-replace-banner-img" id="game-team-replace-banner-img" alt="">
                     <span>Tap a Pok&eacute;mon on your team to replace it.</span>
-                    <button class="filter-btn exclude" id="game-team-replace-cancel-btn">Cancel</button>
+                    <button class="filter-btn exclude" id="game-team-replace-cancel-btn">Don't replace a Pok&eacute;mon.</button>
                 </div>
                 <!-- Shown instead of Add/Trade/Release while
                      beginTeamReleaseMode() is active (see the script) --
@@ -15566,6 +15603,17 @@
             if (releaseBtn) releaseBtn.style.display = (replacing || releasing || negotiatingTrade || attachingFromHand) ? 'none' : '';
             const replaceBanner = document.getElementById('game-team-replace-banner');
             if (replaceBanner) replaceBanner.classList.toggle('visible', replacing);
+            const replaceBannerImg = document.getElementById('game-team-replace-banner-img');
+            if (replaceBannerImg) {
+                if (teamReplacePendingMember && teamReplacePendingMember.src) {
+                    replaceBannerImg.src = teamReplacePendingMember.src;
+                    replaceBannerImg.alt = teamReplacePendingMember.name || '';
+                    replaceBannerImg.classList.add('visible');
+                } else {
+                    replaceBannerImg.classList.remove('visible');
+                    replaceBannerImg.removeAttribute('src');
+                }
+            }
             const releaseBanner = document.getElementById('game-team-release-banner');
             if (releaseBanner) releaseBanner.classList.toggle('visible', releasing);
             const tradeSelectBanner = document.getElementById('game-team-trade-select-banner');
@@ -15888,19 +15936,31 @@
         // screen by the time this is ever set.
         let teamReplacePendingMember = null;
 
-        // Called from confirmTeamAddSelection() once it's back on Team
-        // Tracker with nowhere to put the new member -- just stashes it
-        // and re-renders; the actual replacement happens in the
+        // Which Permanent card (by instanceId) teamReplacePendingMember
+        // came from, if it came from one at all -- set only by
+        // addPermanentPokemonToTeam() by way of beginTeamReplaceMode()'s
+        // own second param; a plain gallery add (confirmTeamAddSelection())
+        // never sets this, since there's no card involved for that path.
+        // Whatever ends up happening to the pending member -- placed via
+        // a slot tap, backed out of via Cancel, or silently discarded by
+        // navigating away (see setGameScreen()) -- this card gets
+        // Discarded (see requestPermanentDiscard()) right alongside it,
+        // same "the Pokémon's been extracted from this card, so the
+        // card's done regardless of where the Pokémon ends up" reasoning
+        // in every one of those three places.
+        let teamReplacePendingSourceInstanceId = null;
+
+        // Called once there's nowhere to put a new member -- either
+        // confirmTeamAddSelection() (gallery pick, no sourceInstanceId)
+        // or addPermanentPokemonToTeam() (a Permanent card's own
+        // pokemonPick, sourceInstanceId is that card's instanceId) via
+        // their shared addOrQueueTeamMember() -- just stashes it and
+        // re-renders; the actual replacement happens in the
         // #game-scroll delegated listener's own .game-team-slot branch,
-        // once the player taps which of the six to overwrite. Left to
-        // setGameScreen() to discard this if the player navigates away
-        // from Team Tracker before choosing (see its own comment) --
-        // same "one authoritative place clears it, every path that
-        // should goes through that" shape as exitTeamAddMode(), just
-        // simpler since there's no mode-wide cursor/banner outside this
-        // one screen to also unwind.
-        function beginTeamReplaceMode(member) {
+        // once the player taps which of the six to overwrite.
+        function beginTeamReplaceMode(member, sourceInstanceId) {
             teamReplacePendingMember = member;
+            teamReplacePendingSourceInstanceId = sourceInstanceId || null;
             renderTeamGrid();
         }
 
@@ -22340,7 +22400,17 @@
         // responsible for its own isActiveSaveReadOnly() guard and
         // whatever screen/panel navigation makes sense for where it's
         // called from -- this only ever touches the roster data itself.
-        function addOrQueueTeamMember(memberSource) {
+        //
+        // sourceInstanceId is only ever passed by addPermanentPokemonToTeam()
+        // -- the Permanent card this member's own pokemonPick came from,
+        // Discarded (see requestPermanentDiscard()) immediately once
+        // there's room to just push the member straight on. If there
+        // isn't room, discarding gets deferred to whatever eventually
+        // resolves the pending replacement instead (see
+        // beginTeamReplaceMode()'s own comment) -- the card stays put
+        // in Permanent for as long as its own Pokémon is still only
+        // pending, not yet actually on the team.
+        function addOrQueueTeamMember(memberSource, sourceInstanceId) {
             const member = {
                 dex: memberSource.dex || '',
                 name: memberSource.name || '',
@@ -22386,8 +22456,9 @@
                 if (activeSaveSlot !== null) persistGameSaves();
                 else if (activeGuestSaveId !== null) persistGameGuestSaves();
                 markUnsavedProgressChanged();
+                if (sourceInstanceId) requestPermanentDiscard(sourceInstanceId);
             } else {
-                beginTeamReplaceMode(member);
+                beginTeamReplaceMode(member, sourceInstanceId);
             }
         }
 
@@ -22423,11 +22494,16 @@
         // Pokémon button, just sourced from this card's own pokemonPick
         // instead of a live gallery <img> (see the chat this was
         // designed in). No shiny art is stored on a pokemonPick, so
-        // this always adds the regular (non-shiny) form.
-        function addPermanentPokemonToTeam(pokemonPick) {
+        // this always adds the regular (non-shiny) form. instanceId is
+        // this card's own instanceId, passed straight through to
+        // addOrQueueTeamMember() so it can Discard the card once its
+        // Pokémon actually lands on the team (immediately if there's
+        // room, or once a pending replacement resolves if not -- see
+        // its own comment).
+        function addPermanentPokemonToTeam(pokemonPick, instanceId) {
             if (isActiveSaveReadOnly()) return;
             if (!pokemonPick || !pokemonPick.src) return;
-            addOrQueueTeamMember({ dex: pokemonPick.dex, name: pokemonPick.name, src: pokemonPick.src, shinysrc: '', shiny: false });
+            addOrQueueTeamMember({ dex: pokemonPick.dex, name: pokemonPick.name, src: pokemonPick.src, shinysrc: '', shiny: false }, instanceId);
             closePermanentCardViewer();
             openGamePanel();
             setGameScreen('team');
@@ -24074,6 +24150,14 @@
             if (screenId !== 'team') {
                 if (teamReplacePendingMember) {
                     teamReplacePendingMember = null;
+                    // Same reasoning as #game-team-replace-cancel-btn's
+                    // own comment -- silently navigating away is still a
+                    // way of backing out of the replacement, so it costs
+                    // the source card too if there was one.
+                    if (teamReplacePendingSourceInstanceId) {
+                        requestPermanentDiscard(teamReplacePendingSourceInstanceId);
+                        teamReplacePendingSourceInstanceId = null;
+                    }
                     renderTeamGrid();
                 }
                 if (teamReleaseModeActive) {
@@ -26193,10 +26277,20 @@
             // anywhere -- the one way out of replace mode besides
             // actually tapping a slot below. Leaves the roster
             // untouched, same as "Don't Add a Pokémon." does for the
-            // gallery half of this flow.
+            // gallery half of this flow. Also Discards
+            // teamReplacePendingSourceInstanceId if this pending member
+            // came from a Permanent card (see its own comment) -- once
+            // Add to Team's been pressed, the Pokémon's committed to
+            // leaving that card one way or another, so backing out here
+            // still costs the card even though nothing ends up on the
+            // team.
             const teamReplaceCancelBtn = e.target.closest('#game-team-replace-cancel-btn');
             if (teamReplaceCancelBtn) {
                 teamReplacePendingMember = null;
+                if (teamReplacePendingSourceInstanceId) {
+                    requestPermanentDiscard(teamReplacePendingSourceInstanceId);
+                    teamReplacePendingSourceInstanceId = null;
+                }
                 renderTeamGrid();
                 return;
             }
@@ -26397,6 +26491,10 @@
                     if (!data.team.members) data.team.members = [];
                     data.team.members[Number(teamSlot.dataset.index)] = teamReplacePendingMember;
                     teamReplacePendingMember = null;
+                    if (teamReplacePendingSourceInstanceId) {
+                        requestPermanentDiscard(teamReplacePendingSourceInstanceId);
+                        teamReplacePendingSourceInstanceId = null;
+                    }
                     if (activeSaveSlot !== null) persistGameSaves();
                     else if (activeGuestSaveId !== null) persistGameGuestSaves();
                     markUnsavedProgressChanged();
@@ -26882,7 +26980,7 @@
             const addToTeamBtn = e.target.closest('.game-permanent-card-add-to-team-btn');
             if (addToTeamBtn && permanentCardViewerInstanceId) {
                 const entry = getLocalPermanentArray().find(e2 => e2.instanceId === permanentCardViewerInstanceId);
-                if (entry && entry.pokemonPick) addPermanentPokemonToTeam(entry.pokemonPick);
+                if (entry && entry.pokemonPick) addPermanentPokemonToTeam(entry.pokemonPick, entry.instanceId);
                 return;
             }
             const counter = e.target.closest('.game-permanent-card-viewer-counter');
