@@ -253,6 +253,9 @@
         }
 
         #filter-scroll,
+        #sounds-scroll,
+        #game-scroll,
+        #discord-scroll,
         #viewer-related-grid,
         #viewer-info-content,
         #how-to-use-section,
@@ -5211,6 +5214,74 @@
             background: rgba(0, 0, 0, 0.3);
         }
 
+        /* Pokémon replace confirmation -- see
+           openTeamReplaceConfirmOverlay()/closeTeamReplaceConfirmOverlay()/
+           confirmTeamReplaceSelection() in the script. Same positioning/
+           backdrop rules as every other Team Tracker overlay above. */
+        #game-team-replace-confirm-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-team-replace-confirm-overlay.visible {
+            display: flex;
+        }
+
+        /* Stacked (Current above New) rather than side by side -- same
+           readability call the attach confirmation above already made
+           for full-size content (see .game-team-attach-confirm-compare's
+           own comment): each column now carries a full graphical
+           readout (image, Level pills, HP icon+counter, Status
+           icon+counter, both card slots -- see
+           buildTeamReplaceSummaryHtml()), reusing the real detail
+           panel's own components wholesale rather than a condensed
+           line of text, so there's no room left for two columns side
+           by side the way there was with the old text-only version.
+           .game-confirm-card's own max-height/overflow-y (see its base
+           rule) handles anything that still doesn't fit a shorter
+           screen at once. */
+        .game-team-replace-confirm-compare {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            margin: 4px 0 12px;
+        }
+
+        .game-team-replace-confirm-compare-col {
+            padding: 10px 0;
+        }
+
+        .game-team-replace-confirm-compare-col + .game-team-replace-confirm-compare-col {
+            border-top: 1px solid rgba(0, 0, 0, 0.15);
+        }
+
+        .game-team-replace-confirm-compare-label {
+            font-size: 13px;
+            font-weight: bold;
+            opacity: 0.8;
+            margin: 0 0 6px;
+        }
+
+        /* Filled in by buildTeamReplaceSummaryHtml() -- see its own
+           comment for exactly which real detail-panel classes get
+           reused here. */
+        .game-team-replace-confirm-summary {
+            text-align: center;
+        }
+
+        .game-team-replace-confirm-empty {
+            font-size: 13px;
+            font-style: italic;
+            opacity: 0.7;
+        }
+
         /* Attach/Nature Cards picker -- see openTeamCardsOverlay()/
            closeTeamCardsOverlay() in the script. Same positioning/
            backdrop rules as every other Team Tracker overlay above
@@ -5708,6 +5779,25 @@
             opacity: 0;
             transform: translateX(-16px);
             pointer-events: none;
+        }
+
+        /* Sized/centered like the Details page's own Level column at
+           rest with no evolution available (see
+           .game-team-detail-level-evo-row.no-evolution's own comment
+           just above) -- same calc(50% - 6px) fixed width so it doesn't
+           stretch to the full row's width the way a plain
+           .game-team-detail-col does everywhere else, just centered
+           directly via justify-content rather than that state's
+           translateX trick, since there's no Evolution sibling column
+           here to translate away from and nothing to animate between --
+           this comparison only ever needs the one, static, already-
+           centered look. */
+        .game-team-replace-confirm-level-row {
+            justify-content: center;
+        }
+
+        .game-team-replace-confirm-level-row .game-team-detail-level-col {
+            flex: 0 0 calc(50% - 6px);
         }
 
         /* Icon justified left, counter pill (see
@@ -11793,6 +11883,42 @@
             </div>
         </div>
 
+        <!-- Pokémon replace confirmation -- see
+             openTeamReplaceConfirmOverlay()/closeTeamReplaceConfirmOverlay()/
+             confirmTeamReplaceSelection() in the script. Reached only
+             from .game-team-slot-hit-zone while teamReplacePendingMember
+             is set (see its own comment) -- every filled slot tap opens
+             this instead of replacing outright, so the player can
+             compare exactly what they'd be giving up against what's
+             coming in first. Read-only stand-in for the full detail view
+             (openTeamDetailOverlay()) -- same categories of information
+             (Level/HP/Status/equipped cards), just static text rather
+             than every interactive widget the real detail view has,
+             since none of those make sense mid-comparison anyway. No
+             backs out to #game-team-replace-banner, letting the player
+             pick a different slot instead, same "Cancel is its own
+             separate exit" shape as #game-team-attach-confirm-overlay
+             above. -->
+        <div id="game-team-replace-confirm-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Replace this Pok&eacute;mon?</p>
+                <div class="game-team-replace-confirm-compare">
+                    <div class="game-team-replace-confirm-compare-col">
+                        <p class="game-team-replace-confirm-compare-label">Current</p>
+                        <div class="game-team-replace-confirm-summary" id="game-team-replace-confirm-old"></div>
+                    </div>
+                    <div class="game-team-replace-confirm-compare-col">
+                        <p class="game-team-replace-confirm-compare-label">New</p>
+                        <div class="game-team-replace-confirm-summary" id="game-team-replace-confirm-new"></div>
+                    </div>
+                </div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-team-replace-confirm-yes-btn">Yes</button>
+                    <button class="filter-btn exclude game-team-replace-confirm-no-btn">No</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Attach/Nature Cards picker for a single Team Tracker slot --
              see openTeamCardsOverlay()/closeTeamCardsOverlay() and
              CARDS_BY_ID in the script. Reuses
@@ -13627,11 +13753,24 @@
                 const teamAddForcedExcludeMatch =
                     teamAddModeActive && TEAM_ADD_FORCED_EXCLUDE_TAGS.some(f => tags.includes(f));
 
+                // Same idea for the Permanent Cards panel's own "choose
+                // a Pokémon" mode (see beginPermanentPickMode()) -- Mega
+                // Evolutions and Gigantamaxes are hidden unless the
+                // card's own choosePokemon value IS "mega" or "gmax"
+                // (permanentPickLockedTag), since in that one case
+                // they're exactly what the player's supposed to be
+                // choosing from rather than a form that shouldn't be
+                // selectable at all. See the chat this was designed in.
+                const permanentPickForcedExcludeMatch =
+                    permanentPickModeActive &&
+                    !PERMANENT_PICK_FORCED_EXCLUDE_TAGS.includes(permanentPickLockedTag) &&
+                    PERMANENT_PICK_FORCED_EXCLUDE_TAGS.some(f => tags.includes(f));
+
                 card.classList.toggle(
                     'show',
                     sectionsMatch && includeMatch && explicitOrMatch && explicitAndMatch &&
                         hideNoAbilityMatch && shinyFilterMatch &&
-                        !(excludeMatch || explicitAndExcludeMatch || teamAddForcedExcludeMatch)
+                        !(excludeMatch || explicitAndExcludeMatch || teamAddForcedExcludeMatch || permanentPickForcedExcludeMatch)
                 );
             });
         }
@@ -15964,6 +16103,203 @@
             renderTeamGrid();
         }
 
+        // Builds one column's worth of read-only summary markup for the
+        // replace confirmation below -- mirrors renderTeamDetailHeader()/
+        // renderTeamDetailLevelSection()/renderTeamDetailHpSection()/
+        // renderTeamDetailStatusSection()/renderTeamDetailCardsSection()
+        // as closely as a static readout reasonably can: same
+        // formOverride/shiny art resolution (so an evolved/Mega/
+        // Gigantamax member shows THAT form, not the species it started
+        // as), same Total Level (base + counter) alongside the raw
+        // counter, same Fainted/standard-has-no-counter HP handling as
+        // computeTeamHpState(), same "No Status"/"No ___ Card equipped."
+        // fallbacks rather than hiding a section just because it's
+        // empty -- every category always renders something, the same
+        // way the real detail view's own sections do, so this actually
+        // reads as a full readout rather than a sparse list of whatever
+        // happened to be set. null (an empty slot -- only ever the
+        // "Current" column, since there's always a "New" member by the
+        // time this can open) gets its own short placeholder instead.
+        // Evolution state itself isn't included -- nothing about a
+        // replacement changes it, and formOverride's already folded into
+        // the art/name above.
+        // Read-only replica of a single Attach/Nature Card slot -- same
+        // markup renderTeamCardSlotPanel() uses for a filled slot,
+        // minus the Remove Card button (nothing here is editable). Card
+        // art if the card has any, its own name as plain text if not
+        // (see .game-team-cards-detail-empty's existing dual purpose
+        // there), or the emptyText fallback if the slot has nothing
+        // equipped at all.
+        function buildTeamReplaceCardSlotMarkup(cardId, emptyText) {
+            const card = cardId ? CARDS_BY_ID[cardId] : null;
+            if (!card) return `<p class="game-team-cards-detail-empty">${escapeHtml(emptyText)}</p>`;
+            return card.imageUrl
+                ? `<img class="game-team-cards-photo" src="${card.imageUrl}" alt="${escapeHtml(card.name)}">`
+                : `<p class="game-team-cards-detail-empty">${escapeHtml(card.name)}</p>`;
+        }
+
+        // Builds one column's worth of read-only summary markup for the
+        // replace confirmation below -- per the chat this was rebuilt
+        // in, this reuses the REAL detail panel's own graphical
+        // components wholesale (.game-team-detail-img,
+        // .game-team-detail-level-total/-counter pills,
+        // .game-team-detail-hp-top's icon+counter,
+        // .game-team-detail-status-top's icon+counter via
+        // statusImageMarkup(), .game-team-cards-photo card art) rather
+        // than a condensed list of plain-text lines -- same classes
+        // renderTeamDetailHeader()/renderTeamDetailLevelSection()/
+        // renderTeamDetailHpSection()/renderTeamDetailStatusSection()/
+        // renderTeamDetailCardsSection() populate for the real,
+        // interactive panel, just written out directly as a static
+        // string here instead of targeted element-by-element, and with
+        // every button/tap-target left out entirely (Add/Remove Card,
+        // Evolve, the Status picker strip, HP's +/- halves) since
+        // nothing on this screen is meant to be editable. Evolution
+        // itself isn't reproduced as its own section -- nothing about a
+        // replacement changes it, and formOverride is already folded
+        // into the art/name below the same way the real header handles
+        // it. null (an empty slot -- only ever the "Current" column,
+        // since there's always a "New" member by the time this can
+        // open) gets its own short placeholder instead.
+        function buildTeamReplaceSummaryHtml(member) {
+            if (!member) return '<p class="game-team-replace-confirm-empty">Empty slot.</p>';
+            const data = getActiveSaveData();
+            const hpRule = getHpRule(data);
+
+            const overrideEntry = member.formOverride ? POKEMON_BY_NAME[member.formOverride] : null;
+            const artSrc = overrideEntry ? overrideEntry.src : member.src;
+            const artShinySrc = overrideEntry ? (overrideEntry.shinysrc || '') : member.shinysrc;
+            const displaySrc = (member.shiny && hasShinyForm(artShinySrc)) ? artShinySrc : (artSrc || '');
+            const displayName = (overrideEntry ? overrideEntry.name : member.name) || 'Unknown';
+
+            const fainted = !!member.fainted;
+            const hasHpCounter = hpRule !== 'standard';
+            const hp = fainted ? 0 : getTeamMemberHp(member, hpRule);
+            const hpMax = getTeamMemberHpMax(member, hpRule) || 0;
+
+            const levelCounter = member.level || 0;
+            const totalLevel = getTeamMemberBaseLevel(member) + levelCounter;
+
+            const statusEntry = STATUS_CONDITIONS.find(s => s.id === member.status) || NO_STATUS_PLACEHOLDER;
+            const statusCounterCfg = member.status ? STATUS_COUNTER_CONFIG[member.status] : null;
+            const statusCounterValue = statusCounterCfg ? (member.statusCounter ?? statusCounterCfg.default) : 0;
+
+            const naturesEnabled = isNaturesEnabledForActiveSave();
+
+            return `
+                ${displaySrc ? `<img class="game-team-detail-img" src="${displaySrc}" alt="${escapeHtml(displayName)}">` : ''}
+                <p class="game-confirm-title">${escapeHtml(displayName)}</p>
+                <div class="game-team-detail-columns game-team-replace-confirm-level-row">
+                    <div class="game-team-detail-col game-team-detail-level-col">
+                        <p class="game-team-detail-section-title">Level</p>
+                        <div class="game-team-detail-level-row">
+                            <div class="game-team-detail-level-total"><span class="game-team-detail-level-total-value">${totalLevel}</span></div>
+                            <div class="game-team-detail-level-counter"><span>${levelCounter}</span></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="game-team-detail-columns">
+                    <div class="game-team-detail-col">
+                        <p class="game-team-detail-section-title">HP</p>
+                        <div class="game-team-detail-hp-top${hasHpCounter ? '' : ' game-team-detail-hp-top-centered'}">
+                            <img class="game-team-detail-hp-icon" src="${fainted ? HP_MODE_IMAGES.fainted : HP_MODE_IMAGES.default}" alt="HP">
+                            ${hasHpCounter ? `<div class="game-team-detail-hp-counter"><span>${hp}</span>&nbsp;/&nbsp;<span>${hpMax}</span></div>` : ''}
+                        </div>
+                        <p class="game-team-detail-hp-status-text">${fainted ? 'Fainted' : 'Healthy'}</p>
+                    </div>
+                    <div class="game-team-detail-col">
+                        <p class="game-team-detail-section-title">Status</p>
+                        <div class="game-team-detail-status-top${statusCounterCfg ? '' : ' game-team-detail-status-top-centered'}">
+                            <div class="game-team-detail-status-icon-wrap">${statusImageMarkup(statusEntry, 'game-team-detail-status-icon-img')}</div>
+                            ${statusCounterCfg ? `<div class="game-team-detail-status-counter"><span>${statusCounterValue}</span></div>` : ''}
+                        </div>
+                        <p class="game-team-detail-status-name-text">${escapeHtml(statusEntry.name)}</p>
+                    </div>
+                </div>
+                <div class="game-team-detail-section">
+                    <p class="game-team-detail-section-title">Attach Card</p>
+                    <div class="game-team-cards-detail">${buildTeamReplaceCardSlotMarkup(member.attachCardId, 'No Attach Card equipped.')}</div>
+                </div>
+                ${naturesEnabled ? `
+                <div class="game-team-detail-section">
+                    <p class="game-team-detail-section-title">Nature Card</p>
+                    <div class="game-team-cards-detail">${buildTeamReplaceCardSlotMarkup(member.natureCardId, 'No Nature Card equipped.')}</div>
+                </div>` : ''}
+            `;
+        }
+
+        // Which roster slot the replace confirmation is currently open
+        // for -- null while it's closed. Set by
+        // openTeamReplaceConfirmOverlay(), read by
+        // confirmTeamReplaceSelection() once Yes is actually tapped.
+        let pendingTeamReplaceSlotIndex = null;
+
+        // Reached from .game-team-slot-hit-zone's own teamReplacePendingMember
+        // branch -- every filled-slot tap while a replacement is pending
+        // lands here now instead of replacing immediately, so the two
+        // summaries (see buildTeamReplaceSummaryHtml() above) can be
+        // compared before anything's committed.
+        function openTeamReplaceConfirmOverlay(index) {
+            pendingTeamReplaceSlotIndex = index;
+            const data = getActiveSaveData();
+            const oldMember = (data.team.members || [])[index] || null;
+            const oldEl = document.getElementById('game-team-replace-confirm-old');
+            if (oldEl) oldEl.innerHTML = buildTeamReplaceSummaryHtml(oldMember);
+            const newEl = document.getElementById('game-team-replace-confirm-new');
+            if (newEl) newEl.innerHTML = buildTeamReplaceSummaryHtml(teamReplacePendingMember);
+            const overlay = document.getElementById('game-team-replace-confirm-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        // No/backdrop -- backs out to #game-team-replace-banner with
+        // teamReplacePendingMember/teamReplacePendingSourceInstanceId
+        // both left untouched, so the player can tap a different slot
+        // instead, same as #game-team-attach-confirm-overlay's own No.
+        function closeTeamReplaceConfirmOverlay() {
+            pendingTeamReplaceSlotIndex = null;
+            const overlay = document.getElementById('game-team-replace-confirm-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // Yes -- the one path that actually performs a replacement now.
+        // Same body .game-team-slot-hit-zone's own branch used to run
+        // directly before this confirmation existed, plus the source-card
+        // Discard this same branch already needed (see
+        // teamReplacePendingSourceInstanceId's own comment).
+        function confirmTeamReplaceSelection() {
+            if (pendingTeamReplaceSlotIndex === null || !teamReplacePendingMember) {
+                closeTeamReplaceConfirmOverlay();
+                return;
+            }
+            const index = pendingTeamReplaceSlotIndex;
+            const data = getActiveSaveData();
+            if (!data.team.members) data.team.members = [];
+            // Same "the card comes off the Pokémon and lands on the
+            // discard pile" bookkeeping as confirmTeamReleaseStage()'s
+            // own comment -- the member sitting in this slot right now
+            // is about to be overwritten wholesale by
+            // teamReplacePendingMember below, so its own equipped cards
+            // (if any) need to be peeled off onto their decks' discard
+            // piles first, or they'd simply vanish along with the old
+            // member object.
+            const outgoing = data.team.members[index];
+            if (outgoing && isVirtualDecksEnabledForActiveSave()) {
+                if (outgoing.attachCardId) discardUnattachedCard(outgoing.attachCardId);
+                if (outgoing.natureCardId) discardUnattachedCard(outgoing.natureCardId);
+            }
+            data.team.members[index] = teamReplacePendingMember;
+            teamReplacePendingMember = null;
+            closeTeamReplaceConfirmOverlay();
+            if (teamReplacePendingSourceInstanceId) {
+                requestPermanentDiscard(teamReplacePendingSourceInstanceId);
+                teamReplacePendingSourceInstanceId = null;
+            }
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            renderTeamGrid();
+        }
+
         // Release mode's own equivalent of teamReplacePendingMember
         // above -- true while #game-team-release-banner is up and every
         // filled slot tap opens the two-stage confirm (see
@@ -16111,6 +16447,18 @@
 
             const data = getActiveSaveData();
             const members = data.team.members || [];
+            const released = members[pendingTeamReleaseIndex];
+            // A released member's own equipped cards don't disappear
+            // along with it -- same "the card comes back off the
+            // Pokémon and lands on the discard pile" bookkeeping as
+            // every other path that unequips one (see
+            // discardUnattachedCard()'s own comment). Gated the same
+            // way those other call sites are: a save that never turned
+            // on virtual decks has no discard pile to put it on.
+            if (released && isVirtualDecksEnabledForActiveSave()) {
+                if (released.attachCardId) discardUnattachedCard(released.attachCardId);
+                if (released.natureCardId) discardUnattachedCard(released.natureCardId);
+            }
             members.splice(pendingTeamReleaseIndex, 1);
             data.team.members = members;
 
@@ -17634,11 +17982,24 @@
         // The Play button in a hand card's own options grid -- see
         // hostApplyPlay()'s own comment for what actually happens to the
         // card (reveals into the Active Card zone, still pending).
+        // Set right before a hand-Play request goes out (see
+        // requestPlayFromHand() below), consumed the next time
+        // renderActiveCardZone() actually draws this device's own
+        // pending card (see its own comment) -- there's almost always
+        // further action needed once a card lands in the Active Card
+        // zone this way, so autoscrolling there saves a manual scroll
+        // every single time. Not set for a draw-reveal or an
+        // Attach-from-hand landing in the same zone -- the chat this was
+        // designed in asked for this specifically for a hand-Play, not
+        // every path that can populate the zone.
+        let pendingActiveCardScrollTrigger = false;
+
         function requestPlayFromHand(cardId) {
             if (isActiveSaveReadOnly()) return;
             const card = CARDS_BY_ID[cardId];
             if (!card) return;
             const deckName = card.cardDeck || DECK_TOOL_LIST[0];
+            pendingActiveCardScrollTrigger = true;
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
                     lobbyState.hostConn.send({ type: 'deck-play', deck: deckName, cardId });
@@ -17837,8 +18198,18 @@
         // pokemonPick is the same idea for cardNeedsPokemonChoice()
         // cards -- see confirmPermanentPickSelection() for what it
         // contains and where it comes from.
+        //
+        // pendingPermanentScrollTrigger: same shape/reasoning as
+        // pendingActiveCardScrollTrigger above, just for the Permanent
+        // Cards panel instead of the Active Card zone, consumed by
+        // renderDecksScreen()'s own Permanent Cards block. This is the
+        // one function every path that lands a card in Permanent goes
+        // through (manual Color, choosePokemon's gallery hand-off, or
+        // neither), so setting it here alone covers all of them.
+        let pendingPermanentScrollTrigger = false;
         function requestActiveCardPermanent(color, pokemonPick) {
             if (isActiveSaveReadOnly()) return;
+            pendingPermanentScrollTrigger = true;
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
                     const payload = { type: 'active-card-permanent' };
@@ -18373,6 +18744,44 @@
                         return `<button class="game-permanent-card-thumb" type="button" data-instance-id="${escapeHtml(entry.instanceId)}" aria-label="View ${escapeHtml(name)}" title="${escapeHtml(name)}">${img}${dot}</button>`;
                     }).join('');
                 }
+                // See pendingPermanentScrollTrigger's own comment.
+                if (pendingPermanentScrollTrigger) {
+                    pendingPermanentScrollTrigger = false;
+                    // Was permanentListEl.scrollIntoView({behavior:'smooth',
+                    // block:'start'}) -- confirmed via logging that this
+                    // choosePokemon reopen was ending up with #game-panel
+                    // (the fixed-position drawer permanentListEl lives in,
+                    // overflow:hidden purely for its own slide-in clipping)
+                    // *also* picking up a real, lasting scrollTop of its
+                    // own -- something scrollIntoView() apparently applies
+                    // to it as one of the scrollable ancestors it walks on
+                    // the way up from permanentListEl, on top of the
+                    // intended scroll on #game-scroll itself. overflow:
+                    // hidden blocks the user from scrolling it by hand, but
+                    // doesn't stop it being scrolled programmatically, and
+                    // nothing ever resets that stray offset afterward -- it
+                    // just sits there shifting everything inside #game-
+                    // panel (including #game-scroll) up by however far it
+                    // was nudged. Scrolling #game-scroll directly and
+                    // exclusively via scrollTo(), instead of walking the
+                    // ancestor chain from permanentListEl, never touches
+                    // #game-panel at all, so this doesn't happen. The
+                    // explicit scrollTop = 0 below is just a defensive
+                    // belt-and-suspenders in case anything else ever nudges
+                    // it the same way -- #game-panel is never meant to
+                    // scroll on its own, #game-scroll is the one true
+                    // scrollport, so forcing it back to 0 is always safe.
+                    requestAnimationFrame(() => {
+                        gamePanel.scrollTop = 0;
+                        const scrollEl = document.getElementById('game-scroll');
+                        if (!scrollEl) return;
+                        const scrollElRect = scrollEl.getBoundingClientRect();
+                        const targetRect = permanentListEl.getBoundingClientRect();
+                        const paddingTop = parseFloat(getComputedStyle(scrollEl).paddingTop) || 0;
+                        const targetScrollTop = scrollEl.scrollTop + (targetRect.top - scrollElRect.top) - paddingTop;
+                        scrollEl.scrollTo({ top: Math.max(0, targetScrollTop), behavior: 'smooth' });
+                    });
+                }
             }
 
             const deckInfo = getDeckInfoMap();
@@ -18538,6 +18947,15 @@
                         </div>
                     </div>
                 `;
+                // See pendingActiveCardScrollTrigger's own comment --
+                // requestAnimationFrame so the scroll happens after the
+                // zone's own layout (just switched from display:none to
+                // visible above) actually settles, rather than measuring
+                // its position mid-transition.
+                if (pendingActiveCardScrollTrigger) {
+                    pendingActiveCardScrollTrigger = false;
+                    requestAnimationFrame(() => zoneEl.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+                }
             } else {
                 zoneEl.innerHTML = `
                     <div class="game-active-card-view centered">
@@ -22205,6 +22623,15 @@
         // exit/lock handling can't possibly bleed into the other's.
         let permanentPickModeActive = false;
 
+        // Tags force-excluded from the gallery for the whole duration of
+        // a Permanent-pick session, unless permanentPickLockedTag IS one
+        // of these (see filterGallery()'s own permanentPickForcedExcludeMatch
+        // comment) -- same shape as TEAM_ADD_FORCED_EXCLUDE_TAGS above,
+        // just without 'pokestar' (Pokéstar tokens aren't otherwise
+        // barred from a choosePokemon pick the way they are from a
+        // team, so there's nothing to force-exclude there).
+        const PERMANENT_PICK_FORCED_EXCLUDE_TAGS = ['mega', 'gmax'];
+
         // Whether beginPermanentPickMode() actually found and locked a
         // filter button -- mirrors teamAddStarterLockActive's own
         // reasoning, just unconditional here (every choosePokemon card
@@ -24176,6 +24603,7 @@
                 closeTeamStatusOverlay();
                 closeTeamReleaseConfirmOverlay();
                 closeAttachFromHandConfirmOverlay();
+                closeTeamReplaceConfirmOverlay();
                 closeTeamHpOverlay();
                 closeTeamReviveConfirmOverlay();
                 closeTeamCardsOverlay();
@@ -26487,18 +26915,7 @@
                 if (teamReplacePendingMember) {
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
-                    const data = getActiveSaveData();
-                    if (!data.team.members) data.team.members = [];
-                    data.team.members[Number(teamSlot.dataset.index)] = teamReplacePendingMember;
-                    teamReplacePendingMember = null;
-                    if (teamReplacePendingSourceInstanceId) {
-                        requestPermanentDiscard(teamReplacePendingSourceInstanceId);
-                        teamReplacePendingSourceInstanceId = null;
-                    }
-                    if (activeSaveSlot !== null) persistGameSaves();
-                    else if (activeGuestSaveId !== null) persistGameGuestSaves();
-                    markUnsavedProgressChanged();
-                    renderTeamGrid();
+                    openTeamReplaceConfirmOverlay(Number(teamSlot.dataset.index));
                     return;
                 }
                 if (teamReleaseModeActive) {
@@ -26655,6 +27072,19 @@
             }
             if (e.target.closest('.game-team-attach-confirm-yes-btn')) {
                 confirmAttachFromHandReplace();
+                return;
+            }
+        });
+
+        // Same shape as the attach confirm listener just above, for the
+        // Pokémon replace confirmation.
+        document.getElementById('game-team-replace-confirm-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-team-replace-confirm-overlay' || e.target.closest('.game-team-replace-confirm-no-btn')) {
+                closeTeamReplaceConfirmOverlay();
+                return;
+            }
+            if (e.target.closest('.game-team-replace-confirm-yes-btn')) {
+                confirmTeamReplaceSelection();
                 return;
             }
         });
