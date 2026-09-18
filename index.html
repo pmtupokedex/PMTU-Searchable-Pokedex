@@ -4650,6 +4650,51 @@
             width: 100%;
         }
 
+        /* Positioning anchor for .game-team-slot-cards-count below --
+           only ever rendered around an icon that actually needs one
+           (see renderTeamGrid()'s own comment), so most members never
+           get this wrapper at all and their icon renders exactly as it
+           always did (a bare .game-team-slot-cards-img, direct child of
+           the badge). Same width/aspect-ratio as that class so standing
+           it in as a flex item in its place doesn't shift anything;
+           display:flex + centering here reproduces the same "centered
+           before going absolute" setup .game-team-slot-status-count
+           relies on (see its own comment), just one layer further in
+           since this needs its own wrapper rather than the badge itself. */
+        .game-team-slot-cards-icon-slot {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+        }
+
+        /* Current itemCounters count for an equipped Attach Card item
+           (see cardHasItemCounter() in the script) -- only a small
+           handful of item cards have this field at all, so most members
+           never render this. Same corner-tucked readout convention as
+           .game-team-slot-status-count (left-anchored, no top/bottom of
+           its own so it stays vertically centered via the wrapper's own
+           flex centering above, exactly like that class's own trick),
+           just scoped to the Attach icon specifically -- in the pill
+           case this only ever wraps the Attach icon, never the Nature
+           one alongside it (see computeTeamCardsState()'s own comment
+           on how count gets attached to the right image). */
+        .game-team-slot-cards-count {
+            position: absolute;
+            left: 6px;
+            font-size: 18px;
+            font-weight: bold;
+            line-height: 1;
+            color: #FFF;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+            pointer-events: none;
+        }
+
         /* Overlay Card -- dead center of the art, not a corner at all
            (see the chat this was designed in), and the one badge here
            that doesn't always exist: only ever rendered by renderTeamGrid()
@@ -5645,6 +5690,26 @@
             padding: 8px 10px;
             font-size: 13px;
             border-radius: 10px;
+        }
+
+        /* .game-permanent-card-viewer-counter-row's own justify-content:
+           center (see its rule) only has room to work when the row
+           itself spans the full container width -- true automatically
+           in the Hand & Decks Permanent Card Viewer's own plain block
+           container (.game-permanent-card-viewer-detail), but not here:
+           .game-team-cards-detail is a flex-wrap row (see its own rule
+           above), so without an explicit width the counter row just
+           shrinks to fit its own label+counter content and appears
+           left-aligned instead, same as .game-team-cards-card-btn's own
+           reason for needing flex-basis: 100% just above. Fixes the
+           Attach/Nature Cards panels (both the corner badge's own
+           overlay and the details view), the Overlay Card popup viewer,
+           and the details view's own Overlay section -- every place
+           this counter widget shows up outside the Permanent Card
+           Viewer itself, all of which share this same
+           .game-team-cards-detail container. */
+        .game-team-cards-detail .game-permanent-card-viewer-counter-row {
+            flex-basis: 100%;
         }
 
         /* This section's own collapsible category list -- shared by
@@ -16213,8 +16278,24 @@
                     const cardsBadge = document.createElement('div');
                     cardsBadge.className = 'game-team-slot-cards' + (cardsState.pill ? ' pill' : '');
                     cardsBadge.dataset.index = i;
+                    // Each icon only gets wrapped in the extra
+                    // .game-team-slot-cards-icon-slot positioning anchor
+                    // when it actually needs to carry a count overlay
+                    // (img.count is a number, not null) -- the plain
+                    // <img>/cropIconMarkup() markup stays exactly as
+                    // before for every icon that doesn't, so a member
+                    // with no itemCounters card equipped renders
+                    // identically to before this was added. Count
+                    // itself follows .game-team-slot-status-count's own
+                    // "left-anchored, vertically centered by the flex
+                    // parent's own align-items before going absolute"
+                    // trick -- see that class's CSS comment.
                     cardsBadge.innerHTML = cardsState.images
-                        .map(img => img.crop ? cropIconMarkup(img) : `<img class="game-team-slot-cards-img" src="${img.url}" alt="${img.alt}" onerror="this.style.display='none'">`)
+                        .map(img => {
+                            const iconHtml = img.crop ? cropIconMarkup(img) : `<img class="game-team-slot-cards-img" src="${img.url}" alt="${img.alt}" onerror="this.style.display='none'">`;
+                            if (typeof img.count !== 'number') return iconHtml;
+                            return `<span class="game-team-slot-cards-icon-slot">${iconHtml}<span class="game-team-slot-cards-count">${img.count}</span></span>`;
+                        })
                         .join('');
                     slot.appendChild(cardsBadge);
 
@@ -17433,6 +17514,24 @@
 
         function cardHasOverlayCounter(card) {
             return !!card && typeof card.overlayCounters === 'number';
+        }
+
+        // ---- Attach Card item counters (see the chat this was designed
+        // in) ---- Same "field presence, not a separate yes/no flag"
+        // convention as getDefaultPermanentCounter()/cardHasPermanentCounter()
+        // and getDefaultOverlayCounter()/cardHasOverlayCounter() above --
+        // a card's own starting counter value (cards.json's itemCounters
+        // field), or whether it has one at all. Only ever relevant to
+        // the Attach Card slot (a small handful of canAttach: "yes" item
+        // cards) -- Nature Cards never carry this field, and
+        // member.attachCounter is meaningless while member.attachCardId
+        // is empty.
+        function getDefaultItemCounter(card) {
+            return (card && typeof card.itemCounters === 'number') ? card.itemCounters : 0;
+        }
+
+        function cardHasItemCounter(card) {
+            return !!card && typeof card.itemCounters === 'number';
         }
 
         function normalizePermanentEntry(entry) {
@@ -20799,18 +20898,32 @@
         // markup below) knows whether to draw it as a plain <img> or a
         // cropped background div. CARD_SLOT_IMAGES.empty has no crop of
         // its own since it's a generic placeholder icon, not card art.
+        //
+        // count is member.attachCounter, but only ever on the image
+        // that's actually the Attach icon, and only when that card has
+        // an itemCounters field at all (cardHasItemCounter()) -- null on
+        // every other image (Nature never has one). The single-icon
+        // case compares singleIcon against attachIcon by reference
+        // (cardIconFor() returns a fresh object each call, so this only
+        // works because both come from the very same attachIcon
+        // variable here, never two separate calls) to tell whether the
+        // one icon showing is actually the Attach one before attaching
+        // a count to it.
         function computeTeamCardsState(member, naturesEnabled) {
             const attachIcon = member ? cardIconFor(member.attachCardId) : null;
             const natureIcon = (naturesEnabled && member) ? cardIconFor(member.natureCardId) : null;
+            const attachCount = (member && cardHasItemCounter(CARDS_BY_ID[member.attachCardId]))
+                ? (member.attachCounter ?? 0)
+                : null;
             if (attachIcon && natureIcon) {
                 return { pill: true, images: [
-                    { url: attachIcon.url, crop: attachIcon.crop, alt: 'Attach Card' },
-                    { url: natureIcon.url, crop: natureIcon.crop, alt: 'Nature Card' },
+                    { url: attachIcon.url, crop: attachIcon.crop, alt: 'Attach Card', count: attachCount },
+                    { url: natureIcon.url, crop: natureIcon.crop, alt: 'Nature Card', count: null },
                 ] };
             }
             const singleIcon = attachIcon || natureIcon;
             return { pill: false, images: [
-                { url: singleIcon ? singleIcon.url : CARD_SLOT_IMAGES.empty, crop: singleIcon ? singleIcon.crop : null, alt: 'Cards' },
+                { url: singleIcon ? singleIcon.url : CARD_SLOT_IMAGES.empty, crop: singleIcon ? singleIcon.crop : null, alt: 'Cards', count: singleIcon === attachIcon ? attachCount : null },
             ] };
         }
 
@@ -20855,6 +20968,14 @@
             if (!member) return;
             if (slot === 'attach') {
                 member.attachCardId = cardId;
+                // Resets to the new card's own starting value (0 for a
+                // card with no itemCounters field at all, same as
+                // clearing the slot outright) every time this changes --
+                // same "always re-derive on equip/remove, never carry a
+                // stale count from the previous card" rule as
+                // commitOverlayToMember()/requestOverlayDiscard()'s own
+                // overlayCounter handling.
+                member.attachCounter = getDefaultItemCounter(CARDS_BY_ID[cardId]);
                 reconcileLegendaryEvolutionOnCardChange(member, getHpRule(data));
             } else {
                 member.natureCardId = cardId;
@@ -20865,7 +20986,32 @@
             renderTeamGrid();
         }
 
-        // Renders one Attach/Nature Card slot's own panel -- shared by
+        // Adjusts the currently-equipped Attach Card's own itemCounters
+        // value by delta (+1/-1), clamped to 0 same as
+        // requestOverlayCounterAdjust()/requestTeamDetailOverlayCounterAdjust()'s
+        // own rule. Shared by both places this counter can be tapped
+        // from -- the corner badge's own Team Cards overlay and the
+        // details panel's Attach Card section -- taking index as a
+        // plain parameter rather than being duplicated per context,
+        // same "single write function, caller supplies its own index"
+        // shape as commitTeamMemberCard() above. Only re-renders
+        // whichever of the two panels is actually showing this member
+        // (each guarded separately, since either, both, or neither
+        // could be true depending on which context called this) plus
+        // the roster grid's own badge either way.
+        function requestAttachCounterAdjust(index, delta) {
+            if (isActiveSaveReadOnly() || index === null) return;
+            const member = (getActiveSaveData().team.members || [])[index];
+            if (!member || !member.attachCardId) return;
+            if (!cardHasItemCounter(CARDS_BY_ID[member.attachCardId])) return;
+            member.attachCounter = Math.max(0, (member.attachCounter || 0) + delta);
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            if (teamCardsOverlayIndex === index) renderTeamCardsOverlay();
+            if (teamDetailIndex === index) renderTeamDetailCardsSection();
+            renderTeamGrid();
+        }
         // this overlay (renderTeamCardsOverlay() below) and the details
         // panel's own Attach Card/Nature Card sections
         // (renderTeamDetailCardsSection()), since both now show the
@@ -20873,10 +21019,14 @@
         // unified in):
         //   a card equipped -- just its own artwork, blown up via
         //     .game-team-cards-photo (tapping it opens
-        //     openTeamCardImageViewer()), Remove Card underneath. Always
-        //     shown regardless of the virtual decks setting -- taking a
-        //     card off is never restricted, only putting a new one on
-        //     (see the next state's own comment).
+        //     openTeamCardImageViewer()), a Counter row (only for the
+        //     Attach slot, and only when that card has its own
+        //     itemCounters field -- see cardHasItemCounter(), same
+        //     "field presence" gate as the Permanent/Overlay viewers'
+        //     own counters), Remove Card underneath. Always shown
+        //     regardless of the virtual decks setting -- taking a card
+        //     off is never restricted, only putting a new one on (see
+        //     the next state's own comment).
         //   no card, not currently picking -- emptyText, plus Add Card
         //     underneath, but ONLY when this save has virtual decks
         //     off. A save using the paper cards has no hand/discard/
@@ -20904,16 +21054,41 @@
         // Only builds the innerHTML -- doesn't attach any listeners
         // itself; each caller's own delegated click/change listener
         // reads data-slot off whatever got rendered here and calls its
-        // own open/cancel/select/remove/toggle functions.
-        function renderTeamCardSlotPanel(elId, slot, cardId, emptyText, addingSlot, expandedDecks) {
+        // own open/cancel/select/remove/toggle functions. The counter
+        // row's own increment/decrement is the one exception -- it
+        // needs to know WHICH member to act on, which neither caller's
+        // data-slot convention carries, so each one's own listener
+        // matches on the counter's own id (elId + '-counter', see
+        // below) instead and calls requestAttachCounterAdjust() with
+        // its own already-known index (teamCardsOverlayIndex or
+        // teamDetailIndex) directly.
+        //
+        // counterValue is a number (the count to show) only when this
+        // is the Attach slot AND the equipped card actually has one --
+        // both callers already work this out via cardHasItemCounter()
+        // before calling in (see renderTeamCardsOverlay()/
+        // renderTeamDetailCardsSection()), same as computeTeamCardsState()
+        // does for the corner badge's own count. null/undefined (Nature,
+        // or an Attach card with no itemCounters field) skips the row
+        // entirely.
+        function renderTeamCardSlotPanel(elId, slot, cardId, emptyText, addingSlot, expandedDecks, counterValue) {
             const el = document.getElementById(elId);
             if (!el) return;
             const card = cardId ? CARDS_BY_ID[cardId] : null;
             if (card) {
+                const showCounter = typeof counterValue === 'number';
                 el.innerHTML = `
                     ${card.imageUrl
                         ? `<img class="game-team-cards-photo" src="${card.imageUrl}" alt="${escapeHtml(card.name)}" data-card-id="${card.id}">`
                         : `<p class="game-team-cards-detail-empty">${escapeHtml(card.name)}</p>`}
+                    ${showCounter ? `
+                        <div class="game-permanent-card-viewer-counter-row">
+                            <span class="game-permanent-card-viewer-counter-label">Counter</span>
+                            <div class="game-permanent-card-viewer-counter" id="${elId}-counter">
+                                <span id="${elId}-counter-value">${counterValue}</span>
+                            </div>
+                        </div>
+                    ` : ''}
                     <button class="filter-btn exclude game-team-cards-card-btn game-team-cards-remove-btn" type="button" data-slot="${slot}">Remove Card</button>
                 `;
                 return;
@@ -20966,7 +21141,7 @@
             const data = getActiveSaveData();
             const member = teamCardsOverlayIndex !== null ? (data.team.members || [])[teamCardsOverlayIndex] : null;
 
-            renderTeamCardSlotPanel('game-team-cards-attach-detail', 'attach', member ? member.attachCardId : null, 'No Attach Card equipped.', teamCardsOverlayAddingSlot, teamCardsOverlayExpandedDecks);
+            renderTeamCardSlotPanel('game-team-cards-attach-detail', 'attach', member ? member.attachCardId : null, 'No Attach Card equipped.', teamCardsOverlayAddingSlot, teamCardsOverlayExpandedDecks, (member && cardHasItemCounter(CARDS_BY_ID[member.attachCardId])) ? (member.attachCounter ?? 0) : null);
 
             // Nature Cards are an optional house rule (see the "Use
             // Nature Cards?" field on the save-creation form and Default
@@ -22289,7 +22464,7 @@
             const member = (data.team.members || [])[teamDetailIndex];
             if (!member) return;
 
-            renderTeamCardSlotPanel('game-team-detail-attach-card-detail', 'attach', member.attachCardId, 'No Attach Card equipped.', teamDetailCardsAddingSlot, teamDetailCardsExpandedDecks);
+            renderTeamCardSlotPanel('game-team-detail-attach-card-detail', 'attach', member.attachCardId, 'No Attach Card equipped.', teamDetailCardsAddingSlot, teamDetailCardsExpandedDecks, cardHasItemCounter(CARDS_BY_ID[member.attachCardId]) ? (member.attachCounter ?? 0) : null);
 
             // Same "hide the section outright when the save has Nature
             // Cards turned off" rule as the overlay's own Nature
@@ -23675,6 +23850,16 @@
                 // whenever it was equipped.
                 attachCardId: null,
                 natureCardId: null,
+                // attachCounter is Attach's own equivalent of
+                // overlayCounter below -- only means anything once
+                // attachCardId is set and that card has its own
+                // itemCounters field (see cardHasItemCounter()). Starts
+                // at 0 here regardless, reset properly to
+                // getDefaultItemCounter() by whichever path actually
+                // equips one -- all of them funnel through
+                // commitTeamMemberCard(), the single place attachCardId
+                // ever changes (see its own comment).
+                attachCounter: 0,
                 // Overlay Card -- a single slot (unlike Attach/Nature's
                 // two), same null-until-equipped convention. overlayCounter
                 // only actually means anything once overlayCardId is set
@@ -28127,6 +28312,23 @@
                 removeTeamCardsOverlayCard(cardRemoveBtn.dataset.slot);
                 return;
             }
+            // Same tap-left/tap-right counter convention as the
+            // Permanent Card viewer's own listener (see its own
+            // comment) -- this reuses that widget's classes/styling
+            // inline (see renderTeamCardSlotPanel()'s own comment on
+            // counterValue) but acts on teamCardsOverlayIndex directly
+            // via requestAttachCounterAdjust() rather than a
+            // viewer-open instance id. Only ever rendered at all for
+            // the Attach slot's own counter element
+            // (#game-team-cards-attach-detail-counter), so there's
+            // nothing to disambiguate here -- Nature never renders one.
+            const attachCounter = e.target.closest('#game-team-cards-attach-detail-counter');
+            if (attachCounter) {
+                const rect = attachCounter.getBoundingClientRect();
+                const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
+                requestAttachCounterAdjust(teamCardsOverlayIndex, clickedRightHalf ? 1 : -1);
+                return;
+            }
             // The accordion's own category header/card buttons (see
             // renderTeamCardSlotPanel()'s own comment) -- data-slot on
             // both tells selectTeamCardsOverlayOption() which of
@@ -28590,6 +28792,20 @@
                 const rect = overlayCounter.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
                 requestTeamDetailOverlayCounterAdjust(clickedRightHalf ? 1 : -1);
+                return;
+            }
+            // Same tap-left/tap-right counter convention as the
+            // Permanent Card viewer's own listener, just against
+            // teamDetailIndex via requestAttachCounterAdjust() -- see
+            // that overlay's own #game-team-cards-attach-detail-counter
+            // branch for the full reasoning, identical here just for
+            // the details panel's own copy of the Attach counter
+            // element.
+            const attachCounter = e.target.closest('#game-team-detail-attach-card-detail-counter');
+            if (attachCounter) {
+                const rect = attachCounter.getBoundingClientRect();
+                const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
+                requestAttachCounterAdjust(teamDetailIndex, clickedRightHalf ? 1 : -1);
                 return;
             }
             // The accordion's own category header/card buttons (see
