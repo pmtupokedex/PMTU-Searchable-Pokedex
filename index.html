@@ -2423,7 +2423,7 @@
         .game-note-color-swatch-btn--red { background-color: #e63233; color: #ffffff; }
 
         /* ---- Hand & Decks tool ----
-           One row per deck (see DECK_TOOL_LIST) -- Draw button on the
+           One row per deck (see getDeckToolList()) -- Draw button on the
            left, draw/discard counts plus the Shuffle/Look at Top
            utility buttons in the middle, and the discard pile's top
            card as a small thumbnail on the right (face-up, same
@@ -2520,6 +2520,21 @@
            .game-deck-utility-btns' own margin-top would just double it. */
         .game-deck-row--extra .game-deck-utility-btns {
             margin-top: 0;
+        }
+
+        /* A TM tier the current player hasn't unlocked yet (see
+           buildDeckRowHtml()'s own locked branch and
+           isTMDeckUnlockedForActiveSave()) -- same dimmed treatment as
+           every other "exists but not actionable right now" state in
+           this panel (e.g. .game-reward-menu-item--claimed), just
+           applied to the whole row since there's no button here to dim
+           on its own. */
+        .game-deck-row--locked {
+            opacity: 0.5;
+        }
+
+        .game-deck-row--locked .game-deck-counts {
+            font-style: italic;
         }
 
         /* Now a real <button> (opens #game-discard-viewer-overlay via
@@ -11393,6 +11408,12 @@
                             <option value="yes">Yes</option>
                         </select>
 
+                        <label for="game-new-tiered-tm-decks-enabled-0">Use Tiered TM Decks?</label>
+                        <select id="game-new-tiered-tm-decks-enabled-0" class="game-new-tiered-tm-decks-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
                         <div class="game-save-slot-actions">
                             <button class="filter-btn game-create-confirm-btn" data-slot="0">Create</button>
                             <button class="filter-btn game-create-cancel-btn" data-slot="0">Cancel</button>
@@ -11457,6 +11478,12 @@
 
                         <label for="game-new-virtual-decks-enabled-1">Use Virtual Decks?</label>
                         <select id="game-new-virtual-decks-enabled-1" class="game-new-virtual-decks-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
+                        <label for="game-new-tiered-tm-decks-enabled-1">Use Tiered TM Decks?</label>
+                        <select id="game-new-tiered-tm-decks-enabled-1" class="game-new-tiered-tm-decks-enabled-select">
                             <option value="no" selected>No</option>
                             <option value="yes">Yes</option>
                         </select>
@@ -11529,6 +11556,12 @@
                             <option value="yes">Yes</option>
                         </select>
 
+                        <label for="game-new-tiered-tm-decks-enabled-2">Use Tiered TM Decks?</label>
+                        <select id="game-new-tiered-tm-decks-enabled-2" class="game-new-tiered-tm-decks-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
                         <div class="game-save-slot-actions">
                             <button class="filter-btn game-create-confirm-btn" data-slot="2">Create</button>
                             <button class="filter-btn game-create-cancel-btn" data-slot="2">Cancel</button>
@@ -11586,6 +11619,12 @@
 
                         <label for="game-save-default-virtual-decks-enabled">Use Virtual Decks?</label>
                         <select id="game-save-default-virtual-decks-enabled" class="game-save-default-virtual-decks-enabled-select">
+                            <option value="no" selected>No</option>
+                            <option value="yes">Yes</option>
+                        </select>
+
+                        <label for="game-save-default-tiered-tm-decks-enabled">Use Tiered TM Decks?</label>
+                        <select id="game-save-default-tiered-tm-decks-enabled" class="game-save-default-tiered-tm-decks-enabled-select">
                             <option value="no" selected>No</option>
                             <option value="yes">Yes</option>
                         </select>
@@ -11856,13 +11895,13 @@
                      screen. -->
                 <div class="game-active-card-zone" id="game-active-card-zone"></div>
 
-                <!-- One row per deck in DECK_TOOL_LIST -- rebuilt by
+                <!-- One row per deck in getDeckToolList() -- rebuilt by
                      renderDecksScreen() any time deck/hand state
                      changes locally or arrives from the host. -->
                 <div class="game-section-header">Decks</div>
                 <div class="game-decks-list" id="game-decks-list"></div>
 
-                <!-- Every DECK_TOOL_LIST entry not in MAIN_DECK_NAMES --
+                <!-- Every getDeckToolList() entry not in MAIN_DECK_NAMES --
                      collapsed by default (see extraDecksExpanded/
                      toggleExtraDecksSection() in the script). Same row
                      markup/behavior as the main three above, just
@@ -14950,6 +14989,19 @@
             });
             if (changed) persistGameSaves();
         })();
+        // Backfills the "Use Tiered TM Decks?" setting onto any save
+        // created before that setting existed -- defaulted to false
+        // (off), same reasoning as migrateVirtualDecksEnabled() above.
+        (function migrateTieredTMDecksEnabled() {
+            let changed = false;
+            gameSaves.forEach(save => {
+                if (save && typeof save.tieredTMDecksEnabled !== 'boolean') {
+                    save.tieredTMDecksEnabled = false;
+                    changed = true;
+                }
+            });
+            if (changed) persistGameSaves();
+        })();
         // Backfills the Hand & Decks tool's own fields onto any save
         // created before it existed -- hand starts empty same as a
         // fresh save's own emptySaveScopedData(), decks starts as an
@@ -15069,6 +15121,18 @@
                 // real cards on hand and don't need this at all. See
                 // isVirtualDecksEnabledForActiveSave().
                 virtualDecksEnabled: !!options.virtualDecksEnabled,
+                // Whether the TM Deck splits into Basic/Advanced/Expert
+                // TM Deck (see getEffectiveCardDeck()/getDeckToolList())
+                // for this save -- an optional house rule, off by
+                // default (see the creation form's own 'no'-selected
+                // option), same shape as virtualDecksEnabled/
+                // naturesEnabled/pokeCoinsEnabled above. Only actually
+                // does anything once virtualDecksEnabled is also on --
+                // there's no Decks screen to show a split deck on
+                // otherwise -- but stored independently rather than
+                // implied by it, same as every other rule here. See
+                // isTieredTMDecksEnabledForActiveSave().
+                tieredTMDecksEnabled: !!options.tieredTMDecksEnabled,
                 // Placeholder until the badge tracker exists to actually
                 // derive this for real -- 'early' matches the Sounds
                 // panel's own GAME_STAGE_ORDER labels (see
@@ -15082,7 +15146,7 @@
                 pokeCoins: seed.pokeCoins,
                 hand: seed.hand,
                 // Draw/discard pile state for every deck this save has
-                // touched -- see ensureHostDeckStore()/DECK_TOOL_LIST.
+                // touched -- see ensureHostDeckStore()/getDeckToolList().
                 // Only ever read/written on the device actually hosting
                 // (or soloing) this save; a connected guest never has
                 // its own copy, it just mirrors whatever the host last
@@ -15329,6 +15393,18 @@
             });
             if (changed) persistGameGuestSaves();
         })();
+        // Same idea as migrateTieredTMDecksEnabled() above, for guest saves.
+        (function migrateGuestTieredTMDecksEnabled() {
+            let changed = false;
+            Object.keys(gameGuestSaves).forEach(id => {
+                const save = gameGuestSaves[id];
+                if (save && typeof save.tieredTMDecksEnabled !== 'boolean') {
+                    save.tieredTMDecksEnabled = false;
+                    changed = true;
+                }
+            });
+            if (changed) persistGameGuestSaves();
+        })();
         let activeGuestSaveId = loadActiveGuestSaveId(gameGuestSaves);
         // Both can't be genuinely active at once -- if somehow both got
         // persisted (shouldn't happen going forward, every mutator below
@@ -15395,6 +15471,7 @@
                 pokeCoinsEnabled: '.game-new-pokecoins-enabled-select',
                 naturesEnabled: '.game-new-natures-enabled-select',
                 virtualDecksEnabled: '.game-new-virtual-decks-enabled-select',
+                tieredTMDecksEnabled: '.game-new-tiered-tm-decks-enabled-select',
             };
             Object.entries(fieldMap).forEach(([key, selector]) => {
                 if (!gameSaveDefaults[key]) return;
@@ -15416,6 +15493,7 @@
                 pokeCoinsEnabled: '#game-save-default-pokecoins-enabled',
                 naturesEnabled: '#game-save-default-natures-enabled',
                 virtualDecksEnabled: '#game-save-default-virtual-decks-enabled',
+                tieredTMDecksEnabled: '#game-save-default-tiered-tm-decks-enabled',
             };
             Object.entries(fieldMap).forEach(([key, selector]) => {
                 if (!gameSaveDefaults[key]) return;
@@ -15674,6 +15752,30 @@
         function getBadgeTiersForOptionId(optionId) {
             const b = gymBadges.find(x => x.id === optionId);
             return b ? normalizeToArray(b.tier) : [];
+        }
+
+        // Highest Tier among every badge the currently-given save has
+        // actually collected (data.badges.collected -- see
+        // collectBadge()'s own comment for that shape, and
+        // getBadgeTiersForOptionId() just above for how a collected
+        // optionId maps back to its own real Tier(s)) -- 0 if nothing's
+        // collected yet, or if gymBadges hasn't finished loading. Only
+        // ever reads the main tiered slots, not collectedExtras (Elite
+        // Four/villain wins/etc., see getExtraPool()'s own comment) --
+        // those aren't Tier-numbered achievements the same way a real
+        // Gym Badge is. This is purely a LOCAL read of whichever save
+        // is active on THIS device -- see isTMDeckUnlockedForActiveSave()
+        // below, the one thing that actually calls this, for why that's
+        // the right save to be checking.
+        function getHighestCollectedBadgeTier(data) {
+            const collected = (data && data.badges && data.badges.collected) || {};
+            let highest = 0;
+            Object.values(collected).forEach(optionId => {
+                getBadgeTiersForOptionId(optionId).forEach(tier => {
+                    if (tier > highest) highest = tier;
+                });
+            });
+            return highest;
         }
 
         // A real <img> where a badge actually has one, falling back to a
@@ -17009,6 +17111,7 @@
         // gets appended at the end so nothing silently disappears.
         const CARD_DECK_ORDER = [
             'Event Deck', 'Item Deck', 'Shop Deck', 'TM Deck',
+            'Basic TM Deck', 'Advanced TM Deck', 'Expert TM Deck',
             'Poké Ball Deck', 'Tera Type Deck', 'Type-Enhancer Deck',
             'Z-Crystal Deck', 'Reward Item Deck', 'Nature Deck',
         ];
@@ -17024,7 +17127,7 @@
             const cards = getAttachableCardsForSlot(slot);
             const byDeck = {};
             cards.forEach(c => {
-                const deck = c.cardDeck || 'Other';
+                const deck = getEffectiveCardDeck(c) || 'Other';
                 (byDeck[deck] = byDeck[deck] || []).push(c);
             });
             const order = CARD_DECK_ORDER.filter(d => byDeck[d]);
@@ -17051,10 +17154,103 @@
         // eventually need their own entries once their "buy, don't draw
         // randomly" rules exist -- not the same mechanic as this list's
         // decks.
-        const DECK_TOOL_LIST = ['Event Deck', 'Item Deck', 'Nature Deck', 'Reward Item Deck', 'Shop Deck', 'Poké Ball Deck', 'Tera Type Deck', 'TM Deck', 'Type-Enhancer Deck', 'Z-Crystal Deck'];
+        //
+        // This is the BASE list -- every consumer actually wants
+        // getDeckToolList() below instead, which optionally splits 'TM
+        // Deck' into three (see isTieredTMDecksEnabledForActiveSave()).
+        // Reference this constant directly only when genuinely talking
+        // about the un-split deck names themselves (e.g. TM_TIER_DECK_NAMES'
+        // own 'TM Deck' check).
+        const DECK_TOOL_LIST_BASE = ['Event Deck', 'Item Deck', 'Nature Deck', 'Reward Item Deck', 'Shop Deck', 'Poké Ball Deck', 'Tera Type Deck', 'TM Deck', 'Type-Enhancer Deck', 'Z-Crystal Deck'];
+
+        // Maps cards.json's own tmTier field (a string: "Basic",
+        // "Advanced", or "Expert") to the deck name a TM card actually
+        // belongs to once isTieredTMDecksEnabledForActiveSave() is on --
+        // see getEffectiveCardDeck() below, the one place this is read.
+        // A TM card with no recognized tmTier value (missing field, or
+        // a string other than one of these three) falls back to Basic
+        // rather than being silently dropped from every deck -- see
+        // that function's own fallback.
+        const TM_TIER_DECK_NAMES = { Basic: 'Basic TM Deck', Advanced: 'Advanced TM Deck', Expert: 'Expert TM Deck' };
+
+        // A card's own cardDeck field, EXCEPT for TM Deck cards once
+        // isTieredTMDecksEnabledForActiveSave() is on, where this
+        // resolves to whichever of TM_TIER_DECK_NAMES its own tmTier
+        // value maps to instead (Basic if that mapping comes up empty --
+        // see TM_TIER_DECK_NAMES's own comment). Every place in this
+        // tool that used to read card.cardDeck directly -- building a
+        // deck's own drawPile, matching a drawn/discarded card back to
+        // its deck, deciding which deck a hand card's Play/Discard
+        // buttons act on, etc. -- reads through this instead, so the
+        // split is entirely transparent to all of that code: with the
+        // rule off, or for any non-TM card, this is identical to
+        // card.cardDeck.
+        function getEffectiveCardDeck(card) {
+            if (!card) return null;
+            if (card.cardDeck === 'TM Deck' && isTieredTMDecksEnabledForActiveSave()) {
+                return TM_TIER_DECK_NAMES[card.tmTier] || TM_TIER_DECK_NAMES.Basic;
+            }
+            return card.cardDeck;
+        }
+
+        // The deck list actually in play for the currently-active save --
+        // DECK_TOOL_LIST_BASE unchanged, except 'TM Deck' itself is
+        // swapped out for its three TM_TIER_DECK_NAMES entries (in
+        // Basic/Advanced/Expert order, in TM Deck's own former slot in
+        // the list) once isTieredTMDecksEnabledForActiveSave() is on.
+        // Every consumer that used to read the DECK_TOOL_LIST constant
+        // directly (deck store setup, deck-info counts, the Decks
+        // screen's own row list) calls this instead, so the split shows
+        // up everywhere consistently off one save-level rule rather than
+        // needing its own check in each place.
+        function getDeckToolList() {
+            if (!isTieredTMDecksEnabledForActiveSave()) return DECK_TOOL_LIST_BASE;
+            const tmIndex = DECK_TOOL_LIST_BASE.indexOf('TM Deck');
+            const tiers = [TM_TIER_DECK_NAMES.Basic, TM_TIER_DECK_NAMES.Advanced, TM_TIER_DECK_NAMES.Expert];
+            return [
+                ...DECK_TOOL_LIST_BASE.slice(0, tmIndex),
+                ...tiers,
+                ...DECK_TOOL_LIST_BASE.slice(tmIndex + 1),
+            ];
+        }
+
+        // The Badge Tier a player needs to have achieved (see
+        // getHighestCollectedBadgeTier() above) before Advanced/Expert
+        // TM Deck opens up to THEM specifically -- per the chat this was
+        // designed in. Basic TM Deck (and every other deck) has no entry
+        // here at all, meaning always unlocked -- see
+        // isTMDeckUnlockedForActiveSave()'s own fallback.
+        const TM_TIER_UNLOCK_REQUIREMENTS = {
+            'Advanced TM Deck': 3,
+            'Expert TM Deck': 5,
+        };
+
+        // Whether the currently-active save (i.e. THIS device's own
+        // player -- see getHighestCollectedBadgeTier()'s own comment on
+        // why that's the right save to check) has unlocked deckName yet.
+        // The TM deck(s) are shared across every player at the table the
+        // same as any other deck (see getDeckToolList()/broadcastDeckState())
+        // -- this never hides or removes a deck, it only ever gates
+        // whether THIS viewer's own copy of the Decks screen lets them
+        // draw/shuffle/look at Advanced or Expert specifically (see
+        // buildDeckRowHtml()'s own locked-row branch, and the guard at
+        // the top of requestDrawCard()/requestShuffleDeck()/
+        // openDeckLookPrompt()). Deliberately a client-side-only check --
+        // badges are never networked at all (see collectBadge()'s own
+        // comment / GAME_PANEL_NOTES.md's Guest Saves notes), so there's
+        // no way for the Host to independently re-verify a connected
+        // guest's own Badge Tier the way it can re-check e.g. a Reward's
+        // oneTime cap. This is an honor-system gate, same as a physical
+        // board game trusting a player not to draw from a deck their
+        // trainer card doesn't qualify for yet.
+        function isTMDeckUnlockedForActiveSave(deckName) {
+            const requiredTier = TM_TIER_UNLOCK_REQUIREMENTS[deckName];
+            if (!requiredTier) return true;
+            return getHighestCollectedBadgeTier(getActiveSaveData()) >= requiredTier;
+        }
 
         // The three decks shown directly on the Decks screen -- every
-        // other entry in DECK_TOOL_LIST goes in the collapsible "Extra
+        // other entry in getDeckToolList() goes in the collapsible "Extra
         // Decks" section instead (see renderDecksScreen()'s own split,
         // extraDecksExpanded/toggleExtraDecksSection()). Shop Deck and
         // Reward Item Deck are both flagged for a bigger functional
@@ -17095,7 +17291,7 @@
         // drawPile once drawPile runs dry (see drawFromHostDeck()) --
         // per the chat this was scoped in, only Event and Nature work
         // that way. The Item Deck and all of its subset "extra" decks
-        // (see MAIN_DECK_NAMES/DECK_TOOL_LIST) are one-and-done: once
+        // (see MAIN_DECK_NAMES/DECK_TOOL_LIST_BASE) are one-and-done: once
         // drawPile is empty that deck stays empty for the rest of the
         // game, it never reshuffles from discardPile even though Item
         // Deck itself still collects one (via discardToHostDeck()).
@@ -17201,7 +17397,7 @@
         function buildFreshDrawPile(deckName) {
             const ids = [];
             Object.values(CARDS_BY_ID).forEach(c => {
-                if (c.cardDeck !== deckName) return;
+                if (getEffectiveCardDeck(c) !== deckName) return;
                 if (!cardMatchesActiveRegion(c)) return;
                 const copies = typeof c.qty === 'number' && c.qty > 0 ? c.qty : 1;
                 for (let i = 0; i < copies; i++) ids.push(c.id);
@@ -17731,7 +17927,7 @@
         // client could otherwise double-claim.
         function hostApplyGainReward(deckName, peerKey, cardId) {
             const card = CARDS_BY_ID[cardId];
-            if (!card || card.cardDeck !== deckName) return; // stale menu / unknown card -- ignore
+            if (!card || getEffectiveCardDeck(card) !== deckName) return; // stale menu / unknown card -- ignore
             const isOneTime = card.oneTime === 'yes';
             if (peerKey === 'host') {
                 if (isOneTime) {
@@ -17786,7 +17982,7 @@
         // the right hand.
         function hostApplyShopAcquire(deckName, peerKey, cardId) {
             const card = CARDS_BY_ID[cardId];
-            if (!card || card.cardDeck !== deckName) return; // stale menu / unknown card -- ignore
+            if (!card || getEffectiveCardDeck(card) !== deckName) return; // stale menu / unknown card -- ignore
             if (peerKey === 'host') {
                 getLocalHandArray().push(cardId);
                 persistLocalHand();
@@ -17867,7 +18063,7 @@
                 if (entry && entry.conn.open) entry.conn.send({ type: 'hand-remove', cardId });
             }
             const card = CARDS_BY_ID[cardId];
-            setHostActiveCard(cardId, (card && card.cardDeck) || '', peerKey, true);
+            setHostActiveCard(cardId, (card && getEffectiveCardDeck(card)) || '', peerKey, true);
         }
 
         // Host-side: the Play button in a hand card's own options grid
@@ -18009,7 +18205,7 @@
                 // rather than waiting on its next full 'permanent-sync'.
                 if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-removed', instanceId });
             }
-            discardToHostDeck((card && card.cardDeck) || DECK_TOOL_LIST[0], removed.cardId);
+            discardToHostDeck((card && getEffectiveCardDeck(card)) || getDeckToolList()[0], removed.cardId);
             broadcastDeckState();
             renderDecksScreen();
         }
@@ -18299,7 +18495,7 @@
             if (lobbyState.role === 'guest') return; // guests only ever receive this, never originate it
             const store = ensureHostDeckStore();
             const decks = {};
-            DECK_TOOL_LIST.forEach(deckName => {
+            getDeckToolList().forEach(deckName => {
                 ensureDeckBuilt(store, deckName);
                 const deck = store ? store[deckName] : { drawPile: [], discardPile: [] };
                 decks[deckName] = {
@@ -18332,6 +18528,7 @@
         // function above never has to ----
         function requestDrawCard(deckName) {
             if (isActiveSaveReadOnly()) return; // see applyReadOnlyIndicators()'s own comment
+            if (!isTMDeckUnlockedForActiveSave(deckName)) return; // see buildDeckRowHtml()'s own locked row -- belt and suspenders, there's no button to have clicked
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
                     lobbyState.hostConn.send({ type: 'deck-draw', deck: deckName });
@@ -18461,7 +18658,7 @@
             if (isActiveSaveReadOnly()) return;
             const card = CARDS_BY_ID[cardId];
             if (!card) return;
-            const deckName = card.cardDeck || DECK_TOOL_LIST[0];
+            const deckName = getEffectiveCardDeck(card) || getDeckToolList()[0];
             pendingActiveCardScrollTrigger = true;
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
@@ -18501,6 +18698,7 @@
         // The deck row's own Shuffle button.
         function requestShuffleDeck(deckName) {
             if (isActiveSaveReadOnly()) return;
+            if (!isTMDeckUnlockedForActiveSave(deckName)) return; // see requestDrawCard()'s own comment
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
                     lobbyState.hostConn.send({ type: 'deck-shuffle', deck: deckName });
@@ -18589,7 +18787,7 @@
             if (!cardId) return;
             const card = CARDS_BY_ID[cardId];
             if (!card) return;
-            requestDiscardUnattached(card.cardDeck || DECK_TOOL_LIST[0], cardId);
+            requestDiscardUnattached(getEffectiveCardDeck(card) || getDeckToolList()[0], cardId);
         }
 
         // ---- Overlay Cards (see the chat this was designed in) ----
@@ -19245,7 +19443,7 @@
                 deckInfo = (guestDeckStateCache && guestDeckStateCache.decks) || {};
             } else {
                 const store = ensureHostDeckStore();
-                DECK_TOOL_LIST.forEach(deckName => {
+                getDeckToolList().forEach(deckName => {
                     ensureDeckBuilt(store, deckName);
                     const deck = store ? store[deckName] : { drawPile: [], discardPile: [] };
                     deckInfo[deckName] = {
@@ -19274,7 +19472,7 @@
         // Builds one deck row's own markup -- shared by the main-three
         // list and the Extra Decks list in renderDecksScreen() below,
         // since both are the exact same row shape either way, just
-        // filtered to a different subset of DECK_TOOL_LIST. info is
+        // filtered to a different subset of getDeckToolList(). info is
         // whatever getDeckInfoMap()[deckName] resolved to (see that
         // function's own comment for the {drawCount, discardCount,
         // discardTop, discardPile} shape, falling back to an empty one
@@ -19298,8 +19496,31 @@
         // at Top -- there's no shuffled drawPile behind this deck any
         // more for a count to describe, see openRewardMenu() for what
         // the button actually opens.
+        //
+        // A locked TM tier (see isTMDeckUnlockedForActiveSave()) is a
+        // fourth shape, checked before any of the above: name and a
+        // "Locked" message, no buttons at all -- not even disabled
+        // ones. The deck still shows up at all (rather than being
+        // hidden outright) so a player without the Badge Tier yet knows
+        // it exists and what unlocks it; there's just nothing to tap.
+        // Every OTHER player at the table with the required Tier still
+        // sees this exact deck's normal row (Draw/Shuffle/Look, real
+        // counts) on their own device -- this only ever locks the row
+        // on the device asking the question, see that function's own
+        // comment on why.
         function buildDeckRowHtml(deckName, info, isExtra) {
             info = info || { drawCount: 0, discardCount: 0, discardTop: null, discardPile: [] };
+
+            if (!isTMDeckUnlockedForActiveSave(deckName)) {
+                return `
+                    <div class="game-deck-row game-deck-row--extra game-deck-row--locked">
+                        <span class="game-deck-info">
+                            <span class="game-deck-name">${escapeHtml(deckName)}</span>
+                            <span class="game-deck-counts">Locked \u2014 unlocks at Badge Tier ${TM_TIER_UNLOCK_REQUIREMENTS[deckName]}+</span>
+                        </span>
+                    </div>
+                `;
+            }
 
             if (isExtra && DECK_GAIN_REWARD_MENU[deckName]) {
                 return `
@@ -19468,7 +19689,7 @@
             // store either way (see ensureDeckBuilt()) -- this only
             // hides the row, it doesn't stop tracking counts for it,
             // so nothing breaks if the rule gets flipped on mid-game.
-            const visibleDecks = DECK_TOOL_LIST.filter(deckName => deckName !== 'Nature Deck' || isNaturesEnabledForActiveSave());
+            const visibleDecks = getDeckToolList().filter(deckName => deckName !== 'Nature Deck' || isNaturesEnabledForActiveSave());
 
             const mainDecks = visibleDecks.filter(deckName => MAIN_DECK_NAMES.includes(deckName));
             const extraDecks = visibleDecks.filter(deckName => !MAIN_DECK_NAMES.includes(deckName));
@@ -19512,7 +19733,7 @@
                 handEl.innerHTML = hand.map((cardId, i) => {
                     const card = CARDS_BY_ID[cardId];
                     const name = card ? card.name : cardId;
-                    const deckName = (card && card.cardDeck) || DECK_TOOL_LIST[0];
+                    const deckName = (card && getEffectiveCardDeck(card)) || getDeckToolList()[0];
                     const canAttach = !readOnly && card && card.canAttach === 'yes';
 
                     // Attach hands off to the Team Tracker (see
@@ -20074,6 +20295,7 @@
         // deck row's own Look at Top button (see .game-deck-look-btn in
         // buildDeckRowHtml()).
         function openDeckLookPrompt(deckName) {
+            if (!isTMDeckUnlockedForActiveSave(deckName)) return; // see requestDrawCard()'s own comment
             deckLookPromptDeckName = deckName;
             const titleEl = document.getElementById('game-deck-look-prompt-title');
             if (titleEl) titleEl.textContent = `Look at Top Cards of ${deckName}`;
@@ -25293,6 +25515,23 @@
             return gameSaveDefaults.virtualDecksEnabled === 'yes';
         }
 
+        // Whether the TM Deck splits into Basic/Advanced/Expert TM Deck
+        // for the currently-active save -- same shape as
+        // isVirtualDecksEnabledForActiveSave() just above, including the
+        // off-by-default fallback and the guest-gets-its-answer-from-
+        // the-host convention (see finalizeGuestJoin()). See
+        // getDeckToolList()/getEffectiveCardDeck() for what actually
+        // reads this.
+        function isTieredTMDecksEnabledForActiveSave() {
+            if (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) {
+                return !!gameGuestSaves[activeGuestSaveId].tieredTMDecksEnabled;
+            }
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
+                return !!gameSaves[activeSaveSlot].tieredTMDecksEnabled;
+            }
+            return gameSaveDefaults.tieredTMDecksEnabled === 'yes';
+        }
+
         // Shows/hides the "Hand & Decks" tile on the Tools menu per
         // isVirtualDecksEnabledForActiveSave() -- this is an opt-in
         // feature for players without the physical board game's paper
@@ -26245,6 +26484,7 @@
                 pokeCoinsEnabled: hostSave.pokeCoinsEnabled,
                 naturesEnabled: hostSave.naturesEnabled,
                 virtualDecksEnabled: hostSave.virtualDecksEnabled,
+                tieredTMDecksEnabled: hostSave.tieredTMDecksEnabled,
             };
         }
 
@@ -27219,6 +27459,7 @@
                 pokeCoinsEnabled: data.pokeCoinsEnabled,
                 naturesEnabled: data.naturesEnabled,
                 virtualDecksEnabled: data.virtualDecksEnabled,
+                tieredTMDecksEnabled: data.tieredTMDecksEnabled,
             };
             const existing = data.hostSaveId ? gameGuestSaves[data.hostSaveId] : null;
             if (existing) {
@@ -27286,6 +27527,7 @@
                 existing.pokeCoinsEnabled = !!ruleset.pokeCoinsEnabled;
                 existing.naturesEnabled = !!ruleset.naturesEnabled;
                 existing.virtualDecksEnabled = !!ruleset.virtualDecksEnabled;
+                existing.tieredTMDecksEnabled = !!ruleset.tieredTMDecksEnabled;
             } else {
                 gameGuestSaves[hostSaveId] = {
                     hostSaveId,
@@ -27300,6 +27542,7 @@
                     pokeCoinsEnabled: !!ruleset.pokeCoinsEnabled,
                     naturesEnabled: !!ruleset.naturesEnabled,
                     virtualDecksEnabled: !!ruleset.virtualDecksEnabled,
+                    tieredTMDecksEnabled: !!ruleset.tieredTMDecksEnabled,
                     badges: { collected: {}, collectedExtras: {} },
                     team: { members: [] },
                     pokeCoins: 3,
@@ -27629,6 +27872,9 @@
                     // Same strict show/hide switch idea again -- see
                     // isVirtualDecksEnabledForActiveSave() in the script.
                     virtualDecksEnabled: slotEl.querySelector('.game-new-virtual-decks-enabled-select').value === 'yes',
+                    // Same strict show/hide switch idea again -- see
+                    // isTieredTMDecksEnabledForActiveSave() in the script.
+                    tieredTMDecksEnabled: slotEl.querySelector('.game-new-tiered-tm-decks-enabled-select').value === 'yes',
                 });
                 nameInput.value = '';
                 return;
@@ -28947,6 +29193,7 @@
                 'game-save-default-pokecoins-enabled': 'pokeCoinsEnabled',
                 'game-save-default-natures-enabled': 'naturesEnabled',
                 'game-save-default-virtual-decks-enabled': 'virtualDecksEnabled',
+                'game-save-default-tiered-tm-decks-enabled': 'tieredTMDecksEnabled',
             };
             const key = defaultFieldMap[e.target.id];
             if (!key) return;
@@ -28960,7 +29207,7 @@
             // Cards picker happens to be open right now (harmless no-op
             // otherwise), same reasoning as pokeCoinsEnabled above. Also
             // gates the Nature Deck row on the Decks screen now (see
-            // renderDecksScreen()'s own DECK_TOOL_LIST filter), so that
+            // renderDecksScreen()'s own getDeckToolList() filter), so that
             // needs the same live refresh.
             if (key === 'naturesEnabled') {
                 renderTeamCardsOverlay();
@@ -28971,6 +29218,12 @@
             // this actually does (show/hide the Hand & Decks tile, and
             // back out of that screen if it's the one currently open).
             if (key === 'virtualDecksEnabled') renderVirtualDecksAvailability();
+            // Same idea again for Tiered TM Decks -- only matters if the
+            // Decks screen happens to be open right now (harmless no-op
+            // otherwise, same as naturesEnabled above), since this only
+            // ever changes which deck row(s) render there (see
+            // renderDecksScreen()'s own getDeckToolList() call).
+            if (key === 'tieredTMDecksEnabled') renderDecksScreen();
         });
 
         // ---- Audio settings (global + per-category mute & volume) ------
