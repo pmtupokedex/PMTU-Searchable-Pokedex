@@ -26623,6 +26623,11 @@
         // instead, making a real lock/suspend cheap to recover from
         // rather than trying to prevent it outright.
         let lobbyWakeLock = null;
+        // See startLobbyHeartbeat()'s own heartbeatCheckTimer for what
+        // this is actually for -- tracks when that timer last fired so
+        // it can tell whether a big gap means THIS device just resumed
+        // from being suspended, rather than the other side going quiet.
+        let lastHeartbeatSweepAt = Date.now();
         async function acquireLobbyWakeLock() {
             if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
             try {
@@ -26690,6 +26695,11 @@
         // way.
         function startLobbyHeartbeat() {
             stopLobbyHeartbeat();
+            // Baseline for the "did MY OWN clock just freeze" check
+            // inside heartbeatCheckTimer below -- reset fresh each time a
+            // session starts so an old session's timing can never bleed
+            // into a new one's first sweep.
+            lastHeartbeatSweepAt = Date.now();
             lobbyState.heartbeatSendTimer = setInterval(() => {
                 if (lobbyState.role === 'host') {
                     lobbyState.connections.forEach(({ conn }) => {
@@ -26702,40 +26712,49 @@
 
             lobbyState.heartbeatCheckTimer = setInterval(() => {
                 const now = Date.now();
+                // A phone that got locked (this device's own, or
+                // backgrounded some other way) freezes every timer in
+                // the tab, this one included -- once it resumes, this
+                // callback fires however late it fires, with "now"
+                // already moved on regardless of whether the OTHER side
+                // ever actually went quiet. Comparing this sweep against
+                // the last one (rather than trusting entry.conn.open,
+                // which mostly reflects an explicit close/error and
+                // stays true indefinitely through the much more common
+                // "signal just silently died" kind of drop -- exactly
+                // the case this needs to still catch) tells whether the
+                // freeze happened HERE: a gap much bigger than the
+                // interval itself means it did, so this one sweep skips
+                // the elapsed-time check entirely rather than treating a
+                // stale clock as a real timeout. The visibilitychange
+                // handler above already re-pings and refreshes
+                // lastSeen/hostConnLastSeen the moment this device
+                // resumes, so the very next sweep -- one normal interval
+                // later -- has trustworthy numbers again regardless.
+                const clockFrozeThisCycle = (now - lastHeartbeatSweepAt) > LOBBY_HEARTBEAT_CHECK_INTERVAL_MS * 3;
+                lastHeartbeatSweepAt = now;
                 if (lobbyState.role === 'host') {
                     // Snapshot first -- handleHostConnectionDrop() mutates
                     // lobbyState.connections, which would otherwise be
                     // unsafe to iterate directly while dropping more than
                     // one stale connection in the same sweep.
                     Array.from(lobbyState.connections.entries()).forEach(([peerId, entry]) => {
-                        if (now - entry.lastSeen > LOBBY_HEARTBEAT_TIMEOUT_MS) {
-                            // A phone that got locked (this device's own,
-                            // or backgrounded some other way) freezes this
-                            // very timer along with everything else in the
-                            // tab -- once it resumes, "now - lastSeen" can
-                            // look exactly like a real timeout even though
-                            // the connection itself was never actually
-                            // touched. Trust the connection's own open
-                            // state over a clock that was just asleep:
-                            // only actually drop it if PeerJS agrees it's
-                            // closed.
-                            if (entry.conn && entry.conn.open) {
-                                entry.lastSeen = now;
-                                return;
-                            }
+                        // An explicit close/error is trustworthy
+                        // regardless of clockFrozeThisCycle -- it's a
+                        // real signal from PeerJS, not a comparison
+                        // against a clock that might have just been
+                        // asleep -- so it always drops immediately,
+                        // without waiting for the timeout.
+                        const explicitlyClosed = !(entry.conn && entry.conn.open);
+                        const timedOut = !clockFrozeThisCycle && (now - entry.lastSeen > LOBBY_HEARTBEAT_TIMEOUT_MS);
+                        if (explicitlyClosed || timedOut) {
                             handleHostConnectionDrop(peerId, entry.conn);
                         }
                     });
                 } else if (lobbyState.role === 'guest') {
-                    if (lobbyState.hostConnLastSeen && now - lobbyState.hostConnLastSeen > LOBBY_HEARTBEAT_TIMEOUT_MS) {
-                        // Same reasoning as the host branch above -- don't
-                        // condemn a connection the object itself still
-                        // calls open just because this device's own clock
-                        // was frozen for a while.
-                        if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                            lobbyState.hostConnLastSeen = now;
-                            return;
-                        }
+                    const explicitlyClosed = !!lobbyState.hostConn && !lobbyState.hostConn.open;
+                    const timedOut = !clockFrozeThisCycle && !!lobbyState.hostConnLastSeen && (now - lobbyState.hostConnLastSeen > LOBBY_HEARTBEAT_TIMEOUT_MS);
+                    if (explicitlyClosed || timedOut) {
                         setLobbyStatus('Lost contact with the host.', 'error');
                         resetLobbyState();
                     }
@@ -26775,6 +26794,13 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState !== 'visible' || lobbyState.role === null) return;
             acquireLobbyWakeLock();
+            // Keeps the very next heartbeatCheckTimer sweep from also
+            // treating this same resume as a frozen-clock cycle (see its
+            // own comment) -- harmless either way since that only skips
+            // one sweep's timeout check, but there's no reason to skip a
+            // second one right after this handler already did its own
+            // fresh round of pings/refreshes above.
+            lastHeartbeatSweepAt = Date.now();
             if (lobbyState.role === 'host') {
                 lobbyState.connections.forEach((entry) => {
                     if (entry.conn && entry.conn.open) {
