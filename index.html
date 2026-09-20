@@ -1552,8 +1552,9 @@
 
         /* Same reasoning as .game-lobby-room-info above -- only the
            host's device decides when the game actually begins (see
-           startGame() in the script), so a guest never sees this at
-           all rather than a disabled/inert copy of it. */
+           beginGameSetup()/finalizeLobbyGameStart() in the script), so a
+           guest never sees this at all rather than a disabled/inert copy
+           of it. */
         .game-lobby[data-role="guest"] .game-lobby-start-game-btn {
             display: none;
         }
@@ -12288,15 +12289,32 @@
                              .game-lobby[data-role="guest"] below), same
                              reasoning as .game-lobby-room-info above --
                              only the host's device actually decides when
-                             the game begins. See startGame() in the
-                             script: switches this device's own Sounds
-                             panel to the Intro playlist for the chosen
-                             region, tells every connected guest to do the
-                             same on their end, and sends everyone
-                             (including the host itself, if it's playing
-                             too -- see lobbyState.hostIsPlayer) to Team
-                             Tracker with a starter Pokémon prompt. -->
-                        <button class="filter-btn game-lobby-start-game-btn" id="game-lobby-start-game-btn">Start Game</button>
+                             the game begins. Three states, all driven by
+                             updateLobbyStartGameButtonUI() rather than
+                             read back out of this element itself:
+                               1. "Begin Game Setup" (enabled) -- the
+                                  default, and where it falls back to any
+                                  time allLobbyStartersChosen() isn't true
+                                  yet (including a player backing out of
+                                  their picker without choosing). Tapping
+                                  it runs beginGameSetup(): switches this
+                                  device's own Sounds panel to the Intro
+                                  playlist for the chosen region, tells
+                                  every connected guest to do the same on
+                                  their end, and sends everyone (including
+                                  the host itself, if it's playing too --
+                                  see lobbyState.hostIsPlayer) to Team
+                                  Tracker with a starter Pokémon prompt.
+                               2. "Start Game" (enabled) -- shown once
+                                  every expected player has actually
+                                  picked a starter (see
+                                  lobbyState.starterChosen/
+                                  allLobbyStartersChosen()). Tapping it
+                                  runs finalizeLobbyGameStart().
+                               3. "Game is in progress" (disabled) --
+                                  where finalizeLobbyGameStart() leaves it
+                                  for the rest of this Lobby session. -->
+                        <button class="filter-btn game-lobby-start-game-btn" id="game-lobby-start-game-btn">Begin Game Setup</button>
 
                         <button class="filter-btn exclude game-lobby-leave-btn" id="game-lobby-leave-btn">Leave Lobby</button>
                     </div>
@@ -24660,12 +24678,19 @@
 
             const data = getActiveSaveData();
             if (!data.team.members) data.team.members = [];
+            // Roster empty right up to this push means this member IS
+            // this device's starter (beginTeamAddMode() already forces
+            // the Starter filter on for exactly this case) -- captured
+            // before the push below so the check isn't fooled by the
+            // member that's about to land in it.
+            const wasRosterEmpty = data.team.members.length === 0;
             if (data.team.members.length < 6) {
                 data.team.members.push(member);
                 if (activeSaveSlot !== null) persistGameSaves();
                 else if (activeGuestSaveId !== null) persistGameGuestSaves();
                 markUnsavedProgressChanged();
                 if (sourceInstanceId) requestPermanentDiscard(sourceInstanceId);
+                if (wasRosterEmpty) reportLobbyStarterChosen();
             } else {
                 beginTeamReplaceMode(member, sourceInstanceId);
             }
@@ -26553,6 +26578,22 @@
             // for the host's own progress. See reportLobbyProgress()/
             // recomputeLobbyLeadingStage() below (Leading-Player Stage).
             playerProgress: {},
+            // Host-only: peer id -> true once that player has picked a
+            // starter (plus the same synthetic 'host' key playerProgress
+            // uses, only meaningful while hostIsPlayer is true). Set by
+            // reportLobbyStarterChosen()/the 'starter-chosen' message
+            // handler, read by allLobbyStartersChosen() to decide the
+            // Start Game button's own text (see
+            // .game-lobby-start-game-btn's comment). Cleared per-peer on
+            // disconnect in handleHostConnectionDrop(), same as
+            // playerProgress, so a player who leaves mid-pick doesn't
+            // permanently block the button for everyone else.
+            starterChosen: {},
+            // Host-only: true once the Start Game button has actually
+            // been clicked in its "everyone's ready" phase -- locks the
+            // button disabled/"Game is in progress" for the rest of this
+            // Lobby session (see updateLobbyStartGameButtonUI()).
+            gameOfficiallyStarted: false,
             // Guest-only: which gameGuestSaves entry (if any) this
             // specific live connection has authority over -- the one
             // thing isActiveSaveReadOnly() checks to tell "my own save,
@@ -26650,7 +26691,8 @@
                 role: null, peer: null, code: null, hostName: null,
                 hostSaveId: null, hostIsPlayer: false, hostColor: null, hostRuleset: null,
                 connections: new Map(), hostConn: null, players: [],
-                playerProgress: {}, linkedGuestSaveId: null,
+                playerProgress: {}, starterChosen: {}, gameOfficiallyStarted: false,
+                linkedGuestSaveId: null,
                 heartbeatSendTimer: null, heartbeatCheckTimer: null,
                 hostConnLastSeen: null, tradeSession: null, tradePairs: new Map(),
             };
@@ -26740,6 +26782,13 @@
             // (see refreshLobbyRosterFromHostState()/the guest-side
             // 'roster' handler for that ongoing case).
             renderTeamGrid();
+            // Same "covers the Host's own case before any roster-changed
+            // event fires" reasoning as renderTeamGrid() just above --
+            // gives the Start Game button its initial "Begin Game Setup"
+            // text/enabled state the moment this device's own Lobby
+            // screen goes active, rather than leaving it on whatever
+            // static text the HTML happened to ship with.
+            updateLobbyStartGameButtonUI();
         }
 
         // ---- Connection keepalive (see the user's report of a stale
@@ -27517,6 +27566,9 @@
                 } else if (data.type === 'progress' && typeof data.badgePoints === 'number') {
                     lobbyState.playerProgress[conn.peer] = { badgePoints: data.badgePoints };
                     recomputeLobbyLeadingStage();
+                } else if (data.type === 'starter-chosen') {
+                    lobbyState.starterChosen[conn.peer] = true;
+                    updateLobbyStartGameButtonUI();
                 } else if (data.type === 'identify' && typeof data.name === 'string') {
                     // Backstop for the same eviction wireHostConnection's
                     // own conn.on('open') above already does from
@@ -27674,6 +27726,7 @@
             if (!lobbyState.connections.has(peerId)) return; // already handled by another of the three paths above
             lobbyState.connections.delete(peerId);
             delete lobbyState.playerProgress[peerId];
+            delete lobbyState.starterChosen[peerId];
             // Trade a Pok\u00e9mon -- if this peer was mid-trade with anyone
             // (see tradePairs' own comment for why the Host tracks this
             // at all), that partner has no other way to find out this
@@ -27718,6 +27771,12 @@
             // a fresh render any time that count changes, same as the
             // Lobby screen's own player list just above.
             renderTeamGrid();
+            // A join or leave changes who's expected to have a starter
+            // (see allLobbyStartersChosen()) -- e.g. a new guest joining
+            // after everyone else already picked should drop the button
+            // back to "Begin Game Setup" rather than leaving it stuck on
+            // "Start Game".
+            updateLobbyStartGameButtonUI();
         }
 
         function broadcastLobbyRoster() {
@@ -27762,6 +27821,62 @@
             if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
                 lobbyState.hostConn.send({ type: 'progress', badgePoints });
             }
+        }
+
+        // Called the moment this device's own team roster goes from
+        // empty to non-empty (see addOrQueueTeamMember()'s own
+        // wasRosterEmpty) -- that first Pokémon is always this device's
+        // starter, since beginTeamAddMode() forces the Starter filter on
+        // for exactly this case. A guest tells the host directly, over
+        // the same connection reportLobbyProgress() uses; the host's own
+        // pick (only reachable at all when lobbyState.hostIsPlayer --
+        // see beginGameSetup()) just marks itself under the same 'host'
+        // key playerProgress already uses elsewhere, with no message to
+        // send anywhere. Solo play (no lobbyState.role) has nothing to
+        // report to and is a no-op here.
+        function reportLobbyStarterChosen() {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'starter-chosen' });
+                }
+            } else if (lobbyState.role === 'host' && lobbyState.hostIsPlayer) {
+                lobbyState.starterChosen.host = true;
+                updateLobbyStartGameButtonUI();
+            }
+        }
+
+        // Host-only: whether every player currently expected to pick a
+        // starter has actually done so. "Expected" is every connected
+        // guest, plus the host itself only when lobbyState.hostIsPlayer
+        // (a host who's just running the lobby was never sent to a
+        // starter picker in the first place -- see beginGameSetup()).
+        // Empty on purpose returns false rather than vacuously true --
+        // there's no one to have readied up yet (e.g. hosting alone with
+        // hostIsPlayer false), so the button has nothing to advance to.
+        function allLobbyStartersChosen() {
+            const expected = lobbyState.players.filter(p => p.id !== 'host' || lobbyState.hostIsPlayer);
+            return expected.length > 0 && expected.every(p => !!lobbyState.starterChosen[p.id]);
+        }
+
+        // Host-only: the single place that ever writes to
+        // #game-lobby-start-game-btn's text/disabled state, kept in sync
+        // with lobbyState.starterChosen/gameOfficiallyStarted rather than
+        // ever being read back out of the button itself. See
+        // .game-lobby-start-game-btn's own HTML comment for the three
+        // states this moves between. Harmless no-op on a guest's device
+        // (the button's just hidden there via
+        // .game-lobby[data-role="guest"] .game-lobby-start-game-btn) and
+        // before the button exists in the DOM at all.
+        function updateLobbyStartGameButtonUI() {
+            const btn = document.getElementById('game-lobby-start-game-btn');
+            if (!btn) return;
+            if (lobbyState.gameOfficiallyStarted) {
+                btn.textContent = 'Game is in progress';
+                btn.disabled = true;
+                return;
+            }
+            btn.disabled = false;
+            btn.textContent = allLobbyStartersChosen() ? 'Start Game' : 'Begin Game Setup';
         }
 
         // ---- Trade a Pok\u00e9mon ----
@@ -28388,7 +28503,7 @@
                 } else if (data.type === 'music') {
                     applyGuestMusicMirror(data);
                 } else if (data.type === 'start-game') {
-                    // See startGame()'s own comment -- the host's real
+                    // See beginGameSetup()'s own comment -- the host's real
                     // Intro playback (and this device's own mirrored
                     // category display, see applyGuestMusicMirror() via
                     // the 'music' broadcast that call also triggers)
@@ -28736,21 +28851,28 @@
         }
 
         // Host-only -- see .game-lobby-start-game-btn's own comment for
-        // why this is never even shown to a guest. Three things happen
-        // together: this device's own Sounds panel switches to the
-        // Intro playlist (see MUSIC_CATEGORY_ICONS's 'intro' entry) for
-        // whatever region this save is already set to, every connected
-        // guest is told to do the equivalent on their end (a guest never
-        // plays real audio itself -- see GAME_PANEL_NOTES.md's Playlist
-        // Sync notes -- so 'start-game' just means "go to Team Tracker
-        // and ask for a starter" there, not "play audio"), and -- if the
-        // host is playing too, see lobbyState.hostIsPlayer -- this
-        // device gets the same Team Tracker/starter prompt locally.
+        // why this is never even shown to a guest, and for the button's
+        // three text/enabled states this is only ever reachable from the
+        // first of (its own click handler already routes a tap straight
+        // to finalizeLobbyGameStart() instead once the button's moved
+        // past this phase). Three things happen together: this device's
+        // own Sounds panel switches to the Intro playlist (see
+        // MUSIC_CATEGORY_ICONS's 'intro' entry) for whatever region this
+        // save is already set to, every connected guest is told to do
+        // the equivalent on their end (a guest never plays real audio
+        // itself -- see GAME_PANEL_NOTES.md's Playlist Sync notes -- so
+        // 'start-game' just means "go to Team Tracker and ask for a
+        // starter" there, not "play audio"), and -- if the host is
+        // playing too, see lobbyState.hostIsPlayer -- this device gets
+        // the same Team Tracker/starter prompt locally.
         // Doesn't check roster size or connection count first: nothing
         // about this is destructive or one-way, so there's no real cost
         // to the host tapping it again later (e.g. a guest reconnects
-        // after missing it the first time).
-        function startGame() {
+        // after missing it the first time, or backs out of their picker
+        // without choosing -- see allLobbyStartersChosen(), which is what
+        // actually decides whether the button's even reachable here
+        // again versus having already moved on to Start Game).
+        function beginGameSetup() {
             if (lobbyState.role !== 'host') return;
             setActiveMusicCategory('intro');
             // setActiveMusicCategory() only resumes playback if music
@@ -28774,6 +28896,19 @@
                 setGameScreen('team');
                 openTeamAddPromptOverlay();
             }
+        }
+
+        // Host-only -- the button's third and final state (see
+        // .game-lobby-start-game-btn's own comment). Only ever reached
+        // via its click handler once allLobbyStartersChosen() is true,
+        // i.e. every expected player already has a starter, so there's
+        // nothing left here to kick off the way beginGameSetup() does --
+        // this just locks the button in place for the rest of the
+        // session so a stray extra tap can't re-trigger anything.
+        function finalizeLobbyGameStart() {
+            if (lobbyState.role !== 'host') return;
+            lobbyState.gameOfficiallyStarted = true;
+            updateLobbyStartGameButtonUI();
         }
 
 
@@ -29508,7 +29643,12 @@
 
             const lobbyStartGameBtn = e.target.closest('.game-lobby-start-game-btn');
             if (lobbyStartGameBtn) {
-                startGame();
+                if (lobbyStartGameBtn.disabled) return; // belt-and-suspenders -- the button's own disabled state already prevents this
+                if (allLobbyStartersChosen()) {
+                    finalizeLobbyGameStart();
+                } else {
+                    beginGameSetup();
+                }
                 return;
             }
 
