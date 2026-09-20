@@ -28372,12 +28372,26 @@
                 }
             });
             conn.on('close', () => {
-                setLobbyStatus('The host ended the lobby.', 'error');
-                resetLobbyState();
+                // A real 'close'/'error' from PeerJS is a much more
+                // direct signal than anything the heartbeat timeout or
+                // probeHostConnectionAndRecoverIfNeeded() have to work
+                // with (see startLobbyHeartbeat()'s own comment on why
+                // conn.open alone can't be trusted the other way) --
+                // and these fire fast, often well before either of
+                // those would even get a chance to notice anything.
+                // Previously this reset straight to the choice screen
+                // with no attempt to recover, which meant it always won
+                // the race against the slower heartbeat/probe paths and
+                // silently defeated the whole auto-rejoin feature
+                // whenever PeerJS happened to detect the drop this way
+                // (see the chat this was fixed in) -- routing through
+                // the same recovery function as every other kind of
+                // drop instead means whichever path notices first, the
+                // outcome is the same automatic rejoin attempt.
+                attemptGuestAutoRejoin(lobbyState.code);
             });
             conn.on('error', () => {
-                setLobbyStatus('Connection to the host was lost.', 'error');
-                resetLobbyState();
+                attemptGuestAutoRejoin(lobbyState.code);
             });
         }
 
