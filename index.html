@@ -1425,6 +1425,108 @@
             box-sizing: border-box;
         }
 
+        /* Host-role step -- shown right after "Host a Lobby" is tapped,
+           before hosting actually starts (see beginHostFlow() in the
+           script). Same standalone-card look/sizing as .game-lobby-naming
+           just above, just a different step in the same one-attribute
+           state machine. */
+        .game-lobby-host-role {
+            display: none;
+            flex-direction: column;
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .game-lobby-host-role .filter-btn {
+            margin: 4px 0 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .game-lobby[data-state="host-role"] .game-lobby-choice {
+            display: none;
+        }
+
+        .game-lobby[data-state="host-role"] .game-lobby-host-role {
+            display: flex;
+        }
+
+        /* Bare color-pick step -- no name field, just swatches. Reused
+           for two different moments (see openLobbyColorPick() in the
+           script): a host choosing to play needing its own color for
+           the first time, and a returning guest whose remembered color
+           (see gameGuestSaves[...].playerColor) has since been taken by
+           someone else and needs a new one before it can finish
+           reconnecting. Same standalone-card look as the two steps
+           above. */
+        .game-lobby-color-pick {
+            display: none;
+            flex-direction: column;
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .game-lobby-color-pick .filter-btn:not(.game-player-color-swatch-btn) {
+            margin: 10px 0 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .game-lobby[data-state="color-pick"] .game-lobby-choice {
+            display: none;
+        }
+
+        .game-lobby[data-state="color-pick"] .game-lobby-color-pick {
+            display: flex;
+        }
+
+        /* Shared by both the naming step's inline swatches and the bare
+           color-pick step above -- 6 colors read better as a 3x2 grid
+           than .game-note-color-grid's 2-column layout (built for a
+           5-item list). */
+        .game-player-color-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin: 6px 0 4px;
+        }
+
+        /* Same .filter-btn base as every swatch family in this doc
+           (.game-note-color-swatch-btn included), background/text
+           swapped per color. Distinct palette from NOTE_COLORS/
+           .game-note-color-swatch-btn-- on purpose -- these identify a
+           *player*, not a card, and the two pickers can be open in
+           different contexts without their colors needing to visually
+           match. */
+        .game-player-color-swatch-btn--red { background-color: #e63233; color: #ffffff; }
+        .game-player-color-swatch-btn--blue { background-color: #2c3eaa; color: #ffffff; }
+        .game-player-color-swatch-btn--green { background-color: #378e2f; color: #ffffff; }
+        .game-player-color-swatch-btn--yellow { background-color: #fdca01; color: #3a2e00; }
+        .game-player-color-swatch-btn--orange { background-color: #f28c1e; color: #3a2000; }
+        .game-player-color-swatch-btn--purple { background-color: #8e44ad; color: #ffffff; }
+
+        /* Already claimed by another connected player (see
+           getLobbyTakenColors()) -- visibly inert rather than just
+           relying on the disabled attribute alone, since the swatch's
+           own bold fill color would otherwise look just as pickable as
+           any other. */
+        .game-player-color-swatch-btn.taken {
+            opacity: 0.35;
+            filter: grayscale(65%);
+            cursor: not-allowed;
+        }
+
+        /* Mid-pick highlight in the naming step, where choosing a color
+           doesn't immediately submit the way it does in the bare
+           color-pick step -- see the naming step's own Join Lobby button,
+           which stays disabled until one of these is marked selected. */
+        .game-player-color-swatch-btn.selected {
+            outline: 3px solid #FFF;
+            outline-offset: 2px;
+        }
+
         .game-lobby[data-state="naming"] .game-lobby-choice {
             display: none;
         }
@@ -1445,6 +1547,14 @@
            a guest's peer id isn't a room anyone else would ever join --
            so it's hidden outright rather than shown empty. */
         .game-lobby[data-role="guest"] .game-lobby-room-info {
+            display: none;
+        }
+
+        /* Same reasoning as .game-lobby-room-info above -- only the
+           host's device decides when the game actually begins (see
+           startGame() in the script), so a guest never sees this at
+           all rather than a disabled/inert copy of it. */
+        .game-lobby[data-role="guest"] .game-lobby-start-game-btn {
             display: none;
         }
 
@@ -1477,6 +1587,24 @@
         .game-lobby-card-blurb {
             font-size: 13px;
             color: #FFF;
+            margin: 0 0 12px;
+        }
+
+        /* Same "needs attention, not destructive" amber as
+           .game-save-progress-banner (see its own comment) -- the host's
+           device is what everyone else's connection actually depends on
+           (see LOBBY_HEARTBEAT_TIMEOUT_MS's own comment / the Wake Lock
+           notes further down in the script), so this flags that up
+           front rather than after someone's already been dropped. Scoped
+           to the Host card alone -- joining has no equivalent stake, so
+           the Join card's own blurb doesn't get this. */
+        .game-lobby-host-note {
+            font-size: 12px;
+            color: #FFF;
+            background: rgba(255, 196, 0, 0.18);
+            border: 2px solid rgba(255, 170, 0, 0.55);
+            border-radius: 8px;
+            padding: 8px 10px;
             margin: 0 0 12px;
         }
 
@@ -1655,6 +1783,41 @@
                 -1px  0   0 black,                 1px  0   0 black,
                 -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
         }
+
+        /* The name half of a .game-lobby-player-row (everything but the
+           optional Host tag), so the color dot below sits right next to
+           the name rather than fighting the row's own space-between. */
+        .game-lobby-player-name {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Small static swatch identifying a player -- next to their name
+           in the Connected Players roster (.game-lobby-player-row) and
+           in the Hands & Decks screen's Other Players list
+           (.game-other-hand-row). Deliberately its own minimal class
+           rather than reusing .game-note-color-dot, which is absolutely
+           positioned for overlaying a card thumbnail -- this one just
+           sits inline. Absent entirely for a hosting-only host (see
+           renderLobbyPlayers()), since that device was never assigned a
+           player color at all. */
+        .game-player-color-dot {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid rgba(0, 0, 0, 0.6);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            flex-shrink: 0;
+        }
+
+        .game-player-color-dot--red { background: #e63233; }
+        .game-player-color-dot--blue { background: #2c3eaa; }
+        .game-player-color-dot--green { background: #378e2f; }
+        .game-player-color-dot--yellow { background: #fdca01; }
+        .game-player-color-dot--orange { background: #f28c1e; }
+        .game-player-color-dot--purple { background: #8e44ad; }
 
         /* Every screen except the save picker (the true root) gets one
            of these at the top -- the menu's goes back to the save
@@ -2804,11 +2967,11 @@
             object-fit: cover;
         }
 
-        /* The selected card's own option list -- Play/Discard/Attach/
-           Put on Top of Deck. Sits below the card (top: 100%, i.e.
-           right after its bottom edge), not over top of it, per the
-           chat this was designed in -- hidden entirely except for
-           whichever single card is currently clicked/tapped
+        /* The selected card's own option list -- Play/Discard/Put on
+           Top of Deck/Put on Bottom of Deck. Sits below the card
+           (top: 100%, i.e. right after its bottom edge), not over top
+           of it, per the chat this was designed in -- hidden entirely
+           except for whichever single card is currently clicked/tapped
            (.is-expanded). Deliberately NOT shown on :hover alone (see
            the chat this was split in) -- these buttons should only
            appear once the player actually commits to a card by
@@ -2816,9 +2979,9 @@
            stack. Fixed height (see the fixed 2x2
            .game-hand-card-options-grid it always contains) so the
            translateY() push above doesn't need to account for variable
-           content -- Attach itself now just hands off to the Team
-           Tracker instead of opening a second view in this same panel
-           (see requestAttachFromHand()'s own comment for why). */
+           content -- no Attach button here any more (see the chat this
+           was moved in) -- Play already reveals into the Active Card
+           zone, which has its own Attach button once it's there. */
         .game-hand-card-options {
             display: none;
             position: absolute;
@@ -3846,6 +4009,26 @@
             opacity: 0.85;
         }
 
+        /* Companion pulse for the +/-1/5 buttons (see pulseFilterBtn()'s
+           own .game-pokecoins-btn branch): started in sync with the
+           pressed button's own .filter-btn-pulse so both animate
+           together, but scaling UP rather than down -- a distinct enough
+           motion from the button's own scale-down that the two don't
+           read as one one smear across the row. 50% is deliberately the
+           peak: that's also the instant the click-delay logic actually
+           applies the new total (see the document 'click' listener's own
+           game-pokecoins-btn branch), so the number's biggest "pop" lines
+           up with the number itself actually changing underneath it. */
+        @keyframes game-pokecoins-value-pulse {
+            0% { transform: translateY(-50%) scale(1); }
+            50% { transform: translateY(-50%) scale(1.18); }
+            100% { transform: translateY(-50%) scale(1); }
+        }
+
+        .game-pokecoins-value.game-pokecoins-value-pulse {
+            animation: game-pokecoins-value-pulse 0.25s ease;
+        }
+
         /* Same [data-readonly] convention as .game-screen above (see
            applyReadOnlyIndicators()), just scoped to this section
            instead of a whole screen since Poké Coins lives on the main
@@ -3969,7 +4152,7 @@
         #game-screen-team[data-readonly="true"] #game-team-add-btn,
         #game-screen-decks[data-readonly="true"] .game-deck-draw-btn,
         #game-screen-decks[data-readonly="true"] .game-hand-discard-btn,
-        #game-screen-decks[data-readonly="true"] .game-hand-attach-btn {
+        #game-screen-decks[data-readonly="true"] .game-hand-return-btn {
             opacity: 0.55;
             pointer-events: none;
         }
@@ -8456,6 +8639,22 @@
         .filter-btn.include { background-color: rgba(0, 153, 255, 0.70); color: white; }
         .filter-btn.exclude { background-color: rgba(255, 77, 77, 0.70); color: white; }
 
+        /* Click/tap feedback -- see the document-level 'click' listener
+           that toggles this class on every .filter-btn in the app. A
+           quick scale-down-and-back rather than a color/opacity change
+           so it reads clearly even on the many differently-colored
+           variants (.include/.exclude, disabled, etc.) without needing
+           its own override for each. */
+        @keyframes filter-btn-pulse {
+            0% { transform: scale(1); }
+            40% { transform: scale(0.92); }
+            100% { transform: scale(1); }
+        }
+
+        .filter-btn.filter-btn-pulse {
+            animation: filter-btn-pulse 0.25s ease;
+        }
+
         /* Generic "visibly present but can't be tapped right now" look --
            used by the Add Pokémon guardrail buttons (Starter/Pokéstar,
            see beginTeamAddMode()/exitTeamAddMode()). pointer-events: none
@@ -11684,11 +11883,11 @@
                 <div class="game-section-header">Tools</div>
 
                 <div class="game-menu-tiles">
-                    <button class="filter-btn" data-target="badges">Badge Tracker</button>
-                    <button class="filter-btn" data-target="calc">Attack Calculator</button>
-                    <button class="filter-btn" data-target="matchup">Type Matchup</button>
                     <button class="filter-btn" data-target="team">Team Tracker</button>
                     <button class="filter-btn" data-target="decks">Hand &amp; Decks</button>
+                    <button class="filter-btn" data-target="badges">Badge Tracker</button>
+                    <button class="filter-btn" data-target="matchup">Type Matchup</button>
+                    <button class="filter-btn" data-target="calc">Attack Calculator</button>
                     <button class="filter-btn" data-target="lobby">Multiplayer Lobby</button>
                 </div>
             </div>
@@ -11958,6 +12157,7 @@
                         <div class="game-lobby-card">
                             <p class="game-lobby-card-title">Host a Lobby</p>
                             <p class="game-lobby-card-blurb">Your device plays the music. Everyone else joins with a room code and can change the playlist from their own devices.</p>
+                            <p class="game-lobby-host-note">The host's device keeps the game connected for everyone, so it needs to stay awake and on-screen for the whole session — a locked phone can still drop players. A laptop or tablet that won't sleep makes the steadiest host; other players are still fine joining from their phones.</p>
                             <label>Your Name</label>
                             <input type="text" class="game-lobby-input game-lobby-host-name" placeholder="Trainer" maxlength="20">
                             <button class="filter-btn game-lobby-host-btn">Host a Lobby</button>
@@ -11999,8 +12199,42 @@
                         <p class="game-lobby-card-blurb">First time joining this host's game. What should other players call you?</p>
                         <label>Your Name</label>
                         <input type="text" class="game-lobby-input game-lobby-naming-name" placeholder="Trainer" maxlength="20">
-                        <button class="filter-btn game-lobby-naming-confirm-btn">Join Lobby</button>
+                        <label>Your Color</label>
+                        <div class="game-player-color-grid" id="game-lobby-naming-color-grid"></div>
+                        <button class="filter-btn game-lobby-naming-confirm-btn" disabled>Join Lobby</button>
                         <button class="filter-btn exclude game-lobby-naming-cancel-btn">Cancel</button>
+                    </div>
+
+                    <!-- Shown right after "Host a Lobby" is tapped (see
+                         beginHostFlow() in the script), before hosting
+                         actually starts -- "Just Hosting" goes straight
+                         to the existing host flow unchanged; "I'll Be
+                         Playing Too" continues on to a player color pick
+                         (skipped if this save already has one on file,
+                         see chooseHostAsPlayer()) before hosting starts. -->
+                    <div class="game-lobby-host-role">
+                        <p class="game-lobby-card-title">One More Thing…</p>
+                        <p class="game-lobby-card-blurb">Will you also be playing a hand on this device, or is it just running the lobby?</p>
+                        <button class="filter-btn game-lobby-host-role-play-btn">I'll Be Playing Too</button>
+                        <button class="filter-btn game-lobby-host-role-hostonly-btn">Just Hosting</button>
+                        <button class="filter-btn exclude game-lobby-host-role-back-btn">Back</button>
+                    </div>
+
+                    <!-- Bare color-pick step, no name field -- see
+                         openLobbyColorPick() in the script for the two
+                         moments this is reused for (a hosting-and-playing
+                         host picking a color for the first time, and a
+                         returning guest whose remembered color has since
+                         been taken by someone else). Tapping an
+                         available swatch commits immediately, same as
+                         the Note Color picker elsewhere in this doc --
+                         no separate Confirm button needed for a single
+                         choice from 6 options. -->
+                    <div class="game-lobby-color-pick">
+                        <p class="game-lobby-card-title" id="game-lobby-color-pick-title">Choose Your Color</p>
+                        <p class="game-lobby-card-blurb" id="game-lobby-color-pick-blurb">Pick the color other players will see next to your name.</p>
+                        <div class="game-player-color-grid" id="game-lobby-color-pick-grid"></div>
+                        <button class="filter-btn exclude game-lobby-color-pick-cancel-btn">Cancel</button>
                     </div>
 
                     <!-- Shown once hosting or connected as a guest (see
@@ -12026,6 +12260,20 @@
 
                         <p class="game-lobby-players-heading">Connected Players</p>
                         <div class="game-lobby-players" id="game-lobby-players"></div>
+
+                        <!-- Host-only (hidden for guests via
+                             .game-lobby[data-role="guest"] below), same
+                             reasoning as .game-lobby-room-info above --
+                             only the host's device actually decides when
+                             the game begins. See startGame() in the
+                             script: switches this device's own Sounds
+                             panel to the Intro playlist for the chosen
+                             region, tells every connected guest to do the
+                             same on their end, and sends everyone
+                             (including the host itself, if it's playing
+                             too -- see lobbyState.hostIsPlayer) to Team
+                             Tracker with a starter Pokémon prompt. -->
+                        <button class="filter-btn game-lobby-start-game-btn" id="game-lobby-start-game-btn">Start Game</button>
 
                         <button class="filter-btn exclude game-lobby-leave-btn" id="game-lobby-leave-btn">Leave Lobby</button>
                     </div>
@@ -13292,6 +13540,151 @@
         document.addEventListener('touchstart', (e) => {
             outsideClickDragOriginatedInPanel = panel.contains(e.target);
         });
+
+        // Click-feedback pulse for every .filter-btn across the whole
+        // app -- added because there was previously no visual
+        // confirmation a tap actually registered at all (see the chat
+        // this was requested in).
+        //
+        // The animation itself starts on PRESS (mousedown/touchstart/
+        // keydown), not on the full 'click' -- after the first attempt
+        // (triggering on 'click') turned out to visibly fail in two
+        // ways, both for the same underlying reason: a 'click' only
+        // fires after the button's already been released, by which
+        // point whatever that button's OWN click handler does has
+        // typically already run too (its own listener sits on a closer
+        // ancestor -- e.g. #game-scroll -- than this one on document,
+        // so it fires first during the bubble phase regardless of
+        // which handler was wired up first in this file). A tile that
+        // navigates to another screen hides this one (display:none)
+        // before this listener's class ever gets to render a single
+        // frame, so the animation sat paused until the player later
+        // backed back out to it; a deck action like Shuffle/Look at
+        // Top re-renders its own row's markup immediately, which
+        // replaces the exact button element outright with a fresh one
+        // that was never pulsed at all.
+        //
+        // Starting the animation on press alone wasn't quite enough,
+        // though: a quick tap can still release (firing 'click', and
+        // with it whatever navigation/re-render that button causes)
+        // well before FILTER_BTN_PULSE_MS has actually elapsed, cutting
+        // the animation short the same two ways as above. So the
+        // 'click' itself is intercepted here in the CAPTURE phase --
+        // guaranteed to run before every other listener on this event,
+        // including #game-scroll's own bubble-phase one, regardless of
+        // DOM position -- and held with stopImmediatePropagation()/
+        // preventDefault() until only whatever's actually left of the
+        // animation's own duration has passed (elapsed since the
+        // ORIGINAL press, not the click, so a slower deliberate press
+        // that already let the animation fully play doesn't add any
+        // extra wait on top). It's then replayed as a synthetic click
+        // on the same element, which every button's own handler treats
+        // exactly like the real one. isConnected/disabled are
+        // rechecked at replay time in case the delay outlived the
+        // button itself somehow (shouldn't happen in practice, since
+        // nothing else here reacts to a click this quickly, but cheap
+        // insurance against dispatching a click into nothing).
+        //
+        // The !e.isTrusted check is what tells the real click captured
+        // above apart from this function's own replay of it a moment
+        // later -- a script-dispatched event is never trusted, no
+        // matter how it's dispatched, so the replay sails straight
+        // through this listener untouched rather than looping forever.
+        // This also means any OTHER already-existing synthetic click in
+        // this file (e.g. the alpha-transparency click-through further
+        // up) is left completely alone by this, same as ever.
+        //
+        // One delegated set of listeners here covers every .filter-btn
+        // everywhere (Pokédex filters, Game Panel, Sounds, Discord, all
+        // of it) rather than adding this into each of the dozens of
+        // separate click handlers throughout this file individually --
+        // none of them need to know this exists at all.
+        const FILTER_BTN_PULSE_MS = 250; // keep in sync with .filter-btn-pulse's own animation-duration below
+        function pulseFilterBtn(e) {
+            const pulseBtn = e.target.closest('.filter-btn');
+            if (!pulseBtn) return;
+            // classList.remove() + a forced reflow before re-adding the
+            // class is what lets the animation restart even on a
+            // button that was just pulsed a moment ago -- without the
+            // reflow, removing and immediately re-adding the same class
+            // produces no browser paint in between, so a still-running
+            // CSS animation wouldn't otherwise restart.
+            pulseBtn.classList.remove('filter-btn-pulse');
+            void pulseBtn.offsetWidth;
+            pulseBtn.classList.add('filter-btn-pulse');
+            pulseBtn._filterBtnPulseStartedAt = performance.now();
+            // The four Poké Coin +/- buttons get a companion pulse on the
+            // total itself, restarted the same remove/reflow/re-add way
+            // and started at the same moment as the button's own pulse
+            // above, so the two visibly animate in lockstep even though
+            // they're two separate elements/animations. The actual value
+            // change is timed separately, to this same button's pulse
+            // reaching its midpoint -- see the document 'click' listener
+            // further down.
+            if (pulseBtn.classList.contains('game-pokecoins-btn')) {
+                const pokeCoinsValueEl = document.getElementById('game-pokecoins-value');
+                if (pokeCoinsValueEl) {
+                    pokeCoinsValueEl.classList.remove('game-pokecoins-value-pulse');
+                    void pokeCoinsValueEl.offsetWidth;
+                    pokeCoinsValueEl.classList.add('game-pokecoins-value-pulse');
+                }
+            }
+        }
+        document.addEventListener('mousedown', pulseFilterBtn);
+        document.addEventListener('touchstart', pulseFilterBtn, { passive: true });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === ' ' || e.key === 'Enter') pulseFilterBtn(e);
+        });
+        // Both events matter here, not just 'animationend': if the button
+        // gets hidden (e.g. a screen switch's display:none, see
+        // setGameScreen()) while its pulse is still mid-flight -- which
+        // can happen even though the click delay is calibrated to match
+        // the animation's own duration, since a setTimeout callback and
+        // the animation's completion aren't guaranteed to be ordered --
+        // the browser fires 'animationcancel' instead of 'animationend'.
+        // Without this, the class is left stuck on a now-hidden button,
+        // and simply re-showing that element later (e.g. navigating back
+        // to the screen it's on) starts a brand-new instance of the
+        // animation from scratch, since the previous one was cancelled
+        // rather than completed -- i.e. exactly the "pulse fires again on
+        // return" bug this is fixing.
+        function clearFilterBtnPulseClass(e) {
+            if (e.animationName === 'filter-btn-pulse') {
+                e.target.classList.remove('filter-btn-pulse');
+            } else if (e.animationName === 'game-pokecoins-value-pulse') {
+                e.target.classList.remove('game-pokecoins-value-pulse');
+            }
+        }
+        document.addEventListener('animationend', clearFilterBtnPulseClass);
+        document.addEventListener('animationcancel', clearFilterBtnPulseClass);
+        document.addEventListener('click', (e) => {
+            if (!e.isTrusted) return; // this is this same listener's own replay -- let it straight through
+            const pulseBtn = e.target.closest('.filter-btn');
+            if (!pulseBtn) return;
+            const startedAt = pulseBtn._filterBtnPulseStartedAt || 0;
+            // The four Poké Coin +/- buttons hold the click to only the
+            // pulse's midpoint rather than its full length -- their pulse
+            // is purely tactile feedback with nothing to navigate away
+            // to, so there's no reason to sit on the actual +1/-5/etc.
+            // apply any longer than it takes the button (and its synced
+            // .game-pokecoins-value-pulse companion, see pulseFilterBtn())
+            // to visibly announce that a change is happening. Everywhere
+            // else still waits for the pulse to fully finish before
+            // whatever the click actually does (e.g. navigating away)
+            // takes effect.
+            const targetMs = pulseBtn.classList.contains('game-pokecoins-btn')
+                ? FILTER_BTN_PULSE_MS / 2
+                : FILTER_BTN_PULSE_MS;
+            const remaining = targetMs - (performance.now() - startedAt);
+            if (remaining <= 0) return; // target point (full pulse, or its midpoint) has already passed -- nothing to wait for
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            setTimeout(() => {
+                if (pulseBtn.isConnected && !pulseBtn.disabled) {
+                    pulseBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                }
+            }, remaining);
+        }, true); // capture -- must run before every other click listener, see the comment above
 
         const pokedexPanel = document.getElementById("pokedex-panel");
 
@@ -17469,6 +17862,37 @@
         // module).
         const NOTE_COLORS = ['pink', 'green', 'blue', 'yellow', 'red'];
 
+        // Player colors -- distinct from NOTE_COLORS above (different
+        // palette, different purpose: this one identifies a *person*
+        // across the whole Multiplayer Lobby/Hands & Decks UI, not a
+        // single card). See choosePlayerColorPick()/PLAYER_COLOR_HEX and
+        // the .game-player-color-* CSS module. Uniqueness (no two
+        // players sharing a color) is enforced host-side -- see
+        // getLobbyTakenColors() and wireHostConnection()'s own
+        // 'identify' handling.
+        const PLAYER_COLORS = ['red', 'blue', 'green', 'yellow', 'orange', 'purple'];
+
+        // Host side only: every color currently spoken for in this
+        // lobby -- the host's own (if it's playing too, see
+        // lobbyState.hostIsPlayer) plus every connected guest's. Used
+        // both to grey out already-taken swatches before anyone picks
+        // (sent along with 'welcome', see buildLobbyWelcomePayload()) and
+        // to reject an 'identify' that asks for one that's since been
+        // grabbed by someone else (see wireHostConnection()'s own
+        // 'identify' handling). excludePeerId leaves one connection's
+        // own current color out of its count against itself -- relevant
+        // when re-validating that exact connection's own request, not
+        // when reporting taken colors out to everyone else.
+        function getLobbyTakenColors(excludePeerId) {
+            const taken = [];
+            if (lobbyState.hostIsPlayer && lobbyState.hostColor) taken.push(lobbyState.hostColor);
+            lobbyState.connections.forEach((entry, peerId) => {
+                if (peerId === excludePeerId) return;
+                if (entry.color) taken.push(entry.color);
+            });
+            return taken;
+        }
+
         // A `"noteColor": "yes"` card (cards.json) needs a color picked
         // via the Active Card zone's own Color button before it can be
         // made Permanent -- see hostApplyActiveCardPermanent()'s own
@@ -18066,6 +18490,49 @@
             setHostActiveCard(cardId, (card && getEffectiveCardDeck(card)) || '', peerKey, true);
         }
 
+        // The hand stack's own Put on Top of Deck/Put on Bottom of Deck
+        // buttons -- same "remove from hand" shape as
+        // hostApplyRemoveFromHandOnly()/hostApplyDiscard() above, but
+        // instead of discarding or handing off to the Active Card zone,
+        // the card goes straight back into its OWN deck's drawPile (see
+        // getEffectiveCardDeck() -- this is the card's real originating
+        // deck, NOT discardToHostDeck()'s "every extra deck folds into
+        // Item Deck" rule, since this needs to land back in the deck
+        // it'll actually be drawn from again). position is 'top' or
+        // 'bottom', same push-onto-the-end-pop()-reads-from-vs-unshift-
+        // onto-the-front convention as hostApplyLookMoveToTop()/
+        // hostApplyLookMoveToBottom() above.
+        function hostApplyReturnToDeck(deckName, peerKey, cardId, position) {
+            if (peerKey === 'host') {
+                const hand = getLocalHandArray();
+                const idx = hand.indexOf(cardId);
+                if (idx === -1) return;
+                hand.splice(idx, 1);
+                persistLocalHand();
+            } else {
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return;
+                const idx = hand.indexOf(cardId);
+                if (idx === -1) return;
+                hand.splice(idx, 1);
+                persistGameSaves();
+                // See hostApplyDiscard()'s own comment on 'hand-remove'.
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'hand-remove', cardId });
+            }
+            const store = ensureHostDeckStore();
+            if (store) {
+                ensureDeckBuilt(store, deckName);
+                if (position === 'bottom') {
+                    store[deckName].drawPile.unshift(cardId);
+                } else {
+                    store[deckName].drawPile.push(cardId);
+                }
+            }
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
         // Host-side: the Play button in a hand card's own options grid
         // (see requestPlayFromHand() below) -- takes the card out of
         // hand exactly like a Discard would (same peerKey-branching
@@ -18559,6 +19026,27 @@
                 }
             } else {
                 hostApplyDiscard(deckName, 'host', cardId);
+            }
+        }
+
+        // The hand stack's own Put on Top of Deck/Put on Bottom of Deck
+        // buttons -- same role-based routing as requestDiscardCard()
+        // just above, resolving cardId's own real deck the same way
+        // requestPlayFromHand()/discardUnattachedCard() already do
+        // (getEffectiveCardDeck(), so a tiered TM card lands back in its
+        // own Basic/Advanced/Expert pile rather than plain 'TM Deck').
+        // position is 'top' or 'bottom' -- see hostApplyReturnToDeck()'s
+        // own comment.
+        function requestReturnToDeck(cardId, position) {
+            if (isActiveSaveReadOnly()) return;
+            const card = CARDS_BY_ID[cardId];
+            const deckName = (card && getEffectiveCardDeck(card)) || getDeckToolList()[0];
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-return-to-deck', deck: deckName, cardId, position });
+                }
+            } else {
+                hostApplyReturnToDeck(deckName, 'host', cardId, position);
             }
         }
 
@@ -19085,21 +19573,25 @@
         // pendingTeamReleaseIndex.
         let pendingAttachReplaceIndex = null;
 
-        // Entered from the Attach button in a hand card's own option
-        // list (see the #game-scroll delegated listener's own
-        // .game-hand-attach-btn branch) -- stashes which card, then
-        // switches to the Team Tracker so the player picks a Pok\u00e9mon
-        // by tapping it there, same "borrow the Team Tracker's own
-        // picking-by-tap flow" request this was built to. Guarded here
-        // rather than only at the final commit, so a read-only save (or
-        // a card that somehow isn't actually attachable) never even
-        // opens the Team Tracker for this.
+        // Entered from the Active Card zone's own Attach button now (see
+        // the #game-scroll delegated listener's own
+        // .game-active-card-attach-btn branch) -- the hand stack's own
+        // direct-Attach shortcut was removed (see the chat this was
+        // moved in; requestAttachFromHand() is unused but left in place
+        // since beginAttachFlow() still needs its 'hand' source
+        // constant elsewhere). Stashes which card, then switches to the
+        // Team Tracker so the player picks a Pok\u00e9mon by tapping it
+        // there, same "borrow the Team Tracker's own picking-by-tap
+        // flow" request this was built to. Guarded here rather than
+        // only at the final commit, so a read-only save (or a card that
+        // somehow isn't actually attachable) never even opens the Team
+        // Tracker for this.
         // Brief transient notice on the Hand & Decks screen itself --
         // same shape as setTradeStatusMessage()'s own toast (auto-hides
         // after 4s, restarts the timer if called again before that).
-        // Currently only used by requestAttachFromHand() below for "no
-        // team members yet", but written generically in case a later
-        // notice needs the same treatment.
+        // Currently only used by beginAttachFlow() below for "no team
+        // members yet", but written generically in case a later notice
+        // needs the same treatment.
         let decksNoticeTimer = null;
         function showDecksNotice(message) {
             const el = document.getElementById('game-decks-notice-banner');
@@ -19734,7 +20226,6 @@
                     const card = CARDS_BY_ID[cardId];
                     const name = card ? card.name : cardId;
                     const deckName = (card && getEffectiveCardDeck(card)) || getDeckToolList()[0];
-                    const canAttach = !readOnly && card && card.canAttach === 'yes';
 
                     // Attach hands off to the Team Tracker (see
                     // requestAttachFromHand()'s own comment) rather than
@@ -19744,12 +20235,24 @@
                     // Play reveals the card into the shared Active Card
                     // zone instead of resolving it right here -- see
                     // hostApplyPlay()'s own comment.
+                    //
+                    // No Attach button here any more (see the chat this
+                    // was moved in) -- Play already reveals into the
+                    // Active Card zone, which has its own Attach button
+                    // once it's there, so a direct hand-to-Attach
+                    // shortcut was redundant with an extra step already
+                    // available rather than a genuinely separate path.
+                    // Put on Top/Bottom of Deck take its old grid slot,
+                    // plus the slot that was a disabled "Coming soon"
+                    // placeholder -- both go through requestReturnToDeck(),
+                    // landing back in the card's own real deck (see that
+                    // function's own comment) rather than its discard pile.
                     const optionsInner = `
                         <div class="game-hand-card-options-grid">
                             <button class="filter-btn game-hand-play-btn" type="button" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Play</button>
                             <button class="filter-btn exclude game-hand-discard-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Discard</button>
-                            <button class="filter-btn game-hand-attach-btn" type="button" data-card-id="${escapeHtml(cardId)}" ${canAttach ? '' : 'disabled'} title="${canAttach ? '' : 'This card can\u2019t be attached'}">Attach</button>
-                            <button class="filter-btn" type="button" disabled title="Coming soon">Put on Top of Deck</button>
+                            <button class="filter-btn game-hand-return-btn" type="button" data-position="top" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Put on Top of Deck</button>
+                            <button class="filter-btn game-hand-return-btn" type="button" data-position="bottom" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Put on Bottom of Deck</button>
                         </div>
                     `;
 
@@ -19774,14 +20277,16 @@
                     const selfId = lobbyState.peer ? lobbyState.peer.id : null;
                     const rows = (lobbyState.players || []).filter(p => p.id !== selfId).map(p => {
                         const count = counts[p.id] || 0;
-                        return `<div class="game-other-hand-row"><span class="game-card-back"></span><span class="game-other-hand-name">${escapeHtml(p.name)}</span><span>${count}</span></div>`;
+                        const dot = p.color ? `<span class="game-player-color-dot game-player-color-dot--${p.color}"></span>` : '';
+                        return `<div class="game-other-hand-row">${dot}<span class="game-card-back"></span><span class="game-other-hand-name">${escapeHtml(p.name)}</span><span>${count}</span></div>`;
                     });
                     othersListEl.innerHTML = rows.join('') || '<p class="game-hand-empty">No other players connected.</p>';
                 } else {
                     const entries = [];
                     lobbyState.connections.forEach((entry, peerId) => {
                         const count = (getPeerHandArray(peerId) || []).length;
-                        entries.push(`<div class="game-other-hand-row"><span class="game-card-back"></span><span class="game-other-hand-name">${escapeHtml(entry.name)}</span><span>${count}</span></div>`);
+                        const dot = entry.color ? `<span class="game-player-color-dot game-player-color-dot--${entry.color}"></span>` : '';
+                        entries.push(`<div class="game-other-hand-row">${dot}<span class="game-card-back"></span><span class="game-other-hand-name">${escapeHtml(entry.name)}</span><span>${count}</span></div>`);
                     });
                     othersListEl.innerHTML = entries.join('') || '<p class="game-hand-empty">No other players connected.</p>';
                 }
@@ -19841,11 +20346,11 @@
                     <div class="game-active-card-view actor">
                         ${imgTag}
                         <div class="game-active-card-actions">
-                            <button class="filter-btn game-active-card-discard-btn" type="button" ${readOnly ? 'disabled' : ''}>Discard</button>
-                            ${canPermanent ? `<button class="filter-btn game-active-card-permanent-btn" type="button">Permanent</button>` : ''}
-                            <button class="filter-btn game-active-card-shuffle-btn" type="button" ${readOnly ? 'disabled' : ''}>Shuffle</button>
                             ${canAttach ? `<button class="filter-btn game-active-card-attach-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Attach</button>` : ''}
+                            ${canPermanent ? `<button class="filter-btn game-active-card-permanent-btn" type="button">Permanent</button>` : ''}
                             ${canOverlay ? `<button class="filter-btn game-active-card-overlay-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Overlay</button>` : ''}
+                            <button class="filter-btn game-active-card-discard-btn" type="button" ${readOnly ? 'disabled' : ''}>Discard</button>
+                            <button class="filter-btn game-active-card-shuffle-btn" type="button" ${readOnly ? 'disabled' : ''}>Shuffle</button>
                         </div>
                     </div>
                 `;
@@ -25950,6 +26455,19 @@
             // re-entering a name (see GAME_PANEL_NOTES.md's Guest Saves
             // notes).
             hostSaveId: null,
+            // Host-only: whether the host's own device is playing a hand
+            // too, rather than just running the lobby (see
+            // beginHostFlow()/chooseHostAsPlayer()) -- decides whether
+            // the host's own roster entry carries a color at all (see
+            // attemptHostPeerCreation()'s peer.on('open') and
+            // refreshLobbyRosterFromHostState()).
+            hostIsPlayer: false,
+            // Host-only: this device's own player color, one of
+            // PLAYER_COLORS, only meaningful when hostIsPlayer is true.
+            // Persisted onto the active save (gameSaves[...].hostPlayerColor)
+            // so hosting the same save again later remembers it without
+            // re-asking (see chooseHostAsPlayer()).
+            hostColor: null,
             // Guest-only: a cached copy of the host's save's own rule
             // fields, learned from the same 'welcome' message -- what a
             // brand-new guest save gets seeded from (see
@@ -26053,12 +26571,13 @@
         // there's exactly one place that actually resets the state.
         function resetLobbyState() {
             stopLobbyHeartbeat();
+            releaseLobbyWakeLock();
             if (lobbyState.peer && !lobbyState.peer.destroyed) {
                 lobbyState.peer.destroy();
             }
             lobbyState = {
                 role: null, peer: null, code: null, hostName: null,
-                hostSaveId: null, hostRuleset: null,
+                hostSaveId: null, hostIsPlayer: false, hostColor: null, hostRuleset: null,
                 connections: new Map(), hostConn: null, players: [],
                 playerProgress: {}, linkedGuestSaveId: null,
                 heartbeatSendTimer: null, heartbeatCheckTimer: null,
@@ -26090,6 +26609,40 @@
             refreshGameUI();
         }
 
+        // Screen Wake Lock -- stops the OS's own idle-timeout from
+        // dimming/locking the screen while a multiplayer session is
+        // active, so the ordinary "set the phone down between turns and
+        // it locks itself" case never happens in the first place. This
+        // is deliberately the only thing this touches: there's no web
+        // API that can keep a page running, or a connection alive, once
+        // a phone is ACTUALLY locked (a deliberate power-button press, or
+        // the OS suspending an already-backgrounded tab regardless of
+        // this lock) -- that's a platform-level suspension no page can
+        // override. The heartbeat check's own conn.open double-check and
+        // the visibilitychange handling further down exist for that case
+        // instead, making a real lock/suspend cheap to recover from
+        // rather than trying to prevent it outright.
+        let lobbyWakeLock = null;
+        async function acquireLobbyWakeLock() {
+            if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
+            try {
+                lobbyWakeLock = await navigator.wakeLock.request('screen');
+                lobbyWakeLock.addEventListener('release', () => { lobbyWakeLock = null; });
+            } catch (err) {
+                // Unsupported, permission denied, or the tab went hidden
+                // again mid-request -- nothing to do here; the
+                // visibilitychange handler below retries this on every
+                // return to the foreground regardless.
+                lobbyWakeLock = null;
+            }
+        }
+        function releaseLobbyWakeLock() {
+            if (lobbyWakeLock) {
+                lobbyWakeLock.release().catch(() => { /* already gone -- nothing to clean up */ });
+                lobbyWakeLock = null;
+            }
+        }
+
         function enterActiveLobbyState() {
             const lobbyEl = document.getElementById('game-lobby');
             lobbyEl.dataset.state = 'active';
@@ -26102,6 +26655,7 @@
             }
             syncMusicUIForLobbyRole();
             startLobbyHeartbeat();
+            acquireLobbyWakeLock();
             // Trade a Pok\u00e9mon's button visibility depends on
             // lobbyState.role/players (see renderTeamGrid()'s own
             // canStartTrade) -- covers the Host's own case, where hosting
@@ -26155,11 +26709,33 @@
                     // one stale connection in the same sweep.
                     Array.from(lobbyState.connections.entries()).forEach(([peerId, entry]) => {
                         if (now - entry.lastSeen > LOBBY_HEARTBEAT_TIMEOUT_MS) {
+                            // A phone that got locked (this device's own,
+                            // or backgrounded some other way) freezes this
+                            // very timer along with everything else in the
+                            // tab -- once it resumes, "now - lastSeen" can
+                            // look exactly like a real timeout even though
+                            // the connection itself was never actually
+                            // touched. Trust the connection's own open
+                            // state over a clock that was just asleep:
+                            // only actually drop it if PeerJS agrees it's
+                            // closed.
+                            if (entry.conn && entry.conn.open) {
+                                entry.lastSeen = now;
+                                return;
+                            }
                             handleHostConnectionDrop(peerId, entry.conn);
                         }
                     });
                 } else if (lobbyState.role === 'guest') {
                     if (lobbyState.hostConnLastSeen && now - lobbyState.hostConnLastSeen > LOBBY_HEARTBEAT_TIMEOUT_MS) {
+                        // Same reasoning as the host branch above -- don't
+                        // condemn a connection the object itself still
+                        // calls open just because this device's own clock
+                        // was frozen for a while.
+                        if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                            lobbyState.hostConnLastSeen = now;
+                            return;
+                        }
                         setLobbyStatus('Lost contact with the host.', 'error');
                         resetLobbyState();
                     }
@@ -26184,6 +26760,46 @@
         window.addEventListener('pagehide', () => {
             if (lobbyState.peer && !lobbyState.peer.destroyed) {
                 lobbyState.peer.destroy();
+            }
+        });
+
+        // Coming back from the background is the one moment it's cheap
+        // to actively check on things instead of waiting for the next
+        // scheduled heartbeat tick (up to LOBBY_HEARTBEAT_CHECK_INTERVAL_MS
+        // away) or, worse, a stale one firing immediately on resume with
+        // a falsely-huge elapsed time (see the heartbeat check's own
+        // conn.open guard above for that half of this). Also where the
+        // Wake Lock above needs re-requesting -- the browser releases it
+        // automatically the instant the tab goes hidden, which is
+        // exactly what let the phone lock itself in the first place.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible' || lobbyState.role === null) return;
+            acquireLobbyWakeLock();
+            if (lobbyState.role === 'host') {
+                lobbyState.connections.forEach((entry) => {
+                    if (entry.conn && entry.conn.open) {
+                        entry.lastSeen = Date.now();
+                        try { entry.conn.send({ type: 'ping' }); } catch (err) { /* next check catches it if this didn't land */ }
+                    }
+                });
+            } else if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConnLastSeen = Date.now();
+                    try { lobbyState.hostConn.send({ type: 'ping' }); } catch (err) { /* next check catches it if this didn't land */ }
+                } else if (lobbyState.code) {
+                    // The connection is actually gone, not just a stale
+                    // timestamp -- rejoin with the same code automatically
+                    // rather than leaving the player stuck looking at a
+                    // dead lobby screen until they notice and re-enter it
+                    // by hand. Guest Saves already carry this player's
+                    // name/progress by hostSaveId (see
+                    // handleLobbyWelcome()/finalizeGuestJoin()), so this
+                    // resolves silently, without a naming prompt, exactly
+                    // like any other reconnect to a save already on file.
+                    const codeToRejoin = lobbyState.code;
+                    setLobbyStatus('Reconnecting\u2026', 'pending');
+                    joinLobbyByCode(codeToRejoin);
+                }
             }
         });
 
@@ -26389,11 +27005,58 @@
             const listEl = document.getElementById('game-lobby-players');
             listEl.innerHTML = lobbyState.players.map(p => `
                 <div class="game-lobby-player-row${p.isHost ? ' is-host' : ''}">
-                    <span>${escapeHtml(p.name)}</span>
+                    <span class="game-lobby-player-name">${p.color ? `<span class="game-player-color-dot game-player-color-dot--${p.color}"></span>` : ''}${escapeHtml(p.name)}</span>
                     ${p.isHost ? '<span class="game-lobby-player-tag">Host</span>' : ''}
                 </div>
             `).join('');
         }
+
+        // Shared by the naming step's inline swatches and the bare
+        // color-pick step (see .game-player-color-grid's own CSS
+        // comment) -- builds one swatch per PLAYER_COLORS entry fresh
+        // every render, greying out/disabling anything in takenColors.
+        function renderPlayerColorGrid(gridEl, takenColors, selectedColor) {
+            if (!gridEl) return;
+            gridEl.innerHTML = PLAYER_COLORS.map(color => {
+                const label = color.charAt(0).toUpperCase() + color.slice(1);
+                const isTaken = (takenColors || []).includes(color);
+                const classes = ['filter-btn', 'game-player-color-swatch-btn', `game-player-color-swatch-btn--${color}`];
+                if (isTaken) classes.push('taken');
+                if (selectedColor === color) classes.push('selected');
+                return `<button class="${classes.join(' ')}" type="button" data-color="${color}" ${isTaken ? 'disabled' : ''}>${label}${isTaken ? ' (Taken)' : ''}</button>`;
+            }).join('');
+        }
+
+        // Bare color-pick step's pending callbacks -- set by
+        // openLobbyColorPick() below, consumed and cleared by the
+        // swatch/Cancel click handlers.
+        let lobbyColorPickOnChoose = null;
+        let lobbyColorPickOnCancel = null;
+
+        // Opens .game-lobby-color-pick for one of its two use cases (see
+        // that class's own CSS comment): a hosting-and-playing host
+        // picking a color for the first time, or a returning guest whose
+        // remembered color has since been taken by someone else.
+        // Choosing an available swatch commits immediately -- no
+        // separate Confirm button, same as the Note Color picker
+        // elsewhere in this doc.
+        function openLobbyColorPick({ title, blurb, takenColors, onChoose, onCancel }) {
+            document.getElementById('game-lobby-color-pick-title').textContent = title;
+            document.getElementById('game-lobby-color-pick-blurb').textContent = blurb;
+            renderPlayerColorGrid(document.getElementById('game-lobby-color-pick-grid'), takenColors || [], null);
+            lobbyColorPickOnChoose = onChoose;
+            lobbyColorPickOnCancel = onCancel || (() => leaveLobby());
+            document.getElementById('game-lobby').dataset.state = 'color-pick';
+        }
+
+        // Naming step's own pending color pick -- a brand-new guest
+        // picks both name and color on the one screen (see
+        // .game-lobby-naming's own color grid), so unlike the bare
+        // color-pick step above, choosing a swatch here just marks it
+        // selected and unlocks the Join Lobby button rather than
+        // submitting immediately.
+        let lobbyNamingSelectedColor = null;
+        let lobbyNamingTakenColors = [];
 
         // ---- Host side ----
 
@@ -26406,7 +27069,51 @@
         // section's creation form on the spot instead of starting to
         // host -- tapping "Host a Lobby" again once a save exists picks
         // up from here normally.
-        function startHostingLobby(name) {
+        //
+        // Doesn't start hosting directly any more -- see the
+        // .game-lobby-host-role step this hands off to next
+        // (chooseHostOnly()/chooseHostAsPlayer() below), which is what
+        // actually calls startHostingLobby().
+        let pendingHostName = 'Trainer';
+        function beginHostFlow(name) {
+            if (!requireLobbyLibs()) return;
+            if (activeSaveSlot === null) {
+                setLobbyStatus('Create or load a save first, then tap Host a Lobby again.', 'error');
+                setSavesSectionCollapsed(false);
+                const emptyIndex = gameSaves.findIndex(save => !save);
+                if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
+                return;
+            }
+            pendingHostName = (name || '').trim() || 'Trainer';
+            document.getElementById('game-lobby').dataset.state = 'host-role';
+        }
+
+        function chooseHostOnly() {
+            startHostingLobby(pendingHostName, false, null);
+        }
+
+        function chooseHostAsPlayer() {
+            const save = gameSaves[activeSaveSlot];
+            const savedColor = save && save.hostPlayerColor;
+            if (savedColor && PLAYER_COLORS.includes(savedColor)) {
+                // Nobody else can possibly be connected yet at the
+                // moment hosting is about to start -- this device's own
+                // remembered color can never collide with anything, so
+                // it's safe to reuse silently rather than re-asking
+                // every single time this same save hosts again.
+                startHostingLobby(pendingHostName, true, savedColor);
+                return;
+            }
+            openLobbyColorPick({
+                title: 'Choose Your Color',
+                blurb: 'Pick the color other players will see next to your name while you play.',
+                takenColors: [],
+                onChoose: (color) => startHostingLobby(pendingHostName, true, color),
+                onCancel: () => { document.getElementById('game-lobby').dataset.state = 'host-role'; },
+            });
+        }
+
+        function startHostingLobby(name, isPlayer, color) {
             if (!requireLobbyLibs()) return;
             if (activeSaveSlot === null) {
                 setLobbyStatus('Create or load a save first, then tap Host a Lobby again.', 'error');
@@ -26419,11 +27126,20 @@
             lobbyState.role = 'host';
             lobbyState.hostName = (name || '').trim() || 'Trainer';
             lobbyState.hostSaveId = gameSaves[activeSaveSlot].hostSaveId;
+            lobbyState.hostIsPlayer = !!isPlayer;
+            lobbyState.hostColor = isPlayer ? color : null;
             // Remembered per-save (not globally) so re-loading a
             // *different* save later doesn't carry over a name that
             // belonged to a different game -- see prefillLobbyHostName(),
-            // which is what reads this back.
+            // which is what reads this back. hostPlayerColor gets the
+            // same treatment (see chooseHostAsPlayer() above, which is
+            // what reads it back), and is left untouched -- not cleared --
+            // when hosting only, so choosing to play again later still
+            // remembers it.
             gameSaves[activeSaveSlot].hostDisplayName = lobbyState.hostName;
+            if (isPlayer && color) {
+                gameSaves[activeSaveSlot].hostPlayerColor = color;
+            }
             persistGameSaves();
             setLobbyStatus('Creating room\u2026', 'pending');
             attemptHostPeerCreation(0);
@@ -26437,7 +27153,7 @@
 
             peer.on('open', () => {
                 setLobbyStatus('', '');
-                lobbyState.players = [{ id: 'host', name: lobbyState.hostName, isHost: true }];
+                lobbyState.players = [{ id: 'host', name: lobbyState.hostName, isHost: true, color: lobbyState.hostColor }];
                 // Seeds the host's own entry in the leading-player
                 // comparison immediately, using this device's currently
                 // active save/session -- so the Sounds panel already has
@@ -26472,7 +27188,7 @@
         // Shared by wireHostConnection's initial handshake and
         // resyncLobbyForNewHostSave()'s re-handshake below -- both need
         // the exact same message shape, just at different moments.
-        function buildLobbyWelcomePayload(hostSave) {
+        function buildLobbyWelcomePayload(hostSave, excludePeerId) {
             return {
                 type: 'welcome',
                 hostSaveId: hostSave.hostSaveId,
@@ -26485,6 +27201,13 @@
                 naturesEnabled: hostSave.naturesEnabled,
                 virtualDecksEnabled: hostSave.virtualDecksEnabled,
                 tieredTMDecksEnabled: hostSave.tieredTMDecksEnabled,
+                // Lets a joining guest grey out already-claimed swatches
+                // before ever picking one, rather than only finding out
+                // via a round-trip 'color-rejected' after the fact (see
+                // getLobbyTakenColors()/wireHostConnection()'s own
+                // 'identify' handling for the backstop that still exists
+                // for the genuine-race case this can't catch on its own).
+                takenColors: getLobbyTakenColors(excludePeerId),
             };
         }
 
@@ -26543,7 +27266,7 @@
                 // Hosting requires an active host save (see
                 // startHostingLobby()), so gameSaves[activeSaveSlot] is
                 // guaranteed to exist here.
-                conn.send(buildLobbyWelcomePayload(gameSaves[activeSaveSlot]));
+                conn.send(buildLobbyWelcomePayload(gameSaves[activeSaveSlot], conn.peer));
                 refreshLobbyRosterFromHostState();
                 // Gives this brand-new connection the Host's current
                 // Hand & Decks state right away, same reasoning as the
@@ -26588,11 +27311,28 @@
                     lobbyState.playerProgress[conn.peer] = { badgePoints: data.badgePoints };
                     recomputeLobbyLeadingStage();
                 } else if (data.type === 'identify' && typeof data.name === 'string') {
+                    // A color is required alongside the name from here on
+                    // (see the naming/color-pick UI, which always sends
+                    // one now) -- validated before anything else commits,
+                    // so a genuine race between two joins, or a stale
+                    // Guest Save remembering a color someone else has
+                    // since taken, can never leave two players sharing
+                    // one. Rejecting outright (rather than silently
+                    // overwriting or auto-picking a replacement) puts the
+                    // choice of what to use instead back in the guest's
+                    // own hands -- see the guest-side 'color-rejected'
+                    // handling this pairs with.
+                    const requestedColor = typeof data.color === 'string' ? data.color : null;
+                    if (requestedColor && (!PLAYER_COLORS.includes(requestedColor) || getLobbyTakenColors(conn.peer).includes(requestedColor))) {
+                        if (conn.open) conn.send({ type: 'color-rejected', takenColors: getLobbyTakenColors(conn.peer) });
+                        return;
+                    }
                     // The real name, now that the guest has resolved who
                     // it is (see finalizeGuestJoin()) -- replaces the
                     // 'Trainer' placeholder set on conn.on('open') above.
                     if (entry) {
                         entry.name = data.name.trim() || 'Trainer';
+                        if (requestedColor) entry.color = requestedColor;
                         refreshLobbyRosterFromHostState();
                     }
                     // Links this connection to its durable Hand & Decks
@@ -26633,6 +27373,8 @@
                     hostApplyShopAcquire(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-discard' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyDiscard(data.deck, conn.peer, data.cardId);
+                } else if (data.type === 'deck-return-to-deck' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
+                    hostApplyReturnToDeck(data.deck, conn.peer, data.cardId, data.position);
                 } else if (data.type === 'deck-discard-to-hand' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyReturnDiscardToHand(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-shuffle-in' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -26726,8 +27468,8 @@
         // to separately reconcile their own copies of "who's here."
         function refreshLobbyRosterFromHostState() {
             lobbyState.players = [
-                { id: 'host', name: lobbyState.hostName, isHost: true },
-                ...Array.from(lobbyState.connections.entries()).map(([id, entry]) => ({ id, name: entry.name, isHost: false })),
+                { id: 'host', name: lobbyState.hostName, isHost: true, color: lobbyState.hostIsPlayer ? lobbyState.hostColor : null },
+                ...Array.from(lobbyState.connections.entries()).map(([id, entry]) => ({ id, name: entry.name, isHost: false, color: entry.color || null })),
             ];
             broadcastLobbyRoster();
             renderLobbyPlayers();
@@ -27301,8 +28043,44 @@
                     // See refreshLobbyRosterFromHostState()'s own matching
                     // call for why.
                     renderTeamGrid();
+                } else if (data.type === 'color-rejected') {
+                    // The color just sent in 'identify' (see
+                    // finalizeGuestJoin()) turned out to already be taken
+                    // by the time the host received it -- a genuine race
+                    // with someone else claiming it in the same instant.
+                    // The name/guestClientId this device already
+                    // committed to are still fine (and already persisted
+                    // to this Guest Save, see finalizeGuestJoin()) --
+                    // only the color needs picking again.
+                    const hostSaveId = lobbyState.hostSaveId;
+                    const existing = hostSaveId ? gameGuestSaves[hostSaveId] : null;
+                    const retryName = (existing && existing.playerName) || 'Trainer';
+                    openLobbyColorPick({
+                        title: 'Pick a New Color',
+                        blurb: 'That color was just taken \u2014 pick another.',
+                        takenColors: Array.isArray(data.takenColors) ? data.takenColors : [],
+                        onChoose: (color) => finalizeGuestJoin(retryName, color),
+                        onCancel: () => leaveLobby(),
+                    });
                 } else if (data.type === 'music') {
                     applyGuestMusicMirror(data);
+                } else if (data.type === 'start-game') {
+                    // See startGame()'s own comment -- the host's real
+                    // Intro playback (and this device's own mirrored
+                    // category display, see applyGuestMusicMirror() via
+                    // the 'music' broadcast that call also triggers)
+                    // arrives separately; this message is purely "go to
+                    // Team Tracker and ask for a starter" for a guest.
+                    // openGamePanel() first since this guest could be
+                    // looking at literally anything else in the app when
+                    // this arrives (the Pokédex, some other panel
+                    // entirely) -- setGameScreen() alone only changes
+                    // which .game-screen is active *inside* the Game
+                    // panel, it doesn't surface the panel itself if it's
+                    // currently closed.
+                    openGamePanel();
+                    setGameScreen('team');
+                    openTeamAddPromptOverlay();
                 } else if (data.type === 'deck-state' && data.decks && data.handCounts) {
                     // Public counts only (draw/discard sizes, everyone's
                     // hand *count*) -- see broadcastDeckState()'s own
@@ -27461,9 +28239,30 @@
                 virtualDecksEnabled: data.virtualDecksEnabled,
                 tieredTMDecksEnabled: data.tieredTMDecksEnabled,
             };
+            const takenColors = Array.isArray(data.takenColors) ? data.takenColors : [];
             const existing = data.hostSaveId ? gameGuestSaves[data.hostSaveId] : null;
             if (existing) {
-                finalizeGuestJoin(existing.playerName);
+                if (existing.playerColor && !takenColors.includes(existing.playerColor)) {
+                    finalizeGuestJoin(existing.playerName, existing.playerColor);
+                    return;
+                }
+                // Either this returning guest never had a color on file
+                // (an older Guest Save from before this feature existed),
+                // or someone else already has the one it remembers --
+                // either way, a name is already known, so this only
+                // needs the bare color-pick step rather than the full
+                // naming step again.
+                setLobbyStatus('', '');
+                setGameScreen('lobby');
+                openLobbyColorPick({
+                    title: existing.playerColor ? 'Pick a New Color' : 'Choose Your Color',
+                    blurb: existing.playerColor
+                        ? 'Someone else already has your usual color \u2014 pick another.'
+                        : 'Pick the color other players will see next to your name.',
+                    takenColors,
+                    onChoose: (color) => finalizeGuestJoin(existing.playerName, color),
+                    onCancel: () => leaveLobby(),
+                });
                 return;
             }
             // A resync mid-session (see resyncLobbyForNewHostSave()) can
@@ -27494,6 +28293,11 @@
                 nameInput.value = '';
                 nameInput.focus();
             }
+            lobbyNamingSelectedColor = null;
+            lobbyNamingTakenColors = takenColors;
+            renderPlayerColorGrid(document.getElementById('game-lobby-naming-color-grid'), takenColors, null);
+            const namingConfirmBtn = document.querySelector('.game-lobby-naming-confirm-btn');
+            if (namingConfirmBtn) namingConfirmBtn.disabled = true;
         }
 
         // Second (and, for a returning guest, only) real step: creates or
@@ -27506,18 +28310,20 @@
         // enters the active Lobby view. Called either immediately (an
         // existing guest save, from handleLobbyWelcome() above) or from
         // the naming step's Confirm button (a brand-new one).
-        function finalizeGuestJoin(name) {
+        function finalizeGuestJoin(name, color) {
             const hostSaveId = lobbyState.hostSaveId;
             if (!hostSaveId) {
                 setLobbyStatus('This host hasn\u2019t loaded a save yet \u2014 try again shortly.', 'error');
                 return;
             }
             const cleanName = (name || '').trim() || 'Trainer';
+            const cleanColor = PLAYER_COLORS.includes(color) ? color : null;
             const ruleset = lobbyState.hostRuleset || {};
             const now = new Date().toISOString();
             const existing = gameGuestSaves[hostSaveId];
             if (existing) {
                 existing.playerName = cleanName;
+                if (cleanColor) existing.playerColor = cleanColor;
                 existing.hostNameCache = lobbyState.hostName;
                 existing.lastPlayed = now;
                 existing.region = ruleset.region;
@@ -27532,6 +28338,7 @@
                 gameGuestSaves[hostSaveId] = {
                     hostSaveId,
                     playerName: cleanName,
+                    playerColor: cleanColor,
                     hostNameCache: lobbyState.hostName,
                     createdAt: now,
                     lastPlayed: now,
@@ -27568,7 +28375,7 @@
             if (ruleset.region) musicState.activeRegion = ruleset.region;
 
             if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                lobbyState.hostConn.send({ type: 'identify', name: cleanName, guestClientId: getOrCreateGuestClientId() });
+                lobbyState.hostConn.send({ type: 'identify', name: cleanName, guestClientId: getOrCreateGuestClientId(), color: cleanColor });
             }
 
             lobbyState.players = [{ id: 'host', name: lobbyState.hostName || 'Host', isHost: true }];
@@ -27589,6 +28396,47 @@
             const wasActive = lobbyState.role !== null;
             resetLobbyState();
             if (wasActive) setLobbyStatus('', '');
+        }
+
+        // Host-only -- see .game-lobby-start-game-btn's own comment for
+        // why this is never even shown to a guest. Three things happen
+        // together: this device's own Sounds panel switches to the
+        // Intro playlist (see MUSIC_CATEGORY_ICONS's 'intro' entry) for
+        // whatever region this save is already set to, every connected
+        // guest is told to do the equivalent on their end (a guest never
+        // plays real audio itself -- see GAME_PANEL_NOTES.md's Playlist
+        // Sync notes -- so 'start-game' just means "go to Team Tracker
+        // and ask for a starter" there, not "play audio"), and -- if the
+        // host is playing too, see lobbyState.hostIsPlayer -- this
+        // device gets the same Team Tracker/starter prompt locally.
+        // Doesn't check roster size or connection count first: nothing
+        // about this is destructive or one-way, so there's no real cost
+        // to the host tapping it again later (e.g. a guest reconnects
+        // after missing it the first time).
+        function startGame() {
+            if (lobbyState.role !== 'host') return;
+            setActiveMusicCategory('intro');
+            // setActiveMusicCategory() only resumes playback if music
+            // happened to already be playing before the switch (see
+            // rebuildMusicQueue()'s "keep whatever was already
+            // happening" default) -- nothing's usually playing yet at
+            // this exact moment, so Start Game forces it on regardless,
+            // with the same guarded play() every other transport
+            // control already uses (respecting mute/volume, silently a
+            // no-op if this browser blocks autoplay or the category's
+            // actually muted).
+            if (isCategoryAudible('music')) {
+                musicAudio.volume = getCategoryVolume('music');
+                musicAudio.play().catch(() => { /* autoplay blocked or file missing -- silently skip */ });
+            }
+            lobbyState.connections.forEach(({ conn }) => {
+                if (conn.open) conn.send({ type: 'start-game' });
+            });
+            if (lobbyState.hostIsPlayer) {
+                openGamePanel();
+                setGameScreen('team');
+                openTeamAddPromptOverlay();
+            }
         }
 
 
@@ -27674,9 +28522,15 @@
                 return;
             }
 
-            const handAttachBtn = e.target.closest('.game-hand-attach-btn');
-            if (handAttachBtn) {
-                requestAttachFromHand(handAttachBtn.dataset.cardId);
+            // No hand Attach button any more (see the chat this was
+            // moved in) -- requestAttachFromHand()/beginAttachFlow()'s
+            // own 'hand' source is unreachable UI-wise now, left in
+            // place only because requestAttachFromActiveCard()/
+            // commitAttachFromHandToMember() still share the same
+            // functions for the Active Card zone's own Attach button.
+            const handReturnBtn = e.target.closest('.game-hand-return-btn');
+            if (handReturnBtn) {
+                requestReturnToDeck(handReturnBtn.dataset.cardId, handReturnBtn.dataset.position);
                 return;
             }
 
@@ -28235,7 +29089,57 @@
             const lobbyHostBtn = e.target.closest('.game-lobby-host-btn');
             if (lobbyHostBtn) {
                 const card = lobbyHostBtn.closest('.game-lobby-card');
-                startHostingLobby(card.querySelector('.game-lobby-host-name').value);
+                beginHostFlow(card.querySelector('.game-lobby-host-name').value);
+                return;
+            }
+
+            const lobbyHostRolePlayBtn = e.target.closest('.game-lobby-host-role-play-btn');
+            if (lobbyHostRolePlayBtn) {
+                chooseHostAsPlayer();
+                return;
+            }
+
+            const lobbyHostRoleHostOnlyBtn = e.target.closest('.game-lobby-host-role-hostonly-btn');
+            if (lobbyHostRoleHostOnlyBtn) {
+                chooseHostOnly();
+                return;
+            }
+
+            const lobbyHostRoleBackBtn = e.target.closest('.game-lobby-host-role-back-btn');
+            if (lobbyHostRoleBackBtn) {
+                document.getElementById('game-lobby').dataset.state = 'choice';
+                return;
+            }
+
+            const lobbyColorPickCancelBtn = e.target.closest('.game-lobby-color-pick-cancel-btn');
+            if (lobbyColorPickCancelBtn) {
+                const cancelFn = lobbyColorPickOnCancel;
+                lobbyColorPickOnChoose = null;
+                lobbyColorPickOnCancel = null;
+                if (cancelFn) cancelFn();
+                return;
+            }
+
+            // Shared by both color grids (see .game-player-color-grid's
+            // own CSS comment) -- the naming step's own grid just marks
+            // a swatch selected and unlocks Join Lobby (see the naming
+            // Confirm handler below); the bare color-pick step's grid
+            // commits immediately via its stored onChoose callback (see
+            // openLobbyColorPick()).
+            const playerColorSwatchBtn = e.target.closest('.game-player-color-swatch-btn');
+            if (playerColorSwatchBtn && !playerColorSwatchBtn.disabled) {
+                const color = playerColorSwatchBtn.dataset.color;
+                if (playerColorSwatchBtn.closest('#game-lobby-naming-color-grid')) {
+                    lobbyNamingSelectedColor = color;
+                    renderPlayerColorGrid(document.getElementById('game-lobby-naming-color-grid'), lobbyNamingTakenColors, color);
+                    const namingConfirmBtn = document.querySelector('.game-lobby-naming-confirm-btn');
+                    if (namingConfirmBtn) namingConfirmBtn.disabled = false;
+                } else if (playerColorSwatchBtn.closest('#game-lobby-color-pick-grid')) {
+                    const chooseFn = lobbyColorPickOnChoose;
+                    lobbyColorPickOnChoose = null;
+                    lobbyColorPickOnCancel = null;
+                    if (chooseFn) chooseFn(color);
+                }
                 return;
             }
 
@@ -28254,13 +29158,20 @@
 
             const lobbyNamingConfirmBtn = e.target.closest('.game-lobby-naming-confirm-btn');
             if (lobbyNamingConfirmBtn) {
-                finalizeGuestJoin(document.querySelector('.game-lobby-naming-name').value);
+                if (!lobbyNamingSelectedColor) return; // belt-and-suspenders -- the button's own disabled state already prevents this
+                finalizeGuestJoin(document.querySelector('.game-lobby-naming-name').value, lobbyNamingSelectedColor);
                 return;
             }
 
             const lobbyNamingCancelBtn = e.target.closest('.game-lobby-naming-cancel-btn');
             if (lobbyNamingCancelBtn) {
                 leaveLobby();
+                return;
+            }
+
+            const lobbyStartGameBtn = e.target.closest('.game-lobby-start-game-btn');
+            if (lobbyStartGameBtn) {
+                startGame();
                 return;
             }
 
