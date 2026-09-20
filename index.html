@@ -17916,22 +17916,37 @@
             return taken;
         }
 
-        // Host side only: is some OTHER already-connected peer actually
-        // the same physical guest as guestClientId, just under a new
-        // conn.peer from a fresh reconnect? Only meaningful once
-        // 'identify' has arrived (see wireHostConnection()'s own
-        // handling below) -- a connection that hasn't identified yet has
-        // no guestClientId to compare against and can't match here.
-        // excludePeerId leaves the connection currently identifying out
-        // of its own search, same reasoning as getLobbyTakenColors()'s
-        // own excludePeerId.
-        function findLobbyConnectionByGuestClientId(guestClientId, excludePeerId) {
+        // Host side only: every OTHER already-connected peer that's
+        // actually the same physical guest as guestClientId, just under
+        // a different conn.peer -- normally at most one (an ordinary
+        // fast reconnect superseding its own immediately-prior
+        // connection), but returned as a list rather than a single match
+        // so evictStaleLobbyConnectionsByGuestClientId() below can clear
+        // every one at once if more than one somehow accumulated (e.g.
+        // a reconnect attempt that itself got interrupted before its own
+        // predecessor was evicted). excludePeerId leaves the connection
+        // currently identifying out of its own search, same reasoning as
+        // getLobbyTakenColors()'s own excludePeerId.
+        function findLobbyConnectionsByGuestClientId(guestClientId, excludePeerId) {
+            const matches = [];
             for (const [peerId, entry] of lobbyState.connections) {
                 if (peerId !== excludePeerId && entry.guestClientId === guestClientId) {
-                    return [peerId, entry];
+                    matches.push([peerId, entry]);
                 }
             }
-            return null;
+            return matches;
+        }
+
+        // Evicts every stale connection sharing guestClientId with the
+        // one currently identifying (excludePeerId) -- see
+        // findLobbyConnectionsByGuestClientId() just above for why this
+        // is a list rather than a single lookup. Reuses
+        // handleHostConnectionDrop() for the exact same cleanup a real
+        // drop already gets, once per stale entry found.
+        function evictStaleLobbyConnectionsByGuestClientId(guestClientId, excludePeerId) {
+            findLobbyConnectionsByGuestClientId(guestClientId, excludePeerId).forEach(([stalePeerId, staleEntry]) => {
+                handleHostConnectionDrop(stalePeerId, staleEntry.conn);
+            });
         }
 
         // A `"noteColor": "yes"` card (cards.json) needs a color picked
@@ -27441,11 +27456,7 @@
                 // been added alongside the still-lingering old one.
                 const metaGuestClientId = conn.metadata && typeof conn.metadata.guestClientId === 'string' ? conn.metadata.guestClientId : null;
                 if (metaGuestClientId) {
-                    const stale = findLobbyConnectionByGuestClientId(metaGuestClientId, conn.peer);
-                    if (stale) {
-                        const [stalePeerId, staleEntry] = stale;
-                        handleHostConnectionDrop(stalePeerId, staleEntry.conn);
-                    }
+                    evictStaleLobbyConnectionsByGuestClientId(metaGuestClientId, conn.peer);
                 }
                 // Placeholder until the real 'identify' message below --
                 // a guest no longer sends its name at connect time (it
@@ -27517,11 +27528,7 @@
                     // already evicted any stale duplicate by the time
                     // 'identify' arrives.
                     if (typeof data.guestClientId === 'string' && data.guestClientId) {
-                        const stale = findLobbyConnectionByGuestClientId(data.guestClientId, conn.peer);
-                        if (stale) {
-                            const [stalePeerId, staleEntry] = stale;
-                            handleHostConnectionDrop(stalePeerId, staleEntry.conn);
-                        }
+                        evictStaleLobbyConnectionsByGuestClientId(data.guestClientId, conn.peer);
                     }
                     // A color is required alongside the name from here on
                     // (see the naming/color-pick UI, which always sends
@@ -28231,6 +28238,21 @@
                 return;
             }
             const attemptNumber = attempt || 0;
+            // Guards the retry-on-error logic below: peer.on('error')
+            // stays attached for this peer's entire lifetime, not just
+            // the initial handshake -- PeerJS can fire a peer-level error
+            // (its own signaling-socket hiccups, 'network',
+            // 'disconnected', etc.) well after the connection to the
+            // host has already succeeded, without the actual
+            // DataConnection itself being dead at all. Without this
+            // flag, that later, often-harmless error was being treated
+            // the same as an initial-handshake failure -- destroying a
+            // perfectly good, already-reconnected session and forcing an
+            // entirely new, unnecessary reconnect cycle right on top of
+            // it (visible as a "stale" connection getting evicted that
+            // was actually the good one, and the color-picker/roster
+            // hiccups that came with redoing the handshake from scratch).
+            let connectionEstablished = false;
             // Only tear the whole thing down to the choice screen on the
             // very first attempt -- a retry needs lobbyState.role/code to
             // still say 'guest'/cleanCode so a second heartbeat/probe
@@ -28261,6 +28283,12 @@
                 // matters for a fast reconnect.
                 const conn = peer.connect(LOBBY_ROOM_PREFIX + cleanCode, { reliable: true, metadata: { guestClientId: getOrCreateGuestClientId() } });
                 lobbyState.hostConn = conn;
+                // Marks the handshake as done the moment the actual
+                // DataConnection opens -- deliberately ahead of
+                // wireGuestConnection()'s own listeners below, so this is
+                // already true before anything else on this connection
+                // has a chance to run.
+                conn.on('open', () => { connectionEstablished = true; });
                 wireGuestConnection(conn);
             });
 
@@ -28268,6 +28296,17 @@
                 if (err && err.type === 'peer-unavailable') {
                     setLobbyStatus('Room not found \u2014 check the code and try again.', 'error');
                     resetLobbyState();
+                    return;
+                }
+                if (connectionEstablished) {
+                    // The handshake already succeeded -- this is some
+                    // later, unrelated peer-level hiccup, not a failure
+                    // to connect. wireGuestConnection()'s own
+                    // conn.on('close')/('error') already calls
+                    // attemptGuestAutoRejoin() if the connection genuinely
+                    // dies; piling a second, independent recovery attempt
+                    // on top of that here would only race it. Nothing to
+                    // do here but ignore it.
                     return;
                 }
                 if (attemptNumber < LOBBY_JOIN_RETRY_LIMIT) {
