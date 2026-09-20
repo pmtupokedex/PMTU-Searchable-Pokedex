@@ -12309,8 +12309,13 @@
                                   every expected player has actually
                                   picked a starter (see
                                   lobbyState.starterChosen/
-                                  allLobbyStartersChosen()). Tapping it
-                                  runs finalizeLobbyGameStart().
+                                  allLobbyStartersChosen(), both
+                                  per-save rather than per-session --
+                                  see finalizeGuestJoin()'s own
+                                  hasStarter). Tapping it runs
+                                  finalizeLobbyGameStart(): switches the
+                                  Sounds panel from Intro over to the
+                                  Route playlist for the actual game.
                                3. "Game is in progress" (disabled) --
                                   where finalizeLobbyGameStart() leaves it
                                   for the rest of this Lobby session. -->
@@ -26582,12 +26587,19 @@
             // starter (plus the same synthetic 'host' key playerProgress
             // uses, only meaningful while hostIsPlayer is true). Set by
             // reportLobbyStarterChosen()/the 'starter-chosen' message
-            // handler, read by allLobbyStartersChosen() to decide the
-            // Start Game button's own text (see
-            // .game-lobby-start-game-btn's comment). Cleared per-peer on
-            // disconnect in handleHostConnectionDrop(), same as
-            // playerProgress, so a player who leaves mid-pick doesn't
-            // permanently block the button for everyone else.
+            // handler for a pick made live this session, and also
+            // re-derived from each player's actual save data on
+            // (re)join -- see finalizeGuestJoin()'s own hasStarter and
+            // attemptHostPeerCreation()'s peer.on('open') -- so a save
+            // that already has a starter from an earlier session doesn't
+            // get re-prompted just because the Lobby itself restarted.
+            // Read by allLobbyStartersChosen() to decide the Start Game
+            // button's own text (see .game-lobby-start-game-btn's
+            // comment). Cleared per-peer on disconnect in
+            // handleHostConnectionDrop(), same as playerProgress, so a
+            // player who leaves mid-pick doesn't permanently block the
+            // button for everyone else -- reconnecting re-populates it
+            // from their save the same way joining fresh does.
             starterChosen: {},
             // Host-only: true once the Start Game button has actually
             // been clicked in its "everyone's ready" phase -- locks the
@@ -27397,6 +27409,15 @@
                 lobbyState.playerProgress.host = {
                     badgePoints: computeBadgePoints(hostData),
                 };
+                // Per-save, not per-session (see allLobbyStartersChosen()'s
+                // own comment) -- if this save's team roster is already
+                // non-empty (a break resumed, or hosting the same save a
+                // second time after finishing a round earlier), the host's
+                // own starter pick from back then still counts and
+                // shouldn't force a fresh prompt. Only meaningful at all
+                // once hostIsPlayer is known -- a hosting-only device was
+                // never expected to pick one in the first place.
+                lobbyState.starterChosen.host = lobbyState.hostIsPlayer && (hostData.team.members || []).length > 0;
                 enterActiveLobbyState();
                 recomputeLobbyLeadingStage();
             });
@@ -27604,6 +27625,14 @@
                     if (entry) {
                         entry.name = data.name.trim() || 'Trainer';
                         if (requestedColor) entry.color = requestedColor;
+                        // Per-save, not per-session (see
+                        // allLobbyStartersChosen()'s own comment) -- a
+                        // returning guest whose save already has a
+                        // starter reports that here (see
+                        // finalizeGuestJoin()'s own hasStarter) rather
+                        // than needing to pick one all over again just
+                        // because the Lobby itself restarted.
+                        lobbyState.starterChosen[conn.peer] = !!data.hasStarter;
                         refreshLobbyRosterFromHostState();
                     }
                     // Links this connection to its durable Hand & Decks
@@ -27834,6 +27863,13 @@
         // key playerProgress already uses elsewhere, with no message to
         // send anywhere. Solo play (no lobbyState.role) has nothing to
         // report to and is a no-op here.
+        //
+        // This is the "just picked it live, mid-session" path --
+        // starterChosen also gets set from a save's already-existing
+        // team roster on (re)join (see finalizeGuestJoin()'s own
+        // hasStarter and attemptHostPeerCreation()'s peer.on('open')),
+        // which is what makes the flag survive a Lobby restart rather
+        // than resetting every session the way it used to.
         function reportLobbyStarterChosen() {
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
@@ -28827,7 +28863,17 @@
             if (ruleset.region) musicState.activeRegion = ruleset.region;
 
             if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                lobbyState.hostConn.send({ type: 'identify', name: cleanName, guestClientId: getOrCreateGuestClientId(), color: cleanColor });
+                // Per-save, not per-session (see allLobbyStartersChosen()'s
+                // own comment) -- gameGuestSaves[hostSaveId].team.members
+                // survives a lobby restart/reconnect the same way any
+                // other guest-save progress does (see persistGameGuestSaves()
+                // above), so a returning player who already has a starter
+                // reports that immediately rather than waiting to be
+                // prompted again. Reads back off gameGuestSaves directly
+                // rather than getActiveSaveData() since activeGuestSaveId
+                // is only set a few lines further down.
+                const hasStarter = ((gameGuestSaves[hostSaveId] && gameGuestSaves[hostSaveId].team.members) || []).length > 0;
+                lobbyState.hostConn.send({ type: 'identify', name: cleanName, guestClientId: getOrCreateGuestClientId(), color: cleanColor, hasStarter });
             }
 
             lobbyState.players = [{ id: 'host', name: lobbyState.hostName || 'Host', isHost: true }];
@@ -28901,12 +28947,20 @@
         // Host-only -- the button's third and final state (see
         // .game-lobby-start-game-btn's own comment). Only ever reached
         // via its click handler once allLobbyStartersChosen() is true,
-        // i.e. every expected player already has a starter, so there's
-        // nothing left here to kick off the way beginGameSetup() does --
-        // this just locks the button in place for the rest of the
-        // session so a stray extra tap can't re-trigger anything.
+        // i.e. every expected player already has a starter. Switches
+        // this device's own Sounds panel (and every connected guest's
+        // mirrored display, same broadcast setActiveMusicCategory()
+        // already triggers for beginGameSetup()'s own Intro switch) from
+        // Intro over to the Route playlist for the actual game, then
+        // locks the button in place for the rest of the session so a
+        // stray extra tap can't re-trigger anything.
         function finalizeLobbyGameStart() {
             if (lobbyState.role !== 'host') return;
+            setActiveMusicCategory('route');
+            if (isCategoryAudible('music')) {
+                musicAudio.volume = getCategoryVolume('music');
+                musicAudio.play().catch(() => { /* autoplay blocked or file missing -- silently skip */ });
+            }
             lobbyState.gameOfficiallyStarted = true;
             updateLobbyStartGameButtonUI();
         }
