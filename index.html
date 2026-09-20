@@ -28144,17 +28144,43 @@
             document.getElementById('game-lobby-join-confirm-overlay').classList.remove('visible');
         }
 
-        function joinLobbyByCode(code) {
+        // How many times joinLobbyByCode() below retries a transient
+        // connection failure (anything other than 'peer-unavailable',
+        // which means the room genuinely doesn't exist and retrying
+        // won't help) before actually giving up. This matters most right
+        // after a real network drop: the OS/browser often reports
+        // 'online' a moment before DNS/routing has actually recovered,
+        // so the very first attempt to reach the PeerJS signaling server
+        // can fail with something like 'network'/'server-error'/
+        // 'socket-error' even though the network is about to be fine.
+        // Previously that first failure surfaced as "Could not connect"
+        // and reset lobbyState straight back to null, silently ending
+        // the whole auto-rejoin attempt right when it had just started.
+        const LOBBY_JOIN_RETRY_LIMIT = 4;
+        // Backoff between those retries -- short enough that a real
+        // recovery is picked up quickly, spaced out enough not to hammer
+        // the signaling server while the network is still settling.
+        const LOBBY_JOIN_RETRY_DELAY_MS = 2000;
+
+        function joinLobbyByCode(code, attempt) {
             if (!requireLobbyLibs()) return;
             const cleanCode = (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
             if (cleanCode.length !== LOBBY_CODE_LENGTH) {
                 setLobbyStatus('Enter the full room code.', 'error');
                 return;
             }
-            resetLobbyState();
-            lobbyState.role = 'guest';
-            lobbyState.code = cleanCode;
-            setLobbyStatus('Connecting\u2026', 'pending');
+            const attemptNumber = attempt || 0;
+            // Only tear the whole thing down to the choice screen on the
+            // very first attempt -- a retry needs lobbyState.role/code to
+            // still say 'guest'/cleanCode so a second heartbeat/probe
+            // trigger arriving mid-retry doesn't read as "not in a lobby
+            // at all" (see attemptGuestAutoRejoin()'s own guard).
+            if (attemptNumber === 0) {
+                resetLobbyState();
+                lobbyState.role = 'guest';
+                lobbyState.code = cleanCode;
+            }
+            setLobbyStatus(attemptNumber === 0 ? 'Connecting\u2026' : 'Lost contact \u2014 reconnecting\u2026', 'pending');
 
             const peer = new Peer();
             lobbyState.peer = peer;
@@ -28174,9 +28200,19 @@
             peer.on('error', (err) => {
                 if (err && err.type === 'peer-unavailable') {
                     setLobbyStatus('Room not found \u2014 check the code and try again.', 'error');
-                } else {
-                    setLobbyStatus('Could not connect \u2014 check your connection and try again.', 'error');
+                    resetLobbyState();
+                    return;
                 }
+                if (attemptNumber < LOBBY_JOIN_RETRY_LIMIT) {
+                    // Transient failure (signaling server unreachable,
+                    // network still settling, etc.) -- destroy this
+                    // attempt's peer and try again rather than treating
+                    // one bad attempt as final.
+                    peer.destroy();
+                    setTimeout(() => joinLobbyByCode(cleanCode, attemptNumber + 1), LOBBY_JOIN_RETRY_DELAY_MS);
+                    return;
+                }
+                setLobbyStatus('Could not connect \u2014 check your connection and try again.', 'error');
                 resetLobbyState();
             });
         }
