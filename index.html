@@ -17916,6 +17916,24 @@
             return taken;
         }
 
+        // Host side only: is some OTHER already-connected peer actually
+        // the same physical guest as guestClientId, just under a new
+        // conn.peer from a fresh reconnect? Only meaningful once
+        // 'identify' has arrived (see wireHostConnection()'s own
+        // handling below) -- a connection that hasn't identified yet has
+        // no guestClientId to compare against and can't match here.
+        // excludePeerId leaves the connection currently identifying out
+        // of its own search, same reasoning as getLobbyTakenColors()'s
+        // own excludePeerId.
+        function findLobbyConnectionByGuestClientId(guestClientId, excludePeerId) {
+            for (const [peerId, entry] of lobbyState.connections) {
+                if (peerId !== excludePeerId && entry.guestClientId === guestClientId) {
+                    return [peerId, entry];
+                }
+            }
+            return null;
+        }
+
         // A `"noteColor": "yes"` card (cards.json) needs a color picked
         // via the Active Card zone's own Color button before it can be
         // made Permanent -- see hostApplyActiveCardPermanent()'s own
@@ -27462,6 +27480,33 @@
                     lobbyState.playerProgress[conn.peer] = { badgePoints: data.badgePoints };
                     recomputeLobbyLeadingStage();
                 } else if (data.type === 'identify' && typeof data.name === 'string') {
+                    // A guest that reconnects quickly enough -- before
+                    // the host's own heartbeat has noticed the old
+                    // connection is gone -- shows up here as a genuinely
+                    // new peer id carrying the SAME guestClientId as an
+                    // entry the host is still holding onto. Left alone,
+                    // that stale entry keeps this guest's own color
+                    // marked "taken" against itself (see
+                    // getLobbyTakenColors()) and leaves a phantom extra
+                    // player in the roster until the heartbeat timeout
+                    // eventually cleans it up -- which is what produced
+                    // the color-picker prompt and the multi-attempt
+                    // reconnect loop this was fixed for. Evicting the
+                    // stale connection right here, the moment the new one
+                    // proves (via guestClientId) it's the same guest,
+                    // means a fast reconnect never has to wait out that
+                    // timeout at all. Reuses handleHostConnectionDrop()
+                    // for the exact same cleanup a real drop already gets
+                    // (roster, trade cancellation, freeing the color) so
+                    // this can never leave state in a different shape
+                    // than an ordinary disconnect would.
+                    if (typeof data.guestClientId === 'string' && data.guestClientId) {
+                        const stale = findLobbyConnectionByGuestClientId(data.guestClientId, conn.peer);
+                        if (stale) {
+                            const [stalePeerId, staleEntry] = stale;
+                            handleHostConnectionDrop(stalePeerId, staleEntry.conn);
+                        }
+                    }
                     // A color is required alongside the name from here on
                     // (see the naming/color-pick UI, which always sends
                     // one now) -- validated before anything else commits,
