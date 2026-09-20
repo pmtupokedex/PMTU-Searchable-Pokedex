@@ -26450,13 +26450,13 @@
         // below), and how long without hearing anything at all before a
         // connection is treated as dropped -- roughly 3 missed beats'
         // worth of slack so an ordinary momentary hiccup doesn't trip it.
-        const LOBBY_HEARTBEAT_INTERVAL_MS = 15000;
-        const LOBBY_HEARTBEAT_TIMEOUT_MS = 45000;
+        const LOBBY_HEARTBEAT_INTERVAL_MS = 5000;
+        const LOBBY_HEARTBEAT_TIMEOUT_MS = 15000;
         // How often the timeout check itself runs -- doesn't need to
         // match the ping interval, just needs to be frequent enough that
         // the timeout is caught reasonably close to when it's actually
         // crossed.
-        const LOBBY_HEARTBEAT_CHECK_INTERVAL_MS = 10000;
+        const LOBBY_HEARTBEAT_CHECK_INTERVAL_MS = 3000;
         // How long a guest-side connectivity probe (see
         // probeHostConnectionAndRecoverIfNeeded()) waits for ANY reply
         // from the host -- not necessarily this exact ping's own pong,
@@ -26813,11 +26813,26 @@
             lastHeartbeatSweepAt = Date.now();
             lobbyState.heartbeatSendTimer = setInterval(() => {
                 if (lobbyState.role === 'host') {
+                    // try/catch per-connection -- a synchronous throw
+                    // from one stale connection shouldn't abort the
+                    // forEach and skip pinging every other, still-healthy
+                    // guest this same sweep (see the guest-side send just
+                    // below for the same .open-can-lag reasoning).
                     lobbyState.connections.forEach(({ conn }) => {
-                        if (conn.open) conn.send({ type: 'ping' });
+                        if (conn.open) {
+                            try { conn.send({ type: 'ping' }); } catch (err) { /* next check catches it if this didn't land */ }
+                        }
                     });
                 } else if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
-                    lobbyState.hostConn.send({ type: 'ping' });
+                    // Same try/catch as every other ping send in this
+                    // feature (see the visibilitychange handler and
+                    // probeHostConnectionAndRecoverIfNeeded() below) --
+                    // .open can lag the real RTCDataChannel state, so a
+                    // synchronous throw here is possible and shouldn't
+                    // skip the rest of this sweep's work. The next
+                    // heartbeatCheckTimer tick still catches a genuinely
+                    // dead connection either way.
+                    try { lobbyState.hostConn.send({ type: 'ping' }); } catch (err) { /* next check catches it if this didn't land */ }
                 }
             }, LOBBY_HEARTBEAT_INTERVAL_MS);
 
