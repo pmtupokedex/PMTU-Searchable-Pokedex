@@ -1773,6 +1773,29 @@
 		border: 2px solid rgba(0, 153, 255, 0.45);
         }
 
+        /* Host-only (see renderLobbyPlayers()'s own role check -- a
+           guest's copy of this same roster never gets one of these at
+           all, not even a disabled one) -- a manual safety valve for
+           exactly the case the chat this was added in was about: the
+           heartbeat's automatic detection is the normal way a dropped
+           player gets cleared out, but if it's ever slow to catch a
+           genuinely-dead connection (or just wrong), this lets the host
+           clear that slot immediately by hand -- notably including
+           freeing up whatever color that slot was holding (see
+           getLobbyTakenColors(), which reads live off
+           lobbyState.connections) for someone else to pick when all six
+           are otherwise taken. Sized down from the standard .filter-btn
+           footprint so it reads as a small, deliberate action tucked
+           into the row rather than competing with the name for
+           attention.
+        */
+        .game-lobby-kick-btn {
+            padding: 4px 10px;
+            font-size: 12px;
+            margin-left: 8px;
+            flex-shrink: 0;
+        }
+
         .game-lobby-player-tag {
             font-size: 14px;
             font-weight: bold;
@@ -27033,6 +27056,7 @@
                 <div class="game-lobby-player-row${p.isHost ? ' is-host' : ''}">
                     <span class="game-lobby-player-name">${p.color ? `<span class="game-player-color-dot game-player-color-dot--${p.color}"></span>` : ''}${escapeHtml(p.name)}</span>
                     ${p.isHost ? '<span class="game-lobby-player-tag">Host</span>' : ''}
+                    ${(!p.isHost && lobbyState.role === 'host') ? `<button class="filter-btn exclude game-lobby-kick-btn" type="button" data-peer-id="${escapeHtml(p.id)}">Kick</button>` : ''}
                 </div>
             `).join('');
         }
@@ -27456,6 +27480,27 @@
         // quiet for too long. All three should have the exact same
         // effect on the roster/progress/stage, so there's exactly one
         // place that actually does it.
+        // Host-only manual override (see .game-lobby-kick-btn's own CSS
+        // comment for the "just in case" it exists for) -- tells the
+        // guest first, then reuses handleHostConnectionDrop() for the
+        // exact same cleanup an automatically-detected drop already
+        // goes through (roster, trade cancellation, freeing up the
+        // color, all of it), so kicking someone can never leave the
+        // state in a different shape than a real disconnect would.
+        // Works unconditionally regardless of what entry.conn.open
+        // currently claims -- the whole point is to clear a slot by
+        // hand even if the connection object itself is confused about
+        // its own state.
+        function kickLobbyPlayer(peerId) {
+            if (lobbyState.role !== 'host') return;
+            const entry = lobbyState.connections.get(peerId);
+            if (!entry) return;
+            if (entry.conn && entry.conn.open) {
+                try { entry.conn.send({ type: 'kicked' }); } catch (err) { /* closing it immediately after this either way */ }
+            }
+            handleHostConnectionDrop(peerId, entry.conn);
+        }
+
         function handleHostConnectionDrop(peerId, conn) {
             if (!lobbyState.connections.has(peerId)) return; // already handled by another of the three paths above
             lobbyState.connections.delete(peerId);
@@ -28060,6 +28105,15 @@
                 if (data.type === 'ping') return;
                 if (data.type === 'welcome') {
                     handleLobbyWelcome(data);
+                } else if (data.type === 'kicked') {
+                    // Host-initiated (see kickLobbyPlayer()) -- an
+                    // explicit message rather than just letting this
+                    // device's own heartbeat eventually notice the
+                    // connection died, so the person sees a clear reason
+                    // rather than the generic "Lost contact with the
+                    // host" a real drop would show.
+                    setLobbyStatus('The host removed you from the lobby.', 'error');
+                    resetLobbyState();
                 } else if (data.type === 'roster' && Array.isArray(data.players)) {
                     lobbyState.players = data.players;
                     const hostEntry = data.players.find(p => p.isHost);
@@ -29198,6 +29252,12 @@
             const lobbyStartGameBtn = e.target.closest('.game-lobby-start-game-btn');
             if (lobbyStartGameBtn) {
                 startGame();
+                return;
+            }
+
+            const lobbyKickBtn = e.target.closest('.game-lobby-kick-btn');
+            if (lobbyKickBtn) {
+                kickLobbyPlayer(lobbyKickBtn.dataset.peerId);
                 return;
             }
 
