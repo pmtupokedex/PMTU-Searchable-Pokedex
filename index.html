@@ -26457,6 +26457,21 @@
         // the timeout is caught reasonably close to when it's actually
         // crossed.
         const LOBBY_HEARTBEAT_CHECK_INTERVAL_MS = 10000;
+        // How long a guest-side connectivity probe (see
+        // probeHostConnectionAndRecoverIfNeeded()) waits for ANY reply
+        // from the host -- not necessarily this exact ping's own pong,
+        // just anything that bumps hostConnLastSeen -- before giving up
+        // and rejoining from scratch. Short: this only runs at moments
+        // (tab resuming, network coming back) where there's real reason
+        // to suspect trouble already, not on a normal healthy timer.
+        const LOBBY_CONNECTIVITY_PROBE_GRACE_MS = 4000;
+        // Floor between one auto-rejoin attempt and the next -- the
+        // heartbeat timeout and a connectivity probe (see both above)
+        // run on independent timers and can end up agreeing something's
+        // wrong within moments of each other; without this they'd both
+        // fire attemptGuestAutoRejoin() and stack two overlapping
+        // reconnect attempts on top of each other.
+        const LOBBY_AUTO_REJOIN_COOLDOWN_MS = 5000;
 
         // Single mutable bag for the whole feature, same "one object,
         // reached into rather than duplicated" spirit as gameSaves
@@ -26716,6 +26731,69 @@
         // Leave Lobby, the other side actually closing, a heartbeat
         // timeout on either end -- cleans its own timers up the same
         // way.
+        // Guest-only. One place that decides how to come back from "the
+        // host connection is actually gone," whatever noticed it first
+        // -- the heartbeat timeout below, or
+        // probeHostConnectionAndRecoverIfNeeded() further down. Guest
+        // Saves already carry this player's name/color/progress by
+        // hostSaveId (see handleLobbyWelcome()/finalizeGuestJoin()), so
+        // joinLobbyByCode() resolves the rest on its own once the
+        // connection's back -- nothing else needs caching here beyond
+        // the room code itself.
+        let lastGuestAutoRejoinAt = 0;
+        function attemptGuestAutoRejoin(code) {
+            const now = Date.now();
+            if (now - lastGuestAutoRejoinAt < LOBBY_AUTO_REJOIN_COOLDOWN_MS) return; // already retrying via some other path
+            lastGuestAutoRejoinAt = now;
+            if (!code) {
+                setLobbyStatus('Lost contact with the host.', 'error');
+                leaveLobby();
+                return;
+            }
+            setLobbyStatus('Lost contact \u2014 reconnecting\u2026', 'pending');
+            joinLobbyByCode(code); // resets lobbyState itself; nothing more to clean up first
+        }
+
+        // Guest-only. Called on both a visibilitychange resume and the
+        // browser's own 'online' event (see both listeners further
+        // down) -- neither is proof the connection to the host still
+        // actually works. hostConn.open mostly reflects an explicit
+        // close/error, not whether the data channel is still delivering
+        // anything (see startLobbyHeartbeat()'s own heartbeatCheckTimer
+        // comment for the fuller explanation of why that flag alone
+        // isn't trustworthy) -- a connection that died silently, which
+        // is the common case for an actual network drop, keeps reporting
+        // open indefinitely. So rather than trusting that flag directly,
+        // this pings the host and gives it a short grace window (see
+        // LOBBY_CONNECTIVITY_PROBE_GRACE_MS) to answer -- any incoming
+        // message counts, not just a reply to this exact ping -- before
+        // deciding the connection is actually dead and rejoining from
+        // scratch. Safe to call redundantly; a still-healthy connection
+        // just gets an extra ping.
+        let guestConnectivityProbeTimer = null;
+        function probeHostConnectionAndRecoverIfNeeded() {
+            if (lobbyState.role !== 'guest') return;
+            if (!lobbyState.hostConn || !lobbyState.hostConn.open) {
+                // Not even claiming to be open -- no reason to wait out a
+                // grace window for something that's already given up.
+                attemptGuestAutoRejoin(lobbyState.code);
+                return;
+            }
+            const seenBeforeProbe = lobbyState.hostConnLastSeen;
+            try { lobbyState.hostConn.send({ type: 'ping' }); } catch (err) { /* the grace window below still catches this either way */ }
+            clearTimeout(guestConnectivityProbeTimer);
+            guestConnectivityProbeTimer = setTimeout(() => {
+                if (lobbyState.role !== 'guest') return; // already left, or recovered via some other path
+                if (lobbyState.hostConnLastSeen === seenBeforeProbe) {
+                    // Nothing came back at all in the grace window --
+                    // this ping's own reply or otherwise -- treat it as
+                    // the real thing the heartbeat timeout would
+                    // eventually catch anyway, just faster.
+                    attemptGuestAutoRejoin(lobbyState.code);
+                }
+            }, LOBBY_CONNECTIVITY_PROBE_GRACE_MS);
+        }
+
         function startLobbyHeartbeat() {
             stopLobbyHeartbeat();
             // Baseline for the "did MY OWN clock just freeze" check
@@ -26778,8 +26856,7 @@
                     const explicitlyClosed = !!lobbyState.hostConn && !lobbyState.hostConn.open;
                     const timedOut = !clockFrozeThisCycle && !!lobbyState.hostConnLastSeen && (now - lobbyState.hostConnLastSeen > LOBBY_HEARTBEAT_TIMEOUT_MS);
                     if (explicitlyClosed || timedOut) {
-                        setLobbyStatus('Lost contact with the host.', 'error');
-                        resetLobbyState();
+                        attemptGuestAutoRejoin(lobbyState.code);
                     }
                 }
             }, LOBBY_HEARTBEAT_CHECK_INTERVAL_MS);
@@ -26832,24 +26909,23 @@
                     }
                 });
             } else if (lobbyState.role === 'guest') {
-                if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                    lobbyState.hostConnLastSeen = Date.now();
-                    try { lobbyState.hostConn.send({ type: 'ping' }); } catch (err) { /* next check catches it if this didn't land */ }
-                } else if (lobbyState.code) {
-                    // The connection is actually gone, not just a stale
-                    // timestamp -- rejoin with the same code automatically
-                    // rather than leaving the player stuck looking at a
-                    // dead lobby screen until they notice and re-enter it
-                    // by hand. Guest Saves already carry this player's
-                    // name/progress by hostSaveId (see
-                    // handleLobbyWelcome()/finalizeGuestJoin()), so this
-                    // resolves silently, without a naming prompt, exactly
-                    // like any other reconnect to a save already on file.
-                    const codeToRejoin = lobbyState.code;
-                    setLobbyStatus('Reconnecting\u2026', 'pending');
-                    joinLobbyByCode(codeToRejoin);
-                }
+                probeHostConnectionAndRecoverIfNeeded();
             }
+        });
+
+        // Covers what visibilitychange above doesn't: the tab stayed
+        // foregrounded and visible the whole time, but the network
+        // itself dropped and came back (wifi hiccup, switching between
+        // wifi and cellular, walking out of range and back). The
+        // browser's own 'online' event is the signal for that -- same
+        // probe-and-recover either way, harmless/redundant if the
+        // connection turns out to have been fine the whole time. Host
+        // side has no equivalent here -- a host doesn't reconnect to
+        // anyone, its own connections either survive or get caught by
+        // the normal heartbeat timeout regardless of what triggered the
+        // drop.
+        window.addEventListener('online', () => {
+            probeHostConnectionAndRecoverIfNeeded();
         });
 
         // Encodes a URL back to this same page with the room code as a
