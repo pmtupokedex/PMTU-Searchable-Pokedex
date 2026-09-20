@@ -27421,17 +27421,44 @@
 
         function wireHostConnection(conn) {
             conn.on('open', () => {
+                // A guest that reconnects fast enough -- before the
+                // host's heartbeat has noticed the old connection is
+                // gone -- now carries its persistent guestClientId right
+                // in the connection metadata (see joinLobbyByCode()'s own
+                // peer.connect() call), available immediately here rather
+                // than only once 'identify' arrives further down. That
+                // timing is what actually matters: evicting the stale
+                // connection here, before the placeholder entry below is
+                // created and before 'welcome' is sent, means the
+                // takenColors this brand-new connection is told about
+                // never includes its OWN old color in the first place --
+                // no color-picker detour, and no moment where both the
+                // old and new connections' placeholder entries coexist in
+                // the roster. Evicting only later, from 'identify' (as
+                // this used to), was too late for both: 'welcome' (and
+                // its takenColors) had already gone out, and the
+                // placeholder entry for this new connection had already
+                // been added alongside the still-lingering old one.
+                const metaGuestClientId = conn.metadata && typeof conn.metadata.guestClientId === 'string' ? conn.metadata.guestClientId : null;
+                if (metaGuestClientId) {
+                    const stale = findLobbyConnectionByGuestClientId(metaGuestClientId, conn.peer);
+                    if (stale) {
+                        const [stalePeerId, staleEntry] = stale;
+                        handleHostConnectionDrop(stalePeerId, staleEntry.conn);
+                    }
+                }
                 // Placeholder until the real 'identify' message below --
                 // a guest no longer sends its name at connect time (it
                 // usually doesn't know it yet: see handleLobbyWelcome()),
                 // so this briefly shows "Trainer" in the roster for
-                // every new connection regardless of role.
+                // every new connection regardless of role. guestClientId
+                // itself, though, IS already known if metadata carried
+                // one (see above) -- setting it here too, not just from
+                // 'identify', means a second/third rapid reconnect
+                // racing in before this one's own 'identify' arrives can
+                // still find and evict THIS entry by guestClientId.
                 const placeholderName = (conn.metadata && conn.metadata.name) || 'Trainer';
-                lobbyState.connections.set(conn.peer, { conn, name: placeholderName, lastSeen: Date.now() });
-                // guestClientId isn't known yet at this point -- it
-                // arrives with 'identify' below, which is what actually
-                // links this connection to its durable save.guestHands
-                // entry (see resolveGuestClientIdForPeer()).
+                lobbyState.connections.set(conn.peer, { conn, name: placeholderName, lastSeen: Date.now(), guestClientId: metaGuestClientId });
                 // Hosting requires an active host save (see
                 // startHostingLobby()), so gameSaves[activeSaveSlot] is
                 // guaranteed to exist here.
@@ -27480,26 +27507,15 @@
                     lobbyState.playerProgress[conn.peer] = { badgePoints: data.badgePoints };
                     recomputeLobbyLeadingStage();
                 } else if (data.type === 'identify' && typeof data.name === 'string') {
-                    // A guest that reconnects quickly enough -- before
-                    // the host's own heartbeat has noticed the old
-                    // connection is gone -- shows up here as a genuinely
-                    // new peer id carrying the SAME guestClientId as an
-                    // entry the host is still holding onto. Left alone,
-                    // that stale entry keeps this guest's own color
-                    // marked "taken" against itself (see
-                    // getLobbyTakenColors()) and leaves a phantom extra
-                    // player in the roster until the heartbeat timeout
-                    // eventually cleans it up -- which is what produced
-                    // the color-picker prompt and the multi-attempt
-                    // reconnect loop this was fixed for. Evicting the
-                    // stale connection right here, the moment the new one
-                    // proves (via guestClientId) it's the same guest,
-                    // means a fast reconnect never has to wait out that
-                    // timeout at all. Reuses handleHostConnectionDrop()
-                    // for the exact same cleanup a real drop already gets
-                    // (roster, trade cancellation, freeing the color) so
-                    // this can never leave state in a different shape
-                    // than an ordinary disconnect would.
+                    // Backstop for the same eviction wireHostConnection's
+                    // own conn.on('open') above already does from
+                    // connection metadata -- covers a connection that
+                    // somehow reached here without ever getting a
+                    // guestClientId into its entry that way (metadata
+                    // missing or stripped somewhere along the way).
+                    // Harmless no-op in the normal case, since 'open'
+                    // already evicted any stale duplicate by the time
+                    // 'identify' arrives.
                     if (typeof data.guestClientId === 'string' && data.guestClientId) {
                         const stale = findLobbyConnectionByGuestClientId(data.guestClientId, conn.peer);
                         if (stale) {
@@ -28237,7 +28253,13 @@
                 // whatever host it's about to meet, which it won't know
                 // until the host's 'welcome' message arrives). See
                 // handleLobbyWelcome()/finalizeGuestJoin() below.
-                const conn = peer.connect(LOBBY_ROOM_PREFIX + cleanCode, { reliable: true });
+                // guestClientId goes in the connection metadata itself
+                // (available to the host the instant this connection
+                // opens) rather than waiting for the 'identify' message
+                // further down -- see wireHostConnection()'s own
+                // conn.on('open') for why that timing is what actually
+                // matters for a fast reconnect.
+                const conn = peer.connect(LOBBY_ROOM_PREFIX + cleanCode, { reliable: true, metadata: { guestClientId: getOrCreateGuestClientId() } });
                 lobbyState.hostConn = conn;
                 wireGuestConnection(conn);
             });
