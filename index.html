@@ -24995,7 +24995,7 @@
             const badgePoints = computeBadgePoints(data);
 
             if (lobbyState.role === 'guest') {
-                reportLobbyProgress(badgePoints);
+                reportLobbyProgress(badgePoints, (data.team.members || []).length > 0);
                 return;
             }
             if (lobbyState.role === 'host') {
@@ -27586,6 +27586,14 @@
                     applyMusicTransportAction(data.action);
                 } else if (data.type === 'progress' && typeof data.badgePoints === 'number') {
                     lobbyState.playerProgress[conn.peer] = { badgePoints: data.badgePoints };
+                    // OR rather than overwrite -- see reportLobbyProgress()'s
+                    // own comment on why this is a redundant, confirm-only
+                    // signal, never one that can un-set a starter another
+                    // path (identify/starter-chosen) already confirmed.
+                    if (data.hasStarter) {
+                        lobbyState.starterChosen[conn.peer] = true;
+                        updateLobbyStartGameButtonUI();
+                    }
                     recomputeLobbyLeadingStage();
                 } else if (data.type === 'starter-chosen') {
                     lobbyState.starterChosen[conn.peer] = true;
@@ -27846,9 +27854,18 @@
         // resolved (see finalizeGuestJoin() -- not simply on connection
         // open, since which save's progress to report isn't known until
         // then) and again from afterBadgeChange() any time it changes.
-        function reportLobbyProgress(badgePoints) {
+        // hasStarter is redundant with (not a replacement for)
+        // reportLobbyStarterChosen()/finalizeGuestJoin()'s own hasStarter
+        // -- this just means every place that already calls this (every
+        // badge change, plus once right after joining) is also a second,
+        // independent chance for the Start Game button to notice this
+        // device already has one, in case the dedicated message somehow
+        // never landed. Host-side merges it in with OR rather than
+        // overwriting (see the 'progress' handler), so this can only
+        // ever confirm a starter, never un-set one.
+        function reportLobbyProgress(badgePoints, hasStarter) {
             if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
-                lobbyState.hostConn.send({ type: 'progress', badgePoints });
+                lobbyState.hostConn.send({ type: 'progress', badgePoints, hasStarter: !!hasStarter });
             }
         }
 
@@ -28887,7 +28904,7 @@
             // away, rather than waiting for the first badge change after
             // joining.
             const data = getActiveSaveData();
-            reportLobbyProgress(computeBadgePoints(data));
+            reportLobbyProgress(computeBadgePoints(data), (data.team.members || []).length > 0);
         }
 
         function leaveLobby() {
@@ -28904,13 +28921,20 @@
         // past this phase). Three things happen together: this device's
         // own Sounds panel switches to the Intro playlist (see
         // MUSIC_CATEGORY_ICONS's 'intro' entry) for whatever region this
-        // save is already set to, every connected guest is told to do
-        // the equivalent on their end (a guest never plays real audio
-        // itself -- see GAME_PANEL_NOTES.md's Playlist Sync notes -- so
-        // 'start-game' just means "go to Team Tracker and ask for a
-        // starter" there, not "play audio"), and -- if the host is
-        // playing too, see lobbyState.hostIsPlayer -- this device gets
-        // the same Team Tracker/starter prompt locally.
+        // save is already set to, every connected guest WHO STILL NEEDS
+        // ONE is told to go pick a starter on their end (a guest never
+        // plays real audio itself -- see GAME_PANEL_NOTES.md's Playlist
+        // Sync notes -- so 'start-game' just means "go to Team Tracker
+        // and ask for a starter" there, not "play audio"), and -- if the
+        // host is playing too and doesn't have one yet either, see
+        // lobbyState.hostIsPlayer -- this device gets the same Team
+        // Tracker/starter prompt locally. Checking
+        // lobbyState.starterChosen before sending/opening either one is
+        // what keeps this per-save rather than per-session (see
+        // allLobbyStartersChosen()'s own comment): without it, a player
+        // whose starter already survived a Lobby restart would still get
+        // yanked back into the picker just because the host tapped this
+        // again, even though there's nothing left for them to do here.
         // Doesn't check roster size or connection count first: nothing
         // about this is destructive or one-way, so there's no real cost
         // to the host tapping it again later (e.g. a guest reconnects
@@ -28934,10 +28958,10 @@
                 musicAudio.volume = getCategoryVolume('music');
                 musicAudio.play().catch(() => { /* autoplay blocked or file missing -- silently skip */ });
             }
-            lobbyState.connections.forEach(({ conn }) => {
-                if (conn.open) conn.send({ type: 'start-game' });
+            lobbyState.connections.forEach(({ conn }, peerId) => {
+                if (conn.open && !lobbyState.starterChosen[peerId]) conn.send({ type: 'start-game' });
             });
-            if (lobbyState.hostIsPlayer) {
+            if (lobbyState.hostIsPlayer && !lobbyState.starterChosen.host) {
                 openGamePanel();
                 setGameScreen('team');
                 openTeamAddPromptOverlay();
