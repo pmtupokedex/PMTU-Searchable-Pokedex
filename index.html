@@ -26538,7 +26538,7 @@
         // How long kickLobbyPlayer() waits after sending 'kicked' before
         // actually closing that connection -- see its own comment for
         // why the send and the close can't happen in the same tick.
-        const LOBBY_KICK_CLOSE_DELAY_MS = 500;
+        const LOBBY_KICK_CLOSE_DELAY_MS = 1000;
 
         // Single mutable bag for the whole feature, same "one object,
         // reached into rather than duplicated" spirit as gameSaves
@@ -28740,9 +28740,29 @@
                 // the same recovery function as every other kind of
                 // drop instead means whichever path notices first, the
                 // outcome is the same automatic rejoin attempt.
+                //
+                // Both guards below matter for the same reason
+                // probeHostConnectionAndRecoverIfNeeded() already has
+                // its own "already left" check: destroying this
+                // device's own peer (resetLobbyState(), e.g. right
+                // after processing 'kicked' -- see wireHostConnection's
+                // conn.on('data') 'kicked' handling) tears this exact
+                // `conn` down too, which fires this SAME close handler
+                // a moment later, by which point lobbyState has already
+                // moved on. Without a guard, that stale event would
+                // stomp right back over whatever status 'kicked' just
+                // set (e.g. "The host removed you from the lobby.")
+                // with a bogus "Lost contact" and an unwanted rejoin
+                // attempt. The hostConn check covers the same shape of
+                // race for a *newer* connection: if this device has
+                // already moved on to a fresh attempt (a new conn is
+                // now lobbyState.hostConn), a late close from this old,
+                // already-superseded one has nothing left to recover.
+                if (lobbyState.role !== 'guest' || lobbyState.hostConn !== conn) return;
                 attemptGuestAutoRejoin(lobbyState.code);
             });
             conn.on('error', () => {
+                if (lobbyState.role !== 'guest' || lobbyState.hostConn !== conn) return;
                 attemptGuestAutoRejoin(lobbyState.code);
             });
         }
