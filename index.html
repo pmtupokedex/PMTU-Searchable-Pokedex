@@ -26700,9 +26700,34 @@
         function resetLobbyState() {
             stopLobbyHeartbeat();
             releaseLobbyWakeLock();
-            if (lobbyState.peer && !lobbyState.peer.destroyed) {
-                lobbyState.peer.destroy();
-            }
+            // Grab the outgoing peer and swap lobbyState to its fresh,
+            // blank shape FIRST, then destroy the old peer after --
+            // deliberately not the other order. PeerJS's close/error
+            // events can fire synchronously from inside .destroy()
+            // (not just "a moment later" as you'd expect), and every
+            // one of those handlers (see wireGuestConnection's own
+            // conn.on('close')/('error'), for instance) guards itself
+            // with a "is this stale?" check against the CURRENT
+            // lobbyState (role/hostConn) to no-op on exactly this kind
+            // of leftover event. That guard only works if lobbyState
+            // has already been reset by the time the event lands --
+            // destroying the old peer first meant a synchronous close
+            // could fire while lobbyState still looked like the live,
+            // pre-reset session, sail straight past the guard, and
+            // kick off a reentrant attemptGuestAutoRejoin()/
+            // joinLobbyByCode() mid-reset -- whose own reconnect then
+            // got its role/hostConn silently clobbered back to null
+            // the instant this function's own reassignment ran a
+            // moment later, even though the new connection it started
+            // kept working underneath. That's what let a just-kicked
+            // guest end up with a live connection to the host but
+            // lobbyState.role stuck at null -- neither host nor guest
+            // -- which is also why the CSS that hides host-only
+            // controls from a guest (keyed off data-role="guest")
+            // never applied, and why the heartbeat send loop (gated on
+            // role being 'host' or 'guest') silently stopped pinging,
+            // so the host dropped it again once the timeout elapsed.
+            const outgoingPeer = lobbyState.peer;
             lobbyState = {
                 role: null, peer: null, code: null, hostName: null,
                 hostSaveId: null, hostIsPlayer: false, hostColor: null, hostRuleset: null,
@@ -26712,6 +26737,9 @@
                 heartbeatSendTimer: null, heartbeatCheckTimer: null,
                 hostConnLastSeen: null, tradeSession: null, tradePairs: new Map(),
             };
+            if (outgoingPeer && !outgoingPeer.destroyed) {
+                outgoingPeer.destroy();
+            }
             const lobbyEl = document.getElementById('game-lobby');
             lobbyEl.dataset.state = 'choice';
             delete lobbyEl.dataset.role;
