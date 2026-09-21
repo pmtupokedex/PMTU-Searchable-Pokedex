@@ -5189,6 +5189,26 @@
             display: flex;
         }
 
+        /* Host-only -- "Close this lobby?" when connected guests would be
+           dropped along with it. Same backdrop/positioning rules as
+           #game-lobby-join-confirm-overlay just above, duplicated for the
+           same independence reason its own comment gives. */
+        #game-lobby-close-confirm-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-lobby-close-confirm-overlay.visible {
+            display: flex;
+        }
+
         /* In-app QR scanner -- same positioning/backdrop rules as the two
            overlays above, duplicated for the same independence reason. */
         #game-lobby-scan-overlay {
@@ -12349,6 +12369,22 @@
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude game-lobby-join-confirm-discard-btn">Discard &amp; Join</button>
                     <button class="filter-btn game-lobby-join-confirm-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Host-only -- "Close this lobby?" when leaving would take
+             connected guests down with it. See attemptLeaveLobby()/
+             closeLobbyCloseConfirmOverlay() in the script. Reuses the
+             shared confirm overlay visual classes, same reasoning as
+             #game-lobby-join-confirm-overlay above. -->
+        <div id="game-lobby-close-confirm-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Close this lobby?</p>
+                <p class="game-confirm-subtext" id="game-lobby-close-confirm-subtext"></p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-lobby-close-confirm-leave-btn">Close Anyway</button>
+                    <button class="filter-btn game-lobby-close-confirm-cancel-btn">Cancel</button>
                 </div>
             </div>
         </div>
@@ -28988,6 +29024,32 @@
             if (wasActive) setLobbyStatus('', '');
         }
 
+        // The Leave Lobby button's real entry point, host side -- unlike
+        // a guest leaving (which only ever disconnects itself), a host
+        // leaving tears down resetLobbyState()'s peer entirely, which
+        // takes every currently-connected guest down with it. Asks first
+        // whenever that's actually the case, same "don't silently strand
+        // anyone" instinct as attemptJoinLobby()'s own unsaved-progress
+        // check. A guest, or a host with nobody connected yet, has
+        // nothing to lose by leaving -- straight through to leaveLobby()
+        // for both.
+        function attemptLeaveLobby() {
+            if (lobbyState.role === 'host' && lobbyState.connections.size > 0) {
+                const count = lobbyState.connections.size;
+                document.getElementById('game-lobby-close-confirm-subtext').textContent =
+                    count === 1
+                        ? 'There is still 1 player connected \u2014 closing the lobby will disconnect them too.'
+                        : `There are still ${count} players connected \u2014 closing the lobby will disconnect them too.`;
+                document.getElementById('game-lobby-close-confirm-overlay').classList.add('visible');
+                return;
+            }
+            leaveLobby();
+        }
+
+        function closeLobbyCloseConfirmOverlay() {
+            document.getElementById('game-lobby-close-confirm-overlay').classList.remove('visible');
+        }
+
         // Host-only -- see .game-lobby-start-game-btn's own comment for
         // why this is never even shown to a guest, and for the button's
         // three text/enabled states this is only ever reachable from the
@@ -29813,7 +29875,7 @@
 
             const lobbyLeaveBtn = e.target.closest('.game-lobby-leave-btn');
             if (lobbyLeaveBtn) {
-                leaveLobby();
+                attemptLeaveLobby();
                 return;
             }
         });
@@ -29850,6 +29912,21 @@
                 const code = pendingLobbyJoinCode;
                 closeLobbyJoinConfirmOverlay();
                 joinLobbyByCode(code);
+                return;
+            }
+        });
+
+        // Same reasoning again -- this overlay's also a sibling of
+        // #game-scroll, not a descendant, so it needs its own listener
+        // rather than relying on the delegated one.
+        document.getElementById('game-lobby-close-confirm-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-lobby-close-confirm-overlay' || e.target.closest('.game-lobby-close-confirm-cancel-btn')) {
+                closeLobbyCloseConfirmOverlay();
+                return;
+            }
+            if (e.target.closest('.game-lobby-close-confirm-leave-btn')) {
+                closeLobbyCloseConfirmOverlay();
+                leaveLobby();
                 return;
             }
         });
