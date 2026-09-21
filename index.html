@@ -26535,6 +26535,10 @@
         // fire attemptGuestAutoRejoin() and stack two overlapping
         // reconnect attempts on top of each other.
         const LOBBY_AUTO_REJOIN_COOLDOWN_MS = 5000;
+        // How long kickLobbyPlayer() waits after sending 'kicked' before
+        // actually closing that connection -- see its own comment for
+        // why the send and the close can't happen in the same tick.
+        const LOBBY_KICK_CLOSE_DELAY_MS = 500;
 
         // Single mutable bag for the whole feature, same "one object,
         // reached into rather than duplicated" spirit as gameSaves
@@ -27753,10 +27757,33 @@
             if (lobbyState.role !== 'host') return;
             const entry = lobbyState.connections.get(peerId);
             if (!entry) return;
-            if (entry.conn && entry.conn.open) {
-                try { entry.conn.send({ type: 'kicked' }); } catch (err) { /* closing it immediately after this either way */ }
+            const conn = entry.conn;
+            if (conn && conn.open) {
+                try { conn.send({ type: 'kicked' }); } catch (err) { /* closing it below either way */ }
             }
-            handleHostConnectionDrop(peerId, entry.conn);
+            // Passing null here (rather than conn) does every bit of
+            // this device's own cleanup -- roster, trade cancellation,
+            // freeing the color -- immediately, exactly like a real drop
+            // would, but deliberately leaves the actual conn.close() to
+            // the setTimeout below rather than doing it in the same tick
+            // as the 'kicked' send() just above. Closing a data channel
+            // right after sending on it doesn't guarantee that last
+            // message actually reached the other side first -- PeerJS/
+            // WebRTC can (and in practice does) tear the channel down
+            // before it's flushed, which is what let a kicked guest's
+            // connection go straight to its own conn.on('close')/('error')
+            // and fall into attemptGuestAutoRejoin() instead of ever
+            // seeing 'kicked' at all -- rejoining for several seconds
+            // before its own heartbeat gave up and it finally saw "Lost
+            // contact with the host" instead of the real reason. This
+            // short, otherwise-invisible delay is what gives 'kicked'
+            // time to actually land before this side hangs up on it.
+            handleHostConnectionDrop(peerId, null);
+            if (conn && conn.open) {
+                setTimeout(() => {
+                    try { conn.close(); } catch (err) { /* already gone -- nothing to clean up */ }
+                }, LOBBY_KICK_CLOSE_DELAY_MS);
+            }
         }
 
         function handleHostConnectionDrop(peerId, conn) {
