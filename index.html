@@ -197,7 +197,8 @@
            top of it. Covers the filter panel's own scroll, the
            related-images row's horizontal scroll, the general-info
            panel's scroll, the Full Type Chart's own scroll box, the
-           Reward/Shop menu grids, and every .game-confirm-card (including
+           Rulebook PDF viewer's own scroll area, the Reward/Shop menu
+           grids, and every .game-confirm-card (including
            the Team Tracker's detail view -- see its own max-height/
            overflow-y rule further down) -- that last one matters especially
            once a card's content is animating
@@ -261,6 +262,7 @@
         #viewer-info-content,
         #how-to-use-section,
         #game-matchup-chart-scroll,
+        #game-rulebook-canvas-wrap,
         .game-confirm-card,
         .game-reward-menu-grid,
         .game-shop-menu-grid {
@@ -273,6 +275,7 @@
         #viewer-info-content::-webkit-scrollbar,
         #how-to-use-section::-webkit-scrollbar,
         #game-matchup-chart-scroll::-webkit-scrollbar,
+        #game-rulebook-canvas-wrap::-webkit-scrollbar,
         .game-confirm-card::-webkit-scrollbar,
         .game-reward-menu-grid::-webkit-scrollbar,
         .game-shop-menu-grid::-webkit-scrollbar {
@@ -285,6 +288,7 @@
         #viewer-info-content::-webkit-scrollbar-track,
         #how-to-use-section::-webkit-scrollbar-track,
         #game-matchup-chart-scroll::-webkit-scrollbar-track,
+        #game-rulebook-canvas-wrap::-webkit-scrollbar-track,
         .game-confirm-card::-webkit-scrollbar-track,
         .game-reward-menu-grid::-webkit-scrollbar-track,
         .game-shop-menu-grid::-webkit-scrollbar-track {
@@ -296,6 +300,7 @@
         #viewer-info-content::-webkit-scrollbar-thumb,
         #how-to-use-section::-webkit-scrollbar-thumb,
         #game-matchup-chart-scroll::-webkit-scrollbar-thumb,
+        #game-rulebook-canvas-wrap::-webkit-scrollbar-thumb,
         .game-confirm-card::-webkit-scrollbar-thumb,
         .game-reward-menu-grid::-webkit-scrollbar-thumb,
         .game-shop-menu-grid::-webkit-scrollbar-thumb {
@@ -314,6 +319,7 @@
         #viewer-info-content::-webkit-scrollbar-thumb:hover,
         #how-to-use-section::-webkit-scrollbar-thumb:hover,
         #game-matchup-chart-scroll::-webkit-scrollbar-thumb:hover,
+        #game-rulebook-canvas-wrap::-webkit-scrollbar-thumb:hover,
         .game-confirm-card::-webkit-scrollbar-thumb:hover,
         .game-reward-menu-grid::-webkit-scrollbar-thumb:hover,
         .game-shop-menu-grid::-webkit-scrollbar-thumb:hover {
@@ -1391,6 +1397,11 @@
                 /* Deliberately no border-radius here (see the chat this was removed in) -- these panels dock flush against the viewport edge now. */
                 box-shadow: -4px 0 10px rgba(0,0,0,0.5);
                 transform: translateX(100%);
+                /* width/max-width are transitioned too (alongside the
+                   existing transform) so switching in/out of the
+                   Rulebook screen (see #game-panel.game-rulebook-wide
+                   below) resizes smoothly rather than snapping. */
+                transition: transform 0.35s ease, width 0.35s ease, max-width 0.35s ease;
             }
 
             #game-panel.open {
@@ -1402,6 +1413,32 @@
                the gallery, so it stays interactive while open. */
             body.game-open {
                 padding-right: calc(20px + min(480px, 90vw));
+                transition: padding-right 0.35s ease;
+            }
+
+            /* Widened for the Rulebook screen specifically -- desktop-
+               only (mobile's panel is always full-width anyway) and
+               toggled by setGameScreen() the moment it switches to or
+               away from 'rulebook', rather than being tied to the panel
+               opening/closing in general. 1080px specifically (rather
+               than an even double of 480) is what lets the PDF.js
+               canvas render at its natural full size instead of getting
+               scaled by the browser to fit a narrower column, which is
+               what was introducing soft/aliased edges. #game-scroll's
+               own max-width (480px normally) needs widening to match, or
+               the rulebook content would still be squeezed into the old
+               column width even though the panel around it grew. */
+            #game-panel.game-rulebook-wide {
+                width: 1080px;
+                max-width: 90vw;
+            }
+
+            body.game-open.game-rulebook-wide {
+                padding-right: calc(20px + min(1080px, 90vw));
+            }
+
+            #game-panel.game-rulebook-wide #game-scroll {
+                max-width: 1080px;
             }
         }
 
@@ -1434,6 +1471,17 @@
             overflow-y: auto;
             padding: calc(var(--real-vh, 100dvh) * 0.12) 20px calc(var(--real-vh, 100dvh) * 0.13);
             flex-grow: 1;
+            /* Without this, a flex item won't shrink below its content's
+               natural height -- normally harmless since most screens'
+               content is short enough not to hit that ceiling, but the
+               Rulebook screen's zoomed canvas can grow tall enough to
+               expose it: #game-scroll would balloon to match instead of
+               staying pinned to the space #game-panel actually gives it,
+               and the excess then just gets clipped by #game-panel's own
+               overflow: hidden with no scrollbar anywhere able to reach
+               it. min-height: 0 lets this shrink back down to its flex
+               allotment so its own overflow-y: auto can do its job. */
+            min-height: 0;
             width: 100%;
             max-width: 480px;
             margin: 0 auto;
@@ -1463,6 +1511,9 @@
             flex-direction: column;
             flex: 1;
             width: 100%;
+            /* Same reasoning as #game-scroll's own min-height: 0 above --
+               this is the other missing link in that chain. */
+            min-height: 0;
         }
 
         .game-screen.active {
@@ -7761,28 +7812,10 @@
 
         /* ---- Rulebook (test build -- see the screen's own HTML
            comment) ---- */
-        .game-rulebook-toggles {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin: 0 0 15px;
-        }
-
-        .game-rulebook-toggle-btn {
-            margin: 0;
-            flex: 1 1 auto;
-        }
-
-        /* Same reuse-not-reinvent reasoning as
-           .game-matchup-toggle-btn.active's own comment. */
-        .game-rulebook-toggle-btn.active {
-            background-color: rgba(0, 153, 255, 0.70);
-        }
-
         /* flex: 1 + min-height: 0 is what lets this fill whatever's left
            of .game-screen's own column instead of collapsing to its
-           content's natural (zero, for an empty iframe/canvas) height --
-           the same pairing .game-rulebook-pdfjs-canvas-wrap below and
+           content's natural (zero, for an empty canvas) height -- the
+           same pairing .game-rulebook-pdfjs-canvas-wrap below and
            .game-screen.active itself rely on. */
         .game-rulebook-viewer {
             display: flex;
@@ -7794,30 +7827,32 @@
             overflow: hidden;
         }
 
-        .game-rulebook-iframe {
-            flex: 1;
-            min-height: 0;
-            width: 100%;
-            border: none;
-            /* Matches the neutral gray most browsers' own native PDF
-               viewer already opens on, so there's no stark white flash
-               visible through the iframe while the (potentially large)
-               PDF is still loading. */
-            background: #525659;
-        }
-
         .game-rulebook-pdfjs-toolbar {
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 10px;
             padding: 10px;
-            flex-wrap: wrap;
+            /* Was flex-wrap: wrap, which is what let Prev/Next/-/+ and
+               the page count spill onto a second line once the panel
+               got narrow enough (i.e. on mobile, where the panel is
+               always full-width but that width still isn't huge). The
+               mobile-only rule below shrinks gap/padding/button size
+               enough that nowrap keeps everything on one line instead. */
+            flex-wrap: nowrap;
         }
 
         .game-rulebook-pdfjs-btn {
             margin: 0;
             padding: 6px 16px;
+            /* Flex items default to min-width: auto, which refuses to
+               shrink a button below its own text's natural width --
+               harmless at this size on desktop, but exactly what would
+               still force a second line on mobile even with nowrap set
+               above. min-width: 0 lets flex-shrink actually do its job
+               there instead. */
+            min-width: 0;
+            flex: 0 1 auto;
         }
 
         .game-rulebook-page-indicator {
@@ -7827,20 +7862,60 @@
             text-align: center;
         }
 
+        .game-rulebook-zoom-indicator {
+            color: white;
+            font-weight: bold;
+            /* Just wide enough for "100%"-ish readings without the two
+               zoom buttons hopping closer/further apart as the digit
+               count changes (e.g. "80%" vs "150%"). */
+            min-width: 44px;
+            text-align: center;
+        }
+
+        /* Matches this file's other mobile/desktop split (viewport
+           below the 664px breakpoint used everywhere else here). Tighter
+           gap/padding and a lower page-indicator floor are what actually
+           buy back the room nowrap above needs -- the buttons' own
+           min-width: 0 alone would otherwise just render Prev/Next's
+           text squeezed illegibly thin rather than fitting for real. */
+        @media (max-width: 663px) {
+            .game-rulebook-pdfjs-toolbar {
+                gap: 4px;
+                padding: 8px 4px;
+            }
+
+            .game-rulebook-pdfjs-btn {
+                padding: 6px 10px;
+                font-size: 14px;
+            }
+
+            .game-rulebook-page-indicator {
+                min-width: 0;
+                font-size: 14px;
+                white-space: nowrap;
+            }
+
+            .game-rulebook-zoom-indicator {
+                min-width: 0;
+                font-size: 14px;
+                white-space: nowrap;
+            }
+        }
+
         .game-rulebook-pdfjs-canvas-wrap {
             flex: 1;
             min-height: 0;
             overflow: auto;
-            display: flex;
-            justify-content: center;
-            /* A flex container's cross-axis default is align-items:
-               stretch -- without overriding that here, the canvas (a
-               flex item) got stretched to fill this wrap's full height,
-               which fights the canvas's own pixel width/height ratio
-               and squashes the rendered page. flex-start leaves the
-               canvas at whatever size renderRulebookPage() actually
-               drew it at. */
-            align-items: flex-start;
+            /* Used to be display:flex + justify-content:center to center
+               the canvas. That hits a well-known flexbox bug: once a
+               centered flex child overflows its container, browsers
+               clamp scrollLeft at 0 and simply never let you scroll
+               *into* the left-hand overflow -- scrolling right still
+               works, which is exactly the "left edge unreachable, right
+               edge fine" behavior zooming in used to produce. Plain
+               block layout plus margin:auto on the canvas itself (below)
+               centers it the same way when it fits, but doesn't have
+               that scroll-clamping bug once it doesn't. */
             padding: 10px;
         }
 
@@ -7854,7 +7929,15 @@
                scale is what keeps the *first* page load looking
                reasonably sized instead; zooming from there just grows
                or shrinks the canvas for real, and this wrap's own
-               overflow: auto scrolls to it. */
+               overflow: auto scrolls to it.
+               display:block + margin:0 auto replaces the old flex
+               centering (see the wrap's own comment above): auto
+               margins center the canvas when it's narrower than the
+               wrap, but resolve to 0 -- i.e. flush left -- the instant
+               it's wider, which is exactly when you need the overflow
+               to stay reachable by scrolling. */
+            display: block;
+            margin: 0 auto;
             background: white;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.4);
         }
@@ -12758,13 +12841,14 @@
                 </div>
             </div>
 
-            <!-- Test build only -- lets you compare the native browser
-                 PDF viewer against a PDF.js-rendered one before picking
-                 one permanently. Both point at the same RULEBOOK_PDF_URL
-                 in the script; see initRulebookScreen()/
-                 switchRulebookViewer() for how each one lazy-loads only
-                 once it's actually the visible viewer, so opening this
-                 screen doesn't fetch a large PDF twice over. -->
+            <!-- The native-viewer/PDF.js comparison this screen started
+                 as (see the git history if you need the old iframe
+                 approach back) is settled -- PDF.js won, since Dropbox
+                 and raw GitHub links both push browsers toward
+                 downloading rather than displaying inline in an iframe,
+                 a hosting-side header issue the native viewer had no way
+                 around. See initRulebookScreen() in the script for the
+                 lazy-load-on-first-open logic that's left. -->
             <div class="game-screen" id="game-screen-rulebook">
                 <div class="game-screen-header">
                     <span class="game-screen-back-wrap">
@@ -12774,21 +12858,13 @@
                 </div>
                 <p class="game-screen-title">Rulebook</p>
 
-                <div class="game-rulebook-toggles">
-                    <button class="filter-btn game-rulebook-toggle-btn active" id="game-rulebook-native-toggle" data-viewer="native" aria-pressed="true">Native Viewer</button>
-                    <button class="filter-btn game-rulebook-toggle-btn" id="game-rulebook-pdfjs-toggle" data-viewer="pdfjs" aria-pressed="false">PDF.js Viewer</button>
-                </div>
-
-                <div class="game-rulebook-viewer" id="game-rulebook-viewer-native">
-                    <iframe class="game-rulebook-iframe" id="game-rulebook-iframe" title="Rulebook (native viewer)"></iframe>
-                </div>
-
-                <div class="game-rulebook-viewer" id="game-rulebook-viewer-pdfjs" style="display: none;">
+                <div class="game-rulebook-viewer" id="game-rulebook-viewer-pdfjs">
                     <div class="game-rulebook-pdfjs-toolbar">
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-prev-btn" aria-label="Previous page">&lsaquo; Prev</button>
                         <span class="game-rulebook-page-indicator" id="game-rulebook-page-indicator">Loading&hellip;</span>
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-next-btn" aria-label="Next page">Next &rsaquo;</button>
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-out-btn" aria-label="Zoom out">&minus;</button>
+                        <span class="game-rulebook-zoom-indicator" id="game-rulebook-zoom-indicator" aria-live="polite"></span>
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-in-btn" aria-label="Zoom in">+</button>
                     </div>
                     <div class="game-rulebook-pdfjs-canvas-wrap" id="game-rulebook-canvas-wrap">
@@ -26890,13 +26966,15 @@
         const RULEBOOK_PDFJS_VERSION = '3.11.174';
         const RULEBOOK_PDFJS_SCRIPT_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${RULEBOOK_PDFJS_VERSION}/pdf.min.js`;
         const RULEBOOK_PDFJS_WORKER_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${RULEBOOK_PDFJS_VERSION}/pdf.worker.min.js`;
+        // The fixed set of stops the zoom +/- buttons move between (see
+        // zoomRulebookTo() below) -- the same standard set most PDF
+        // viewers offer, rather than an arbitrary multiplicative step
+        // that could land on any percentage.
+        const RULEBOOK_ZOOM_LEVELS = [0.25, 0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
 
-        let rulebookActiveViewer = 'native';
-        let rulebookNativeLoaded = false;
         // Caches the in-flight/completed script-injection promise so
-        // switching to the PDF.js toggle twice (or opening this screen,
-        // leaving, and coming back) doesn't inject and load the library
-        // a second time.
+        // opening this screen, leaving, and coming back doesn't inject
+        // and load the library a second time.
         let rulebookPdfjsLoadPromise = null;
         let rulebookPdfDoc = null;
         let rulebookCurrentPage = 1;
@@ -26906,7 +26984,11 @@
         // replaces this with a fit-to-width value based on the page's
         // actual size and the viewer's available width, rather than a
         // guessed constant that would look right for some page sizes
-        // and wrong for others. The +/- buttons adjust it from there.
+        // and wrong for others -- that initial value is deliberately
+        // NOT snapped to RULEBOOK_ZOOM_LEVELS, so "fit width" can still
+        // land wherever actually fits a given page/screen; the +/-
+        // buttons only start snapping to that fixed set once the person
+        // actually clicks one (see zoomRulebookTo() below).
         let rulebookZoomScale = 0;
         // Guards against a slower page render finishing after a faster
         // Prev/Next tap that landed while it was still in flight --
@@ -26916,20 +26998,10 @@
         let rulebookRenderToken = 0;
 
         // Runs once, the first time this screen is opened this session
-        // (see setGameScreen()'s own hook) -- loads whichever viewer is
-        // currently selected (native by default). Switching viewers
-        // later goes through switchRulebookViewer() instead, which has
-        // the same "only load once" guard for the other one.
+        // (see setGameScreen()'s own hook) -- loadRulebookPdfjsViewer()
+        // has its own "only load once" guard for repeat visits.
         function initRulebookScreen() {
-            if (rulebookActiveViewer === 'native') loadRulebookNativeViewer();
-            else loadRulebookPdfjsViewer();
-        }
-
-        function loadRulebookNativeViewer() {
-            if (rulebookNativeLoaded) return;
-            rulebookNativeLoaded = true;
-            const iframe = document.getElementById('game-rulebook-iframe');
-            if (iframe) iframe.src = RULEBOOK_PDF_URL;
+            loadRulebookPdfjsViewer();
         }
 
         // Injects the pdf.js UMD build as a plain <script> tag (this is
@@ -26991,6 +27063,27 @@
                 });
         }
 
+        // Moves rulebookZoomScale to the next stop in RULEBOOK_ZOOM_LEVELS
+        // in the given direction, rather than multiplying it by a fixed
+        // factor -- keeps every zoom level one of the standard set
+        // (25/50/75/90/100/110/125/150/175/200%) instead of an arbitrary
+        // percentage. Works fine even when the current scale isn't
+        // itself one of those stops (e.g. right after the initial
+        // fit-to-width render): 'in' jumps to the first stop above it,
+        // 'out' to the first stop below it, so the very first click
+        // always lands on a real stop either way. Falls back to the
+        // nearest end of the list if there's nowhere further to go.
+        function zoomRulebookTo(direction) {
+            if (direction === 'in') {
+                const next = RULEBOOK_ZOOM_LEVELS.find((level) => level > rulebookZoomScale + 0.001);
+                rulebookZoomScale = next !== undefined ? next : RULEBOOK_ZOOM_LEVELS[RULEBOOK_ZOOM_LEVELS.length - 1];
+            } else {
+                const lowerLevels = RULEBOOK_ZOOM_LEVELS.filter((level) => level < rulebookZoomScale - 0.001);
+                rulebookZoomScale = lowerLevels.length ? lowerLevels[lowerLevels.length - 1] : RULEBOOK_ZOOM_LEVELS[0];
+            }
+            renderRulebookPage(rulebookCurrentPage);
+        }
+
         function renderRulebookPage(pageNum) {
             if (!rulebookPdfDoc) return;
             const clamped = Math.max(1, Math.min(pageNum, rulebookTotalPages));
@@ -26998,6 +27091,15 @@
             const token = ++rulebookRenderToken;
             const pageIndicatorEl = document.getElementById('game-rulebook-page-indicator');
             if (pageIndicatorEl) pageIndicatorEl.textContent = `Page ${clamped} of ${rulebookTotalPages}`;
+            // rulebookZoomScale is already whatever this render should
+            // use by the time this runs -- set either by the initial
+            // fit-to-width calc or by the zoom +/- handlers just before
+            // they call this -- so reading it back here covers every
+            // case that can change it, prev/next included (a page turn
+            // doesn't change the zoom, but re-stating it costs nothing
+            // and keeps this the one place that owns the readout).
+            const zoomIndicatorEl = document.getElementById('game-rulebook-zoom-indicator');
+            if (zoomIndicatorEl) zoomIndicatorEl.textContent = `${Math.round(rulebookZoomScale * 100)}%`;
             rulebookPdfDoc.getPage(clamped).then((page) => {
                 if (token !== rulebookRenderToken) return; // superseded by a later render -- see rulebookRenderToken's own comment
                 const canvas = document.getElementById('game-rulebook-canvas');
@@ -27010,30 +27112,6 @@
                     if (token !== rulebookRenderToken) return;
                 });
             });
-        }
-
-        // Shared by both toggle buttons -- see the screen's own HTML
-        // comment on why each viewer only loads the first time it's
-        // actually shown rather than both loading together up front.
-        function switchRulebookViewer(target) {
-            if (target !== 'native' && target !== 'pdfjs') return;
-            rulebookActiveViewer = target;
-            const nativeToggle = document.getElementById('game-rulebook-native-toggle');
-            const pdfjsToggle = document.getElementById('game-rulebook-pdfjs-toggle');
-            const nativeViewer = document.getElementById('game-rulebook-viewer-native');
-            const pdfjsViewer = document.getElementById('game-rulebook-viewer-pdfjs');
-            if (nativeToggle) {
-                nativeToggle.classList.toggle('active', target === 'native');
-                nativeToggle.setAttribute('aria-pressed', String(target === 'native'));
-            }
-            if (pdfjsToggle) {
-                pdfjsToggle.classList.toggle('active', target === 'pdfjs');
-                pdfjsToggle.setAttribute('aria-pressed', String(target === 'pdfjs'));
-            }
-            if (nativeViewer) nativeViewer.style.display = target === 'native' ? '' : 'none';
-            if (pdfjsViewer) pdfjsViewer.style.display = target === 'pdfjs' ? '' : 'none';
-            if (target === 'native') loadRulebookNativeViewer();
-            else loadRulebookPdfjsViewer();
         }
 
         function setGameScreen(screenId) {
@@ -27099,6 +27177,15 @@
             document.querySelectorAll('.game-screen').forEach(el => {
                 el.classList.toggle('active', el.id === `game-screen-${screenId}`);
             });
+            // Doubles the panel's width on desktop specifically for the
+            // Rulebook screen (see #game-panel.game-rulebook-wide's own
+            // comment) and reverts it the moment any other screen
+            // becomes active -- including 'main', so stepping back out
+            // shrinks the panel again rather than leaving it wide.
+            const isRulebookScreen = screenId === 'rulebook';
+            const gamePanelEl = document.getElementById('game-panel');
+            if (gamePanelEl) gamePanelEl.classList.toggle('game-rulebook-wide', isRulebookScreen);
+            document.body.classList.toggle('game-rulebook-wide', isRulebookScreen);
             // A scroll position left over from whatever screen was
             // showing before shouldn't carry over to the new one.
             const scrollEl = document.getElementById('game-scroll');
@@ -29990,12 +30077,6 @@
                 return;
             }
 
-            const rulebookToggleBtn = e.target.closest('.game-rulebook-toggle-btn');
-            if (rulebookToggleBtn) {
-                switchRulebookViewer(rulebookToggleBtn.dataset.viewer);
-                return;
-            }
-
             if (e.target.closest('#game-rulebook-prev-btn')) {
                 renderRulebookPage(rulebookCurrentPage - 1);
                 return;
@@ -30005,20 +30086,11 @@
                 return;
             }
             if (e.target.closest('#game-rulebook-zoom-out-btn')) {
-                // Multiplicative rather than a fixed +/-0.2 step -- the
-                // baseline is now a computed fit-to-width value (see
-                // loadRulebookPdfjsViewer()'s own comment) instead of a
-                // fixed constant, so a flat step would feel huge on a
-                // small baseline and barely noticeable on a large one.
-                // A consistent 15%-per-click multiplier feels the same
-                // regardless of where it started.
-                rulebookZoomScale = Math.max(0.2, rulebookZoomScale / 1.15);
-                renderRulebookPage(rulebookCurrentPage);
+                zoomRulebookTo('out');
                 return;
             }
             if (e.target.closest('#game-rulebook-zoom-in-btn')) {
-                rulebookZoomScale = Math.min(6, rulebookZoomScale * 1.15);
-                renderRulebookPage(rulebookCurrentPage);
+                zoomRulebookTo('in');
                 return;
             }
 
