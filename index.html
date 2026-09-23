@@ -1418,25 +1418,29 @@
                only (mobile's panel is always full-width anyway) and
                toggled by setGameScreen() the moment it switches to or
                away from 'rulebook', rather than being tied to the panel
-               opening/closing in general. 1080px specifically (rather
-               than an even double of 480) is what lets the PDF.js
-               canvas render at its natural full size instead of getting
-               scaled by the browser to fit a narrower column, which is
-               what was introducing soft/aliased edges. #game-scroll's
-               own max-width (480px normally) needs widening to match, or
-               the rulebook content would still be squeezed into the old
-               column width even though the panel around it grew. */
+               opening/closing in general. Originally set to 1080px to
+               avoid CSS-imposed shrinkage of the PDF.js canvas, back
+               when that shrinkage was contributing to soft/aliased
+               edges (see renderRulebookPage()'s own comments for how
+               that's actually handled now -- forced 2x supersampling
+               plus high-quality downscaling, neither of which cares how
+               wide this panel is). 720px is sized instead to fit this
+               rulebook's page at 100% zoom without excess empty margin
+               on either side. #game-scroll's own max-width (480px
+               normally) needs widening to match, or the rulebook
+               content would still be squeezed into the old column width
+               even though the panel around it grew. */
             #game-panel.game-rulebook-wide {
-                width: 1080px;
+                width: 720px;
                 max-width: 90vw;
             }
 
             body.game-open.game-rulebook-wide {
-                padding-right: calc(20px + min(1080px, 90vw));
+                padding-right: calc(20px + min(720px, 90vw));
             }
 
             #game-panel.game-rulebook-wide #game-scroll {
-                max-width: 1080px;
+                max-width: 720px;
             }
         }
 
@@ -7865,21 +7869,128 @@
             flex: 0 1 auto;
         }
 
-        .game-rulebook-page-indicator {
+        /* Shared by #game-rulebook-page-indicator and
+           #game-rulebook-zoom-indicator -- both were plain <span>s, now
+           real <button>s (see openRulebookJumpOverlay()/
+           openRulebookZoomOverlay() in the script) so they're reachable
+           by keyboard/screen reader like every other control in this
+           toolbar, not just tap. The reset below strips the browser's
+           default button chrome (background/border/font) back to a
+           blank slate, then the faint pill background/border re-adds
+           just enough of a "this is a button" look -- echoing, at much
+           lower opacity, the same look .filter-btn already gives Prev/
+           Next/-/+ -- to read as tappable without taking on their full
+           visual weight or eating into the toolbar width this was
+           trying to free up in the first place. */
+        .game-rulebook-pill-btn {
             color: white;
             font-weight: bold;
-            min-width: 110px;
             text-align: center;
+            background: rgba(255, 255, 255, 0.16);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: inherit;
+            padding: 4px 8px;
+            cursor: pointer;
+        }
+
+        .game-rulebook-pill-btn:active {
+            background: rgba(255, 255, 255, 0.28);
+        }
+
+        .game-rulebook-page-indicator {
+            min-width: 70px;
         }
 
         .game-rulebook-zoom-indicator {
-            color: white;
-            font-weight: bold;
-            /* Just wide enough for "100%"-ish readings without the two
-               zoom buttons hopping closer/further apart as the digit
-               count changes (e.g. "80%" vs "150%"). */
-            min-width: 44px;
+            /* Just wide enough for "100%"-ish readings without the
+               zoom buttons either side hopping closer/further apart
+               as the digit count changes (e.g. "80%" vs "150%"). */
+            min-width: 52px;
+        }
+
+        /* Jump-to-page prompt -- see openRulebookJumpOverlay() in the
+           script. Same backdrop/centering shell every #game-*-overlay
+           uses, and the same plain-number-input treatment
+           .game-deck-look-prompt-input already has, both duplicated
+           under their own rulebook-specific classes rather than shared,
+           same independence reasoning as everywhere else in this doc. */
+        #game-rulebook-jump-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-rulebook-jump-overlay.visible {
+            display: flex;
+        }
+
+        .game-rulebook-jump-input {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 12px 0;
+            padding: 10px 12px;
+            font-size: 16px;
             text-align: center;
+            background: rgba(0, 0, 0, 0.08);
+            border: 2px solid rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+
+        /* Set-zoom prompt -- see openRulebookZoomOverlay()/
+           confirmRulebookZoomOverlay()/zoomRulebookToFit() in the
+           script. Same shell/input treatment as
+           #game-rulebook-jump-overlay just above, again duplicated
+           under its own ids/classes rather than shared. The Fit button
+           that used to sit in the main toolbar now lives here instead
+           (see openRulebookZoomOverlay()'s own comment for why) --
+           .game-rulebook-zoom-fit-btn reuses .game-save-slot-actions'
+           row layout but needs its own class since it's a third button
+           alongside Go/Cancel rather than either half of a two-button
+           row, so it gets its own rule below rather than fighting
+           .game-save-slot-actions' two-column assumption. */
+        #game-rulebook-zoom-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-rulebook-zoom-overlay.visible {
+            display: flex;
+        }
+
+        .game-rulebook-zoom-input {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 12px 0;
+            padding: 10px 12px;
+            font-size: 16px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.08);
+            border: 2px solid rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+
+        .filter-btn.game-rulebook-zoom-fit-btn {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0 0 10px 0;
         }
 
         /* Matches this file's other mobile/desktop split (viewport
@@ -7899,16 +8010,14 @@
                 font-size: 14px;
             }
 
-            .game-rulebook-page-indicator {
-                min-width: 0;
+            .game-rulebook-pill-btn {
                 font-size: 14px;
                 white-space: nowrap;
             }
 
+            .game-rulebook-page-indicator,
             .game-rulebook-zoom-indicator {
                 min-width: 0;
-                font-size: 14px;
-                white-space: nowrap;
             }
         }
 
@@ -7926,7 +8035,7 @@
                block layout plus margin:auto on the canvas itself (below)
                centers it the same way when it fits, but doesn't have
                that scroll-clamping bug once it doesn't. */
-            padding: 10px;
+            padding: 0px 10px 10px 10px;
         }
 
         .game-rulebook-pdfjs-canvas-wrap canvas {
@@ -12868,12 +12977,11 @@
                 <div class="game-rulebook-viewer" id="game-rulebook-viewer-pdfjs">
                     <div class="game-rulebook-pdfjs-toolbar">
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-prev-btn" aria-label="Previous page">&lsaquo; Prev</button>
-                        <span class="game-rulebook-page-indicator" id="game-rulebook-page-indicator">Loading&hellip;</span>
+                        <button type="button" class="game-rulebook-pill-btn game-rulebook-page-indicator" id="game-rulebook-page-indicator" aria-label="Jump to page">Loading&hellip;</button>
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-next-btn" aria-label="Next page">Next &rsaquo;</button>
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-out-btn" aria-label="Zoom out">&minus;</button>
-                        <span class="game-rulebook-zoom-indicator" id="game-rulebook-zoom-indicator" aria-live="polite"></span>
+                        <button type="button" class="game-rulebook-pill-btn game-rulebook-zoom-indicator" id="game-rulebook-zoom-indicator" aria-label="Set zoom percentage" aria-live="polite"></button>
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-in-btn" aria-label="Zoom in">+</button>
-                        <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-fit-btn" aria-label="Reset zoom to fit page width">Fit</button>
                     </div>
                     <div class="game-rulebook-pdfjs-canvas-wrap" id="game-rulebook-canvas-wrap">
                         <canvas id="game-rulebook-canvas"></canvas>
@@ -13054,6 +13162,49 @@
                 </div>
             </div>
         </div>
+
+        <!-- "Jump to Page" -- see openRulebookJumpOverlay()/
+             closeRulebookJumpOverlay()/confirmRulebookJumpOverlay() in
+             the script. Same plain-text-prompt shape as
+             #game-deck-look-prompt-overlay above (just asks a number,
+             Cancel backs out with nothing changed), duplicated under its
+             own ids/classes rather than shared -- same independence
+             reasoning as every other near-identical overlay pair in this
+             doc. Opened from #game-rulebook-page-indicator itself, which
+             doubles as the page X of Y readout and the button that opens
+             this. -->
+        <div id="game-rulebook-jump-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-rulebook-jump-title">Jump to Page</p>
+                <input type="text" inputmode="numeric" pattern="[0-9]*" class="game-rulebook-jump-input" id="game-rulebook-jump-input" placeholder="Page number" aria-label="Page number to jump to">
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-rulebook-jump-confirm-btn">Go</button>
+                    <button class="filter-btn exclude game-rulebook-jump-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- "Set Zoom" -- see openRulebookZoomOverlay()/
+             closeRulebookZoomOverlay()/confirmRulebookZoomOverlay() in
+             the script. Same plain-text-prompt shape as
+             #game-rulebook-jump-overlay above, opened from
+             #game-rulebook-zoom-indicator the same way that one opens
+             from #game-rulebook-page-indicator. "Fit to Page" used to be
+             its own button on the main toolbar; it's a zoom action same
+             as Go is, just one that ignores the typed number, so it
+             lives here now instead of taking up its own toolbar slot. -->
+        <div id="game-rulebook-zoom-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-rulebook-zoom-title">Set Zoom</p>
+                <input type="text" inputmode="numeric" pattern="[0-9]*" class="game-rulebook-zoom-input" id="game-rulebook-zoom-input" placeholder="Zoom %" aria-label="Zoom percentage">
+                <button class="filter-btn game-rulebook-zoom-fit-btn" id="game-rulebook-zoom-fit-btn" aria-label="Reset zoom to fit page width">Fit to Page</button>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn game-rulebook-zoom-confirm-btn">Go</button>
+                    <button class="filter-btn exclude game-rulebook-zoom-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
 
         <!-- Revive confirmation -- see openTeamReviveConfirmOverlay()/
              closeTeamReviveConfirmOverlay()/confirmTeamRevive() in the
@@ -27052,6 +27203,20 @@
             return (availableWidth > 0 && naturalWidth > 0) ? (availableWidth / naturalWidth) : 1;
         }
 
+        // Same 664px split as this file's other mobile/desktop CSS
+        // breakpoints (see e.g. the toolbar's own @media comment above).
+        // Desktop viewports are roomy enough that a plain 100% render is
+        // both legible and predictable, so the initial load targets that
+        // exact figure there instead of whatever computeRulebookFitScale()
+        // happens to land on (that math fits the wrap's *current* pixel
+        // width, which for this rulebook's page size comes out to ~104%,
+        // not a round 100%). Mobile keeps the fit-to-width calc, since
+        // that's the actual reason it exists -- a fixed 100% would
+        // overflow a phone-width wrap.
+        function computeRulebookInitialScale(page) {
+            return window.innerWidth > 663 ? 1 : computeRulebookFitScale(page);
+        }
+
         function loadRulebookPdfjsViewer() {
             if (rulebookPdfDoc) return;
             const statusEl = document.getElementById('game-rulebook-pdfjs-status');
@@ -27063,7 +27228,7 @@
                     rulebookPdfDoc = doc;
                     rulebookTotalPages = doc.numPages;
                     if (statusEl) statusEl.textContent = '';
-                    rulebookZoomScale = computeRulebookFitScale(firstPage);
+                    rulebookZoomScale = computeRulebookInitialScale(firstPage);
                     renderRulebookPage(1);
                 }))
                 .catch((err) => {
@@ -27100,16 +27265,21 @@
         }
 
         // Reset back to the fit-to-width scale the viewer opens at,
-        // regardless of how far the +/- buttons above have since moved
-        // rulebookZoomScale away from it. Deliberately re-derives that
-        // scale from the *current* page and the wrap's *current* width
-        // via computeRulebookFitScale() rather than reusing whatever
-        // value loadRulebookPdfjsViewer() first calculated -- the room
-        // available can genuinely change later (a phone rotating from
-        // portrait to landscape, say), and re-fetching page 1's fixed
-        // width would also be wrong on a rulebook whose pages aren't all
-        // the same size. Uses rulebookCurrentPage rather than always page
-        // 1 so "fit" fits whatever page is actually on screen right now.
+        // regardless of how far the +/- buttons or the zoom overlay's
+        // own Go have since moved rulebookZoomScale away from it.
+        // Deliberately re-derives that scale from the *current* page and
+        // the wrap's *current* width via computeRulebookFitScale()
+        // rather than reusing whatever value loadRulebookPdfjsViewer()
+        // first calculated -- the room available can genuinely change
+        // later (a phone rotating from portrait to landscape, say), and
+        // re-fetching page 1's fixed width would also be wrong on a
+        // rulebook whose pages aren't all the same size. Uses
+        // rulebookCurrentPage rather than always page 1 so "fit" fits
+        // whatever page is actually on screen right now. Called from the
+        // zoom overlay's own Fit to Page button (see that overlay's
+        // click listener, which also closes the overlay after) -- this
+        // function itself doesn't touch the overlay, same as
+        // confirmRulebookZoomOverlay() leaving that as the caller's job.
         function zoomRulebookToFit() {
             if (!rulebookPdfDoc) return;
             rulebookPdfDoc.getPage(rulebookCurrentPage).then((page) => {
@@ -27118,13 +27288,131 @@
             });
         }
 
+        // Opens on a tap of #game-rulebook-page-indicator itself (the
+        // "X of Y" readout doubles as this overlay's open button -- see
+        // its own CSS comment). Pre-fills the input with the current
+        // page so Go with no changes just re-renders the same page
+        // rather than landing somewhere unexpected.
+        function openRulebookJumpOverlay() {
+            if (!rulebookPdfDoc) return;
+            const inputEl = document.getElementById('game-rulebook-jump-input');
+            if (inputEl) inputEl.value = String(rulebookCurrentPage);
+            document.getElementById('game-rulebook-jump-overlay').classList.add('visible');
+            if (inputEl) {
+                inputEl.focus();
+                inputEl.select();
+            }
+        }
+
+        function closeRulebookJumpOverlay() {
+            document.getElementById('game-rulebook-jump-overlay').classList.remove('visible');
+        }
+
+        // Same validation shape as confirmDeckLookPrompt() -- rejects
+        // outright garbage (blank, zero, negative, non-numeric) rather
+        // than silently doing nothing, but a too-high/too-low page
+        // number is handled differently: renderRulebookPage() already
+        // clamps pageNum into [1, rulebookTotalPages] for every caller
+        // (Prev/Next included), so letting it do the same clamping here
+        // rather than rejecting out-of-range input means "Go" on 999
+        // just lands on the last page instead of erroring for no real
+        // reason.
+        function confirmRulebookJumpOverlay() {
+            const inputEl = document.getElementById('game-rulebook-jump-input');
+            const raw = inputEl ? inputEl.value.trim() : '';
+            const pageNum = parseInt(raw, 10);
+            if (!raw || !Number.isInteger(pageNum) || pageNum <= 0 || String(pageNum) !== raw) {
+                showRulebookJumpNotice('Enter a positive whole number.');
+                return;
+            }
+            closeRulebookJumpOverlay();
+            renderRulebookPage(pageNum);
+        }
+
+        // No dedicated notice banner exists for the rulebook screen the
+        // way showDecksNotice() has one for Decks -- reusing the input
+        // itself as the error surface (placeholder swap + a moment's
+        // red border) rather than introducing a whole new banner element
+        // just for this one validation message.
+        function showRulebookJumpNotice(message) {
+            const inputEl = document.getElementById('game-rulebook-jump-input');
+            if (!inputEl) return;
+            inputEl.value = '';
+            inputEl.placeholder = message;
+            inputEl.style.borderColor = '#c0392b';
+            setTimeout(() => {
+                inputEl.placeholder = 'Page number';
+                inputEl.style.borderColor = '';
+            }, 1500);
+        }
+
+        // Opens on a tap of #game-rulebook-zoom-indicator itself, same
+        // as #game-rulebook-page-indicator opens the jump overlay.
+        // Pre-fills with the current zoom rounded to a whole percent,
+        // same reasoning as the jump overlay pre-filling the current
+        // page: Go with no changes just re-renders at the same zoom.
+        function openRulebookZoomOverlay() {
+            if (!rulebookPdfDoc) return;
+            const inputEl = document.getElementById('game-rulebook-zoom-input');
+            if (inputEl) inputEl.value = String(Math.round(rulebookZoomScale * 100));
+            document.getElementById('game-rulebook-zoom-overlay').classList.add('visible');
+            if (inputEl) {
+                inputEl.focus();
+                inputEl.select();
+            }
+        }
+
+        function closeRulebookZoomOverlay() {
+            document.getElementById('game-rulebook-zoom-overlay').classList.remove('visible');
+        }
+
+        // Same validation shape as confirmRulebookJumpOverlay(), but the
+        // valid range is clamped rather than left open-ended: typing
+        // 2000 into this box would ask renderRulebookPage() for a canvas
+        // bitmap thousands of pixels on a side (see its own
+        // devicePixelRatio comment for why that number climbs fast on a
+        // high-DPR phone), which is a real memory/perf cost for a zoom
+        // level nobody actually reads a rulebook at. Bounded to the same
+        // 25-200% range the +/- buttons already stay within
+        // (RULEBOOK_ZOOM_LEVELS's own first/last stops), so free-typed
+        // and stepped zoom can never disagree about what's reachable.
+        function confirmRulebookZoomOverlay() {
+            const inputEl = document.getElementById('game-rulebook-zoom-input');
+            const raw = inputEl ? inputEl.value.trim() : '';
+            const percent = parseInt(raw, 10);
+            const minPercent = RULEBOOK_ZOOM_LEVELS[0] * 100;
+            const maxPercent = RULEBOOK_ZOOM_LEVELS[RULEBOOK_ZOOM_LEVELS.length - 1] * 100;
+            if (!raw || !Number.isInteger(percent) || String(percent) !== raw || percent < minPercent || percent > maxPercent) {
+                showRulebookZoomNotice(`Enter a number from ${minPercent} to ${maxPercent}.`);
+                return;
+            }
+            closeRulebookZoomOverlay();
+            rulebookZoomScale = percent / 100;
+            renderRulebookPage(rulebookCurrentPage);
+        }
+
+        // Same input-as-error-surface treatment as
+        // showRulebookJumpNotice() -- see its own comment for why there's
+        // no separate banner element here.
+        function showRulebookZoomNotice(message) {
+            const inputEl = document.getElementById('game-rulebook-zoom-input');
+            if (!inputEl) return;
+            inputEl.value = '';
+            inputEl.placeholder = message;
+            inputEl.style.borderColor = '#c0392b';
+            setTimeout(() => {
+                inputEl.placeholder = 'Zoom %';
+                inputEl.style.borderColor = '';
+            }, 1500);
+        }
+
         function renderRulebookPage(pageNum) {
             if (!rulebookPdfDoc) return;
             const clamped = Math.max(1, Math.min(pageNum, rulebookTotalPages));
             rulebookCurrentPage = clamped;
             const token = ++rulebookRenderToken;
             const pageIndicatorEl = document.getElementById('game-rulebook-page-indicator');
-            if (pageIndicatorEl) pageIndicatorEl.textContent = `Page ${clamped} of ${rulebookTotalPages}`;
+            if (pageIndicatorEl) pageIndicatorEl.textContent = `${clamped} of ${rulebookTotalPages}`;
             // rulebookZoomScale is already whatever this render should
             // use by the time this runs -- set either by the initial
             // fit-to-width calc or by the zoom +/- handlers just before
@@ -27145,22 +27433,76 @@
                 // percentages, so `viewport` above must stay exactly what
                 // it was for that math to keep meaning what the zoom
                 // indicator says it means. The bitmap actually drawn into
-                // the canvas is a separate concern: on a high-DPR phone
-                // (devicePixelRatio 2-3), a canvas backed by only one
-                // pixel per CSS pixel is coarser than the screen it's
-                // shown on, so the browser has to stretch it to fill the
-                // real display -- that's the "lower quality" softness on
-                // mobile, not any actual compression of the PDF. Sizing
-                // the backing bitmap up by devicePixelRatio and then
-                // pinning the CSS box back down to the original
-                // CSS-pixel viewport gives the browser enough source
-                // pixels to fill the screen 1:1 instead of stretching.
-                const outputScale = window.devicePixelRatio || 1;
-                canvas.width = Math.floor(viewport.width * outputScale);
-                canvas.height = Math.floor(viewport.height * outputScale);
-                canvas.style.width = `${viewport.width}px`;
-                canvas.style.height = `${viewport.height}px`;
+                // On a scanned/raster PDF, matching outputScale to
+                // devicePixelRatio alone (1 on a typical desktop
+                // monitor) would be enough -- there's a real embedded
+                // image with real pixels, and native resolution just
+                // shows those pixels as they are. But this rulebook is
+                // vector text, and vector fills get rasterized fresh at
+                // whatever resolution they're drawn at, with no font
+                // hinting the way native OS text rendering has. At
+                // exactly 1 device pixel per CSS pixel there often
+                // aren't enough pixels per glyph for anti-aliasing to
+                // smooth thin strokes convincingly, which reads as
+                // "blocky" even though nothing is technically being
+                // stretched -- and explains why the devicePixelRatio-
+                // only version of this fix (and the imageSmoothingQuality
+                // change after it, which only ever affected bitmap
+                // stretching, not vector fills) made no visible
+                // difference on a 1x desktop screen: outputScale stayed
+                // at 1 either way, so nothing about how the text itself
+                // got rasterized had changed. Forcing a minimum of 2
+                // here means every render -- desktop included --
+                // supersamples: pdf.js draws the page at roughly double
+                // the pixel density the screen actually needs, and the
+                // browser's downscale filter (now 'high' quality, set
+                // below) smooths that back down to display size, the
+                // same trick "Retina" rendering gets for free on
+                // high-DPR screens, just applied deliberately here even
+                // where the display doesn't already ask for it.
+                const outputScale = Math.max(window.devicePixelRatio || 1, 2);
+                // Floored once here so canvas.width/height and
+                // canvas.style.width/height are both built from the
+                // exact same whole-pixel numbers below -- viewport.width/
+                // height themselves are essentially never whole numbers
+                // (they're this page's native size times whatever
+                // fractional rulebookZoomScale got landed on), and
+                // leaving the CSS side unrounded while the bitmap side
+                // got floored was the actual bug: at outputScale 1 (a
+                // typical desktop monitor, no retina scaling in play at
+                // all), that mismatch alone forced the browser to
+                // stretch a whole-pixel bitmap across a fractional-pixel
+                // box on every single render, and it's exactly why this
+                // was zoom-level-dependent -- some percentages happen to
+                // land viewport.width close to a whole number (looks
+                // fine), others land it far from one (visibly blocky).
+                const cssWidth = Math.floor(viewport.width);
+                const cssHeight = Math.floor(viewport.height);
+                canvas.width = Math.floor(cssWidth * outputScale);
+                canvas.height = Math.floor(cssHeight * outputScale);
+                canvas.style.width = `${cssWidth}px`;
+                canvas.style.height = `${cssHeight}px`;
                 const ctx = canvas.getContext('2d');
+                // Browsers default imageSmoothingQuality to 'low', which
+                // uses a cheaper, blockier resampling filter for any
+                // raster content the page draws -- this is the actual
+                // fix for desktop blockiness, distinct from the
+                // devicePixelRatio handling above (that only changes
+                // anything on a high-DPR screen; on a standard 1x
+                // desktop monitor it was already a no-op, which is
+                // exactly why it didn't help there). Matters most if
+                // this rulebook is a scanned/rasterized PDF rather than
+                // vector text -- 'low' quality is most visible exactly
+                // where the report was, zoomed content with fine detail
+                // like text -- but costs nothing to set even on a purely
+                // vector PDF where there's no raster content for it to
+                // apply to. Set on every render rather than once, since
+                // getContext('2d') on an already-initialized canvas
+                // returns the same context object back either way,
+                // making a one-time setup call no safer than just
+                // stating it fresh each time here.
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
                 // Scales the drawing operations up to match the larger
                 // backing bitmap; passed as render()'s own transform
                 // rather than ctx.scale() directly so it can't leak into
@@ -27238,11 +27580,11 @@
             document.querySelectorAll('.game-screen').forEach(el => {
                 el.classList.toggle('active', el.id === `game-screen-${screenId}`);
             });
-            // Doubles the panel's width on desktop specifically for the
-            // Rulebook screen (see #game-panel.game-rulebook-wide's own
-            // comment) and reverts it the moment any other screen
-            // becomes active -- including 'main', so stepping back out
-            // shrinks the panel again rather than leaving it wide.
+            // Widens the panel on desktop specifically for the Rulebook
+            // screen (see #game-panel.game-rulebook-wide's own comment)
+            // and reverts it the moment any other screen becomes active
+            // -- including 'main', so stepping back out shrinks the
+            // panel again rather than leaving it wide.
             const isRulebookScreen = screenId === 'rulebook';
             const gamePanelEl = document.getElementById('game-panel');
             if (gamePanelEl) gamePanelEl.classList.toggle('game-rulebook-wide', isRulebookScreen);
@@ -30154,8 +30496,12 @@
                 zoomRulebookTo('in');
                 return;
             }
-            if (e.target.closest('#game-rulebook-zoom-fit-btn')) {
-                zoomRulebookToFit();
+            if (e.target.closest('#game-rulebook-page-indicator')) {
+                openRulebookJumpOverlay();
+                return;
+            }
+            if (e.target.closest('#game-rulebook-zoom-indicator')) {
+                openRulebookZoomOverlay();
                 return;
             }
 
@@ -31282,6 +31628,47 @@
 
         document.getElementById('game-deck-look-prompt-input').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') confirmDeckLookPrompt();
+        });
+
+        // Jump-to-page overlay -- same click-outside/Cancel-backs-out-
+        // with-nothing-changed shape as #game-deck-look-prompt-overlay's
+        // own listener just above.
+        document.getElementById('game-rulebook-jump-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-rulebook-jump-overlay' || e.target.closest('.game-rulebook-jump-cancel-btn')) {
+                closeRulebookJumpOverlay();
+                return;
+            }
+            if (e.target.closest('.game-rulebook-jump-confirm-btn')) {
+                confirmRulebookJumpOverlay();
+            }
+        });
+
+        document.getElementById('game-rulebook-jump-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') confirmRulebookJumpOverlay();
+        });
+
+        // Set-zoom overlay -- same click-outside/Cancel-backs-out-with-
+        // nothing-changed shape as #game-rulebook-jump-overlay's own
+        // listener just above, plus Fit to Page as a third action that
+        // ignores whatever's typed in the box and calls
+        // zoomRulebookToFit() instead of confirmRulebookZoomOverlay().
+        document.getElementById('game-rulebook-zoom-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-rulebook-zoom-overlay' || e.target.closest('.game-rulebook-zoom-cancel-btn')) {
+                closeRulebookZoomOverlay();
+                return;
+            }
+            if (e.target.closest('.game-rulebook-zoom-confirm-btn')) {
+                confirmRulebookZoomOverlay();
+                return;
+            }
+            if (e.target.closest('.game-rulebook-zoom-fit-btn')) {
+                closeRulebookZoomOverlay();
+                zoomRulebookToFit();
+            }
+        });
+
+        document.getElementById('game-rulebook-zoom-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') confirmRulebookZoomOverlay();
         });
 
         // The peeked-cards viewer -- exact same shape as
