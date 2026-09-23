@@ -27486,8 +27486,31 @@
 
             const statusEl = document.getElementById('game-rulebook-pdfjs-status');
             const pageIndicatorEl = document.getElementById('game-rulebook-page-indicator');
+            const zoomIndicatorEl = document.getElementById('game-rulebook-zoom-indicator');
+            const canvasEl = document.getElementById('game-rulebook-canvas');
             rulebookPdfDoc = null;
             rulebookLoadedId = null;
+            // Invalidates any render still in flight for whatever book
+            // was previously loading/showing -- without this, a slow
+            // renderRulebookPage() call left over from the last book
+            // could resolve after this point and draw its page onto
+            // what's now a different book's canvas.
+            rulebookRenderToken++;
+            // Blanks the canvas right away instead of leaving the
+            // previous book's last-rendered page on screen for however
+            // long this book takes to fetch/parse/render its own first
+            // page -- reassigning width/height (even to the same value)
+            // clears a canvas's bitmap per spec, and collapsing it to
+            // 0x0 also means it can't briefly show at a mismatched size
+            // if the new book's page dimensions differ from the old
+            // one's.
+            if (canvasEl) {
+                canvasEl.width = 0;
+                canvasEl.height = 0;
+            }
+            if (pageIndicatorEl) pageIndicatorEl.textContent = 'Loading\u2026';
+            if (zoomIndicatorEl) zoomIndicatorEl.textContent = '';
+            if (statusEl) statusEl.textContent = '';
 
             const cached = rulebookDocCache[book.id];
             const docPromise = cached
