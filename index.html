@@ -12873,6 +12873,7 @@
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-out-btn" aria-label="Zoom out">&minus;</button>
                         <span class="game-rulebook-zoom-indicator" id="game-rulebook-zoom-indicator" aria-live="polite"></span>
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-in-btn" aria-label="Zoom in">+</button>
+                        <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-fit-btn" aria-label="Reset zoom to fit page width">Fit</button>
                     </div>
                     <div class="game-rulebook-pdfjs-canvas-wrap" id="game-rulebook-canvas-wrap">
                         <canvas id="game-rulebook-canvas"></canvas>
@@ -27033,6 +27034,24 @@
             return rulebookPdfjsLoadPromise;
         }
 
+        // Shared by loadRulebookPdfjsViewer()'s initial render and
+        // zoomRulebookToFit() below -- this page's own natural (scale 1)
+        // width, divided into whatever room the wrap actually has right
+        // now (minus its own left/right padding), gives a scale where
+        // the page's rendered width just matches the viewer -- reasonable
+        // regardless of whether this particular PDF's pages are US
+        // Letter, A4, or something else entirely. Recomputed from the
+        // wrap's *current* clientWidth rather than cached from page load,
+        // so it still lands correctly if the screen has since rotated or
+        // resized. Falls back to 1 (no scaling) if the wrap isn't in the
+        // DOM yet or reports zero width for any reason.
+        function computeRulebookFitScale(page) {
+            const wrapEl = document.getElementById('game-rulebook-canvas-wrap');
+            const naturalWidth = page.getViewport({ scale: 1 }).width;
+            const availableWidth = wrapEl ? wrapEl.clientWidth - 20 : 0;
+            return (availableWidth > 0 && naturalWidth > 0) ? (availableWidth / naturalWidth) : 1;
+        }
+
         function loadRulebookPdfjsViewer() {
             if (rulebookPdfDoc) return;
             const statusEl = document.getElementById('game-rulebook-pdfjs-status');
@@ -27044,19 +27063,7 @@
                     rulebookPdfDoc = doc;
                     rulebookTotalPages = doc.numPages;
                     if (statusEl) statusEl.textContent = '';
-                    // Fit-to-width: this page's own natural (scale 1)
-                    // width, divided into whatever room the wrap
-                    // actually has right now (minus its own left/right
-                    // padding), gives a scale where the page's rendered
-                    // width just matches the viewer -- reasonable
-                    // regardless of whether this particular PDF's pages
-                    // are US Letter, A4, or something else entirely.
-                    // Falls back to 1 (no scaling) if the wrap isn't in
-                    // the DOM yet or reports zero width for any reason.
-                    const wrapEl = document.getElementById('game-rulebook-canvas-wrap');
-                    const naturalWidth = firstPage.getViewport({ scale: 1 }).width;
-                    const availableWidth = wrapEl ? wrapEl.clientWidth - 20 : 0;
-                    rulebookZoomScale = (availableWidth > 0 && naturalWidth > 0) ? (availableWidth / naturalWidth) : 1;
+                    rulebookZoomScale = computeRulebookFitScale(firstPage);
                     renderRulebookPage(1);
                 }))
                 .catch((err) => {
@@ -27069,6 +27076,7 @@
                     if (pageIndicatorEl) pageIndicatorEl.textContent = 'Failed to load';
                 });
         }
+
 
         // Moves rulebookZoomScale to the next stop in RULEBOOK_ZOOM_LEVELS
         // in the given direction, rather than multiplying it by a fixed
@@ -27089,6 +27097,25 @@
                 rulebookZoomScale = lowerLevels.length ? lowerLevels[lowerLevels.length - 1] : RULEBOOK_ZOOM_LEVELS[0];
             }
             renderRulebookPage(rulebookCurrentPage);
+        }
+
+        // Reset back to the fit-to-width scale the viewer opens at,
+        // regardless of how far the +/- buttons above have since moved
+        // rulebookZoomScale away from it. Deliberately re-derives that
+        // scale from the *current* page and the wrap's *current* width
+        // via computeRulebookFitScale() rather than reusing whatever
+        // value loadRulebookPdfjsViewer() first calculated -- the room
+        // available can genuinely change later (a phone rotating from
+        // portrait to landscape, say), and re-fetching page 1's fixed
+        // width would also be wrong on a rulebook whose pages aren't all
+        // the same size. Uses rulebookCurrentPage rather than always page
+        // 1 so "fit" fits whatever page is actually on screen right now.
+        function zoomRulebookToFit() {
+            if (!rulebookPdfDoc) return;
+            rulebookPdfDoc.getPage(rulebookCurrentPage).then((page) => {
+                rulebookZoomScale = computeRulebookFitScale(page);
+                renderRulebookPage(rulebookCurrentPage);
+            });
         }
 
         function renderRulebookPage(pageNum) {
@@ -30125,6 +30152,10 @@
             }
             if (e.target.closest('#game-rulebook-zoom-in-btn')) {
                 zoomRulebookTo('in');
+                return;
+            }
+            if (e.target.closest('#game-rulebook-zoom-fit-btn')) {
+                zoomRulebookToFit();
                 return;
             }
 
