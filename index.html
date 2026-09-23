@@ -8212,6 +8212,17 @@
             margin: 0;
         }
 
+        /* Same look as .game-rulebook-pdfjs-status above, just for the
+           picker screen's own loading/error line -- kept as its own
+           class rather than shared since the two live on different
+           screens and have no other reason to stay in lockstep. */
+        .game-rulebook-picker-status {
+            text-align: center;
+            color: white;
+            padding: 6px 10px 0;
+            margin: 0;
+        }
+
         /* Move Type (left) / Defending Type(s) (right), side by side.
            Each .game-matchup-column is just a plain flex child -- when
            Dual Defending Types is on, Defending Type 2's select stacks
@@ -12687,7 +12698,7 @@
                     <button class="filter-btn" data-target="matchup">Type Matchup</button>
                     <button class="filter-btn" data-target="calc">Attack Calculator</button>
                     <button class="filter-btn" data-target="lobby">Multiplayer Lobby</button>
-                    <button class="filter-btn" data-target="rulebook">Rulebook</button>
+                    <button class="filter-btn" data-target="rulebook-picker">Rulebook</button>
                 </div>
             </div>
 
@@ -13101,6 +13112,25 @@
                 </div>
             </div>
 
+            <!-- Picked from here (see renderRulebookPicker() in the
+                 script, fed by rulebooks.json -- same
+                 fetch-a-repo-level-JSON-file pattern as cards.json/
+                 gym-badges.json/music-tracks.json elsewhere in this
+                 doc) before the viewer screen below ever opens, so
+                 adding another book later is just another entry in
+                 that JSON file, no HTML/script changes needed. -->
+            <div class="game-screen" id="game-screen-rulebook-picker">
+                <div class="game-screen-header">
+                    <span class="game-screen-back-wrap">
+                        <span class="game-screen-back-decor"></span>
+                        <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
+                    </span>
+                </div>
+                <p class="game-screen-title">Rulebook</p>
+
+                <div class="game-menu-tiles" id="game-rulebook-picker-list"></div>
+            </div>
+
             <!-- The native-viewer/PDF.js comparison this screen started
                  as (see the git history if you need the old iframe
                  approach back) is settled -- PDF.js won, since Dropbox
@@ -13113,10 +13143,10 @@
                 <div class="game-screen-header">
                     <span class="game-screen-back-wrap">
                         <span class="game-screen-back-decor"></span>
-                        <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
+                        <button class="game-back-btn game-screen-back-btn" data-target="rulebook-picker" aria-label="Back"></button>
                     </span>
                 </div>
-                <p class="game-screen-title">Rulebook</p>
+                <p class="game-screen-title" id="game-rulebook-viewer-title">Rulebook</p>
 
                 <div class="game-rulebook-viewer" id="game-rulebook-viewer-pdfjs">
                     <div class="game-rulebook-pdfjs-toolbar">
@@ -27253,11 +27283,78 @@
 
         // ---- Rulebook (test build -- see the screen's own HTML
         // comment) ----
-        // Direct-content Dropbox link (dl=1, same dl.dropboxusercontent.com
-        // pattern this file already uses for fonts/images) rather than a
-        // dropbox.com share link, which would open Dropbox's own preview
-        // page instead of serving the raw PDF bytes either viewer needs.
-        const RULEBOOK_PDF_URL = 'https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/rulebooks/PMTU%20Core%20-%20Move%20Rules%20and%20Effects%205.3%20-%20Darkprince909%20Revision.pdf';
+        // List of available rulebooks, fetched from rulebooks.json --
+        // same repo/root-level-file convention as pokemon-data.json/
+        // gym-badges.json/cards.json/music-tracks.json elsewhere in this
+        // doc. Each entry is expected to look like
+        // { "id": "core", "title": "Core Rules", "url": "https://raw.githubusercontent.com/.../Core%20Rules.pdf" },
+        // with url following the same direct-content raw-GitHub-link
+        // shape RULEBOOK_PDF_URL used to be hardcoded to (a dropbox.com
+        // *share* link or a GitHub blob/tree page URL would serve an
+        // HTML preview page instead of the raw PDF bytes either viewer
+        // needs). Adding another book later is just another entry in
+        // that file -- nothing here or in the HTML needs to change.
+        const RULEBOOKS_URL = 'https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/rulebooks.json';
+        let rulebookBooks = [];
+        // Distinguishes "hasn't resolved yet" (still shows "Loading...")
+        // from "resolved to nothing usable" (shows a real error instead
+        // of loading forever) in renderRulebookPicker() below -- the
+        // empty-array state alone can't tell those two apart.
+        let rulebookBooksLoadFailed = false;
+        // The book most recently tapped in the picker (see
+        // selectRulebook() below). Sticks around after leaving the
+        // viewer screen so coming straight back re-opens the same book
+        // rather than forcing a fresh pick every time.
+        let currentRulebookBook = null;
+
+        fetch(RULEBOOKS_URL)
+            .then(res => res.json())
+            .then(data => {
+                rulebookBooks = Array.isArray(data) ? data : [];
+                renderRulebookPicker();
+            })
+            .catch(err => {
+                console.warn('Could not load rulebook list:', err);
+                rulebookBooksLoadFailed = true;
+                renderRulebookPicker();
+            });
+
+        // Builds the picker screen's button list from rulebookBooks --
+        // called once fetch(RULEBOOKS_URL) above resolves (in case the
+        // picker screen is already open and waiting) and again from
+        // setGameScreen() every time that screen becomes active (in
+        // case the fetch already resolved before the person ever opened
+        // it -- the far more common case in practice).
+        function renderRulebookPicker() {
+            const listEl = document.getElementById('game-rulebook-picker-list');
+            if (!listEl) return;
+            if (rulebookBooksLoadFailed) {
+                listEl.innerHTML = '<p class="game-rulebook-picker-status">Could not load the rulebook list.</p>';
+                return;
+            }
+            if (!rulebookBooks.length) {
+                listEl.innerHTML = '<p class="game-rulebook-picker-status">Loading rulebooks&hellip;</p>';
+                return;
+            }
+            listEl.innerHTML = rulebookBooks.map(book =>
+                `<button type="button" class="filter-btn game-rulebook-picker-btn" data-book-id="${escapeHtml(book.id)}">${escapeHtml(book.title)}</button>`
+            ).join('');
+        }
+
+        // Opens the viewer screen on a specific book -- the picker
+        // screen's own click handler (see the delegated listener) is
+        // the only caller. Deliberately just sets state and hands off
+        // to setGameScreen() rather than also calling
+        // loadRulebookPdfjsViewer() itself: setGameScreen('rulebook')
+        // already triggers initRulebookScreen() below, same as it would
+        // for any other route into this screen.
+        function selectRulebook(bookId) {
+            const book = rulebookBooks.find(b => b.id === bookId);
+            if (!book) return;
+            currentRulebookBook = book;
+            setGameScreen('rulebook');
+        }
+
         // Pinned exact version, loaded from cdnjs -- same CDN and
         // "pin an exact version" approach as every other CDN-loaded
         // library already in this codebase. Deliberately the last 3.x
@@ -27280,6 +27377,20 @@
         // opening this screen, leaving, and coming back doesn't inject
         // and load the library a second time.
         let rulebookPdfjsLoadPromise = null;
+        // Keyed by book id -- once a given book's pdf.js document has
+        // been fetched and parsed, switching to a different book and
+        // back to this one re-uses the same object instead of
+        // re-downloading it. rulebookPdfDoc below always mirrors
+        // whichever entry matches currentRulebookBook.id right now (or
+        // null while that entry is still loading for the first time).
+        const rulebookDocCache = {};
+        // Which book's pages rulebookPdfDoc/rulebookCurrentPage/
+        // rulebookZoomScale actually describe -- compared against
+        // currentRulebookBook.id by loadRulebookPdfjsViewer() below to
+        // tell "already showing this exact book, just resume where the
+        // person left off" apart from "a different book was just
+        // picked, reset to page 1."
+        let rulebookLoadedId = null;
         let rulebookPdfDoc = null;
         let rulebookCurrentPage = 1;
         let rulebookTotalPages = 0;
@@ -27363,15 +27474,35 @@
         }
 
         function loadRulebookPdfjsViewer() {
-            if (rulebookPdfDoc) return;
+            if (!currentRulebookBook) return;
+            const book = currentRulebookBook;
+            const titleEl = document.getElementById('game-rulebook-viewer-title');
+            if (titleEl) titleEl.textContent = book.title || 'Rulebook';
+
+            // Already showing this exact book (e.g. the person left for
+            // another screen and came straight back) -- leave their
+            // current page/zoom alone rather than resetting to page 1.
+            if (rulebookPdfDoc && rulebookLoadedId === book.id) return;
+
             const statusEl = document.getElementById('game-rulebook-pdfjs-status');
             const pageIndicatorEl = document.getElementById('game-rulebook-page-indicator');
-            if (statusEl) statusEl.textContent = 'Loading PDF.js\u2026';
-            loadPdfJsLibrary()
-                .then((pdfjsLib) => pdfjsLib.getDocument(RULEBOOK_PDF_URL).promise)
+            rulebookPdfDoc = null;
+            rulebookLoadedId = null;
+
+            const cached = rulebookDocCache[book.id];
+            const docPromise = cached
+                ? Promise.resolve(cached)
+                : loadPdfJsLibrary().then((pdfjsLib) => pdfjsLib.getDocument(book.url).promise);
+
+            if (!cached && statusEl) statusEl.textContent = 'Loading PDF.js\u2026';
+
+            docPromise
                 .then((doc) => doc.getPage(1).then((firstPage) => {
+                    rulebookDocCache[book.id] = doc;
                     rulebookPdfDoc = doc;
+                    rulebookLoadedId = book.id;
                     rulebookTotalPages = doc.numPages;
+                    rulebookCurrentPage = 1;
                     if (statusEl) statusEl.textContent = '';
                     rulebookZoomScale = computeRulebookInitialScale(firstPage);
                     renderRulebookPage(1);
@@ -27392,22 +27523,28 @@
         // device. Prefers the already-loaded pdf.js document's own
         // getData() -- which hands back the complete underlying bytes
         // regardless of whether pdf.js fetched them in one shot or via
-        // range requests -- over a fresh fetch() of RULEBOOK_PDF_URL, so
-        // a click here doesn't re-download a multi-page rulebook that's
-        // already sitting in memory. Falls back to fetch() only if this
-        // is somehow called before rulebookPdfDoc exists. Routes through
-        // a Blob + object URL rather than pointing an <a download> tag
-        // straight at RULEBOOK_PDF_URL, since a cross-origin download
-        // attribute like that is honored inconsistently across browsers
-        // -- a same-origin blob: URL always downloads instead of
-        // navigating.
+        // range requests -- over a fresh fetch() of the book's own url,
+        // so a click here doesn't re-download a multi-page rulebook
+        // that's already sitting in memory (rulebookDocCache means
+        // that's true even for a book that isn't the *current* one's
+        // pdf.js document right this instant, but downloadRulebookPdf()
+        // is only ever reachable from this book's own toolbar, so that
+        // distinction doesn't come up in practice). Falls back to
+        // fetch() only if this is somehow called before rulebookPdfDoc
+        // exists. Routes through a Blob + object URL rather than
+        // pointing an <a download> tag straight at the book's own url,
+        // since a cross-origin download attribute like that is honored
+        // inconsistently across browsers -- a same-origin blob: URL
+        // always downloads instead of navigating.
         function downloadRulebookPdf() {
+            if (!currentRulebookBook) return;
+            const book = currentRulebookBook;
             const statusEl = document.getElementById('game-rulebook-pdfjs-status');
             const saveBlob = (blob) => {
                 const blobUrl = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = blobUrl;
-                link.download = 'PMTU Core - Move Rules and Effects 5.3.pdf';
+                link.download = `${book.title || 'Rulebook'}.pdf`;
                 document.body.appendChild(link);
                 link.click();
                 link.remove();
@@ -27415,7 +27552,7 @@
             };
             const dataPromise = rulebookPdfDoc
                 ? rulebookPdfDoc.getData().then((data) => new Blob([data], { type: 'application/pdf' }))
-                : fetch(RULEBOOK_PDF_URL).then((res) => res.blob());
+                : fetch(book.url).then((res) => res.blob());
             dataPromise
                 .then(saveBlob)
                 .catch((err) => {
@@ -27775,6 +27912,7 @@
             if (scrollEl) scrollEl.scrollTop = 0;
             if (screenId === 'lobby') prefillLobbyHostName();
             if (screenId === 'decks') renderDecksScreen();
+            if (screenId === 'rulebook-picker') renderRulebookPicker();
             if (screenId === 'rulebook') initRulebookScreen();
         }
 
@@ -30657,6 +30795,12 @@
                 // synthetic click at this button.
                 if (matchupToggleBtn.disabled) return;
                 toggleMatchupOption(matchupToggleBtn.dataset.toggle);
+                return;
+            }
+
+            const rulebookPickerBtn = e.target.closest('.game-rulebook-picker-btn');
+            if (rulebookPickerBtn) {
+                selectRulebook(rulebookPickerBtn.dataset.bookId);
                 return;
             }
 
