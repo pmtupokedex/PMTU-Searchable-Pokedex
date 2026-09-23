@@ -27389,8 +27389,17 @@
         // currentRulebookBook.id by loadRulebookPdfjsViewer() below to
         // tell "already showing this exact book, just resume where the
         // person left off" apart from "a different book was just
-        // picked, reset to page 1."
+        // picked, resume wherever *that* book's own reading position
+        // last was (see rulebookLastPageById just below)."
         let rulebookLoadedId = null;
+        // Keyed by book id -- the page the person was last looking at
+        // in each book, updated on every renderRulebookPage() call (see
+        // its own comment). Session-only by design (a plain in-memory
+        // object, nothing written to storage), so switching between
+        // books remembers each one's position, but an actual page
+        // reload starts everything fresh again -- same lifetime as
+        // rulebookDocCache above, for the same reason.
+        const rulebookLastPageById = {};
         let rulebookPdfDoc = null;
         let rulebookCurrentPage = 1;
         let rulebookTotalPages = 0;
@@ -27525,10 +27534,16 @@
                     rulebookPdfDoc = doc;
                     rulebookLoadedId = book.id;
                     rulebookTotalPages = doc.numPages;
-                    rulebookCurrentPage = 1;
                     if (statusEl) statusEl.textContent = '';
                     rulebookZoomScale = computeRulebookInitialScale(firstPage);
-                    renderRulebookPage(1);
+                    // Resumes wherever the person last left off in this
+                    // particular book this session (see
+                    // rulebookLastPageById's own comment); falls back to
+                    // page 1 for a book that hasn't been opened yet, and
+                    // clamps in case the remembered page somehow exceeds
+                    // this book's own page count.
+                    const startPage = Math.min(rulebookLastPageById[book.id] || 1, rulebookTotalPages);
+                    renderRulebookPage(startPage);
                 }))
                 .catch((err) => {
                     // Most likely cause here is the PDF host not sending
@@ -27750,6 +27765,9 @@
             if (!rulebookPdfDoc) return;
             const clamped = Math.max(1, Math.min(pageNum, rulebookTotalPages));
             rulebookCurrentPage = clamped;
+            // Remembers this book's reading position for the rest of
+            // the session -- see rulebookLastPageById's own comment.
+            if (currentRulebookBook) rulebookLastPageById[currentRulebookBook.id] = clamped;
             const token = ++rulebookRenderToken;
             const pageIndicatorEl = document.getElementById('game-rulebook-page-indicator');
             if (pageIndicatorEl) pageIndicatorEl.textContent = `${clamped} of ${rulebookTotalPages}`;
