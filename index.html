@@ -27112,10 +27112,37 @@
                 const canvas = document.getElementById('game-rulebook-canvas');
                 if (!canvas) return;
                 const viewport = page.getViewport({ scale: rulebookZoomScale });
-                canvas.width = viewport.width;
-                canvas.height = viewport.height;
+                // rulebookZoomScale is a CSS-pixel concept -- it's derived
+                // from wrapEl.clientWidth in loadRulebookPdfjsViewer() and
+                // stays snapped to RULEBOOK_ZOOM_LEVELS's on-screen
+                // percentages, so `viewport` above must stay exactly what
+                // it was for that math to keep meaning what the zoom
+                // indicator says it means. The bitmap actually drawn into
+                // the canvas is a separate concern: on a high-DPR phone
+                // (devicePixelRatio 2-3), a canvas backed by only one
+                // pixel per CSS pixel is coarser than the screen it's
+                // shown on, so the browser has to stretch it to fill the
+                // real display -- that's the "lower quality" softness on
+                // mobile, not any actual compression of the PDF. Sizing
+                // the backing bitmap up by devicePixelRatio and then
+                // pinning the CSS box back down to the original
+                // CSS-pixel viewport gives the browser enough source
+                // pixels to fill the screen 1:1 instead of stretching.
+                const outputScale = window.devicePixelRatio || 1;
+                canvas.width = Math.floor(viewport.width * outputScale);
+                canvas.height = Math.floor(viewport.height * outputScale);
+                canvas.style.width = `${viewport.width}px`;
+                canvas.style.height = `${viewport.height}px`;
                 const ctx = canvas.getContext('2d');
-                page.render({ canvasContext: ctx, viewport }).promise.then(() => {
+                // Scales the drawing operations up to match the larger
+                // backing bitmap; passed as render()'s own transform
+                // rather than ctx.scale() directly so it can't leak into
+                // whatever the next render on this same canvas/context
+                // does (page.render() resets the canvas state it uses
+                // each call, but not transforms applied outside that
+                // call).
+                const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+                page.render({ canvasContext: ctx, viewport, transform }).promise.then(() => {
                     if (token !== rulebookRenderToken) return;
                 });
             });
