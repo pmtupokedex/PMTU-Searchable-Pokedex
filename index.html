@@ -13106,6 +13106,7 @@
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-out-btn" aria-label="Zoom out">&minus;</button>
                         <button type="button" class="game-rulebook-pill-btn game-rulebook-zoom-indicator" id="game-rulebook-zoom-indicator" aria-label="Set zoom percentage" aria-live="polite"></button>
                         <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-zoom-in-btn" aria-label="Zoom in">+</button>
+                        <button class="filter-btn game-rulebook-pdfjs-btn" id="game-rulebook-download-btn" aria-label="Download PDF" title="Download PDF">&#8595;</button>
                     </div>
                     <div class="game-rulebook-pdfjs-canvas-wrap" id="game-rulebook-canvas-wrap">
                         <canvas id="game-rulebook-canvas"></canvas>
@@ -27367,6 +27368,41 @@
         }
 
 
+        // Saves the same PDF the viewer is showing to the person's own
+        // device. Prefers the already-loaded pdf.js document's own
+        // getData() -- which hands back the complete underlying bytes
+        // regardless of whether pdf.js fetched them in one shot or via
+        // range requests -- over a fresh fetch() of RULEBOOK_PDF_URL, so
+        // a click here doesn't re-download a multi-page rulebook that's
+        // already sitting in memory. Falls back to fetch() only if this
+        // is somehow called before rulebookPdfDoc exists. Routes through
+        // a Blob + object URL rather than pointing an <a download> tag
+        // straight at RULEBOOK_PDF_URL, since a cross-origin download
+        // attribute like that is honored inconsistently across browsers
+        // -- a same-origin blob: URL always downloads instead of
+        // navigating.
+        function downloadRulebookPdf() {
+            const statusEl = document.getElementById('game-rulebook-pdfjs-status');
+            const saveBlob = (blob) => {
+                const blobUrl = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = blobUrl;
+                link.download = 'PMTU Core - Move Rules and Effects 5.3.pdf';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(blobUrl);
+            };
+            const dataPromise = rulebookPdfDoc
+                ? rulebookPdfDoc.getData().then((data) => new Blob([data], { type: 'application/pdf' }))
+                : fetch(RULEBOOK_PDF_URL).then((res) => res.blob());
+            dataPromise
+                .then(saveBlob)
+                .catch((err) => {
+                    if (statusEl) statusEl.textContent = `Could not download the PDF: ${err.message}`;
+                });
+        }
+
         // Moves rulebookZoomScale to the next stop in RULEBOOK_ZOOM_LEVELS
         // in the given direction, rather than multiplying it by a fixed
         // factor -- keeps every zoom level one of the standard set
@@ -30618,6 +30654,10 @@
             }
             if (e.target.closest('#game-rulebook-zoom-in-btn')) {
                 zoomRulebookTo('in');
+                return;
+            }
+            if (e.target.closest('#game-rulebook-download-btn')) {
+                downloadRulebookPdf();
                 return;
             }
             if (e.target.closest('#game-rulebook-page-indicator')) {
