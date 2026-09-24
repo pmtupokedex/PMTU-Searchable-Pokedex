@@ -8079,6 +8079,117 @@
             border-radius: 10px;
         }
 
+        /* Empty (no innerHTML, see renderRulebookJumpSections()) for any
+           book without a "sections" list in rulebooks.json -- an empty
+           div with no children takes up no visible space on its own, so
+           nothing else here needs to special-case that case. */
+        .game-rulebook-jump-sections-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            font-size: 15px;
+            font-weight: bold;
+            color: #333;
+            background: rgba(0, 0, 0, 0.06);
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-top: 14px;
+        }
+
+        .game-rulebook-jump-sections-header:hover {
+            opacity: 0.85;
+        }
+
+        /* Same rotating-caret idiom as .filter-section-header::after
+           elsewhere in this doc, just in the confirm-card's own dark-
+           on-white palette rather than that panel's white-on-dark one. */
+        .game-rulebook-jump-sections-header::after {
+            content: "\25BC";
+            font-size: 11px;
+            transition: transform 0.3s ease;
+        }
+
+        .game-rulebook-jump-sections-header.collapsed::after {
+            transform: rotate(-90deg);
+        }
+
+        .game-rulebook-jump-sections-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 8px;
+            /* .game-confirm-card's own max-height/overflow-y (see that
+               rule's comment) is what actually keeps a long table of
+               contents from pushing this card off-screen -- nothing
+               extra needed here for that. */
+        }
+
+        /* Deliberately its own look rather than .filter-btn -- that
+           class's puffy uppercase pill treatment (built for a handful
+           of short, similar-length filter choices) reads wrong for a
+           table of contents, where entries vary a lot in length, nest
+           several levels deep, and want to show a page number rather
+           than just a label. Plain rows with a bottom divider and a
+           hover highlight read more like an actual table of contents
+           instead. Every level (section/subsection/sub-subsection)
+           always renders -- see buildRulebookTocNodeHtml()'s own
+           comment for why only the outer "Jump to Section" header is
+           collapsible, not each individual entry. */
+        .game-rulebook-toc-entry {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 10px;
+            box-sizing: border-box;
+            background: none;
+            border: none;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+            margin: 0;
+            padding: 8px 4px;
+            font-size: 14px;
+            font-family: inherit;
+            color: #333;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .game-rulebook-toc-entry:hover {
+            background: rgba(0, 0, 0, 0.06);
+        }
+
+        .game-rulebook-toc-entry:active {
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        .game-rulebook-toc-entry-title {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+
+        /* The page number itself -- muted/bold rather than a matching
+           text color so it reads as a number column, not a second title. */
+        .game-rulebook-toc-entry-page {
+            flex: 0 0 auto;
+            font-weight: bold;
+            color: #777;
+        }
+
+        /* A node with subsections but no page of its own (a purely
+           organizational heading -- see buildRulebookTocNodeHtml()) --
+           not a button, since there's nothing to jump to, just a small
+           label introducing whatever's nested under it. */
+        .game-rulebook-toc-heading {
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: #777;
+            padding: 10px 4px 2px;
+            box-sizing: border-box;
+        }
+
         /* Set-zoom prompt -- see openRulebookZoomOverlay()/
            confirmRulebookZoomOverlay()/zoomRulebookToFit() in the
            script. Same shell/input treatment as
@@ -8163,6 +8274,19 @@
             .game-rulebook-btn-compact {
                 display: inline;
             }
+
+            /* .game-rulebook-viewer (the toolbar/canvas-wrap/status'
+               shared parent) is a column flex container -- see its own
+               rule -- so reordering these three is just a matter of
+               giving the toolbar a higher order than the other two's
+               default (0), rather than moving it in the DOM. Puts the
+               controls within thumb's reach at the bottom of the
+               screen, which is where they're wanted on a phone; left
+               alone (desktop keeps the DOM order: controls above the
+               page, the way a mouse-driven toolbar is normally read). */
+            .game-rulebook-pdfjs-toolbar {
+                order: 1;
+            }
         }
 
         .game-rulebook-pdfjs-canvas-wrap {
@@ -8180,6 +8304,30 @@
                centers it the same way when it fits, but doesn't have
                that scroll-clamping bug once it doesn't. */
             padding: 0px 10px 10px 10px;
+        }
+
+        /* This has to come after the base rule directly above rather
+           than living inside the same @media (max-width: 663px) block
+           as .game-rulebook-pdfjs-toolbar's own order: 1 further up --
+           that block sits earlier in the file, and with equal
+           specificity on both sides, the base rule below would win the
+           cascade on mobile regardless of the media query actually
+           matching, silently overriding the swap. Living down here
+           instead means this is the last word.
+           0 top / 10px bottom above exists because the toolbar used to
+           sit above the canvas and supply that gap itself via its own
+           padding, leaving the canvas free to sit flush against it up
+           top while still needing its own breathing room at the very
+           bottom of the viewer. Once that toolbar moves below the
+           canvas instead (order: 1, mobile only), those roles reverse:
+           nothing sits between the screen title and the canvas anymore,
+           so the canvas needs its own top padding back, while the
+           toolbar's own top padding recreates the gap that used to be
+           the canvas's bottom padding's job. */
+        @media (max-width: 663px) {
+            .game-rulebook-pdfjs-canvas-wrap {
+                padding: 10px 10px 0 10px;
+            }
         }
 
         .game-rulebook-pdfjs-canvas-wrap canvas {
@@ -13356,6 +13504,18 @@
                     <button class="filter-btn game-rulebook-jump-confirm-btn">Go</button>
                     <button class="filter-btn exclude game-rulebook-jump-cancel-btn">Cancel</button>
                 </div>
+
+                <!-- Only for books whose rulebooks.json entry has a
+                     "sections" array -- see renderRulebookJumpSections()
+                     in the script, which leaves this whole block empty
+                     (and hidden) for any book that doesn't define one,
+                     rather than showing an empty "Jump to Section" with
+                     nothing under it. Starts collapsed every time the
+                     overlay opens (no state remembered between opens) so
+                     a book with a long table of contents doesn't push
+                     the plain page-number input off the top of the card
+                     by default. -->
+                <div class="game-rulebook-jump-sections" id="game-rulebook-jump-sections"></div>
             </div>
         </div>
 
@@ -27325,6 +27485,17 @@
         // setGameScreen() every time that screen becomes active (in
         // case the fetch already resolved before the person ever opened
         // it -- the far more common case in practice).
+        // Order matters here -- this is also the section display order
+        // (Core first, Expansion second). Anything whose type doesn't
+        // match either value (missing field, typo, a future type not
+        // added here yet) falls through to RULEBOOK_OTHER_SECTION_LABEL
+        // below rather than silently vanishing from the list.
+        const RULEBOOK_SECTIONS = [
+            { type: 'core', label: 'Core Rulebooks' },
+            { type: 'expansion', label: 'Expansion Rulebooks' },
+        ];
+        const RULEBOOK_OTHER_SECTION_LABEL = 'Other Rulebooks';
+
         function renderRulebookPicker() {
             const listEl = document.getElementById('game-rulebook-picker-list');
             if (!listEl) return;
@@ -27336,9 +27507,24 @@
                 listEl.innerHTML = '<p class="game-rulebook-picker-status">Loading rulebooks&hellip;</p>';
                 return;
             }
-            listEl.innerHTML = rulebookBooks.map(book =>
-                `<button type="button" class="filter-btn game-rulebook-picker-btn" data-book-id="${escapeHtml(book.id)}">${escapeHtml(book.title)}</button>`
-            ).join('');
+            const knownTypes = new Set(RULEBOOK_SECTIONS.map((section) => section.type));
+            const sections = RULEBOOK_SECTIONS.map((section) => ({
+                label: section.label,
+                books: rulebookBooks.filter((book) => book.type === section.type),
+            }));
+            const otherBooks = rulebookBooks.filter((book) => !knownTypes.has(book.type));
+            if (otherBooks.length) sections.push({ label: RULEBOOK_OTHER_SECTION_LABEL, books: otherBooks });
+
+            listEl.innerHTML = sections
+                .filter((section) => section.books.length)
+                .map((section) => {
+                    const heading = `<div class="game-section-header">${escapeHtml(section.label)}</div>`;
+                    const buttons = section.books.map((book) =>
+                        `<button type="button" class="filter-btn game-rulebook-picker-btn" data-book-id="${escapeHtml(book.id)}">${escapeHtml(book.title)}</button>`
+                    ).join('');
+                    return heading + buttons;
+                })
+                .join('');
         }
 
         // Opens the viewer screen on a specific book -- the picker
@@ -27652,6 +27838,7 @@
             if (!rulebookPdfDoc) return;
             const inputEl = document.getElementById('game-rulebook-jump-input');
             if (inputEl) inputEl.value = String(rulebookCurrentPage);
+            renderRulebookJumpSections();
             document.getElementById('game-rulebook-jump-overlay').classList.add('visible');
             if (inputEl) {
                 inputEl.focus();
@@ -27661,6 +27848,95 @@
 
         function closeRulebookJumpOverlay() {
             document.getElementById('game-rulebook-jump-overlay').classList.remove('visible');
+        }
+
+        // Two additional levels beyond the top-level entries in
+        // "sections" -- Section > Subsection > Sub-subsection, each
+        // nested the same way (a "sections" array on the entry itself).
+        // Anything nested deeper than that in rulebooks.json is left
+        // out rather than recursed into further, so a typo'd extra
+        // level of nesting can't grow this into an unbounded tree; see
+        // buildRulebookTocNodeHtml()'s own depth check.
+        const RULEBOOK_TOC_MAX_DEPTH = 3;
+        // How far each nesting level is indented, in px -- applied via
+        // inline style on whichever element is this node's own list
+        // item (see buildRulebookTocNodeHtml()), since that varies by
+        // node shape (a plain button for a leaf, a row or header div for
+        // anything with children) and a single shared class covering
+        // all of those wasn't worth the trouble for one property.
+        const RULEBOOK_TOC_INDENT_PX = 16;
+
+        // Recursively builds one entry (and, if it has any, its nested
+        // subsections) from a rulebooks.json "sections" node --
+        // { "title": "...", "page": N, "sections": [...] }, "sections"
+        // and "page" both optional. Only the outer "Jump to Section"
+        // header itself collapses (see renderRulebookJumpSections()) --
+        // every level under it always renders in full once that's open,
+        // rather than each subsection/sub-subsection needing its own
+        // tap to reveal, so the whole table of contents is visible at a
+        // glance instead of hunted through level by level. Two shapes:
+        //   - Has a valid page: a .game-rulebook-toc-entry button
+        //     showing the title and its page number side by side --
+        //     tapping it jumps straight there, whether or not it also
+        //     has subsections (which just render directly beneath it).
+        //   - No valid page, but has subsections: a plain
+        //     .game-rulebook-toc-heading label (not a button, nothing to
+        //     jump to) introducing whatever's nested under it.
+        //   - Neither: dropped entirely rather than rendering an empty
+        //     row.
+        function buildRulebookTocNodeHtml(node, depth) {
+            const title = escapeHtml(node.title || '');
+            const page = parseInt(node.page, 10);
+            const hasPage = Number.isInteger(page) && page > 0;
+            const indent = (depth - 1) * RULEBOOK_TOC_INDENT_PX;
+            const rawChildren = (depth < RULEBOOK_TOC_MAX_DEPTH && Array.isArray(node.sections)) ? node.sections : [];
+            const childrenHtml = rawChildren.map((child) => buildRulebookTocNodeHtml(child, depth + 1)).filter(Boolean).join('');
+
+            if (!hasPage && !childrenHtml) return '';
+
+            const ownHtml = hasPage
+                ? `<button type="button" class="game-rulebook-toc-entry" data-page="${page}" style="margin-left: ${indent}px; width: calc(100% - ${indent}px);">
+                       <span class="game-rulebook-toc-entry-title">${title}</span>
+                       <span class="game-rulebook-toc-entry-page">${page}</span>
+                   </button>`
+                : `<div class="game-rulebook-toc-heading" style="margin-left: ${indent}px; width: calc(100% - ${indent}px);">${title}</div>`;
+
+            return ownHtml + childrenHtml;
+        }
+
+        // Builds the collapsible "Jump to Section" block from
+        // currentRulebookBook.sections -- an optional array in
+        // rulebooks.json, expected to look like
+        // [{ "title": "Combat", "page": 12, "sections": [...] }, ...]
+        // (see buildRulebookTocNodeHtml() above for the full node
+        // shape, including subsections). A book that doesn't define one
+        // (or defines an empty array) gets an empty, hidden-by-omission
+        // block instead of an empty "Jump to Section" header with
+        // nothing under it. Re-run every time the overlay opens (see
+        // openRulebookJumpOverlay()) rather than once when the book
+        // loads, both because it's cheap and because it means the
+        // header always starts fresh and collapsed, same as the page-
+        // number input always starts pre-filled with the current page
+        // rather than remembering whatever was typed last time.
+        function renderRulebookJumpSections() {
+            const wrapEl = document.getElementById('game-rulebook-jump-sections');
+            if (!wrapEl) return;
+            const sections = (currentRulebookBook && Array.isArray(currentRulebookBook.sections))
+                ? currentRulebookBook.sections
+                : [];
+            const bodyHtml = sections.map((section) => buildRulebookTocNodeHtml(section, 1)).filter(Boolean).join('');
+            if (!bodyHtml) {
+                wrapEl.innerHTML = '';
+                return;
+            }
+            wrapEl.innerHTML = `
+                <div class="game-rulebook-jump-sections-header collapsed" id="game-rulebook-jump-sections-header">
+                    <span>Jump to Section</span>
+                </div>
+                <div class="game-rulebook-jump-sections-list" id="game-rulebook-jump-sections-list" style="display: none;">
+                    ${bodyHtml}
+                </div>
+            `;
         }
 
         // Same validation shape as confirmDeckLookPrompt() -- rejects
@@ -32009,6 +32285,20 @@
             }
             if (e.target.closest('.game-rulebook-jump-confirm-btn')) {
                 confirmRulebookJumpOverlay();
+                return;
+            }
+            const sectionsHeader = e.target.closest('#game-rulebook-jump-sections-header');
+            if (sectionsHeader) {
+                sectionsHeader.classList.toggle('collapsed');
+                const listEl = document.getElementById('game-rulebook-jump-sections-list');
+                if (listEl) listEl.style.display = sectionsHeader.classList.contains('collapsed') ? 'none' : '';
+                return;
+            }
+            const tocEntry = e.target.closest('.game-rulebook-toc-entry');
+            if (tocEntry) {
+                const page = parseInt(tocEntry.dataset.page, 10);
+                closeRulebookJumpOverlay();
+                if (Number.isInteger(page)) renderRulebookPage(page);
             }
         });
 
