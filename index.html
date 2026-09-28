@@ -1706,34 +1706,11 @@
             flex-shrink: 0;
         }
 
-        /* Read-only card for a Pokémon this device may watch but not
-           control -- see renderReadOnlyBattleSlot(). */
-        .game-battle-readonly-card {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            padding: 8px;
-            text-align: center;
-        }
-
-        .game-battle-readonly-card-img {
-            width: 96px;
-            height: 96px;
-            object-fit: contain;
-        }
-
-        .game-battle-readonly-card-name {
-            margin: 0;
-            font-size: 16px;
-            font-weight: bold;
-        }
-
-        .game-battle-readonly-card-meta {
-            margin: 0;
-            font-size: 13px;
-            opacity: 0.85;
+        /* Full card for a Pokémon this device may watch but not
+           control -- see renderReadOnlyBattleSlot(). pointer-events:
+           none is what keeps every corner badge inert. */
+        .game-battle-readonly-slot {
+            pointer-events: none;
         }
 
         /* ---- Multiplayer Lobby (connection layer -- see
@@ -21063,12 +21040,36 @@
         // hostBattleArenaState.
         function broadcastBattleArenaState() {
             if (lobbyState.role === 'guest') return; // guests only ever receive this, never originate it
+            pruneBattleArenaOrphans();
             const payload = { type: 'battle-arena-state', attacker: hostBattleArenaState.attacker, defender: hostBattleArenaState.defender };
             if (lobbyState.connections) {
                 lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
             }
             guestBattleArenaCache = payload; // one code path for host and guest alike
             applyIncomingArenaState(payload);
+        }
+
+        // Frees any slot whose owner is no longer a live connection.
+        // handleHostConnectionDrop() is the normal way that happens, but
+        // a slot must never depend on a single close event having fired
+        // (a device that just vanishes can take a while to be noticed,
+        // or come back under a new peer id) -- so this runs on every
+        // broadcast and every roster refresh, and treats "owner not in
+        // lobbyState.connections, or its connection not open" as
+        // vacant. Returns whether anything changed; deliberately doesn't
+        // broadcast itself (its callers do).
+        function pruneBattleArenaOrphans() {
+            let changed = false;
+            ['attacker', 'defender'].forEach(slot => {
+                const entry = hostBattleArenaState[slot];
+                if (!entry || !entry.ownerId || entry.ownerId === 'host') return;
+                const connEntry = lobbyState.connections && lobbyState.connections.get(entry.ownerId);
+                if (!connEntry || !connEntry.conn || !connEntry.conn.open) {
+                    hostBattleArenaState[slot] = null;
+                    changed = true;
+                }
+            });
+            return changed;
         }
 
         // slot is 'attacker' or 'defender'; member is a full team-member
@@ -21171,7 +21172,14 @@
         // The shared entry for a slot, or null solo / when empty.
         function getArenaSlotEntry(slot) {
             if (lobbyState.role === null || !guestBattleArenaCache) return null;
-            return guestBattleArenaCache[slot] || null;
+            const entry = guestBattleArenaCache[slot] || null;
+            // An entry whose owner is no longer in the roster is
+            // vacant as far as this device is concerned, even if the
+            // Host's next broadcast hasn't landed yet -- a departed
+            // player must never keep a slot locked.
+            if (entry && entry.ownerId && lobbyState.players.length
+                && !lobbyState.players.some(p => p.id === entry.ownerId)) return null;
+            return entry;
         }
 
         // True when the slot holds a specific OTHER player's own
@@ -21239,25 +21247,100 @@
             renderBattleDefenderSlot();
         }
 
-        // Read-only card for a Pokémon this device may look at but not
-        // touch -- another player's own Pokémon, or the Wild Pokémon
-        // while this device is the acting player. Deliberately built
-        // from plain markup instead of the interactive corner badges,
-        // so nothing in it can reach the #game-scroll delegated
-        // HP/Status/Level listeners.
-        function renderReadOnlyBattleSlot(container, member) {
-            const display = getBattleMemberDisplay(member);
-            const hpState = computeTeamHpState(member, getHpRule(getActiveSaveData()));
-            const statusEntry = STATUS_CONDITIONS.find(s => s.id === member.status);
-            const metaParts = [`Lv ${member.level || 0}`];
-            if (hpState.showCount) metaParts.push(`${hpState.count} HP`);
-            if (member.fainted) metaParts.push('Fainted');
-            else if (statusEntry) metaParts.push(statusEntry.name);
-            container.innerHTML = `<div class="game-battle-readonly-card">
-                <img class="game-battle-readonly-card-img" src="${display.src || ''}" alt="${escapeHtml(display.name)}">
-                <p class="game-battle-readonly-card-name">${escapeHtml(display.name)}</p>
-                <p class="game-battle-readonly-card-meta">${escapeHtml(metaParts.join(' \u00b7 '))}</p>
-            </div>`;
+        // Evolution-corner crossfade timers for the read-only cards
+        // below, one per half -- same "clear before ever starting a new
+        // one" reasoning as battleWildEvolutionBadgeInterval, so
+        // repeated re-renders can't leak an accumulating pile of timers.
+        var battleReadonlyEvolutionIntervals = { attacker: null, defender: null };
+
+        function clearBattleReadonlyEvolutionTimer(slotName) {
+            if (battleReadonlyEvolutionIntervals[slotName] !== null) {
+                clearInterval(battleReadonlyEvolutionIntervals[slotName]);
+                battleReadonlyEvolutionIntervals[slotName] = null;
+            }
+        }
+
+        // Full card -- art plus HP, Cards, Status, Level, Evolution and
+        // Overlay corners -- for a Pokémon this device may look at but
+        // not touch: another player's own Pokémon, or the Wild Pokémon
+        // while this device is the acting player. Built fresh from the
+        // member data the Host broadcast (this device has no live
+        // .game-team-slot to clone for it), using the exact same badge
+        // builders Team Tracker uses, so it looks identical to the
+        // owner's own card. Read-only is enforced by
+        // .game-battle-readonly-slot's pointer-events: none rather than
+        // by leaving corners off, so none of it can reach the
+        // #game-scroll delegated HP/Status/Level listeners.
+        // opts.wild follows the interactive Wild card's own rules
+        // (renderBattleWildDefenderSlotBody()): Evolution only when
+        // shouldShowWildEvolutionBadge() says so, and no Overlay Card.
+        function renderReadOnlyBattleSlot(container, member, slotName, opts) {
+            clearBattleReadonlyEvolutionTimer(slotName);
+            const isWild = !!(opts && opts.wild);
+            const hpRule = getHpRule(getActiveSaveData());
+            const naturesEnabled = isNaturesEnabledForActiveSave();
+
+            const slot = document.createElement('div');
+            slot.className = 'game-team-slot game-battle-readonly-slot';
+            slot.dataset.filled = 'true';
+            slot.dataset.index = 'readonly';
+
+            const img = document.createElement('img');
+            img.className = 'game-team-slot-img';
+            const overrideEntry = member.formOverride ? POKEMON_BY_NAME[member.formOverride] : null;
+            const artSrc = overrideEntry ? overrideEntry.src : member.src;
+            const artShinySrc = overrideEntry ? (overrideEntry.shinysrc || '') : member.shinysrc;
+            img.src = (member.shiny && hasShinyForm(artShinySrc)) ? artShinySrc : artSrc;
+            img.alt = (overrideEntry ? overrideEntry.name : member.name) || '';
+            img.classList.toggle('fainted', !!member.fainted);
+            img.classList.toggle('has-overlay', !isWild && !!member.overlayCardId);
+            img.onerror = () => { img.style.display = 'none'; };
+            slot.appendChild(img);
+
+            slot.appendChild(buildHpBadge(member, 'readonly', hpRule));
+            slot.appendChild(buildCardsBadge(member, 'readonly', naturesEnabled));
+            slot.appendChild(buildStatusBadge(member, 'readonly'));
+            slot.appendChild(buildLevelBadge(member, 'readonly'));
+
+            if (!isWild || shouldShowWildEvolutionBadge(member)) {
+                const evoState = computeTeamEvolutionState(member);
+                const evolutionBadge = document.createElement('div');
+                evolutionBadge.className = 'game-team-slot-evolution';
+                evolutionBadge.dataset.index = 'readonly';
+                evolutionBadge.dataset.evoMode = evoState.mode;
+                if (evoState.icons.length === 1) {
+                    const dimClass = evoState.dimmed ? ' game-team-corner-img-dimmed' : '';
+                    evolutionBadge.innerHTML = `<img class="game-team-slot-evolution-img${dimClass}" src="${evoState.icons[0]}" alt="Evolution">`;
+                } else {
+                    evolutionBadge.innerHTML = evoState.icons.map((url, idx) => `
+                        <img class="game-team-slot-evolution-img${idx === 0 ? ' evolution-cycle-active' : ''} evolution-cycle-layer" src="${url}" alt="Evolution">
+                    `).join('');
+                    battleReadonlyEvolutionIntervals[slotName] = startEvolutionBadgeCycle(evolutionBadge);
+                }
+                slot.appendChild(evolutionBadge);
+            }
+
+            if (!isWild && member.overlayCardId) {
+                const overlayIconRaw = cardIconFor(member.overlayCardId);
+                const overlayIcon = overlayIconRaw ? { url: overlayIconRaw.url, crop: overlayIconRaw.crop, alt: 'Overlay Card' } : null;
+                const overlayCard = CARDS_BY_ID[member.overlayCardId];
+                const overlayBadge = document.createElement('div');
+                overlayBadge.className = 'game-team-slot-overlay';
+                overlayBadge.dataset.index = 'readonly';
+                overlayBadge.innerHTML = overlayIcon
+                    ? (overlayIcon.crop ? cropIconMarkup(overlayIcon) : `<img class="game-team-slot-overlay-img" src="${overlayIcon.url}" alt="${overlayIcon.alt}" onerror="this.style.display='none'">`)
+                    : '';
+                if (cardHasOverlayCounter(overlayCard)) {
+                    const overlayCountEl = document.createElement('span');
+                    overlayCountEl.className = 'game-team-slot-overlay-count';
+                    overlayCountEl.textContent = member.overlayCounter ?? 0;
+                    overlayBadge.appendChild(overlayCountEl);
+                }
+                slot.appendChild(overlayBadge);
+            }
+
+            container.innerHTML = '';
+            container.appendChild(slot);
         }
 
         // ---- UI-facing entry points (called from the delegated click
@@ -27429,6 +27512,7 @@
         function renderBattleAttackerSlot() {
             const slot = document.getElementById('game-battle-attacker-slot');
             if (!slot) return;
+            clearBattleReadonlyEvolutionTimer('attacker');
             // Recall only ever makes sense once something's actually
             // in the slot -- toggled here alongside the slot's own
             // markup rather than left for recallBattleAttacker() to
@@ -27445,7 +27529,7 @@
             const chooseAttackerBtn = document.getElementById('game-battle-choose-attacker-btn');
             const attackerEntry = getArenaSlotEntry('attacker');
             if (attackerEntry && attackerEntry.ownerId !== getMyLobbyPlayerId()) {
-                renderReadOnlyBattleSlot(slot, attackerEntry.member);
+                renderReadOnlyBattleSlot(slot, attackerEntry.member, 'attacker');
                 if (recallBtn) recallBtn.style.display = 'none';
                 if (chooseAttackerBtn) chooseAttackerBtn.style.display = 'none';
                 return;
@@ -27599,6 +27683,7 @@
         function renderBattleDefenderSlot() {
             const slot = document.getElementById('game-battle-defender-slot');
             if (!slot) return;
+            clearBattleReadonlyEvolutionTimer('defender');
             const recallBtn = document.getElementById('game-battle-recall-defender-btn');
             // Catch This Pokémon -- see catchWildPokemon()'s own comment.
             // Narrower than recallBtn above: only ever shown for the
@@ -27631,7 +27716,7 @@
             };
             if (defenderEntry && defenderEntry.ownerId && defenderEntry.ownerId !== getMyLobbyPlayerId()) {
                 stopWildEvolutionTimer();
-                renderReadOnlyBattleSlot(slot, defenderEntry.member);
+                renderReadOnlyBattleSlot(slot, defenderEntry.member, 'defender');
                 if (recallBtn) recallBtn.style.display = 'none';
                 if (catchBtn) catchBtn.style.display = 'none';
                 setDefenderChooseButtons(false);
@@ -27646,7 +27731,7 @@
                     renderBattleWildDefenderSlotBody(slot);
                 } else {
                     stopWildEvolutionTimer();
-                    renderReadOnlyBattleSlot(slot, defenderEntry.member);
+                    renderReadOnlyBattleSlot(slot, defenderEntry.member, 'defender', { wild: true });
                 }
                 return;
             }
@@ -31951,6 +32036,7 @@
                 { id: 'host', name: lobbyState.hostName, isHost: true, color: lobbyState.hostIsPlayer ? lobbyState.hostColor : null },
                 ...Array.from(lobbyState.connections.entries()).map(([id, entry]) => ({ id, name: entry.name, isHost: false, color: entry.color || null })),
             ];
+            if (pruneBattleArenaOrphans()) broadcastBattleArenaState();
             broadcastLobbyRoster();
             renderLobbyPlayers();
             // Trade a Pok\u00e9mon's own button only shows with >1 connected
@@ -32684,6 +32770,10 @@
                     // See refreshLobbyRosterFromHostState()'s own matching
                     // call for why.
                     renderTeamGrid();
+                    // A player leaving can vacate a slot (see
+                    // getArenaSlotEntry()).
+                    renderBattleAttackerSlot();
+                    renderBattleDefenderSlot();
                 } else if (data.type === 'color-rejected') {
                     // The color just sent in 'identify' (see
                     // finalizeGuestJoin()) turned out to already be taken
