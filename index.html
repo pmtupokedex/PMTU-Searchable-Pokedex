@@ -5886,6 +5886,22 @@
            the script) -- same positioning/backdrop rules as every other
            overlay above (duplicated for the same independence reasoning
            as everywhere else in this doc). */
+        #game-battle-replace-confirm-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 21;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-battle-replace-confirm-overlay.visible {
+            display: flex;
+        }
+
         #game-battle-slot-choice-overlay {
             display: none;
             position: absolute;
@@ -13964,6 +13980,20 @@
             </div>
         </div>
 
+        <!-- "Replace this Pokémon?" -- see confirmBattleSlotReplace()
+             in the script. Sits after the slot-choice and picker
+             overlays so it stacks on top of whichever one is open. -->
+        <div id="game-battle-replace-confirm-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-battle-replace-confirm-title">Replace this Pok&eacute;mon?</p>
+                <p class="game-confirm-subtext" id="game-battle-replace-confirm-subtext"></p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude" id="game-battle-replace-confirm-yes-btn">Replace</button>
+                    <button class="filter-btn" id="game-battle-replace-confirm-no-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Two-stage Release confirmation -- see beginTeamReleaseMode()/
              openTeamReleaseConfirmOverlay()/confirmTeamReleaseStage() in
              the script. One overlay, not two -- pendingTeamReleaseStage
@@ -19322,10 +19352,15 @@
             if (slot === 'attacker' && isBattleAttackerBlockedByActiveTeam()) return;
             if (slot === 'defender' && isBattleDefenderBlockedByActiveTeam()) return;
             const index = pendingBattleSlotChoiceIndex;
-            closeBattleSlotChoiceOverlay();
-            if (slot === 'attacker') setBattleAttackerIndex(index);
-            else setBattleDefenderIndex(index);
-            setGameScreen('battle');
+            // The slot-choice overlay stays open underneath while the
+            // replace confirmation (if any) is showing, so Cancel there
+            // simply drops back to choosing a slot.
+            confirmBattleSlotReplace(slot, () => {
+                closeBattleSlotChoiceOverlay();
+                if (slot === 'attacker') setBattleAttackerIndex(index);
+                else setBattleDefenderIndex(index);
+                setGameScreen('battle');
+            });
         }
 
         // Opens stage 1 of the release confirm for one slot -- called
@@ -21180,14 +21215,6 @@
             if (entry && entry.ownerId && lobbyState.players.length
                 && !lobbyState.players.some(p => p.id === entry.ownerId)) return null;
             return entry;
-        }
-
-        // True when the slot holds a specific OTHER player's own
-        // Pokémon -- this device can neither place into it nor control
-        // what's in it.
-        function isBattleSlotOwnedByOtherPlayer(slot) {
-            const entry = getArenaSlotEntry(slot);
-            return !!(entry && entry.ownerId && entry.ownerId !== getMyLobbyPlayerId());
         }
 
         // Control of an ownerless slot (the Wild Pokémon) belongs to
@@ -26899,13 +26926,9 @@
         let battleWildPickModeActive = false;
 
         function beginBattleWildPickMode() {
-            // Can't swap a Wild Pokémon in over another player's own
-            // Pokémon (a PvP battle in progress) -- see
-            // isBattleSlotOwnedByOtherPlayer().
-            if (isBattleSlotOwnedByOtherPlayer('defender')) {
-                showBattleArenaNotice('Another player\u2019s Pok\u00e9mon is already in the Defender slot.');
-                return;
-            }
+            // Replacing whatever's already in Defender (another player's
+            // Pokémon, or an existing Wild one) is confirmed once the
+            // pick is actually made -- see confirmBattleWildSelection().
             battleWildPickModeActive = true;
             document.body.classList.add('battle-wild-pick-mode');
             filterGallery();
@@ -27019,9 +27042,16 @@
                 shiny,
             };
             exitBattleWildPickMode();
-            setBattleDefenderWild(buildWildPokemonMember(memberSource));
+            // Land on the Battle Arena first so a replace confirmation
+            // (see confirmBattleSlotReplace()) has the Game panel to
+            // show itself in. Cancelling just leaves the Arena as it was.
             openGamePanel();
             setGameScreen('battle');
+            confirmBattleSlotReplace('defender', () => {
+                setBattleDefenderWild(buildWildPokemonMember(memberSource));
+                renderBattleDefenderSlot();
+                renderBattleAttackerSlot();
+            });
         }
 
         function closeTeamAddPromptOverlay() {
@@ -27528,10 +27558,12 @@
             // local-pick rendering below.
             const chooseAttackerBtn = document.getElementById('game-battle-choose-attacker-btn');
             const attackerEntry = getArenaSlotEntry('attacker');
+            // Choose stays available even then -- picking one just asks
+            // for confirmation first (see confirmBattleSlotReplace()).
             if (attackerEntry && attackerEntry.ownerId !== getMyLobbyPlayerId()) {
                 renderReadOnlyBattleSlot(slot, attackerEntry.member, 'attacker');
                 if (recallBtn) recallBtn.style.display = 'none';
-                if (chooseAttackerBtn) chooseAttackerBtn.style.display = 'none';
+                if (chooseAttackerBtn) chooseAttackerBtn.style.display = '';
                 return;
             }
             if (chooseAttackerBtn) chooseAttackerBtn.style.display = '';
@@ -27623,10 +27655,6 @@
             // why this is a flat refusal rather than something
             // resolved per-item the way the individual-Pokémon badge
             // is.
-            if (isBattleSlotOwnedByOtherPlayer('attacker')) {
-                showBattleArenaNotice('Another player\u2019s Pok\u00e9mon is already in the Attacker slot.');
-                return;
-            }
             if (isBattleAttackerBlockedByActiveTeam()) {
                 showBattleArenaNotice('Defender already has a Pok\u00e9mon from this team \u2014 recall it, or switch to a different save, before choosing an Attacker.');
                 return;
@@ -27641,7 +27669,58 @@
             if (overlay) overlay.classList.remove('visible');
         }
 
+        // ---- Replace confirmation for the shared Battle Arena ----
+        // Sending a Pokémon into a half that already holds another
+        // player's Pokémon, or an ownerless one (the Wild Pokémon),
+        // takes it out of the Arena for everyone -- so every path that
+        // does that asks first. Sending over your own pick (or into an
+        // empty half, or solo where getArenaSlotEntry() is always null)
+        // never prompts.
+        let pendingBattleReplaceAction = null;
+
+        function getBattleSlotReplaceDescription(slot) {
+            const entry = getArenaSlotEntry(slot);
+            if (!entry || entry.ownerId === getMyLobbyPlayerId()) return null;
+            const name = getBattleMemberDisplay(entry.member).name || 'Pok\u00e9mon';
+            const slotLabel = slot === 'attacker' ? 'Attacker' : 'Defender';
+            if (!entry.ownerId) {
+                return {
+                    title: `Replace the wild ${name}?`,
+                    subtext: `It\u2019s currently in the ${slotLabel} slot. Sending a Pok\u00e9mon there removes it from the Battle Arena for everyone.`,
+                };
+            }
+            const owner = lobbyState.players.find(p => p.id === entry.ownerId);
+            const ownerName = owner ? owner.name : 'Another player';
+            return {
+                title: `Replace ${ownerName}\u2019s ${name}?`,
+                subtext: `It\u2019s currently in the ${slotLabel} slot. Sending a Pok\u00e9mon there takes it out of the Battle Arena.`,
+            };
+        }
+
+        // Runs onConfirm straight away when nothing would be replaced;
+        // otherwise opens the confirmation and runs it only on Replace.
+        function confirmBattleSlotReplace(slot, onConfirm) {
+            const info = getBattleSlotReplaceDescription(slot);
+            if (!info) {
+                onConfirm();
+                return;
+            }
+            pendingBattleReplaceAction = onConfirm;
+            document.getElementById('game-battle-replace-confirm-title').textContent = info.title;
+            document.getElementById('game-battle-replace-confirm-subtext').textContent = info.subtext;
+            document.getElementById('game-battle-replace-confirm-overlay').classList.add('visible');
+        }
+
+        function closeBattleReplaceConfirm() {
+            pendingBattleReplaceAction = null;
+            document.getElementById('game-battle-replace-confirm-overlay').classList.remove('visible');
+        }
+
         function selectBattleAttacker(index) {
+            confirmBattleSlotReplace('attacker', () => applyBattleAttackerSelection(index));
+        }
+
+        function applyBattleAttackerSelection(index) {
             setBattleAttackerIndex(index);
             closeBattleAttackerPicker();
             // Both, not just Attacker -- setBattleAttackerIndex() may
@@ -27719,12 +27798,12 @@
                 renderReadOnlyBattleSlot(slot, defenderEntry.member, 'defender');
                 if (recallBtn) recallBtn.style.display = 'none';
                 if (catchBtn) catchBtn.style.display = 'none';
-                setDefenderChooseButtons(false);
+                setDefenderChooseButtons(true);
                 return;
             }
             if (defenderEntry && !defenderEntry.ownerId) {
                 const canControl = canControlWildDefender();
-                setDefenderChooseButtons(canControl);
+                setDefenderChooseButtons(true);
                 if (recallBtn) recallBtn.style.display = '';
                 if (catchBtn) catchBtn.style.display = canCatchWildDefender() ? '' : 'none';
                 if (canControl) {
@@ -27928,10 +28007,6 @@
             // Defender half's own equivalent of openBattleAttackerPicker()'s
             // own refusal just above -- same reasoning, checked against
             // Attacker's stamped team instead.
-            if (isBattleSlotOwnedByOtherPlayer('defender')) {
-                showBattleArenaNotice('Another player\u2019s Pok\u00e9mon is already in the Defender slot.');
-                return;
-            }
             if (isBattleDefenderBlockedByActiveTeam()) {
                 showBattleArenaNotice('Attacker already has a Pok\u00e9mon from this team \u2014 recall it, or switch to a different save, before choosing a Defender.');
                 return;
@@ -27947,6 +28022,10 @@
         }
 
         function selectBattleDefender(index) {
+            confirmBattleSlotReplace('defender', () => applyBattleDefenderSelection(index));
+        }
+
+        function applyBattleDefenderSelection(index) {
             setBattleDefenderIndex(index);
             closeBattleDefenderPicker();
             // Both, for the same "might have just cleared Attacker out
@@ -34273,6 +34352,20 @@
         // touching either Battle Arena slot; Attacker/Defender both
         // route to sendTeamMemberToBattleSlot(), which is what actually
         // knows which roster index this overlay is currently open for.
+        // Replace confirmation -- sibling of #game-scroll like the other
+        // overlays, so it catches its own clicks.
+        document.getElementById('game-battle-replace-confirm-overlay').addEventListener('click', (e) => {
+            if (e.target.closest('#game-battle-replace-confirm-yes-btn')) {
+                const action = pendingBattleReplaceAction;
+                closeBattleReplaceConfirm();
+                if (action) action();
+                return;
+            }
+            if (e.target.id === 'game-battle-replace-confirm-overlay' || e.target.closest('#game-battle-replace-confirm-no-btn')) {
+                closeBattleReplaceConfirm();
+            }
+        });
+
         document.getElementById('game-battle-slot-choice-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'game-battle-slot-choice-overlay' || e.target.closest('#game-battle-slot-choice-cancel-btn')) {
                 closeBattleSlotChoiceOverlay();
