@@ -622,7 +622,7 @@
             --game-theme-bg-2: url("https://dl.dropboxusercontent.com/scl/fi/8ewm1e8mibpfasdf8cezl/Pokedex-Background-5.png?rlkey=t1o2cmqmla0xwn2wq5p6l36dl&st=tmzvpi8o&dl=1");
         }
 
-        #game-panel[data-player-theme] .filter-btn:not(.include):not(.exclude):not(.confirm-delete):not(.game-pokecoins-btn-minus):not(.game-pokecoins-btn-plus):not(.game-player-color-swatch-btn):not(.game-note-color-swatch-btn):not(.game-matchup-toggle-btn) {
+        #game-panel[data-player-theme] .filter-btn:not(.include):not(.exclude):not(.confirm-delete):not(.game-pokecoins-btn-minus):not(.game-pokecoins-btn-plus):not(.game-player-color-swatch-btn):not(.game-note-color-swatch-btn):not(.game-matchup-toggle-btn):not(.game-battle-move-typed) {
             background-color: var(--game-theme-color);
         }
 
@@ -1613,7 +1613,12 @@
            so it still reads top-vs-bottom on narrow mobile widths the
            same way it would on a tabletop. flex: 1 on .game-screen
            (see its own rule above) is what gives this container real
-           height to split in the first place. */
+           height to split in the first place. Neither half (nor its
+           slot) sets min-height: 0, so each keeps its automatic
+           content-based minimum: the halves still split spare room
+           equally when there is some, but grow with their contents
+           (card, moves, buttons) when there isn't, and #game-scroll
+           scrolls to reach the rest. */
         .game-battle-arena {
             display: flex;
             flex-direction: column;
@@ -1622,36 +1627,88 @@
             gap: 12px;
         }
 
+        /* The two halves mirror each other top-to-bottom, with the
+           Defender label at the outer edge of each: Defender reads
+           label > buttons > moves > card, Attacker reads card > moves
+           > buttons > label. Spacing between those children comes from
+           this gap rather than per-child margins, since a margin that
+           sits on the "top" of one half's element would land on the
+           wrong side in the other half's mirrored order. Hidden
+           children (an empty moves row) don't take a gap. */
         .game-battle-half {
             display: flex;
             flex-direction: column;
+            gap: 8px;
             flex: 1;
-            min-height: 0;
             border-radius: 10px;
             padding: 10px;
             box-sizing: border-box;
             background: rgba(0, 0, 0, 0.15);
         }
 
+        /* White fill with the standard black outline -- the 8-shadow
+           version here, upgraded to a real text-stroke on high-DPI
+           screens by the shared list further down. */
         .game-battle-half-label {
-            margin: 0 0 8px;
+            margin: 0;
             font-weight: bold;
-            font-size: 15px;
+            font-size: 26px;
             text-transform: uppercase;
             letter-spacing: 0.05em;
+            color: white;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
         }
 
         /* Where the chosen Pokémon's full card renders, for whichever
            half this is (Defender or Attacker) -- flex: 1 so it fills
            whatever room its half has, regardless of which side it's
            in. */
+        .game-battle-slot-wrap {
+            position: relative;
+            display: flex;
+            flex: 1;
+            width: 100%;
+        }
+
         .game-battle-slot {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             flex: 1;
-            min-height: 0;
+        }
+
+        /* Move power + Pokémon's total level, for now (see
+           computeBattleMoveValue()) -- centered over the slot card
+           rather than laid out alongside it, and pointer-events: none so
+           it never blocks a tap on the card underneath. Empty text takes
+           no layout space, same :empty convention as .game-battle-moves.
+           White fill / black outline like every other outlined label on
+           this screen (see .game-battle-half-label's own comment) --
+           this one's just bigger, being the actual number the player
+           needs to read mid-battle. */
+        .game-battle-calc-readout {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            pointer-events: none;
+            font-weight: bold;
+            font-size: 40px;
+            color: white;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
+        .game-battle-calc-readout:empty {
+            display: none;
         }
 
         .game-battle-slot-empty-text {
@@ -1671,9 +1728,48 @@
            the same node elsewhere later, are unaffected. */
         #game-battle-attacker-slot .game-team-slot,
         #game-battle-defender-slot .game-team-slot {
-            width: 220px;
-            max-width: 80%;
+            width: 250px;
+            max-width: 100%;
             margin: 0 auto;
+        }
+
+        /* Breathing room between each slot card and the neighbouring
+           controls: Defender's card sits above the arena's midpoint,
+           Attacker's below it, so each gets its extra space on the side
+           facing the other half. */
+        #game-battle-defender-slot {
+            padding-top: 10px;
+            padding-bottom: 25px;
+        }
+
+        #game-battle-attacker-slot {
+            padding-top: 12px;
+            padding-bottom: 25px;
+        }
+
+        /* One button per move the Pokémon in a half knows -- see
+           renderBattleMoves(). Empty (no Pokémon, or its data hasn't
+           loaded yet) collapses entirely. */
+        .game-battle-moves {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .game-battle-moves:empty {
+            display: none;
+        }
+
+        /* Small "from Tackle" line under every Max Move button's name
+           (see renderBattleMoves()). */
+        .game-battle-move-from {
+            display: block;
+            font-size: 10px;
+            font-weight: normal;
+            line-height: 1.1;
+            opacity: 0.85;
         }
 
         /* Row wrapper for the Attacker half's action buttons (Choose /
@@ -1684,7 +1780,6 @@
             display: flex;
             justify-content: center;
             gap: 8px;
-            margin-top: 8px;
             flex-shrink: 0;
         }
 
@@ -1702,7 +1797,6 @@
             flex-wrap: wrap;
             justify-content: center;
             gap: 8px;
-            margin-top: 8px;
             flex-shrink: 0;
         }
 
@@ -5902,6 +5996,74 @@
             display: flex;
         }
 
+        /* Manual-power prompt for moves.json's "manual" attack_strength
+           moves (Beat Up, Dream Eater, ...) -- see
+           openBattleManualOverlay() in the script. Same backdrop/
+           centering shell as every other #game-*-overlay, duplicated
+           for the same independence reasoning as everywhere else in
+           this doc. */
+        #game-battle-manual-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 21;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-battle-manual-overlay.visible {
+            display: flex;
+        }
+
+        /* Where the move's uniqueEffect text goes -- the instructions
+           for working out the number typed below it. */
+        .game-battle-manual-effect {
+            font-size: 14px;
+            line-height: 1.35;
+            text-align: left;
+            margin: 0 0 12px;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            white-space: pre-wrap;
+            max-height: 30vh;
+            overflow-y: auto;
+        }
+
+        /* Shown instead of real text while a move's uniqueEffect is
+           still missing/"TBD" in moves.json. */
+        .game-battle-manual-effect.placeholder {
+            opacity: 0.7;
+            font-style: italic;
+        }
+
+        .game-battle-manual-input {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0 0 8px;
+            padding: 10px 12px;
+            font-size: 16px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.08);
+            border: 2px solid rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+
+        .game-battle-manual-error {
+            display: none;
+            font-size: 13px;
+            color: #b3261e;
+            margin: 0 0 8px;
+        }
+
+        .game-battle-manual-error.visible {
+            display: block;
+        }
+
         #game-battle-slot-choice-overlay {
             display: none;
             position: absolute;
@@ -5916,6 +6078,35 @@
 
         #game-battle-slot-choice-overlay.visible {
             display: flex;
+        }
+
+        /* Defender Options / Attacker Options -- same positioning and
+           backdrop as the slot-choice overlay just above. Buttons stack
+           full width, one per line. */
+        .game-battle-options-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .game-battle-options-overlay.visible {
+            display: flex;
+        }
+
+        .game-battle-options-actions {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .game-battle-options-actions .filter-btn {
+            width: 100%;
+            box-sizing: border-box;
         }
 
         /* Explains whichever of the two buttons
@@ -12363,6 +12554,8 @@
             .game-badge-region-label,
             .game-badge-stage-readout,
             .game-screen-title,
+            .game-battle-half-label,
+            .game-battle-calc-readout,
             .game-matchup-select.has-selection,
             .game-matchup-result-label,
             .game-matchup-result-bonus,
@@ -13349,9 +13542,6 @@
                 <div class="game-battle-arena">
                     <div class="game-battle-half game-battle-defender">
                         <p class="game-battle-half-label">Defender</p>
-                        <div class="game-battle-slot" id="game-battle-defender-slot">
-                            <p class="game-battle-slot-empty-text">No Pok&eacute;mon selected.</p>
-                        </div>
                         <!-- Recall (see recallBattleDefender() in the
                              script) starts hidden -- renderBattleDefenderSlot()
                              is the only thing that ever shows it, and
@@ -13366,35 +13556,54 @@
                              at all: catching a real team member back
                              onto the same team it's already on makes no
                              sense. -->
+                        <!-- Choose / Choose Wild / Recall / Catch all live in
+                             #game-battle-defender-options-overlay now (see
+                             openBattleOptionsOverlay() in the script). -->
                         <div class="game-battle-defender-btn-row">
-                            <button class="filter-btn" id="game-battle-choose-defender-btn">Choose Pok&eacute;mon</button>
-                            <!-- Defender-only -- see
-                                 beginBattleWildPickMode()/setBattleDefenderWild()
-                                 in the script. Attacker has no equivalent
-                                 button: a Wild Pok\u00e9mon is always
-                                 something the player is up against,
-                                 never something they field themselves. -->
-                            <button class="filter-btn" id="game-battle-choose-wild-btn">Choose Wild Pok&eacute;mon</button>
-                            <button class="filter-btn exclude" id="game-battle-recall-defender-btn" style="display: none;">Recall Pok&eacute;mon</button>
-                            <button class="filter-btn" id="game-battle-catch-wild-btn" style="display: none;">Catch This Pok&eacute;mon</button>
+                            <button class="filter-btn" id="game-battle-defender-options-btn">Defender Options</button>
+                        </div>
+                        <div class="game-battle-moves" id="game-battle-defender-moves"></div>
+                        <!-- Wrapper exists so #game-battle-calc-readout-defender can sit
+                             on top of the card without being wiped out --
+                             renderBattleDefenderSlotCard() replaces
+                             #game-battle-defender-slot's own innerHTML
+                             wholesale on every render, but never touches
+                             this wrapper or its other child. -->
+                        <div class="game-battle-slot-wrap">
+                            <div class="game-battle-slot" id="game-battle-defender-slot">
+                                <p class="game-battle-slot-empty-text">No Pok&eacute;mon selected.</p>
+                            </div>
+                            <!-- Move power + total level, for now -- see
+                                 renderBattleCalcReadout()/computeBattleMoveValue()
+                                 in the script. Empty and inert
+                                 (pointer-events: none) until a move
+                                 button is tapped. -->
+                            <p class="game-battle-calc-readout" id="game-battle-defender-calc-readout"></p>
                         </div>
                     </div>
 
                     <div class="game-battle-half game-battle-attacker">
-                        <p class="game-battle-half-label">Attacker</p>
-                        <div class="game-battle-slot" id="game-battle-attacker-slot">
-                            <p class="game-battle-slot-empty-text">No Pok&eacute;mon selected.</p>
+                        <!-- Defender half's own equivalent just above -- same
+                             wrapper reasoning. -->
+                        <div class="game-battle-slot-wrap">
+                            <div class="game-battle-slot" id="game-battle-attacker-slot">
+                                <p class="game-battle-slot-empty-text">No Pok&eacute;mon selected.</p>
+                            </div>
+                            <p class="game-battle-calc-readout" id="game-battle-attacker-calc-readout"></p>
                         </div>
+                        <div class="game-battle-moves" id="game-battle-attacker-moves"></div>
                         <!-- Recall (see recallBattleAttacker() in the
                              script) starts hidden -- renderBattleAttackerSlot()
                              is the only thing that ever shows it, and
                              only once a Pokémon is actually in the
                              slot, same one-or-the-other convention as
                              the slot's own empty/filled states. -->
+                        <!-- Choose / Recall live in
+                             #game-battle-attacker-options-overlay now. -->
                         <div class="game-battle-attacker-btn-row">
-                            <button class="filter-btn" id="game-battle-choose-attacker-btn">Choose Pok&eacute;mon</button>
-                            <button class="filter-btn exclude" id="game-battle-recall-attacker-btn" style="display: none;">Recall Pok&eacute;mon</button>
+                            <button class="filter-btn" id="game-battle-attacker-options-btn">Attacker Options</button>
                         </div>
+                        <p class="game-battle-half-label">Attacker</p>
                     </div>
 
                 </div>
@@ -13527,7 +13736,7 @@
                      confirm needed beyond that choice, unlike Release
                      -- this never removes anything from the roster. -->
                 <div class="game-team-release-banner" id="game-team-send-to-battle-banner">
-                    <span>Tap a Pok&eacute;mon on your team to send it to the Battle Arena.</span>
+                    <span id="game-team-send-to-battle-banner-text">Tap a Pok&eacute;mon on your team to send it to the Battle Arena.</span>
                     <button class="filter-btn exclude" id="game-team-send-to-battle-cancel-btn">Cancel</button>
                 </div>
                 <!-- Shown instead of Add/Trade/Release while
@@ -13980,6 +14189,39 @@
             </div>
         </div>
 
+        <!-- Defender Options / Attacker Options -- the Choose, Recall
+             (and, for Defender, Choose Wild and Catch) buttons that used
+             to sit under each half. The buttons keep their original ids,
+             so renderBattleDefenderSlot()/renderBattleAttackerSlot()
+             still show and hide them exactly as before; only where they
+             live changed. Clicks are handled by the overlay's own
+             listener in the script (this is a sibling of #game-scroll,
+             not a descendant), which closes the overlay and then runs the
+             same action the button always did. -->
+        <div id="game-battle-defender-options-overlay" class="game-battle-options-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Defender Options</p>
+                <div class="game-save-slot-actions game-battle-options-actions">
+                    <button class="filter-btn" id="game-battle-choose-defender-btn">Choose Pok&eacute;mon</button>
+                    <button class="filter-btn" id="game-battle-choose-wild-btn">Choose Wild Pok&eacute;mon</button>
+                    <button class="filter-btn exclude" id="game-battle-recall-defender-btn" style="display: none;">Recall Pok&eacute;mon</button>
+                    <button class="filter-btn" id="game-battle-catch-wild-btn" style="display: none;">Catch This Pok&eacute;mon</button>
+                    <button class="filter-btn exclude" id="game-battle-defender-options-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="game-battle-attacker-options-overlay" class="game-battle-options-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Attacker Options</p>
+                <div class="game-save-slot-actions game-battle-options-actions">
+                    <button class="filter-btn" id="game-battle-choose-attacker-btn">Choose Pok&eacute;mon</button>
+                    <button class="filter-btn exclude" id="game-battle-recall-attacker-btn" style="display: none;">Recall Pok&eacute;mon</button>
+                    <button class="filter-btn exclude" id="game-battle-attacker-options-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
         <!-- "Replace this Pokémon?" -- see confirmBattleSlotReplace()
              in the script. Sits after the slot-choice and picker
              overlays so it stacks on top of whichever one is open. -->
@@ -13990,6 +14232,26 @@
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude" id="game-battle-replace-confirm-yes-btn">Replace</button>
                     <button class="filter-btn" id="game-battle-replace-confirm-no-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Manual-power prompt -- see openBattleManualOverlay()/
+             confirmBattleManualOverlay() in the script. Shown when a
+             move whose moves.json attack_strength.mode is "manual" is
+             tapped: #game-battle-manual-effect holds that move's
+             uniqueEffect text (how to work out the number), and the
+             number typed below it becomes the move's power in
+             computeBattleMoveValue(). -->
+        <div id="game-battle-manual-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-battle-manual-title">Manual Move</p>
+                <p class="game-battle-manual-effect" id="game-battle-manual-effect"></p>
+                <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" class="game-battle-manual-input" id="game-battle-manual-input" placeholder="Enter the number" aria-label="Number to use for this move's power">
+                <p class="game-battle-manual-error" id="game-battle-manual-error">Enter a whole number, 0 or higher.</p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn" id="game-battle-manual-confirm-btn">Confirm</button>
+                    <button class="filter-btn exclude" id="game-battle-manual-cancel-btn">Cancel</button>
                 </div>
             </div>
         </div>
@@ -15900,6 +16162,9 @@
                 // async-data-arrives-after-first-render re-render in this
                 // doc.
                 renderTeamGrid();
+                // Move buttons read known_moves from the same data.
+                renderBattleAttackerSlot();
+                renderBattleDefenderSlot();
                 data.forEach(p => {
                     const card = document.createElement("div");
                     card.className = "image-card";
@@ -18535,6 +18800,13 @@
             if (releaseBanner) releaseBanner.classList.toggle('visible', releasing);
             const sendToBattleBanner = document.getElementById('game-team-send-to-battle-banner');
             if (sendToBattleBanner) sendToBattleBanner.classList.toggle('visible', sendingToBattle);
+            const sendToBattleBannerText = document.getElementById('game-team-send-to-battle-banner-text');
+            if (sendToBattleBannerText) {
+                const targetLabel = teamSendToBattleTargetSlot === 'attacker' ? 'Attacker' : teamSendToBattleTargetSlot === 'defender' ? 'Defender' : '';
+                sendToBattleBannerText.textContent = targetLabel
+                    ? `Tap a Pok\u00e9mon on your team to send it to the Battle Arena as the ${targetLabel}.`
+                    : 'Tap a Pok\u00e9mon on your team to send it to the Battle Arena.';
+            }
             const tradeSelectBanner = document.getElementById('game-team-trade-select-banner');
             if (tradeSelectBanner) tradeSelectBanner.classList.toggle('visible', selectingTradeOffer);
             const attachBanner = document.getElementById('game-team-attach-banner');
@@ -19147,6 +19419,17 @@
         // Battle Arena is showing.
         let teamSendToBattleModeActive = false;
 
+        // Which Battle Arena half send-to-battle mode is aimed at, when
+        // it was entered from that half's own Choose Pokémon button
+        // (see requestBattleChoosePokemon()) rather than from Team
+        // Tracker's Send Pokémon to Battle Arena button. 'attacker' or
+        // 'defender' means the half is already decided, so tapping a
+        // Pokémon sends it straight there instead of opening the
+        // Attacker/Defender chooser; null (the Team Tracker button's
+        // case) keeps the chooser. Cleared by every path that ends the
+        // mode.
+        let teamSendToBattleTargetSlot = null;
+
         // Which roster index the slot-choice overlay above is currently
         // asking about -- set the moment a slot tap opens it, read (and
         // cleared) the moment Attacker or Defender is actually chosen.
@@ -19243,10 +19526,47 @@
         // same mutual-exclusivity reasons as beginTeamReleaseMode()
         // (renderTeamGrid() already hides this button whenever one of
         // them is active, but costs nothing to check here too).
-        function beginTeamSendToBattleMode() {
+        function beginTeamSendToBattleMode(targetSlot) {
             if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || handAttachPendingCardId) return;
             teamSendToBattleModeActive = true;
+            teamSendToBattleTargetSlot = (targetSlot === 'attacker' || targetSlot === 'defender') ? targetSlot : null;
             renderTeamGrid();
+        }
+
+        // Defender Options / Attacker Options overlays -- see the markup
+        // next to #game-battle-slot-choice-overlay.
+        function openBattleOptionsOverlay(slot) {
+            const overlay = document.getElementById(`game-battle-${slot}-options-overlay`);
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        function closeBattleOptionsOverlays() {
+            ['attacker', 'defender'].forEach(slot => {
+                const overlay = document.getElementById(`game-battle-${slot}-options-overlay`);
+                if (overlay) overlay.classList.remove('visible');
+            });
+        }
+
+        // Battle Arena's Choose Pokémon buttons route here. Instead of
+        // opening the arena's own roster picker, this hops to Team
+        // Tracker with send-to-battle mode already switched on and aimed
+        // at the half that was tapped. An empty roster gets a notice on
+        // the arena instead. Same-team refusals are checked up front
+        // (the old picker's refusal notices are reused), and a read-only
+        // save (which send-to-battle mode refuses) still uses the old
+        // picker.
+        function requestBattleChoosePokemon(slot) {
+            const opener = slot === 'attacker' ? openBattleAttackerPicker : openBattleDefenderPicker;
+            const members = (getActiveSaveData().team && getActiveSaveData().team.members) || [];
+            if (!members.length) {
+                showBattleArenaNotice('You have no Pok\u00e9mon on your team to Battle with.');
+                return;
+            }
+            if (isActiveSaveReadOnly()) { opener(); return; }
+            if (slot === 'attacker' && isBattleAttackerBlockedByActiveTeam()) { opener(); return; }
+            if (slot === 'defender' && isBattleDefenderBlockedByActiveTeam()) { opener(); return; }
+            setGameScreen('team');
+            beginTeamSendToBattleMode(slot);
         }
 
         // The one authoritative way out of this mode short of actually
@@ -19261,9 +19581,14 @@
         // answering Attacker/Defender/Cancel on it) -- same "one place
         // unwinds everything" shape as exitTeamReleaseMode().
         function exitTeamSendToBattleMode() {
+            const cameFromArena = teamSendToBattleTargetSlot !== null;
             teamSendToBattleModeActive = false;
+            teamSendToBattleTargetSlot = null;
             closeBattleSlotChoiceOverlay();
             renderTeamGrid();
+            // Cancel after starting from the arena's Choose button goes
+            // back where the player came from.
+            if (cameFromArena) setGameScreen('battle');
         }
 
         // Opens the Attacker/Defender/Cancel chooser for one roster
@@ -19523,6 +19848,65 @@
             })
             .catch(err => {
                 console.warn('Could not load card data:', err);
+            });
+
+        // Full move database, fetched from moves.json -- same pattern as
+        // CARDS_URL above and the same repo/root-level location. An
+        // object keyed by move name; each entry is
+        //   { type: "grass", attack_strength: { mode, value },
+        //     effects: [...], stab?: "false", uniqueEffect?: ... }
+        // MOVES_BY_NAME keeps those entries whole (attack_strength and
+        // effects are for the Attack Calculator later); for now Battle
+        // Arena only reads `type`, to color each move button like the
+        // Pokédex overlay's type badge (see getBattleMoveType()).
+        // MOVES_BY_KEY is a second index on a lowercased,
+        // punctuation-stripped name, so a known_moves spelling that
+        // differs slightly ("Thunder Punch" / "thunder-punch") still
+        // finds its entry.
+        const MOVES_URL = "https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/moves.json";
+        let MOVES_BY_NAME = {};
+        let MOVES_BY_KEY = {};
+        // type -> the Max Move for that type ("fire" -> "Max Flare"),
+        // built lazily from moves.json itself (see getMaxMoveNameForType())
+        // and thrown away whenever moves.json (re)loads.
+        let MAX_MOVE_BY_TYPE = null;
+        const MAX_GUARD_MOVE_NAME = 'Max Guard';
+
+        function battleMoveKey(name) {
+            return String(name == null ? '' : name).toLowerCase().replace(/[^a-z0-9]/g, '');
+        }
+
+        function getBattleMoveEntry(moveName) {
+            return MOVES_BY_NAME[moveName] || MOVES_BY_KEY[battleMoveKey(moveName)] || null;
+        }
+
+        // The move's lowercase type ("fire", "water", ...) or null when
+        // moves.json hasn't loaded or doesn't list the move. Only the 18
+        // real types are returned, since the value ends up in a
+        // .poke-type-<type> class name.
+        function getBattleMoveType(moveName) {
+            const entry = getBattleMoveEntry(moveName);
+            const type = entry && typeof entry.type === 'string' ? entry.type.toLowerCase().trim() : '';
+            return BATTLE_MOVE_TYPE_NAMES.includes(type) ? type : null;
+        }
+
+        const BATTLE_MOVE_TYPE_NAMES = ['normal', 'fire', 'water', 'electric', 'grass', 'ice', 'fighting', 'poison', 'ground', 'flying', 'psychic', 'bug', 'rock', 'ghost', 'dragon', 'dark', 'steel', 'fairy'];
+
+        fetch(MOVES_URL)
+            .then(res => res.json())
+            .then(data => {
+                MOVES_BY_NAME = (data && typeof data === 'object' && !Array.isArray(data)) ? data : {};
+                MOVES_BY_KEY = {};
+                MAX_MOVE_BY_TYPE = null;
+                Object.keys(MOVES_BY_NAME).forEach(name => { MOVES_BY_KEY[battleMoveKey(name)] = MOVES_BY_NAME[name]; });
+                // Covers Battle Arena already being open (with move
+                // buttons drawn uncolored) when this resolves -- same
+                // late-arrival re-render as the fetches above.
+                renderBattleAttackerSlot();
+                renderBattleDefenderSlot();
+            })
+            .catch(err => {
+                console.warn('Could not load move data:', err);
             });
 
         // Display order for cards.json's own cardDeck values -- used by
@@ -20264,6 +20648,9 @@
         function persistLocalPermanent() {
             if (activeGuestSaveId !== null) persistGameGuestSaves();
             else if (activeSaveSlot !== null) persistGameSaves();
+            // A card leaving Permanent can end Dynamax -- see
+            // reconcileDynamaxWithPermanent().
+            reconcileDynamaxWithPermanent();
         }
 
         // Same "fall back to an in-memory-only object before there's a
@@ -21115,8 +21502,40 @@
         // follow. wild:true tags the entry as ownerless instead.
         function hostApplyBattleSetSlot(slot, peerKey, member, wild) {
             if (slot !== 'attacker' && slot !== 'defender') return;
-            hostBattleArenaState[slot] = member ? { member, ownerId: wild ? null : peerKey } : null;
+            const previous = hostBattleArenaState[slot];
+            const newOwnerId = wild ? null : peerKey;
+            hostBattleArenaState[slot] = member ? { member, ownerId: newOwnerId } : null;
+            // A player whose Pokémon was just taken out of the Arena by
+            // someone ELSE sending a Pokémon in (never by their own
+            // recall or re-pick, which keeps the same owner) is told
+            // so -- otherwise it would just silently vanish from their
+            // screen. Only fires for a real replacement (member is
+            // non-null); an owner leaving is handled by
+            // clearBattleArenaPlacementFor()/pruneBattleArenaOrphans().
+            if (member && previous && previous.ownerId && previous.ownerId !== newOwnerId) {
+                const byPlayer = lobbyState.players.find(pl => pl.id === peerKey);
+                const message = {
+                    type: 'battle-displaced',
+                    slot,
+                    pokemonName: getBattleMemberDisplay(previous.member).name || 'Pok\u00e9mon',
+                    byName: wild ? null : (byPlayer ? byPlayer.name : 'Another player'),
+                };
+                if (previous.ownerId === 'host') {
+                    showBattleDisplacedNotice(message);
+                } else {
+                    const connEntry = lobbyState.connections.get(previous.ownerId);
+                    if (connEntry && connEntry.conn.open) connEntry.conn.send(message);
+                }
+            }
             broadcastBattleArenaState();
+        }
+
+        // Shared by the Host's own local path above and the Guest's
+        // 'battle-displaced' handler.
+        function showBattleDisplacedNotice(data) {
+            const slotLabel = data.slot === 'attacker' ? 'Attacker' : 'Defender';
+            const who = data.byName ? `${data.byName} replaced` : 'A wild Pok\u00e9mon replaced';
+            showBattleArenaNotice(`${who} your ${data.pokemonName} in the ${slotLabel} slot.`);
         }
 
         function sendBattleCatchFailure(peerKey, reason) {
@@ -23350,6 +23769,71 @@
             activeGmax: 'https://dl.dropboxusercontent.com/scl/fi/8v4o0iq9bc4fh1fowxvmk/evo_gmax_active.png?rlkey=sr12w0oxozfnie3i25o5wdsyj&st=gpla4ovy&dl=1',
         };
 
+        // Dynamax reuses existing art: the "not active yet" entry keeps
+        // the plain evo_unable image the corner already shows when
+        // nothing's available, and once it's active it shares
+        // Gigantamax's own active badge.
+        EVOLUTION_MODE_IMAGES.dynamax = EVOLUTION_MODE_IMAGES.unable;
+        EVOLUTION_MODE_IMAGES.activeDynamax = EVOLUTION_MODE_IMAGES.activeGmax;
+
+        // member.dynamaxed -- like formOverride, not declared anywhere,
+        // just documented here: true while the Pokémon is Dynamaxed,
+        // falsy otherwise. Deliberately separate from formOverride --
+        // Dynamax doesn't change the Pokémon's artwork or species, it
+        // only swaps its Battle Arena moves for Max Moves (see
+        // getBattleMemberMoveButtons()). Mutually exclusive with
+        // formOverride: it's only ever offered while none is active,
+        // and every path that sets one clears the other. Cleared by
+        // fainting, a real stage evolution, being caught out of the
+        // wild, tapping the (active) Evolution corner, and -- when
+        // virtual decks are on -- the Dynamax Band leaving the
+        // Permanent zone (see reconcileDynamaxWithPermanent()).
+
+        // Whether any Dynamax Band card is currently in this device's
+        // Permanent zone. Matched by name, same approach as
+        // cardIsDeptStoreSale().
+        function isDynamaxBandInPlay() {
+            return getLocalPermanentArray().some(entry => {
+                const card = CARDS_BY_ID[entry.cardId];
+                return !!card && card.name === 'Dynamax Band';
+            });
+        }
+
+        // Whether this member may newly Dynamax right now. Every
+        // Pokémon can, unless it's fainted, already Dynamaxed, or in a
+        // Mega/Gigantamax/legendary form. The Wild Pokémon has no
+        // Band to check. For a real team member: with virtual decks
+        // on, a Dynamax Band has to be in the Permanent zone; with
+        // them off this app can't see the cards, so it's always
+        // offered and evolutionReminderHtml() covers the requirement.
+        function canMemberDynamax(member) {
+            if (!member || member.fainted || member.formOverride || member.dynamaxed) return false;
+            if (member === battleWildPokemon) return true;
+            if (isVirtualDecksEnabledForActiveSave()) return isDynamaxBandInPlay();
+            return true;
+        }
+
+        // Ends Dynamax on every team member when virtual decks are on
+        // and no Dynamax Band is in the Permanent zone any more. Called
+        // from persistLocalPermanent() (every local Permanent change --
+        // host add/discard and each guest sync message) and when the
+        // virtual decks setting itself changes. Each cleared member
+        // goes through persistTeamSlotChange() so it saves, repaints,
+        // and re-syncs the Battle Arena slot it may be sitting in.
+        // Doesn't touch the Wild Pokémon (it never needs a Band).
+        function reconcileDynamaxWithPermanent() {
+            if (!isVirtualDecksEnabledForActiveSave()) return;
+            if (isDynamaxBandInPlay()) return;
+            const team = getActiveSaveData().team;
+            const members = (team && team.members) || [];
+            members.forEach((member, index) => {
+                if (member && member.dynamaxed) {
+                    member.dynamaxed = false;
+                    persistTeamSlotChange(index);
+                }
+            });
+        }
+
         // baseEntry.legendary_evolve -- a pokemon-data.json entry's own
         // opt-in third evolution mechanic, alongside evolve_cost/
         // evolves_to and mega_forms/gmax_forms above. Shape:
@@ -23433,6 +23917,9 @@
         //                     immediately, no overlay.
         //   'active-gmax' -- already Gigantamaxed; same immediate-revert
         //                     behavior as 'active-mega'.
+        //   'active-dynamax' -- Dynamaxed (member.dynamaxed); shows
+        //                     Gigantamax's active badge and reverts
+        //                     immediately when tapped, no overlay.
         //   'active-legendary' -- currently in a reverts:true
         //                     legendary_evolve form (Primal Kyogre and
         //                     the like); unlike 'active-mega'/'active-gmax',
@@ -23494,6 +23981,12 @@
                 };
             }
 
+            // Dynamaxed (no formOverride -- that branch returned above):
+            // Gigantamax's active badge, tap to revert.
+            if (member.dynamaxed) {
+                return { mode: 'active-dynamax', icons: [EVOLUTION_MODE_IMAGES.activeDynamax], dimmed: false };
+            }
+
             const baseEntry = POKEMON_BY_NAME[member.name];
             if (!baseEntry) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], dimmed: !!member.fainted };
 
@@ -23526,6 +24019,10 @@
             // so that branch is moot in practice, kept false purely for
             // a consistent return shape).
             if (icons.length) return { mode: 'available', icons, dimmed: false };
+            // Dynamax has no icon of its own to cycle in -- it keeps the
+            // plain evo_unable image, but is now clickable (opens the
+            // picker with the Dynamax entry) whenever it's allowed.
+            if (canMemberDynamax(member)) return { mode: 'available', icons: [EVOLUTION_MODE_IMAGES.dynamax], dimmed: false };
             return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], dimmed: !!member.fainted };
         }
 
@@ -23549,6 +24046,9 @@
         // caller.
         function shouldShowWildEvolutionBadge(member) {
             if (!member) return false;
+            // Every Pokémon can Dynamax, so the corner now exists for
+            // any Wild Pokémon that's Dynamaxed or could be.
+            if (member.dynamaxed) return true;
             if (member.formOverride) {
                 const overrideEntry = POKEMON_BY_NAME[member.formOverride];
                 if (!overrideEntry) return false;
@@ -23566,7 +24066,7 @@
             if (!baseEntry) return false;
             const canMega = !member.fainted && !!(baseEntry.mega_forms && baseEntry.mega_forms.length);
             const canGmax = !member.fainted && !!(baseEntry.gmax_forms && baseEntry.gmax_forms.length);
-            return canMega || canGmax;
+            return canMega || canGmax || canMemberDynamax(member);
         }
 
         // ---- Hit Points -----------------------------------------------
@@ -23804,6 +24304,7 @@
             member.statusCounter = undefined;
             member.statusCardSide = undefined;
             member.formOverride = null;
+            member.dynamaxed = false;
             persistTeamSlotChange(index);
         }
 
@@ -24890,7 +25391,7 @@
         // picker's own pendingTeamStatusId.
         let pendingTeamEvolutionChoice = null;
 
-        const EVOLUTION_CATEGORY_LABELS = { evolve: 'Evolution', mega: 'Mega Evolution', gmax: 'Gigantamax', legendary: 'Legendary Evolution' };
+        const EVOLUTION_CATEGORY_LABELS = { evolve: 'Evolution', mega: 'Mega Evolution', gmax: 'Gigantamax', legendary: 'Legendary Evolution', dynamax: 'Dynamax' };
 
         // Shared "Evolve into"/"Mega Evolve into"/etc. verb for a single
         // choice -- used by both the corner badge's own single-option
@@ -24906,6 +25407,7 @@
             if (choice.category === 'evolve') return 'Evolve into';
             if (choice.category === 'mega') return 'Mega Evolve into';
             if (choice.category === 'gmax') return 'Gigantamax into';
+            if (choice.category === 'dynamax') return 'Dynamax';
             if (choice.category === 'legendary') return choice.reverts ? 'Transform into' : 'Evolve into';
             return 'Evolve into';
         }
@@ -24935,6 +25437,12 @@
             }
             if (choice.category === 'gmax') {
                 return `<p class="game-team-evolution-reminder">To Gigantamax this Pok\u00e9mon, you must have a Dynamax Band card in play.</p>`;
+            }
+            if (choice.category === 'dynamax') {
+                // With virtual decks on, the Band is actually checked
+                // (see canMemberDynamax()), so a reminder would be noise.
+                if (isVirtualDecksEnabledForActiveSave()) return '';
+                return `<p class="game-team-evolution-reminder">To Dynamax this Pok\u00e9mon, you must have a Dynamax Band card in play.</p>`;
             }
             if (choice.category === 'legendary' && !choice.gated) {
                 const card = choice.cardId ? CARDS_BY_ID[choice.cardId] : null;
@@ -24996,7 +25504,7 @@
                 return;
             }
 
-            const categories = ['evolve', 'mega', 'gmax', 'legendary'].filter(cat => pendingTeamEvolutionOptions.some(o => o.category === cat));
+            const categories = ['evolve', 'mega', 'gmax', 'legendary', 'dynamax'].filter(cat => pendingTeamEvolutionOptions.some(o => o.category === cat));
             const showHeaders = categories.length > 1;
 
             optionsEl.innerHTML = categories.map(cat => {
@@ -25085,6 +25593,11 @@
                     });
                 }
             }
+            // Every Pokémon can Dynamax -- the entry names the member's
+            // own species, so its preview shows the same artwork
+            // (Dynamax doesn't change it). See canMemberDynamax() for
+            // the gating.
+            if (canMemberDynamax(member)) options.push({ category: 'dynamax', name: member.name });
             return options;
         }
 
@@ -25124,6 +25637,16 @@
         //     reconcileLegendaryEvolutionOnCardChange() for how it comes
         //     back off.
         function applyEvolutionChoice(member, baseEntry, choice, hpRule) {
+            // Dynamax is just a flag -- no species/art/form change, so no
+            // HP-max reconciliation either. See member.dynamaxed's own
+            // comment above.
+            if (choice.category === 'dynamax') {
+                member.dynamaxed = true;
+                return;
+            }
+            // Anything else replaces the whole state -- never leave a
+            // Dynamax behind under a new species or form.
+            member.dynamaxed = false;
             if (choice.category === 'evolve' || (choice.category === 'legendary' && !choice.reverts)) {
                 const targetEntry = POKEMON_BY_NAME[choice.name];
                 if (!targetEntry) return;
@@ -25165,7 +25688,7 @@
             // against a species that happens to also carry an ordinary
             // evolves_to or a legendary_evolve target alongside
             // mega_forms/gmax_forms.
-            if (index === 'wild') options = options.filter(o => o.category === 'mega' || o.category === 'gmax');
+            if (index === 'wild') options = options.filter(o => o.category === 'mega' || o.category === 'gmax' || o.category === 'dynamax');
             if (options.length === 0) return;
 
             pendingTeamEvolutionIndex = index;
@@ -25181,6 +25704,7 @@
                     ? (options[0].category === 'evolve' ? 'Evolve'
                         : options[0].category === 'mega' ? 'Mega Evolve'
                         : options[0].category === 'gmax' ? 'Gigantamax'
+                        : options[0].category === 'dynamax' ? 'Dynamax'
                         : options[0].reverts ? 'Transform' : 'Evolve')
                     : 'Choose an Evolution';
             }
@@ -26460,7 +26984,7 @@
             }
             if (rowEl) rowEl.classList.remove('no-evolution');
 
-            if (evoState.mode === 'active-mega' || evoState.mode === 'active-gmax') {
+            if (evoState.mode === 'active-mega' || evoState.mode === 'active-gmax' || evoState.mode === 'active-dynamax') {
                 // Same immediate-revert behavior as the corner badge's
                 // own tap (see handleTeamDetailEvolutionTypeTap()'s
                 // 'revert' branch) -- one button, no strip at all.
@@ -26504,7 +27028,7 @@
             // via their own real Pokémon artwork -- see previewSrc() in
             // renderTeamDetailEvolutionPicker() below).
             const options = getTeamEvolutionOptions(member);
-            const categories = ['evolve', 'mega', 'gmax', 'legendary'].filter(cat => options.some(o => o.category === cat));
+            const categories = ['evolve', 'mega', 'gmax', 'legendary', 'dynamax'].filter(cat => options.some(o => o.category === cat));
             // An open strip whose category no longer has any options
             // (same "invalidated mid-session" scenario as the 'unable'
             // branch above, just less drastic) gets folded away rather
@@ -26608,6 +27132,7 @@
                 const member = (data.team.members || [])[teamDetailIndex];
                 if (!member) return;
                 member.formOverride = null;
+                member.dynamaxed = false;
                 if (activeSaveSlot !== null) persistGameSaves();
                 else if (activeGuestSaveId !== null) persistGameGuestSaves();
                 markUnsavedProgressChanged();
@@ -27346,6 +27871,32 @@
         // battle" reasoning battleWildPokemon itself already carries.
         let hostBattleArenaState = { attacker: null, defender: null };
 
+        // Which move the Attack Calculator is currently reading for each
+        // half -- just the move name, not a cached total, so a level or
+        // HP edit made after tapping the move still shows up in the
+        // readout on the very next render (see renderBattleCalcReadout()
+        // recomputing from this every time), same "always rebuilt from
+        // live state, never trusted stale" convention as the rest of
+        // this screen. Null before a move's been tapped, or once it's
+        // been cleared out (a new Pokémon in the slot, a recall -- see
+        // resetBattleCalcResult()/every setter and recall function
+        // below).
+        let battleCalcMoveName = { attacker: null, defender: null };
+
+        // The number a player typed into the manual-power prompt (see
+        // openBattleManualOverlay()) for a "manual" move, per half --
+        // { moveName, value } or null. Stamped with the move it was
+        // typed for so computeBattleMoveValue() never reuses it for a
+        // different manual move tapped afterward. Cleared alongside
+        // battleCalcMoveName by resetBattleCalcResult().
+        let battleCalcManualValue = { attacker: null, defender: null };
+
+        // For a Dynamaxed Pokémon, battleCalcMoveName is the MAX move
+        // that was tapped ("Max Strike"); this is the known move it
+        // replaced ("Tackle"), which supplies the Max Move's power (see
+        // getBattleEffectiveStrength()). Null for any ordinary move.
+        let battleCalcBaseMove = { attacker: null, defender: null };
+
         // Re-sends this device's own current pick for one half to the
         // rest of the Lobby -- called by every place that changes it AND
         // by persistTeamSlotChange() on every HP/Status/Level/Cards
@@ -27395,9 +27946,11 @@
         function setBattleAttackerIndex(index) {
             battleAttackerMemberIndex = index;
             battleAttackerTeamId = index !== null ? getActiveTeamId() : null;
+            resetBattleCalcResult('attacker');
             if (index !== null && battleDefenderMemberIndex === index) {
                 battleDefenderMemberIndex = null;
                 battleDefenderTeamId = null;
+                resetBattleCalcResult('defender');
             }
             syncMyBattleSlot('attacker');
             syncMyBattleSlot('defender');
@@ -27417,9 +27970,11 @@
             // only reads it while battleDefenderMemberIndex === 'wild'),
             // but there's no reason to let it linger in memory either.
             battleWildPokemon = null;
+            resetBattleCalcResult('defender');
             if (index !== null && battleAttackerMemberIndex === index) {
                 battleAttackerMemberIndex = null;
                 battleAttackerTeamId = null;
+                resetBattleCalcResult('attacker');
             }
             syncMyBattleSlot('attacker');
             syncMyBattleSlot('defender');
@@ -27444,6 +27999,7 @@
             battleWildPokemon = member;
             battleDefenderMemberIndex = 'wild';
             battleDefenderTeamId = 'wild';
+            resetBattleCalcResult('defender');
             // Once a Lobby session exists this sets the ownerless Wild
             // Pokémon in the ONE shared Defender half. A no-op solo.
             requestBattleSetSlot('defender', member, true);
@@ -27506,6 +28062,364 @@
             };
         }
 
+        // The two public renderers -- card first, then the move buttons
+        // for whatever ended up in the half (the card renderers can
+        // clear a stale pick themselves, so moves are always derived
+        // after them, never before).
+        function renderBattleAttackerSlot() {
+            renderBattleAttackerSlotCard();
+            renderBattleMoves('attacker');
+            renderBattleCalcReadout('attacker');
+            // A "target" half-level move in the other half reads THIS
+            // half's level, so its readout can go stale when this one
+            // changes -- refresh it too.
+            renderBattleCalcReadout('defender');
+        }
+
+        function renderBattleDefenderSlot() {
+            renderBattleDefenderSlotCard();
+            renderBattleMoves('defender');
+            renderBattleCalcReadout('defender');
+            // Same reasoning as renderBattleAttackerSlot() just above.
+            renderBattleCalcReadout('attacker');
+        }
+
+        // Whatever Pokémon this device is currently showing in a half,
+        // from any source (my own live pick, another player's, the
+        // Wild Pokémon), or null.
+        function getBattleSlotMember(slotName) {
+            const entry = getArenaSlotEntry(slotName);
+            if (entry && entry.ownerId !== getMyLobbyPlayerId()) return entry.member;
+            const index = slotName === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+            const teamId = slotName === 'attacker' ? battleAttackerTeamId : battleDefenderTeamId;
+            if (index === null) return null;
+            if (index === 'wild') return battleWildPokemon;
+            if (teamId !== getActiveTeamId()) return null;
+            return (getActiveSaveData().team.members || [])[index] || null;
+        }
+
+        // A member's level shown everywhere else on this screen (Team
+        // Tracker's own Level section, HP's alt2 rule) -- base level
+        // from pokemon-data.json's token_level plus whatever the
+        // player's bumped .game-team-slot-level counter up to. Reused
+        // here rather than duplicated, same getTeamMemberBaseLevel()
+        // this doc's other total-level reads already share.
+        function getBattleMemberTotalLevel(member) {
+            return getTeamMemberBaseLevel(member) + (member.level || 0);
+        }
+
+        // The other half of the Arena -- whichever slot a move used from
+        // slotName is aimed at.
+        function getBattleOpposingSlotName(slotName) {
+            return slotName === 'attacker' ? 'defender' : 'attacker';
+        }
+
+        // A "half_level" move's power (moves.json's
+        //   attack_strength: { mode: "half_level", of: "self" | "target" })
+        // -- half of the named Pokémon's total level, rounded DOWN
+        // (Level 7 Seismic Toss -> 7 / 2 = 3.5 -> 3). "self" reads the
+        // Pokémon using the move (slotName's own member); "target"
+        // reads whatever's in the opposite half. Returns null when
+        // that Pokémon isn't there, or `of` isn't one of the two
+        // known values, so a typo in moves.json fails safe (unsupported)
+        // rather than silently using the wrong Pokémon's level.
+        function getBattleHalfLevelPower(slotName, strength) {
+            let source = null;
+            if (strength.of === 'self') source = getBattleSlotMember(slotName);
+            else if (strength.of === 'target') source = getBattleSlotMember(getBattleOpposingSlotName(slotName));
+            if (!source) return null;
+            return Math.floor(getBattleMemberTotalLevel(source) / 2);
+        }
+
+        // What actually decides a move's power, as { name, strength }
+        // (name = the move whose moves.json attack_strength applies --
+        // matters for a "manual" entry's typed number). For every
+        // ordinary move that's just its own attack_strength. A Max Move
+        // ("derived_from_base_move") follows moves.json's own priority
+        // list: the Pokémon's own pokemon-data.json `maxPower` first
+        // (only G-Max forms have one), else the power of the move it
+        // replaced (baseMoveName, when Dynamaxed). Returns null when
+        // nothing resolves (no Pokémon, unknown move, a Max Move with
+        // neither a maxPower nor a base move).
+        function getBattleEffectiveStrength(slotName, moveName, baseMoveName) {
+            const entry = getBattleMoveEntry(moveName);
+            const strength = entry && entry.attack_strength;
+            if (!strength) return null;
+            if (strength.mode !== 'derived_from_base_move') return { name: moveName, strength };
+            const priority = Array.isArray(strength.priority) ? strength.priority : [];
+            for (const source of priority) {
+                if (source === 'pokemon.maxPower') {
+                    const member = getBattleSlotMember(slotName);
+                    const speciesEntry = member ? POKEMON_BY_NAME[member.formOverride || member.name] : null;
+                    if (speciesEntry && typeof speciesEntry.maxPower === 'number') {
+                        return { name: moveName, strength: { mode: 'fixed', value: speciesEntry.maxPower } };
+                    }
+                } else if (source === 'base_move.attack_strength' && baseMoveName) {
+                    const baseEntry = getBattleMoveEntry(baseMoveName);
+                    const baseStrength = baseEntry && baseEntry.attack_strength;
+                    // A base move is never itself a Max Move, so this
+                    // can't loop.
+                    if (baseStrength && baseStrength.mode !== 'derived_from_base_move') {
+                        return { name: baseMoveName, strength: baseStrength };
+                    }
+                }
+            }
+            return null;
+        }
+
+        // True when a move's power comes from the target's level (a
+        // "half_level" of "target", directly or via a Max Move's base
+        // move) and the opposite half is empty -- lets the tap handler
+        // say "pick a target" instead of the generic "not supported".
+        function isBattleMoveWaitingOnTarget(slotName, moveName, baseMoveName) {
+            const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
+            return !!(eff && eff.strength.mode === 'half_level' && eff.strength.of === 'target'
+                && !getBattleSlotMember(getBattleOpposingSlotName(slotName)));
+        }
+
+        // The name of the "manual" move whose number the player has to
+        // type for this tap -- the move itself, or (Dynamaxed) the base
+        // move a Max Move is standing in for. Null when no typed
+        // number is involved.
+        function getBattleManualSourceName(slotName, moveName, baseMoveName) {
+            const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
+            return (eff && eff.strength.mode === 'manual') ? eff.name : null;
+        }
+
+        // The Attack Calculator's own math -- for now, just the move's
+        // power plus the Pokémon's total level (more factors are
+        // coming later). Power comes from getBattleEffectiveStrength():
+        //   - "fixed": its plain `value`.
+        //   - "half_level": half of the user's ("self") or the
+        //     opponent's ("target") total level, rounded down -- see
+        //     getBattleHalfLevelPower().
+        //   - "manual": a number the player types into the
+        //     manual-power overlay, following the move's uniqueEffect
+        //     text -- see openBattleManualOverlay().
+        //   - a Max Move: the Pokémon's maxPower, else its base move's
+        //     power, resolved by any of the three above.
+        // Either way the user's OWN total level is what's added on top.
+        // Returns null when the slot has no Pokémon, when a half-level
+        // move's target isn't there, when a "manual" move hasn't had
+        // its number entered yet, or when a Max Move has nothing to
+        // derive its power from.
+        function computeBattleMoveValue(slotName, moveName, baseMoveName) {
+            const member = getBattleSlotMember(slotName);
+            if (!member) return null;
+            const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
+            if (!eff) return null;
+            const strength = eff.strength;
+            let power = null;
+            if (strength.mode === 'fixed' && typeof strength.value === 'number') {
+                power = strength.value;
+            } else if (strength.mode === 'half_level') {
+                power = getBattleHalfLevelPower(slotName, strength);
+            } else if (strength.mode === 'manual') {
+                // The player-typed number for THIS move, if they've
+                // entered one (see openBattleManualOverlay()).
+                const manual = battleCalcManualValue[slotName];
+                if (manual && manual.moveName === eff.name) power = manual.value;
+            }
+            if (power === null) return null;
+            return power + getBattleMemberTotalLevel(member);
+        }
+
+        // The one authoritative way to blank a half's calc result --
+        // called by every setter/recall below that changes (or clears)
+        // what's in that slot, since a move tapped for a DIFFERENT
+        // Pokémon has nothing meaningful left to compute once that
+        // Pokémon is gone. Doesn't repaint itself, same "caller owns the
+        // repaint" convention as every setter in this file -- every call
+        // site already re-renders the slot right after.
+        function resetBattleCalcResult(slotName) {
+            battleCalcMoveName[slotName] = null;
+            battleCalcManualValue[slotName] = null;
+            battleCalcBaseMove[slotName] = null;
+        }
+
+        // Draws (or clears) the readout sitting over one half's slot
+        // card -- called from renderBattleAttackerSlot()/
+        // renderBattleDefenderSlot() so it's always current, and
+        // recomputes from computeBattleMoveValue() fresh every time
+        // rather than reading a cached number, so a level bump or a
+        // Pokémon swap made after the move was tapped shows up here on
+        // the very next render same as everywhere else on this screen.
+        function renderBattleCalcReadout(slotName) {
+            const el = document.getElementById(`game-battle-${slotName}-calc-readout`);
+            if (!el) return;
+            const moveName = battleCalcMoveName[slotName];
+            const value = moveName ? computeBattleMoveValue(slotName, moveName, battleCalcBaseMove[slotName]) : null;
+            el.textContent = value === null ? '' : String(value);
+        }
+
+        // Manual-power prompt -- for moves whose moves.json
+        // attack_strength.mode is "manual" (Beat Up, Dream Eater,
+        // ...), whose power can't be derived from a fixed number or a
+        // level. Shows the move's uniqueEffect text (the instructions
+        // for working out the number) and asks the player to type it;
+        // the number then feeds computeBattleMoveValue() as the move's
+        // power. A Dynamaxed Pokémon's Max Move standing in for a
+        // manual move asks for the BASE move's number (and shows its
+        // uniqueEffect), since that's what supplies the power. Which
+        // half/move the open prompt is for:
+        let battleManualPending = null; // { slotName, moveName, baseMoveName, manualName } | null
+
+        function openBattleManualOverlay(slotName, moveName, baseMoveName, manualName) {
+            battleManualPending = { slotName, moveName, baseMoveName: baseMoveName || null, manualName };
+            const entry = getBattleMoveEntry(manualName);
+            document.getElementById('game-battle-manual-title').textContent =
+                manualName === moveName ? moveName : `${moveName} (${manualName})`;
+            // uniqueEffect is still "TBD" (or absent) for most manual
+            // moves in moves.json -- show a muted placeholder rather
+            // than the literal "TBD" until real text is filled in.
+            const effectText = entry && typeof entry.uniqueEffect === 'string' ? entry.uniqueEffect.trim() : '';
+            const hasEffect = effectText !== '' && effectText.toUpperCase() !== 'TBD';
+            const effectEl = document.getElementById('game-battle-manual-effect');
+            effectEl.textContent = hasEffect
+                ? effectText
+                : "How to work out this move's number hasn't been added yet.";
+            effectEl.classList.toggle('placeholder', !hasEffect);
+            // Re-tapping the same move reopens with the last number
+            // typed for it, so a small correction doesn't mean
+            // starting over.
+            const previous = battleCalcManualValue[slotName];
+            const inputEl = document.getElementById('game-battle-manual-input');
+            inputEl.value = (previous && previous.moveName === manualName) ? String(previous.value) : '';
+            document.getElementById('game-battle-manual-error').classList.remove('visible');
+            document.getElementById('game-battle-manual-overlay').classList.add('visible');
+            inputEl.focus();
+        }
+
+        // Backs out with nothing changed -- any number already
+        // entered earlier keeps applying.
+        function closeBattleManualOverlay() {
+            battleManualPending = null;
+            document.getElementById('game-battle-manual-overlay').classList.remove('visible');
+        }
+
+        // Accepts a whole number 0 or higher (a manual move can
+        // legitimately work out to 0); anything else shows the
+        // inline error and leaves the prompt open.
+        function confirmBattleManualOverlay() {
+            const pending = battleManualPending;
+            if (!pending) return;
+            const raw = document.getElementById('game-battle-manual-input').value.trim();
+            const value = parseInt(raw, 10);
+            if (!/^[0-9]+$/.test(raw) || !Number.isInteger(value) || value < 0) {
+                document.getElementById('game-battle-manual-error').classList.add('visible');
+                return;
+            }
+            closeBattleManualOverlay();
+            // The half's Pokémon could have been swapped out from
+            // under an open prompt (another Lobby player replacing
+            // it) -- nothing left to attach the number to then.
+            if (!getBattleSlotMember(pending.slotName)) return;
+            battleCalcManualValue[pending.slotName] = { moveName: pending.manualName, value };
+            battleCalcMoveName[pending.slotName] = pending.moveName;
+            battleCalcBaseMove[pending.slotName] = pending.baseMoveName;
+            renderBattleCalcReadout(pending.slotName);
+        }
+
+        // ---- Dynamax: Max Moves ------------------------------------
+
+        // The Max Move for a type ("fire" -> "Max Flare"), read from
+        // moves.json itself: the "Max ..." entries whose power is
+        // derived from a base move. Max Guard is excluded (fixed
+        // power, used only for 0-power moves regardless of type).
+        // Null before moves.json loads or for a type with no Max Move.
+        function getMaxMoveNameForType(type) {
+            if (!MAX_MOVE_BY_TYPE) {
+                MAX_MOVE_BY_TYPE = {};
+                Object.keys(MOVES_BY_NAME).forEach(name => {
+                    const entry = MOVES_BY_NAME[name];
+                    if (name.startsWith('Max ') && name !== MAX_GUARD_MOVE_NAME && entry && entry.type
+                        && entry.attack_strength && entry.attack_strength.mode === 'derived_from_base_move') {
+                        MAX_MOVE_BY_TYPE[String(entry.type).toLowerCase()] = name;
+                    }
+                });
+            }
+            return MAX_MOVE_BY_TYPE[type] || null;
+        }
+
+        // The Max Move a known move becomes while Dynamaxed: any move
+        // with 0 power (status moves) becomes Max Guard regardless of
+        // type; everything else becomes the Max Move of its own type
+        // (Normal -> Max Strike). Returns null when it can't tell
+        // (moves.json not loaded or the move isn't listed), so the
+        // caller can leave that move as it was.
+        function getMaxMoveForKnownMove(moveName) {
+            const entry = getBattleMoveEntry(moveName);
+            if (!entry) return null;
+            const strength = entry.attack_strength;
+            if (strength && strength.mode === 'fixed' && strength.value === 0) {
+                return getBattleMoveEntry(MAX_GUARD_MOVE_NAME) ? MAX_GUARD_MOVE_NAME : null;
+            }
+            const type = getBattleMoveType(moveName);
+            return type ? getMaxMoveNameForType(type) : null;
+        }
+
+        // The buttons to draw for a member: one per known move, each
+        // { name, base } -- name is what's shown/tapped, base is the
+        // known move it replaced (null when not Dynamaxed). A move that
+        // can't be mapped, or that's already a Max/G-Max move, stays
+        // as itself.
+        function getBattleMemberMoveButtons(member) {
+            const moves = getBattleMemberMoves(member);
+            if (!member.dynamaxed) return moves.map(name => ({ name, base: null }));
+            return moves.map(move => {
+                const alreadyMax = /^(Max |G-Max )/.test(move);
+                const maxName = alreadyMax ? null : getMaxMoveForKnownMove(move);
+                return maxName ? { name: maxName, base: move } : { name: move, base: null };
+            });
+        }
+
+        // Moves come from pokemon-data.json's known_moves (see
+        // POKEMON_BY_NAME). A Mega/G-Max form showing via formOverride
+        // has its own entry with its own moves, so that one wins.
+        function getBattleMemberMoves(member) {
+            const entry = POKEMON_BY_NAME[member.formOverride || member.name];
+            return (entry && Array.isArray(entry.known_moves)) ? entry.known_moves : [];
+        }
+
+        // One button per known move (or, while Dynamaxed, per Max Move --
+        // see getBattleMemberMoveButtons()). Tapping one selects it for
+        // the Attack Calculator (see the #game-scroll click listener).
+        function renderBattleMoves(slotName) {
+            const container = document.getElementById(`game-battle-${slotName}-moves`);
+            if (!container) return;
+            const member = getBattleSlotMember(slotName);
+            const buttons = member ? getBattleMemberMoveButtons(member) : [];
+            // The move list can change under a selected move (Dynamax
+            // starting/ending, a new Pokémon) -- drop the selection if
+            // that exact move-plus-base isn't offered any more, so the
+            // readout never shows a number for a button that's gone.
+            const selectedName = battleCalcMoveName[slotName];
+            if (selectedName && !buttons.some(b => b.name === selectedName && (b.base || null) === (battleCalcBaseMove[slotName] || null))) {
+                resetBattleCalcResult(slotName);
+            }
+            // Every Max Move button carries a small "from X" label naming
+            // the known move it replaced -- it's what tells apart two
+            // known moves that became the same Max Move (say two Normal
+            // moves -> Max Strike) but have different powers, and it
+            // keeps the buttons consistent when only some collide.
+            // A move whose type is known (see getBattleMoveType()) borrows
+            // the Pokédex overlay's type-badge color via the same
+            // .poke-type-<type> classes; game-battle-move-typed keeps the
+            // player-theme button color from overriding it. Unknown
+            // types (moves.json missing, unlisted move) keep the stock
+            // look.
+            container.innerHTML = buttons.map(b => {
+                const type = getBattleMoveType(b.name);
+                const typeClasses = type ? ` game-battle-move-typed poke-type-${type}` : '';
+                const baseAttr = b.base ? ` data-base-move="${escapeHtml(b.base)}"` : '';
+                const fromLabel = b.base
+                    ? `<span class="game-battle-move-from">from ${escapeHtml(b.base)}</span>`
+                    : '';
+                return `<button class="filter-btn game-battle-move-btn${typeClasses}" data-battle-slot="${slotName}" data-move-name="${escapeHtml(b.name)}"${baseAttr}>${escapeHtml(b.name)}${fromLabel}</button>`;
+            }).join('');
+        }
+
+
         // Redraws the Attacker slot against whatever
         // battleAttackerMemberIndex currently points at -- called on
         // opening the screen (see setGameScreen()), right after a new
@@ -27539,7 +28453,7 @@
         // frame of it instead. Falls back to the empty state if the
         // index no longer resolves to anything (roster changed since
         // the pick, or nothing picked yet).
-        function renderBattleAttackerSlot() {
+        function renderBattleAttackerSlotCard() {
             const slot = document.getElementById('game-battle-attacker-slot');
             if (!slot) return;
             clearBattleReadonlyEvolutionTimer('attacker');
@@ -27743,6 +28657,7 @@
         function recallBattleAttacker() {
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
+            resetBattleCalcResult('attacker');
             renderBattleAttackerSlot();
             syncMyBattleSlot('attacker');
         }
@@ -27759,7 +28674,7 @@
         // reasoning as every other near-identical pair in this doc --
         // Attacker and Defender won't necessarily always want to stay
         // in lockstep.
-        function renderBattleDefenderSlot() {
+        function renderBattleDefenderSlotCard() {
             const slot = document.getElementById('game-battle-defender-slot');
             if (!slot) return;
             clearBattleReadonlyEvolutionTimer('defender');
@@ -28046,6 +28961,7 @@
             battleDefenderMemberIndex = null;
             battleDefenderTeamId = null;
             battleWildPokemon = null;
+            resetBattleCalcResult('defender');
             renderBattleDefenderSlot();
             // Once a Lobby session exists, clear the shared half too: an
             // ownerless Wild Pokémon can be recalled by anyone who can
@@ -28104,6 +29020,9 @@
         function applyCaughtWildMember(member) {
             if (!member || isActiveSaveReadOnly()) return;
 
+            // A caught Pokémon joins the roster un-Dynamaxed (it has no
+            // Band on its side of things).
+            member.dynamaxed = false;
             if (member.formOverride) {
                 const hpRule = getHpRule(getActiveSaveData());
                 const oldMax = getTeamMemberHpMax(member, hpRule);
@@ -29587,6 +30506,9 @@
         function renderVirtualDecksAvailability() {
             const tileEl = document.querySelector('[data-target="decks"]');
             const enabled = isVirtualDecksEnabledForActiveSave();
+            // Turning virtual decks ON with a member already Dynamaxed
+            // and no Band in Permanent should end it too.
+            reconcileDynamaxWithPermanent();
             if (tileEl) tileEl.style.display = enabled ? '' : 'none';
             if (!enabled && currentGameScreen === 'decks') {
                 setGameScreen('main');
@@ -30590,6 +31512,7 @@
                     // sense while still looking at Team Tracker, same
                     // reasoning as teamReleaseModeActive just above.
                     teamSendToBattleModeActive = false;
+                    teamSendToBattleTargetSlot = null;
                     renderTeamGrid();
                 }
                 // Belt-and-suspenders alongside
@@ -30640,6 +31563,7 @@
             if (scrollEl) scrollEl.scrollTop = 0;
             if (screenId === 'lobby') prefillLobbyHostName();
             if (screenId === 'decks') renderDecksScreen();
+            if (screenId !== 'battle') closeBattleOptionsOverlays();
             if (screenId === 'battle') {
                 renderBattleAttackerSlot();
                 renderBattleDefenderSlot();
@@ -33014,6 +33938,8 @@
                     // owns the roster, since the Host never has a copy
                     // of a Guest's own save to push it onto directly.
                     finishLocalWildCatch(data.member);
+                } else if (data.type === 'battle-displaced') {
+                    showBattleDisplacedNotice(data);
                 } else if (data.type === 'battle-catch-failed') {
                     showBattleArenaNotice(data.reason || 'You can\u2019t catch this Pok\u00e9mon right now.');
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
@@ -33763,64 +34689,46 @@
                 return;
             }
 
-            // Battle Arena's Attacker half -- opens the roster picker
-            // (see openBattleAttackerPicker()). Read-only saves are
-            // fine here, unlike teamAddBtn above: picking a Pokémon for
-            // the Attacker slot only affects this screen's own display,
-            // it doesn't write anything back to the save.
-            const battleChooseAttackerBtn = e.target.closest('#game-battle-choose-attacker-btn');
-            if (battleChooseAttackerBtn) {
-                openBattleAttackerPicker();
+            // Attack Calculator, first pass -- see computeBattleMoveValue()
+            // for what it currently adds up. Tapping a move sets which
+            // move that half's readout tracks; the readout itself
+            // recomputes fresh on every render rather than caching a
+            // number here (see renderBattleCalcReadout()'s own comment).
+            // Available on read-only saves and another player's watched
+            // Pokémon too -- this never writes anything back to any
+            // save, it only changes what this device is showing itself.
+            const battleMoveBtn = e.target.closest('.game-battle-move-btn');
+            if (battleMoveBtn) {
+                const slot = battleMoveBtn.dataset.battleSlot;
+                const moveName = battleMoveBtn.dataset.moveName;
+                // Set on a Dynamaxed Pokémon's Max Move buttons -- the
+                // known move each one replaced (see
+                // getBattleMemberMoveButtons()).
+                const baseMove = battleMoveBtn.dataset.baseMove || null;
+                const manualName = getBattleManualSourceName(slot, moveName, baseMove);
+                if (manualName) {
+                    openBattleManualOverlay(slot, moveName, baseMove, manualName);
+                    return;
+                }
+                if (computeBattleMoveValue(slot, moveName, baseMove) === null) {
+                    showBattleArenaNotice(isBattleMoveWaitingOnTarget(slot, moveName, baseMove)
+                        ? "This move uses the target's level -- put a Pok\u00e9mon in the other half first."
+                        : "This move's calculation isn't supported yet.");
+                    return;
+                }
+                battleCalcMoveName[slot] = moveName;
+                battleCalcBaseMove[slot] = baseMove;
+                renderBattleCalcReadout(slot);
                 return;
             }
 
-            // Recall -- clears the Attacker slot back to empty (see
-            // recallBattleAttacker()). Same read-only-is-fine treatment
-            // as Choose Pokémon just above, for the same reason.
-            const battleRecallAttackerBtn = e.target.closest('#game-battle-recall-attacker-btn');
-            if (battleRecallAttackerBtn) {
-                recallBattleAttacker();
-                return;
-            }
-
-            // Battle Arena's Defender half -- same shape as the
-            // Attacker pair just above (opens its own roster picker,
-            // read-only saves fine, same reasoning).
-            const battleChooseDefenderBtn = e.target.closest('#game-battle-choose-defender-btn');
-            if (battleChooseDefenderBtn) {
-                openBattleDefenderPicker();
-                return;
-            }
-
-            // Hands off to the gallery instead of opening a picker
-            // overlay -- same shape as #game-team-add-btn/#permanent-pick-btn's
-            // own click handling (see beginBattleWildPickMode()'s own
-            // comment for why there's no confirm prompt first the way
-            // Team Tracker's Add button has one).
-            const battleChooseWildBtn = e.target.closest('#game-battle-choose-wild-btn');
-            if (battleChooseWildBtn) {
-                if (isActiveSaveReadOnly()) return;
-                closeGamePanel();
-                beginBattleWildPickMode();
-                return;
-            }
-
-            const battleRecallDefenderBtn = e.target.closest('#game-battle-recall-defender-btn');
-            if (battleRecallDefenderBtn) {
-                recallBattleDefender();
-                return;
-            }
-
-            const battleCatchWildBtn = e.target.closest('#game-battle-catch-wild-btn');
-            if (battleCatchWildBtn) {
-                // Once a Lobby session exists, the Wild Pokémon is
-                // shared -- requestBattleCatchWild() lets the Host
-                // arbitrate two players tapping this at nearly the same
-                // moment (see hostApplyBattleCatchWild()) rather than
-                // this device just assuming it won and applying the
-                // catch straight to its own roster.
-                if (lobbyState.role !== null) requestBattleCatchWild();
-                else catchWildPokemon();
+            // Defender Options / Attacker Options -- opens the overlay
+            // holding that half's Choose / Recall (/ Wild / Catch)
+            // buttons. Available on read-only saves too, same as the
+            // buttons it now wraps.
+            const battleOptionsBtn = e.target.closest('#game-battle-attacker-options-btn, #game-battle-defender-options-btn');
+            if (battleOptionsBtn) {
+                openBattleOptionsOverlay(battleOptionsBtn.id === 'game-battle-attacker-options-btn' ? 'attacker' : 'defender');
                 return;
             }
 
@@ -34028,6 +34936,14 @@
                 if (!member) return;
                 const evoState = computeTeamEvolutionState(member);
                 if (evoState.mode === 'unable' || evoState.mode === 'active-legendary') return;
+                if (evoState.mode === 'active-dynamax') {
+                    // Immediate revert, same as Gigantamax -- no HP
+                    // reconciliation since Dynamax doesn't touch the
+                    // form/token_level.
+                    member.dynamaxed = false;
+                    persistTeamSlotChange(index);
+                    return;
+                }
                 if (evoState.mode === 'active-mega' || evoState.mode === 'active-gmax') {
                     // Same reconciliation as confirmTeamEvolutionSelection()'s
                     // own mega/gmax branch, in reverse -- reverting
@@ -34103,6 +35019,13 @@
                 if (teamSendToBattleModeActive) {
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
+                    if (teamSendToBattleTargetSlot) {
+                        // Half already decided by the arena's Choose
+                        // button -- skip the Attacker/Defender chooser.
+                        pendingBattleSlotChoiceIndex = Number(teamSlot.dataset.index);
+                        sendTeamMemberToBattleSlot(teamSendToBattleTargetSlot);
+                        return;
+                    }
                     openBattleSlotChoiceOverlay(Number(teamSlot.dataset.index));
                     return;
                 }
@@ -34354,6 +35277,23 @@
         // knows which roster index this overlay is currently open for.
         // Replace confirmation -- sibling of #game-scroll like the other
         // overlays, so it catches its own clicks.
+        // Manual-power prompt -- Cancel or the backdrop backs out with
+        // nothing changed; Confirm/Enter applies the typed number (see
+        // confirmBattleManualOverlay()).
+        document.getElementById('game-battle-manual-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-battle-manual-overlay' || e.target.closest('#game-battle-manual-cancel-btn')) {
+                closeBattleManualOverlay();
+                return;
+            }
+            if (e.target.closest('#game-battle-manual-confirm-btn')) {
+                confirmBattleManualOverlay();
+            }
+        });
+
+        document.getElementById('game-battle-manual-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') confirmBattleManualOverlay();
+        });
+
         document.getElementById('game-battle-replace-confirm-overlay').addEventListener('click', (e) => {
             if (e.target.closest('#game-battle-replace-confirm-yes-btn')) {
                 const action = pendingBattleReplaceAction;
@@ -34379,6 +35319,48 @@
                 sendTeamMemberToBattleSlot('defender');
                 return;
             }
+        });
+
+        // Defender Options / Attacker Options overlays -- siblings of
+        // #game-scroll, so the delegated listener there never sees these
+        // clicks. Each action closes the overlay first, then does what
+        // the button did when it sat under the half.
+        ['attacker', 'defender'].forEach(slot => {
+            const overlay = document.getElementById(`game-battle-${slot}-options-overlay`);
+            if (!overlay) return;
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay || e.target.closest(`#game-battle-${slot}-options-close-btn`)) {
+                    closeBattleOptionsOverlays();
+                    return;
+                }
+                if (e.target.closest(`#game-battle-choose-${slot}-btn`)) {
+                    closeBattleOptionsOverlays();
+                    requestBattleChoosePokemon(slot);
+                    return;
+                }
+                if (e.target.closest(`#game-battle-recall-${slot}-btn`)) {
+                    closeBattleOptionsOverlays();
+                    if (slot === 'attacker') recallBattleAttacker();
+                    else recallBattleDefender();
+                    return;
+                }
+                if (slot === 'defender' && e.target.closest('#game-battle-choose-wild-btn')) {
+                    closeBattleOptionsOverlays();
+                    if (isActiveSaveReadOnly()) return;
+                    closeGamePanel();
+                    beginBattleWildPickMode();
+                    return;
+                }
+                if (slot === 'defender' && e.target.closest('#game-battle-catch-wild-btn')) {
+                    closeBattleOptionsOverlays();
+                    // Once a Lobby session exists, the Wild Pokémon is
+                    // shared -- the Host arbitrates near-simultaneous
+                    // catches (see hostApplyBattleCatchWild()).
+                    if (lobbyState.role !== null) requestBattleCatchWild();
+                    else catchWildPokemon();
+                    return;
+                }
+            });
         });
 
         // Same reasoning again -- this overlay's also a sibling of
