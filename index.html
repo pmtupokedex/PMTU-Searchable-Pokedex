@@ -1706,69 +1706,34 @@
             flex-shrink: 0;
         }
 
-        /* Multiplayer Battle Arena roster -- see renderBattleArenaRoster()
-           in the script. Empty (and so effectively invisible, gap and
-           all) whenever no Lobby session is active; .mp-active on the
-           parent (toggled by that same function) is what actually gives
-           it room to breathe once it's showing real content, rather
-           than fighting Attacker/Defender's own flex:1 for space all
-           the time regardless of whether anything's in it. */
-        .game-battle-roster {
+        /* Read-only card for a Pokémon this device may watch but not
+           control -- see renderReadOnlyBattleSlot(). */
+        .game-battle-readonly-card {
             display: flex;
             flex-direction: column;
-            gap: 8px;
-        }
-
-        .game-battle-arena.mp-active .game-battle-roster {
-            flex-shrink: 0;
-        }
-
-        .game-battle-roster-item {
-            display: grid;
-            grid-template-columns: auto 1fr;
-            column-gap: 10px;
-            row-gap: 2px;
             align-items: center;
-            border-radius: 10px;
-            padding: 8px 12px;
-            background: rgba(0, 0, 0, 0.15);
+            justify-content: center;
+            gap: 4px;
+            padding: 8px;
+            text-align: center;
         }
 
-        .game-battle-roster-item-owner {
-            grid-column: 1 / -1;
-            font-weight: bold;
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            opacity: 0.85;
-        }
-
-        .game-battle-roster-item-img {
-            grid-row: 2 / 4;
-            width: 48px;
-            height: 48px;
+        .game-battle-readonly-card-img {
+            width: 96px;
+            height: 96px;
             object-fit: contain;
         }
 
-        .game-battle-roster-item-name {
-            font-size: 15px;
+        .game-battle-readonly-card-name {
+            margin: 0;
+            font-size: 16px;
             font-weight: bold;
         }
 
-        .game-battle-roster-item-meta {
+        .game-battle-readonly-card-meta {
+            margin: 0;
             font-size: 13px;
             opacity: 0.85;
-        }
-
-        .game-battle-roster-item-empty .game-battle-roster-item-meta {
-            font-style: italic;
-        }
-
-        .game-battle-roster-empty-text {
-            margin: 0;
-            font-size: 14px;
-            text-align: center;
-            opacity: 0.8;
         }
 
         /* ---- Multiplayer Lobby (connection layer -- see
@@ -13439,13 +13404,6 @@
                         </div>
                     </div>
 
-                    <!-- Multiplayer-only -- see renderBattleArenaRoster()
-                         in the script. Empty and untouched by CSS
-                         (display: contents on .game-battle-arena.mp-active
-                         is what actually makes room for it) whenever no
-                         Lobby session is active, so solo play looks
-                         exactly like it always did. -->
-                    <div class="game-battle-roster" id="game-battle-roster"></div>
                 </div>
             </div>
 
@@ -21088,85 +21046,79 @@
         // guestBattleArenaCache/hostBattleArenaState's own declarations
         // further down in the Battle Arena section for the overall
         // shape) ----
+        // There is exactly ONE Attacker slot and ONE Defender slot for
+        // the whole lobby, each holding either a specific player's own
+        // Pokémon ({member, ownerId: <peerId or 'host'>}) or an
+        // ownerless one ({member, ownerId: null} -- today only ever the
+        // Wild Pokémon, but the same shape is what an NPC Trainer or
+        // Gym Leader would use later). Who may control what follows
+        // from ownership alone -- see canControlWildDefender()/
+        // canCatchWildDefender() below.
+        //
         // Same broadcast-a-full-snapshot shape as broadcastDeckState()
         // just above -- every mutation below rebuilds and resends the
-        // whole {wild, placements} object rather than a smaller delta,
-        // since the Arena is small (one Wild Pokémon plus one pick per
-        // connected player) and this keeps every device's own
+        // whole {attacker, defender} object rather than a smaller delta,
+        // since it's tiny and this keeps every device's own
         // guestBattleArenaCache trivially consistent with the Host's
-        // hostBattleArenaState without ever needing to reconcile a
-        // partial update against a possibly-stale local copy.
+        // hostBattleArenaState.
         function broadcastBattleArenaState() {
             if (lobbyState.role === 'guest') return; // guests only ever receive this, never originate it
-            const payload = { type: 'battle-arena-state', wild: hostBattleArenaState.wild, placements: hostBattleArenaState.placements };
+            const payload = { type: 'battle-arena-state', attacker: hostBattleArenaState.attacker, defender: hostBattleArenaState.defender };
             if (lobbyState.connections) {
                 lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
             }
-            guestBattleArenaCache = payload; // so renderBattleArenaRoster() has one code path for host and guest alike
-            // The Host is also a player, same as any Guest -- its own
-            // Defender slot needs to reflect whatever the shared Wild
-            // Pokémon actually is right now too, through the exact same
-            // plumbing a Guest uses (see applyIncomingWildState()'s own
-            // comment).
-            applyIncomingWildState(payload.wild ? payload.wild.member : null);
-            renderBattleArenaRoster();
+            guestBattleArenaCache = payload; // one code path for host and guest alike
+            applyIncomingArenaState(payload);
         }
 
-        // member is a full team-member-shaped object (or null to clear)
-        // -- see syncMyBattlePlacement()'s own comment for why the
-        // Attacker half is what feeds this. peerKey isn't re-validated
-        // against lobbyState.connections here -- an unrecognized/stale
-        // key just adds a placements entry nobody's roster row will
-        // ever match (see renderBattleArenaRoster(), which only ever
-        // iterates lobbyState.players), rather than anything actually
-        // harmful.
-        function hostApplyBattlePlace(peerKey, member) {
-            if (member) hostBattleArenaState.placements[peerKey] = member;
-            else delete hostBattleArenaState.placements[peerKey];
+        // slot is 'attacker' or 'defender'; member is a full team-member
+        // shaped object or null to clear. ownerId comes from the
+        // connection the message actually arrived on (conn.peer, or
+        // 'host') rather than anything the sender claims about
+        // themselves -- same convention hostApplyDraw() etc. already
+        // follow. wild:true tags the entry as ownerless instead.
+        function hostApplyBattleSetSlot(slot, peerKey, member, wild) {
+            if (slot !== 'attacker' && slot !== 'defender') return;
+            hostBattleArenaState[slot] = member ? { member, ownerId: wild ? null : peerKey } : null;
             broadcastBattleArenaState();
         }
 
-        function hostApplyBattleSetWild(peerKey, member, ownerName) {
-            hostBattleArenaState.wild = member ? { member, ownerName: ownerName || 'Someone' } : null;
-            broadcastBattleArenaState();
+        function sendBattleCatchFailure(peerKey, reason) {
+            if (peerKey === 'host') {
+                showBattleArenaNotice(reason);
+            } else {
+                const connEntry = lobbyState.connections.get(peerKey);
+                if (connEntry && connEntry.conn.open) connEntry.conn.send({ type: 'battle-catch-failed', reason });
+            }
         }
 
         // The one place a Wild Pokémon actually gets caught once the
-        // Arena is shared -- resolves the same "first claim wins" race
-        // hostApplyGainReward() (see its own comment) already handles
-        // for a oneTime:'yes' card, just against
-        // hostBattleArenaState.wild directly instead of a claims array:
-        // if it's already null by the time this runs (someone else's
-        // claim, or this same player's own second tap, landed first),
-        // this is silently a no-op rather than catching the same
-        // Pokémon twice or catching nothing into two different rosters.
+        // Arena is shared. Only the owner of the Attacker slot -- the
+        // player whose Pokémon is actually in the fight, i.e. the one
+        // who encountered it -- may do this; anyone else's request is
+        // refused with a notice. That also settles what used to be a
+        // race: there's only ever one eligible catcher, and a second
+        // tap from them after the first already landed finds the slot
+        // empty.
         //
-        // The Host's own roster lives locally
-        // (getActiveSaveData().team.members), so a Host catch applies
-        // straight through finishLocalWildCatch() -- exactly like
-        // catching solo. A Guest's roster is never something the Host
-        // has a copy of at all (unlike Hand & Decks -- see
-        // getPeerHandArray()'s own comment), so the only way to
-        // actually put the catch onto THAT device's own save is to tell
-        // it to do so itself, the same "confirmed by the Host, applied
-        // locally" shape 'deck-drawn' already uses for a card landing
-        // in a guest's own hand.
+        // The Host's own roster lives locally, so a Host catch applies
+        // straight through finishLocalWildCatch(). A Guest's roster is
+        // never something the Host has a copy of (see
+        // getPeerHandArray()'s own comment), so the Guest is told to add
+        // it to its own save itself -- same "confirmed by the Host,
+        // applied locally" shape 'deck-drawn' already uses.
         function hostApplyBattleCatchWild(peerKey) {
-            const entry = hostBattleArenaState.wild;
-            if (!entry) {
-                // Someone else's claim (or this same player's own second
-                // tap) already landed first -- tell the loser plainly
-                // rather than leaving them tapping a button that quietly
-                // does nothing.
-                if (peerKey === 'host') {
-                    showBattleArenaNotice('Too late \u2014 someone already caught it.');
-                } else {
-                    const connEntry = lobbyState.connections.get(peerKey);
-                    if (connEntry && connEntry.conn.open) connEntry.conn.send({ type: 'battle-catch-failed' });
-                }
+            const entry = hostBattleArenaState.defender;
+            if (!entry || entry.ownerId) {
+                sendBattleCatchFailure(peerKey, 'Too late \u2014 there\u2019s nothing to catch anymore.');
                 return;
             }
-            hostBattleArenaState.wild = null;
+            const attackerEntry = hostBattleArenaState.attacker;
+            if (!attackerEntry || attackerEntry.ownerId !== peerKey) {
+                sendBattleCatchFailure(peerKey, 'Only the player battling this Pok\u00e9mon can catch it.');
+                return;
+            }
+            hostBattleArenaState.defender = null;
             if (peerKey === 'host') {
                 finishLocalWildCatch(entry.member);
             } else {
@@ -21177,42 +21129,29 @@
         }
 
         // Host-only cleanup for a connection going away -- see
-        // handleHostConnectionDrop()'s own call site. A departed
-        // player's own Attacker pick shouldn't keep showing in everyone
-        // else's roster list (renderBattleArenaRoster() would otherwise
-        // happily keep rendering a placements entry for a peerId no
-        // longer in lobbyState.players at all -- harmless, but stale).
-        // The shared Wild Pokémon is left alone regardless of who set
-        // it -- it belongs to the whole lobby, not to whoever happened
-        // to send it in, so one player leaving shouldn't yank it out
-        // from under everyone else mid-fight.
+        // handleHostConnectionDrop()'s own call site. Frees any slot
+        // that player owned. An ownerless (Wild) entry is left alone --
+        // it belongs to nobody in particular, so one player leaving
+        // shouldn't yank it out from under everyone else.
         function clearBattleArenaPlacementFor(peerId) {
-            if (!(peerId in hostBattleArenaState.placements)) return;
-            delete hostBattleArenaState.placements[peerId];
-            broadcastBattleArenaState();
+            let changed = false;
+            ['attacker', 'defender'].forEach(slot => {
+                const entry = hostBattleArenaState[slot];
+                if (entry && entry.ownerId === peerId) {
+                    hostBattleArenaState[slot] = null;
+                    changed = true;
+                }
+            });
+            if (changed) broadcastBattleArenaState();
         }
 
         // ---- Client-facing entry points -- same "branch on role once
-        // here" convention as requestDrawCard() etc. below, so every
-        // caller above (syncMyBattlePlacement(), setBattleDefenderWild(),
-        // persistTeamSlotChange(), recallBattleDefender(), the
-        // #game-scroll delegated listener's Catch This Pokémon branch)
-        // just calls these without caring whether this device is the
-        // Host or a Guest. ----
-        function requestBattlePlace(member) {
+        // here" convention as requestDrawCard() etc. below. ----
+        function requestBattleSetSlot(slot, member, wild) {
             if (lobbyState.role === 'guest') {
-                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-place', member });
+                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-set-slot', slot, member, wild: !!wild });
             } else if (lobbyState.role === 'host') {
-                hostApplyBattlePlace('host', member);
-            }
-        }
-
-        function requestBattleSetWild(member) {
-            if (lobbyState.role === null) return;
-            if (lobbyState.role === 'guest') {
-                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-set-wild', member, ownerName: getOwnLobbyDisplayName() });
-            } else {
-                hostApplyBattleSetWild('host', member, getOwnLobbyDisplayName());
+                hostApplyBattleSetSlot(slot, 'host', member, !!wild);
             }
         }
 
@@ -21225,65 +21164,100 @@
             }
         }
 
-        // Multiplayer-only roster list under the Attacker/Defender
-        // halves -- shows every OTHER connected player's own current
-        // Attacker pick, read-only (see guestBattleArenaCache's own
-        // comment for why this device's own pick isn't repeated here --
-        // it's already showing, and fully editable, right in the
-        // Attacker half itself). Also what actually toggles the two
-        // halves between solo and multiplayer behavior: hides the
-        // real-Pokémon Defender picker (see that button's own comment)
-        // and flags .game-battle-arena so its own CSS can adjust
-        // spacing for the extra list. Falls straight back to solo's
-        // original layout the moment lobbyState.role goes back to null.
-        function renderBattleArenaRoster() {
-            const container = document.getElementById('game-battle-roster');
-            const arena = document.querySelector('.game-battle-arena');
-            const chooseDefenderBtn = document.getElementById('game-battle-choose-defender-btn');
-            if (!container) return;
-            const inLobby = lobbyState.role !== null;
-            if (arena) arena.classList.toggle('mp-active', inLobby);
-            // Choosing a second one of your own Pokémon into Defender
-            // was a solo-only comparison feature -- once Defender is
-            // the whole lobby's shared Wild Pokémon instead, offering
-            // this button back would silently do nothing useful:
-            // there's no private "my own second Pokémon" slot left to
-            // put it in.
-            if (chooseDefenderBtn) chooseDefenderBtn.style.display = inLobby ? 'none' : '';
-            if (!inLobby) {
-                container.innerHTML = '';
-                return;
-            }
+        // ---- Ownership / permission helpers. Every one of these is
+        // trivially permissive solo (lobbyState.role === null): one
+        // person is playing everything, so nobody needs excluding. ----
+
+        // The shared entry for a slot, or null solo / when empty.
+        function getArenaSlotEntry(slot) {
+            if (lobbyState.role === null || !guestBattleArenaCache) return null;
+            return guestBattleArenaCache[slot] || null;
+        }
+
+        // True when the slot holds a specific OTHER player's own
+        // Pokémon -- this device can neither place into it nor control
+        // what's in it.
+        function isBattleSlotOwnedByOtherPlayer(slot) {
+            const entry = getArenaSlotEntry(slot);
+            return !!(entry && entry.ownerId && entry.ownerId !== getMyLobbyPlayerId());
+        }
+
+        // Control of an ownerless slot (the Wild Pokémon) belongs to
+        // everyone EXCEPT the owner of the Attacker slot -- that
+        // player is busy playing their own Pokémon, and it's the other
+        // players who make the Wild Pokémon's choices. If there's no
+        // acting player yet, or nobody else is connected to take the
+        // other side, nothing needs excluding.
+        function canControlWildDefender() {
+            if (lobbyState.role === null) return true;
+            const attackerEntry = getArenaSlotEntry('attacker');
+            if (!attackerEntry || !attackerEntry.ownerId) return true;
+            if (lobbyState.players.length <= 1) return true;
+            return attackerEntry.ownerId !== getMyLobbyPlayerId();
+        }
+
+        // The mirror image: only the Attacker slot's owner -- the
+        // player who encountered it -- may catch it.
+        function canCatchWildDefender() {
+            if (lobbyState.role === null) return true;
+            const attackerEntry = getArenaSlotEntry('attacker');
+            return !!(attackerEntry && attackerEntry.ownerId && attackerEntry.ownerId === getMyLobbyPlayerId());
+        }
+
+        // Applies a battle-arena-state onto this device's local
+        // Attacker/Defender variables -- the same ones the solo
+        // render/edit plumbing already reads, so that plumbing keeps
+        // working unmodified for whatever this device is entitled to
+        // interact with. Deliberately never re-broadcasts: this is
+        // applying something that already happened elsewhere.
+        //   - A slot I own: my own local pick is the live source of
+        //     truth (it's what caused the broadcast), left alone.
+        //   - An ownerless Defender: mirrored into battleWildPokemon so
+        //     the existing interactive wild card can edit it (whether
+        //     this device is actually allowed to is decided at render
+        //     time, see renderBattleDefenderSlot()).
+        //   - Empty, or another player's: nothing local to keep.
+        function applyIncomingArenaState(payload) {
             const myId = getMyLobbyPlayerId();
-            const placements = (guestBattleArenaCache && guestBattleArenaCache.placements) || {};
-            const others = lobbyState.players.filter(p => p.id !== myId);
-            if (!others.length) {
-                container.innerHTML = '<p class="game-battle-roster-empty-text">No other players connected yet.</p>';
-                return;
+            if (!(payload.attacker && payload.attacker.ownerId === myId)) {
+                battleAttackerMemberIndex = null;
+                battleAttackerTeamId = null;
             }
-            const hpRule = getHpRule(getActiveSaveData());
-            container.innerHTML = others.map(player => {
-                const member = placements[player.id];
-                if (!member) {
-                    return `<div class="game-battle-roster-item game-battle-roster-item-empty">
-                        <span class="game-battle-roster-item-owner">${escapeHtml(player.name)}</span>
-                        <span class="game-battle-roster-item-meta">No Pok\u00e9mon in the Arena.</span>
-                    </div>`;
-                }
-                const display = getBattleMemberDisplay(member);
-                const hpState = computeTeamHpState(member, hpRule);
-                const statusEntry = STATUS_CONDITIONS.find(s => s.id === member.status);
-                const metaParts = [`Lv ${member.level || 0}`];
-                if (hpState.showCount) metaParts.push(`${hpState.count} HP`);
-                if (member.fainted) metaParts.push('Fainted');
-                else if (statusEntry) metaParts.push(statusEntry.name);
-                return `<div class="game-battle-roster-item">
-                    <span class="game-battle-roster-item-owner">${escapeHtml(player.name)}</span>
-                    <img class="game-battle-roster-item-img" src="${display.src || ''}" alt="${escapeHtml(display.name)}">
-                    <span class="game-battle-roster-item-name">${escapeHtml(display.name)}</span>
-                    <span class="game-battle-roster-item-meta">${escapeHtml(metaParts.join(' \u00b7 '))}</span>
-                </div>`;
-            }).join('');
+            const defenderEntry = payload.defender;
+            if (defenderEntry && defenderEntry.ownerId === myId) {
+                battleWildPokemon = null;
+            } else if (defenderEntry && !defenderEntry.ownerId) {
+                battleWildPokemon = defenderEntry.member;
+                battleDefenderMemberIndex = 'wild';
+                battleDefenderTeamId = 'wild';
+            } else {
+                battleWildPokemon = null;
+                battleDefenderMemberIndex = null;
+                battleDefenderTeamId = null;
+            }
+            renderBattleAttackerSlot();
+            renderBattleDefenderSlot();
+        }
+
+        // Read-only card for a Pokémon this device may look at but not
+        // touch -- another player's own Pokémon, or the Wild Pokémon
+        // while this device is the acting player. Deliberately built
+        // from plain markup instead of the interactive corner badges,
+        // so nothing in it can reach the #game-scroll delegated
+        // HP/Status/Level listeners.
+        function renderReadOnlyBattleSlot(container, member) {
+            const display = getBattleMemberDisplay(member);
+            const hpState = computeTeamHpState(member, getHpRule(getActiveSaveData()));
+            const statusEntry = STATUS_CONDITIONS.find(s => s.id === member.status);
+            const metaParts = [`Lv ${member.level || 0}`];
+            if (hpState.showCount) metaParts.push(`${hpState.count} HP`);
+            if (member.fainted) metaParts.push('Fainted');
+            else if (statusEntry) metaParts.push(statusEntry.name);
+            container.innerHTML = `<div class="game-battle-readonly-card">
+                <img class="game-battle-readonly-card-img" src="${display.src || ''}" alt="${escapeHtml(display.name)}">
+                <p class="game-battle-readonly-card-name">${escapeHtml(display.name)}</p>
+                <p class="game-battle-readonly-card-meta">${escapeHtml(metaParts.join(' \u00b7 '))}</p>
+            </div>`;
         }
 
         // ---- UI-facing entry points (called from the delegated click
@@ -23670,7 +23644,7 @@
                 // Status/Level/Cards edit made here (by ANY connected
                 // player, not just whoever originally set it) needs to
                 // reach everyone else too. A no-op solo.
-                requestBattleSetWild(battleWildPokemon);
+                requestBattleSetSlot('defender', battleWildPokemon, true);
                 return;
             }
             if (activeSaveSlot !== null) persistGameSaves();
@@ -23682,7 +23656,10 @@
             // was just edited is actually the one currently sent to the
             // Battle Arena.
             if (index === battleAttackerMemberIndex && getActiveTeamId() === battleAttackerTeamId) {
-                syncMyBattlePlacement();
+                syncMyBattleSlot('attacker');
+            }
+            if (index === battleDefenderMemberIndex && getActiveTeamId() === battleDefenderTeamId) {
+                syncMyBattleSlot('defender');
             }
         }
 
@@ -26839,6 +26816,13 @@
         let battleWildPickModeActive = false;
 
         function beginBattleWildPickMode() {
+            // Can't swap a Wild Pokémon in over another player's own
+            // Pokémon (a PvP battle in progress) -- see
+            // isBattleSlotOwnedByOtherPlayer().
+            if (isBattleSlotOwnedByOtherPlayer('defender')) {
+                showBattleArenaNotice('Another player\u2019s Pok\u00e9mon is already in the Defender slot.');
+                return;
+            }
             battleWildPickModeActive = true;
             document.body.classList.add('battle-wild-pick-mode');
             filterGallery();
@@ -27224,44 +27208,54 @@
         // ---- Multiplayer Battle Arena sharing (see the chat this was
         // built in) ----
         // Everything above this point stays exactly as it was for
-        // solo/offline play. These two variables are what let the same
-        // two halves work as a shared, whole-lobby-visible arena once a
-        // Lobby session exists:
-        //   - Attacker keeps meaning "my own current pick" either way --
-        //     setBattleAttackerIndex()/recallBattleAttacker() and
-        //     persistTeamSlotChange() below now also push it out to the
-        //     rest of the lobby (see syncMyBattlePlacement()/
-        //     requestBattlePlace()), so a fresh pick AND a later HP/
-        //     Status/Level edit both show up for everyone else too.
-        //   - Defender stops being a private second Pokémon of mine to
-        //     compare against once a Lobby session exists -- picking one
-        //     of my own OTHER team members into it is hidden in that
-        //     case (see renderBattleArenaRoster()), leaving only Choose
-        //     Wild Pokémon, which now sets ONE Wild Pokémon shared by
-        //     the whole lobby (see requestBattleSetWild()) rather than a
-        //     private one. Every connected player, not just whoever set
-        //     it, can then edit its HP/Status/Level through this same
-        //     existing Defender slot (see persistTeamSlotChange()'s own
-        //     hook and applyIncomingWildState() below).
-        // Everyone else's own Attacker pick shows up read-only in the
-        // new roster list under both halves (see renderBattleArenaRoster()),
-        // built from guestBattleArenaCache -- the guest-side (and host's
-        // own) mirror of the Host's last broadcastBattleArenaState(),
-        // same "one code path, host and guest alike" trick
-        // guestDeckStateCache already uses for Hand & Decks.
+        // solo/offline play, where one person controls both halves.
+        // Once a Lobby session exists there is still exactly ONE
+        // Attacker half and ONE Defender half for the whole lobby, each
+        // holding either a specific player's own Pokémon or an ownerless
+        // one (today: the Wild Pokémon). The local variables above stay
+        // this device's own live view of whatever it owns/mirrors; who
+        // owns what lives in the shared state below (see
+        // applyIncomingArenaState() for how the two are reconciled, and
+        // canControlWildDefender()/canCatchWildDefender() for the
+        // control rules that follow from ownership).
+        //
+        // guestBattleArenaCache: the guest-side (and host's own) mirror
+        // of the Host's last broadcastBattleArenaState() --
+        // {attacker, defender}, each {member, ownerId} | null, ownerId
+        // null meaning ownerless. Same "one code path, host and guest
+        // alike" trick guestDeckStateCache already uses.
         let guestBattleArenaCache = null;
 
-        // Host-only authoritative store backing guestBattleArenaCache
-        // above -- see hostApplyBattlePlace()/hostApplyBattleSetWild()/
-        // hostApplyBattleCatchWild(). Reset fresh every time hosting
-        // starts or the lobby resets (see resetLobbyState()), never
+        // Host-only authoritative store backing it -- see
+        // hostApplyBattleSetSlot()/hostApplyBattleCatchWild(). Reset
+        // whenever the lobby resets (see resetLobbyState()), never
         // persisted -- same "pure in-memory state for the current
-        // battle" reasoning battleWildPokemon itself already carries
-        // solo.
-        //   wild: { member, ownerName } | null
-        //   placements: { [peerId]: member } -- 'host' included
-        //     alongside every lobbyState.connections key.
-        let hostBattleArenaState = { wild: null, placements: {} };
+        // battle" reasoning battleWildPokemon itself already carries.
+        let hostBattleArenaState = { attacker: null, defender: null };
+
+        // Re-sends this device's own current pick for one half to the
+        // rest of the Lobby -- called by every place that changes it AND
+        // by persistTeamSlotChange() on every HP/Status/Level/Cards
+        // edit, so a wound taken mid-battle shows up for everyone else
+        // too. A no-op solo. Only ever sends a real roster pick of this
+        // device's own; the Wild Pokémon goes out separately (see
+        // setBattleDefenderWild()/persistTeamSlotChange()'s 'wild'
+        // branch).
+        function syncMyBattleSlot(slot) {
+            if (lobbyState.role === null) return;
+            const index = slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+            const teamId = slot === 'attacker' ? battleAttackerTeamId : battleDefenderTeamId;
+            if (index === 'wild') return; // ownerless -- not mine to sync or clear from here
+            if (index === null || teamId !== getActiveTeamId()) {
+                // Only clear the shared slot if it's actually MINE --
+                // a stale null here must never wipe another player's pick.
+                const entry = getArenaSlotEntry(slot);
+                if (entry && entry.ownerId === getMyLobbyPlayerId()) requestBattleSetSlot(slot, null, false);
+                return;
+            }
+            const members = getActiveSaveData().team.members || [];
+            requestBattleSetSlot(slot, members[index] || null, false);
+        }
 
         // The one authoritative way to point the Attacker half at a
         // roster index -- picking a Pokémon that's currently the
@@ -27292,7 +27286,8 @@
                 battleDefenderMemberIndex = null;
                 battleDefenderTeamId = null;
             }
-            syncMyBattlePlacement();
+            syncMyBattleSlot('attacker');
+            syncMyBattleSlot('defender');
         }
 
         // Defender half's own equivalent of setBattleAttackerIndex()
@@ -27313,6 +27308,8 @@
                 battleAttackerMemberIndex = null;
                 battleAttackerTeamId = null;
             }
+            syncMyBattleSlot('attacker');
+            syncMyBattleSlot('defender');
         }
 
         // The one authoritative way to point Defender at a Wild
@@ -27334,31 +27331,9 @@
             battleWildPokemon = member;
             battleDefenderMemberIndex = 'wild';
             battleDefenderTeamId = 'wild';
-            // Once a Lobby session exists, this is no longer a private
-            // pick -- it's setting the ONE Wild Pokémon the whole lobby
-            // sees and fights together (see requestBattleSetWild()). A
-            // no-op solo.
-            requestBattleSetWild(member);
-        }
-
-        // Applies an incoming battle-arena-state's own `wild` straight
-        // onto the local battleWildPokemon/battleDefenderMemberIndex/
-        // battleDefenderTeamId trio -- the exact same three variables
-        // Defender's existing (fully interactive) render/edit plumbing
-        // already reads, so once a Lobby session exists that plumbing
-        // just keeps working completely unmodified, now reflecting
-        // whatever the Host's last broadcast said instead of only ever
-        // this device's own local pick. Deliberately does NOT call back
-        // into requestBattleSetWild() itself -- this is applying
-        // something that already happened elsewhere, not deciding
-        // anything new, so re-broadcasting it here would either loop
-        // pointlessly (on the Host, which already broadcast it once) or
-        // just be redundant (on a Guest, who isn't the one who set it).
-        function applyIncomingWildState(member) {
-            battleWildPokemon = member;
-            battleDefenderMemberIndex = member ? 'wild' : null;
-            battleDefenderTeamId = member ? 'wild' : null;
-            renderBattleDefenderSlot();
+            // Once a Lobby session exists this sets the ownerless Wild
+            // Pokémon in the ONE shared Defender half. A no-op solo.
+            requestBattleSetSlot('defender', member, true);
         }
 
         // Whether picking a new Attacker from whatever team is active
@@ -27460,6 +27435,22 @@
             // sort out, so it's always in sync with whatever this
             // render just decided the slot's state is.
             const recallBtn = document.getElementById('game-battle-recall-attacker-btn');
+            // Multiplayer: there's only ONE Attacker half for the whole
+            // lobby. If it currently holds another player's Pokémon,
+            // this device just watches it -- no controls, and no
+            // picker either, since that half isn't free to take.
+            // Solo (getArenaSlotEntry() is always null then) and
+            // "empty or mine" both fall through to the original
+            // local-pick rendering below.
+            const chooseAttackerBtn = document.getElementById('game-battle-choose-attacker-btn');
+            const attackerEntry = getArenaSlotEntry('attacker');
+            if (attackerEntry && attackerEntry.ownerId !== getMyLobbyPlayerId()) {
+                renderReadOnlyBattleSlot(slot, attackerEntry.member);
+                if (recallBtn) recallBtn.style.display = 'none';
+                if (chooseAttackerBtn) chooseAttackerBtn.style.display = 'none';
+                return;
+            }
+            if (chooseAttackerBtn) chooseAttackerBtn.style.display = '';
             if (battleAttackerMemberIndex === null) {
                 slot.innerHTML = '<p class="game-battle-slot-empty-text">No Pok\u00e9mon selected.</p>';
                 if (recallBtn) recallBtn.style.display = 'none';
@@ -27548,6 +27539,10 @@
             // why this is a flat refusal rather than something
             // resolved per-item the way the individual-Pokémon badge
             // is.
+            if (isBattleSlotOwnedByOtherPlayer('attacker')) {
+                showBattleArenaNotice('Another player\u2019s Pok\u00e9mon is already in the Attacker slot.');
+                return;
+            }
             if (isBattleAttackerBlockedByActiveTeam()) {
                 showBattleArenaNotice('Defender already has a Pok\u00e9mon from this team \u2014 recall it, or switch to a different save, before choosing an Attacker.');
                 return;
@@ -27586,26 +27581,7 @@
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
             renderBattleAttackerSlot();
-            syncMyBattlePlacement();
-        }
-
-        // Re-sends this device's own current Attacker pick to the rest
-        // of the Lobby -- called by every place that changes it (a
-        // fresh pick, a recall) AND by persistTeamSlotChange() below on
-        // every HP/Status/Level/Cards edit, so a wound taken mid-battle
-        // shows up for everyone else too, not just at the moment the
-        // Pokémon was first sent in. A harmless no-op outside an active
-        // Lobby session -- requestBattlePlace() itself checks
-        // lobbyState.role, this just saves every caller from also
-        // having to resolve the current member first for nothing.
-        function syncMyBattlePlacement() {
-            if (lobbyState.role === null) return;
-            if (battleAttackerMemberIndex === null || battleAttackerTeamId !== getActiveTeamId()) {
-                requestBattlePlace(null);
-                return;
-            }
-            const members = getActiveSaveData().team.members || [];
-            requestBattlePlace(members[battleAttackerMemberIndex] || null);
+            syncMyBattleSlot('attacker');
         }
 
         // Defender half's own equivalent of renderBattleAttackerSlot()
@@ -27630,6 +27606,51 @@
             // catching a real team member back onto the same team it's
             // already on makes no sense.
             const catchBtn = document.getElementById('game-battle-catch-wild-btn');
+            // Multiplayer -- see renderBattleAttackerSlot()'s own
+            // comment for the general idea. Defender additionally has
+            // the ownerless Wild Pokémon case:
+            //   - another player's own Pokémon (PvP): watch only.
+            //   - the Wild Pokémon: interactive for whoever
+            //     canControlWildDefender() says (everyone except the
+            //     Attacker's owner), read-only for that owner -- who is
+            //     the only one canCatchWildDefender() lets catch it.
+            //     Recall stays available to everyone (the acting
+            //     player fleeing, or the other side calling it off).
+            const chooseDefenderBtn = document.getElementById('game-battle-choose-defender-btn');
+            const chooseWildBtn = document.getElementById('game-battle-choose-wild-btn');
+            const setDefenderChooseButtons = (show) => {
+                if (chooseDefenderBtn) chooseDefenderBtn.style.display = show ? '' : 'none';
+                if (chooseWildBtn) chooseWildBtn.style.display = show ? '' : 'none';
+            };
+            const defenderEntry = getArenaSlotEntry('defender');
+            const stopWildEvolutionTimer = () => {
+                if (battleWildEvolutionBadgeInterval) {
+                    clearInterval(battleWildEvolutionBadgeInterval);
+                    battleWildEvolutionBadgeInterval = null;
+                }
+            };
+            if (defenderEntry && defenderEntry.ownerId && defenderEntry.ownerId !== getMyLobbyPlayerId()) {
+                stopWildEvolutionTimer();
+                renderReadOnlyBattleSlot(slot, defenderEntry.member);
+                if (recallBtn) recallBtn.style.display = 'none';
+                if (catchBtn) catchBtn.style.display = 'none';
+                setDefenderChooseButtons(false);
+                return;
+            }
+            if (defenderEntry && !defenderEntry.ownerId) {
+                const canControl = canControlWildDefender();
+                setDefenderChooseButtons(canControl);
+                if (recallBtn) recallBtn.style.display = '';
+                if (catchBtn) catchBtn.style.display = canCatchWildDefender() ? '' : 'none';
+                if (canControl) {
+                    renderBattleWildDefenderSlotBody(slot);
+                } else {
+                    stopWildEvolutionTimer();
+                    renderReadOnlyBattleSlot(slot, defenderEntry.member);
+                }
+                return;
+            }
+            setDefenderChooseButtons(true);
             if (battleDefenderMemberIndex === null) {
                 slot.innerHTML = '<p class="game-battle-slot-empty-text">No Pok\u00e9mon selected.</p>';
                 if (recallBtn) recallBtn.style.display = 'none';
@@ -27822,6 +27843,10 @@
             // Defender half's own equivalent of openBattleAttackerPicker()'s
             // own refusal just above -- same reasoning, checked against
             // Attacker's stamped team instead.
+            if (isBattleSlotOwnedByOtherPlayer('defender')) {
+                showBattleArenaNotice('Another player\u2019s Pok\u00e9mon is already in the Defender slot.');
+                return;
+            }
             if (isBattleDefenderBlockedByActiveTeam()) {
                 showBattleArenaNotice('Attacker already has a Pok\u00e9mon from this team \u2014 recall it, or switch to a different save, before choosing a Defender.');
                 return;
@@ -27858,13 +27883,16 @@
             battleDefenderTeamId = null;
             battleWildPokemon = null;
             renderBattleDefenderSlot();
-            // Once a Lobby session exists, Defender only ever holds the
-            // one Wild Pokémon shared by the whole lobby (see
-            // renderBattleArenaRoster(), which hides the real-member
-            // picker in that case) -- so recalling it here means
-            // clearing it for everyone, not just this device. A no-op
-            // solo (requestBattleSetWild() itself checks lobbyState.role).
-            requestBattleSetWild(null);
+            // Once a Lobby session exists, clear the shared half too: an
+            // ownerless Wild Pokémon can be recalled by anyone who can
+            // see the button (the acting player fleeing, or the other
+            // side calling it off), while a real pick of this device's
+            // own goes through the usual own-slot-only sync.
+            if (lobbyState.role !== null) {
+                const entry = getArenaSlotEntry('defender');
+                if (entry && !entry.ownerId) requestBattleSetSlot('defender', null, false);
+                else syncMyBattleSlot('defender');
+            }
         }
 
         // "Catch This Pokémon" -- hands battleWildPokemon off to Team
@@ -29542,7 +29570,8 @@
             renderPokeCoins();
             renderVirtualDecksAvailability();
             renderDecksScreen();
-            renderBattleArenaRoster();
+            renderBattleAttackerSlot();
+            renderBattleDefenderSlot();
         }
 
         // Called by any save-scoped tool whenever it mutates badges/team
@@ -30450,7 +30479,6 @@
             if (screenId === 'battle') {
                 renderBattleAttackerSlot();
                 renderBattleDefenderSlot();
-                renderBattleArenaRoster();
             }
             if (screenId === 'rulebook-picker') renderRulebookPicker();
             if (screenId === 'rulebook') initRulebookScreen();
@@ -30815,7 +30843,7 @@
             // alone -- solo Battle Arena keeps whatever this device had
             // showing before it ever joined/hosted, same as every other
             // solo tool on this reset.
-            hostBattleArenaState = { wild: null, placements: {} };
+            hostBattleArenaState = { attacker: null, defender: null };
             guestBattleArenaCache = null;
             refreshGameUI();
             applyGamePanelPlayerTheme();
@@ -31818,10 +31846,8 @@
                     // device (see commitAttachFromHandToMember()'s own
                     // comment), this just clears the shared zone.
                     hostApplyActiveCardResolveAttach(conn.peer);
-                } else if (data.type === 'battle-place') {
-                    hostApplyBattlePlace(conn.peer, data.member || null);
-                } else if (data.type === 'battle-set-wild') {
-                    hostApplyBattleSetWild(conn.peer, data.member || null, typeof data.ownerName === 'string' ? data.ownerName : null);
+                } else if (data.type === 'battle-set-slot') {
+                    hostApplyBattleSetSlot(data.slot, conn.peer, data.member || null, !!data.wild);
                 } else if (data.type === 'battle-catch-wild') {
                     hostApplyBattleCatchWild(conn.peer);
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
@@ -32810,8 +32836,7 @@
                     renderRewardMenu(); // no-op unless this exact menu is open
                 } else if (data.type === 'battle-arena-state') {
                     guestBattleArenaCache = data;
-                    applyIncomingWildState(data.wild ? data.wild.member : null);
-                    renderBattleArenaRoster();
+                    applyIncomingArenaState(data);
                 } else if (data.type === 'battle-caught' && data.member) {
                     // The Host just confirmed THIS device won the claim
                     // on the shared Wild Pokémon (see
@@ -32821,7 +32846,7 @@
                     // of a Guest's own save to push it onto directly.
                     finishLocalWildCatch(data.member);
                 } else if (data.type === 'battle-catch-failed') {
-                    showBattleArenaNotice('Too late \u2014 someone already caught it.');
+                    showBattleArenaNotice(data.reason || 'You can\u2019t catch this Pok\u00e9mon right now.');
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
                     // Unlike the host side's own handling of this same
                     // prefix (see wireHostConnection()), no `to`-based
