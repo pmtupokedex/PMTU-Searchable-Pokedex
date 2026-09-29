@@ -28740,16 +28740,58 @@
         // POKEMON_BY_NAME). A Mega/G-Max form showing via formOverride
         // has its own entry with its own moves, so that one wins.
         //
-        // NOTE FOR LATER: TM Moves and Z-Moves aren't in this list yet
-        // (only known_moves are). When they're added, no Dynamax code
-        // needs to change -- game rule: TM Moves and Z-Moves BOTH also
-        // become Max Moves while the Pokémon is Dynamaxed, and
-        // getBattleMemberMoveButtons()/getMaxMoveForKnownMove() already
-        // treat any move in this list that way (by type, or Max Guard
-        // for 0 power). Just append them to what this returns.
+        // On top of those, the equipped Attach Card can teach more (see
+        // getBattleMemberAttachCardMoves() just below): a TM's one move, or a
+        // Z-Crystal's Z-Moves. They're appended after the known moves,
+        // and a card move the Pokémon already knows isn't listed twice.
+        // No Dynamax code needed to change for them -- game rule: TM
+        // Moves and Z-Moves BOTH also become Max Moves while the
+        // Pokémon is Dynamaxed, and getBattleMemberMoveButtons()/
+        // getMaxMoveForKnownMove() already treat any move in this list
+        // that way (by type, or Max Guard for 0 power).
         function getBattleMemberMoves(member) {
             const entry = POKEMON_BY_NAME[member.formOverride || member.name];
-            return (entry && Array.isArray(entry.known_moves)) ? entry.known_moves : [];
+            const moves = (entry && Array.isArray(entry.known_moves)) ? entry.known_moves.slice() : [];
+            getBattleMemberAttachCardMoves(member).forEach(name => {
+                if (!moves.includes(name)) moves.push(name);
+            });
+            return moves;
+        }
+
+        // The moves this member's equipped Attach Card lets it use, in
+        // the card's own order. Reads ONLY member.attachCardId -- the card
+        // in the Attach Cards corner badge -- and has nothing to do with
+        // the Battle Card / Field Move Effect zones (see battleZones),
+        // which stay their own separate mechanic. Two shapes, both from cards.json:
+        //   - TM cards:        taught_move  -- a single move name
+        //   - Z-Crystal cards: taught_moves -- an array (the type's
+        //                      generic Z-Move first, then that type's
+        //                      Pokémon-specific ones)
+        // A move whose moves.json entry has an `exclusive_to` list is
+        // only offered when the Pokémon's CURRENT form name is on it
+        // (formOverride first, same lookup as every other form-aware
+        // read here) -- exact names as they appear in pokemon-data.json,
+        // so a G-Max form has to be listed itself (Pulverizing Pancake
+        // lists both "Snorlax" and "G-Max Snorlax"), while a Mega form
+        // is never listed. Moves with no `exclusive_to` are open to any
+        // holder. A move moves.json doesn't list (or hasn't loaded yet)
+        // is skipped rather than guessed at -- it couldn't be checked
+        // for exclusivity, and moves.json's own load re-renders both
+        // halves (see its fetch), so it appears the moment it can be
+        // verified. Empty for no card, a card that teaches nothing, or
+        // a Wild Pokémon (which never has an Attach Card).
+        function getBattleMemberAttachCardMoves(member) {
+            const card = (member && member.attachCardId) ? CARDS_BY_ID[member.attachCardId] : null;
+            if (!card) return [];
+            const names = [];
+            if (typeof card.taught_move === 'string' && card.taught_move) names.push(card.taught_move);
+            if (Array.isArray(card.taught_moves)) card.taught_moves.forEach(n => { if (typeof n === 'string' && n) names.push(n); });
+            const formName = member.formOverride || member.name;
+            return names.filter(name => {
+                const moveEntry = getBattleMoveEntry(name);
+                if (!moveEntry) return false;
+                return Array.isArray(moveEntry.exclusive_to) ? moveEntry.exclusive_to.includes(formName) : true;
+            });
         }
 
         // One button per known move (or, while Dynamaxed, per Max Move --
