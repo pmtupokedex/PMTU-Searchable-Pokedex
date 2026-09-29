@@ -1845,6 +1845,51 @@
             display: none;
         }
 
+        /* The move currently feeding the Attack calculation (see
+           syncBattleMoveSelection()): a white outline and a slightly
+           bigger button, held until a different move is picked or the
+           round is cleared. The button grows by adding padding (not
+           transform: scale), so the label keeps its size, and the
+           margin shrinks by the same amount so neighbouring buttons
+           don't shift. The 10px/5px are .filter-btn's base padding and
+           margin. The outline keeps the button's normal drop shadow. */
+        .game-battle-move-btn {
+            transition: padding 0.15s ease, margin 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .game-battle-move-btn.game-battle-move-selected {
+            padding: calc(10px + 2px) calc(10px + 5px);
+            margin: calc(5px - 2px) calc(5px - 5px);
+            box-shadow:
+                0 0 0 3px white,
+                0 4px 10px rgba(0, 0, 0, 0.25);
+        }
+
+        /* Multiplayer: a move button for a Pokémon this player may not
+           choose for (see canIChooseBattleMoves()) -- still visible, so
+           everyone can see which move was picked, just dimmed. The
+           selected one stays at full strength. */
+        .game-battle-move-btn.game-battle-move-locked:not(.game-battle-move-selected) {
+            opacity: 0.6;
+            cursor: default;
+        }
+
+        /* Begin Battle / Next Round / End Battle -- one centered row
+           between the Defender and Attacker halves (spacing above and
+           below comes from .game-battle-arena's own gap). */
+        .game-battle-controls {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .game-battle-controls .filter-btn {
+            margin: 0;
+        }
+
         /* Small "from Tackle" line under every Max Move button's name
            (see renderBattleMoves()). */
         .game-battle-move-from {
@@ -13675,6 +13720,17 @@
                         </div>
                     </div>
 
+                    <!-- Battle flow controls -- see renderBattleControls()
+                         in the script for which of these show when.
+                         Begin Battle is visible (but disabled) until both
+                         halves hold a Pokémon; once a battle is running it
+                         gives way to Next Round + End Battle. -->
+                    <div class="game-battle-controls" id="game-battle-controls">
+                        <button class="filter-btn include" id="game-battle-begin-btn" disabled>Begin Battle</button>
+                        <button class="filter-btn" id="game-battle-next-round-btn" style="display: none;">Next Round</button>
+                        <button class="filter-btn exclude" id="game-battle-end-btn" style="display: none;">End Battle</button>
+                    </div>
+
                     <div class="game-battle-half game-battle-attacker">
                         <!-- Defender half's own equivalent just above -- same
                              wrapper reasoning. -->
@@ -21560,7 +21616,19 @@
         function broadcastBattleArenaState() {
             if (lobbyState.role === 'guest') return; // guests only ever receive this, never originate it
             pruneBattleArenaOrphans();
-            const payload = { type: 'battle-arena-state', attacker: hostBattleArenaState.attacker, defender: hostBattleArenaState.defender };
+            const st = hostBattleArenaState;
+            if (!st.moves) st.moves = { attacker: null, defender: null };
+            // A chosen move can't outlive the Pokémon it was chosen for,
+            // and a battle with nothing left in either half is over.
+            ['attacker', 'defender'].forEach(slot => { if (!st[slot]) st.moves[slot] = null; });
+            if (!st.attacker && !st.defender) st.inProgress = false;
+            const payload = {
+                type: 'battle-arena-state',
+                attacker: st.attacker,
+                defender: st.defender,
+                inProgress: !!st.inProgress,
+                moves: { attacker: st.moves.attacker, defender: st.moves.defender },
+            };
             if (lobbyState.connections) {
                 lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
             }
@@ -21602,6 +21670,12 @@
             const previous = hostBattleArenaState[slot];
             const newOwnerId = wild ? null : peerKey;
             hostBattleArenaState[slot] = member ? { member, ownerId: newOwnerId } : null;
+            // Every HP/level/status edit re-sends the same Pokémon, so a
+            // chosen move only clears when the half's occupant actually
+            // changed (emptied, a different owner, or a different Pokémon).
+            const sameOccupant = !!(member && previous && previous.ownerId === newOwnerId
+                && previous.member && previous.member.name === member.name && previous.member.dex === member.dex);
+            if (!sameOccupant && hostBattleArenaState.moves) hostBattleArenaState.moves[slot] = null;
             // A player whose Pokémon was just taken out of the Arena by
             // someone ELSE sending a Pokémon in (never by their own
             // recall or re-pick, which keeps the same owner) is told
@@ -21670,7 +21744,12 @@
                 sendBattleCatchFailure(peerKey, 'Only the player battling this Pok\u00e9mon can catch it.');
                 return;
             }
+            // A catch ends the battle for everyone: both halves are
+            // recalled and the moves go away.
+            hostBattleArenaState.attacker = null;
             hostBattleArenaState.defender = null;
+            hostBattleArenaState.inProgress = false;
+            hostBattleArenaState.moves = { attacker: null, defender: null };
             if (peerKey === 'host') {
                 finishLocalWildCatch(entry.member);
             } else {
@@ -21716,6 +21795,84 @@
             }
         }
 
+        // ---- Battle phase (Begin / Next Round / End) and move choice.
+        // Same request -> Host applies -> full-state broadcast shape as
+        // the slot functions above. ----
+        function requestBattlePhase(action) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-phase', action });
+            } else if (lobbyState.role === 'host') {
+                hostApplyBattlePhase('host', action);
+            }
+        }
+
+        // move is {moveName, baseMove, manual, rule}, or null to clear.
+        function requestBattleSetMove(slot, move) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-set-move', slot, move });
+            } else if (lobbyState.role === 'host') {
+                hostApplyBattleSetMove(slot, 'host', move);
+            }
+        }
+
+        // Same routing as sendBattleCatchFailure(), for any short notice.
+        function sendBattleNotice(peerKey, reason) {
+            if (peerKey === 'host') {
+                showBattleArenaNotice(reason);
+            } else {
+                const connEntry = lobbyState.connections.get(peerKey);
+                if (connEntry && connEntry.conn.open) connEntry.conn.send({ type: 'battle-notice', reason });
+            }
+        }
+
+        function hostApplyBattlePhase(peerKey, action) {
+            const st = hostBattleArenaState;
+            if (action === 'begin') {
+                if (!st.inProgress) {
+                    if (!st.attacker || !st.defender) {
+                        sendBattleNotice(peerKey, 'Both halves need a Pok\u00e9mon before the battle can begin.');
+                    } else {
+                        st.inProgress = true;
+                        st.moves = { attacker: null, defender: null };
+                    }
+                }
+            } else if (action === 'next') {
+                if (st.inProgress) st.moves = { attacker: null, defender: null };
+            } else if (action === 'end') {
+                // Everything is recalled, whoever owned it.
+                st.inProgress = false;
+                st.moves = { attacker: null, defender: null };
+                st.attacker = null;
+                st.defender = null;
+            } else {
+                return;
+            }
+            broadcastBattleArenaState();
+        }
+
+        function hostApplyBattleSetMove(slot, peerKey, move) {
+            if (slot !== 'attacker' && slot !== 'defender') return;
+            const st = hostBattleArenaState;
+            if (!st.inProgress || !battleMoveControlAllowed(st, slot, peerKey)) {
+                if (st.inProgress) sendBattleNotice(peerKey, battleMoveLockReason(st, slot));
+                broadcastBattleArenaState(); // puts the sender's screen back to what's actually chosen
+                return;
+            }
+            let clean = null;
+            if (move && typeof move.moveName === 'string' && move.moveName) {
+                clean = {
+                    moveName: move.moveName.slice(0, 80),
+                    baseMove: typeof move.baseMove === 'string' ? move.baseMove.slice(0, 80) : null,
+                    manual: (move.manual && typeof move.manual.moveName === 'string' && Number.isFinite(move.manual.value))
+                        ? { moveName: move.manual.moveName.slice(0, 80), value: move.manual.value } : null,
+                    rule: (move.rule && typeof move.rule === 'object') ? { dual: !!move.rule.dual, immunities: !!move.rule.immunities } : null,
+                };
+            }
+            if (!st.moves) st.moves = { attacker: null, defender: null };
+            st.moves[slot] = clean;
+            broadcastBattleArenaState();
+        }
+
         // ---- Ownership / permission helpers. Every one of these is
         // trivially permissive solo (lobbyState.role === null): one
         // person is playing everything, so nobody needs excluding. ----
@@ -21755,6 +21912,42 @@
             return !!(attackerEntry && attackerEntry.ownerId && attackerEntry.ownerId === getMyLobbyPlayerId());
         }
 
+        // Who may choose moves for a half. A Pokémon that belongs to
+        // a player: only that player. An ownerless one (the Wild
+        // Pokémon): every player EXCEPT the owner of the other half's
+        // Pokémon (same rule as canControlWildDefender()); nobody is
+        // excluded if the other half is empty/ownerless or the lobby has
+        // one player. `state` is {attacker, defender} entries.
+        function battleMoveControlAllowed(state, slotName, playerId) {
+            const entry = state[slotName];
+            if (!entry) return false;
+            if (entry.ownerId) return entry.ownerId === playerId;
+            const other = state[slotName === 'attacker' ? 'defender' : 'attacker'];
+            if (!other || !other.ownerId) return true;
+            if (lobbyState.players.length <= 1) return true;
+            return other.ownerId !== playerId;
+        }
+
+        function battleMoveLockReason(state, slotName) {
+            const entry = state[slotName];
+            return (entry && entry.ownerId)
+                ? 'Only the player who owns this Pok\u00e9mon can choose its moves.'
+                : 'You can\u2019t choose moves for a Pok\u00e9mon your own is battling.';
+        }
+
+        // This device's own answer -- solo, everything is allowed.
+        function canIChooseBattleMoves(slotName) {
+            if (lobbyState.role === null) return true;
+            return battleMoveControlAllowed(
+                { attacker: getArenaSlotEntry('attacker'), defender: getArenaSlotEntry('defender') },
+                slotName, getMyLobbyPlayerId());
+        }
+
+        function getMyBattleMoveLockReason(slotName) {
+            return battleMoveLockReason(
+                { attacker: getArenaSlotEntry('attacker'), defender: getArenaSlotEntry('defender') }, slotName);
+        }
+
         // Applies a battle-arena-state onto this device's local
         // Attacker/Defender variables -- the same ones the solo
         // render/edit plumbing already reads, so that plumbing keeps
@@ -21786,6 +21979,22 @@
                 battleDefenderMemberIndex = null;
                 battleDefenderTeamId = null;
             }
+            // Battle phase and each half's chosen move come from the
+            // shared state for everyone (the chooser included) -- the
+            // score itself is recomputed locally from them, using the
+            // chooser's Type Effectiveness Rule (see
+            // getBattleTypeRuleToggles()).
+            battleInProgress = !!payload.inProgress;
+            ['attacker', 'defender'].forEach(slot => {
+                const chosen = payload.moves && payload.moves[slot];
+                if (chosen) {
+                    battleCalcMoveName[slot] = chosen.moveName;
+                    battleCalcBaseMove[slot] = chosen.baseMove || null;
+                    battleCalcManualValue[slot] = chosen.manual || null;
+                } else {
+                    resetBattleCalcResult(slot);
+                }
+            });
             renderBattleAttackerSlot();
             renderBattleDefenderSlot();
         }
@@ -27885,6 +28094,13 @@
         // moment it was picked.
         let battleAttackerMemberIndex = null;
 
+        // Whether a battle is currently running on THIS device: false
+        // until Begin Battle is tapped (moves stay hidden), true until
+        // End Battle or a successful catch (see beginBattle()/
+        // endBattle()). Per-device only for now -- not part of the
+        // shared Lobby arena state.
+        let battleInProgress = false;
+
         // Defender half's own equivalent of battleAttackerMemberIndex
         // just above -- same reasoning, just tracked independently so
         // Attacker and Defender can each hold their own pick. The one
@@ -27956,8 +28172,11 @@
         //
         // guestBattleArenaCache: the guest-side (and host's own) mirror
         // of the Host's last broadcastBattleArenaState() --
-        // {attacker, defender}, each {member, ownerId} | null, ownerId
-        // null meaning ownerless. Same "one code path, host and guest
+        // {attacker, defender, inProgress, moves}: attacker/defender each
+        // {member, ownerId} | null (ownerId null meaning ownerless);
+        // inProgress is whether Begin Battle has been pressed; moves is
+        // {attacker, defender}, each the move currently chosen for that
+        // half ({moveName, baseMove, manual, rule}) or null. Same "one code path, host and guest
         // alike" trick guestDeckStateCache already uses.
         let guestBattleArenaCache = null;
 
@@ -27966,7 +28185,7 @@
         // whenever the lobby resets (see resetLobbyState()), never
         // persisted -- same "pure in-memory state for the current
         // battle" reasoning battleWildPokemon itself already carries.
-        let hostBattleArenaState = { attacker: null, defender: null };
+        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null } };
 
         // Which move the Attack Calculator is currently reading for each
         // half -- just the move name, not a cached total, so a level or
@@ -28285,6 +28504,7 @@
             // half's level, so its readout can go stale when this one
             // changes -- refresh it too.
             renderBattleCalcReadout('defender');
+            renderBattleControls();
         }
 
         function renderBattleDefenderSlot() {
@@ -28293,6 +28513,79 @@
             renderBattleCalcReadout('defender');
             // Same reasoning as renderBattleAttackerSlot() just above.
             renderBattleCalcReadout('attacker');
+            renderBattleControls();
+        }
+
+        // Which of Begin Battle / Next Round / End Battle is showing,
+        // and whether Begin is tappable. Both halves count as populated
+        // whatever their source (own pick, another player's, Wild).
+        // A battle with nothing left in either half can't still be
+        // "in progress", so that clears it here too.
+        function renderBattleControls() {
+            const beginBtn = document.getElementById('game-battle-begin-btn');
+            const nextBtn = document.getElementById('game-battle-next-round-btn');
+            const endBtn = document.getElementById('game-battle-end-btn');
+            if (!beginBtn || !nextBtn || !endBtn) return;
+            const attackerIn = !!getBattleSlotMember('attacker');
+            const defenderIn = !!getBattleSlotMember('defender');
+            if (battleInProgress && !attackerIn && !defenderIn) battleInProgress = false;
+            beginBtn.style.display = battleInProgress ? 'none' : '';
+            beginBtn.disabled = !(attackerIn && defenderIn);
+            nextBtn.style.display = battleInProgress ? '' : 'none';
+            endBtn.style.display = battleInProgress ? '' : 'none';
+        }
+
+        // Begin Battle -- only possible with a Pokémon in both halves;
+        // reveals every move button.
+        function beginBattle() {
+            if (battleInProgress) return;
+            if (!getBattleSlotMember('attacker') || !getBattleSlotMember('defender')) return;
+            if (lobbyState.role !== null) { requestBattlePhase('begin'); return; } // shared: comes back via applyIncomingArenaState()
+            battleInProgress = true;
+            renderBattleMoves('attacker');
+            renderBattleMoves('defender');
+            renderBattleControls();
+        }
+
+        // Next Round -- clears both halves' selected moves (and any
+        // typed manual power), keeps the battle and both Pokémon.
+        function nextBattleRound() {
+            if (!battleInProgress) return;
+            if (lobbyState.role !== null) { requestBattlePhase('next'); return; }
+            resetBattleCalcResult('attacker');
+            resetBattleCalcResult('defender');
+            renderBattleMoves('attacker');
+            renderBattleMoves('defender');
+            renderBattleCalcReadout('attacker');
+            renderBattleCalcReadout('defender');
+        }
+
+        // End Battle -- also what a successful catch does (see
+        // finishLocalWildCatch()). Hides the moves and recalls both
+        // halves. In a lobby that's the Host's call (everyone's
+        // Pok\u00e9mon go); solo it's done here.
+        function endBattle() {
+            // In a lobby the Host clears both shared halves for everyone.
+            if (lobbyState.role !== null) { requestBattlePhase('end'); return; }
+            battleInProgress = false;
+            recallBattleAttacker();
+            recallBattleDefender();
+            renderBattleControls();
+        }
+
+        // Puts the halo on whichever move button matches this half's
+        // current selection (name AND, for a Max Move, base move), and
+        // takes it off the rest.
+        function syncBattleMoveSelection(slotName) {
+            const container = document.getElementById(`game-battle-${slotName}-moves`);
+            if (!container) return;
+            const selected = battleCalcMoveName[slotName];
+            const selectedBase = battleCalcBaseMove[slotName] || null;
+            container.querySelectorAll('.game-battle-move-btn').forEach(btn => {
+                const on = !!selected && btn.dataset.moveName === selected && (btn.dataset.baseMove || null) === selectedBase;
+                btn.classList.toggle('game-battle-move-selected', on);
+                btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            });
         }
 
         renderAllBattleZones();
@@ -28432,7 +28725,19 @@
         // one (Guest Save first, same order as renderMatchupPanel(),
         // which locks the Type Matchup tool to it), otherwise whatever
         // the Type Matchup tool's own toggles currently say.
-        function getBattleTypeRuleToggles() {
+        function getBattleTypeRuleToggles(slotName) {
+            // In a lobby the chooser's own rule travels with the chosen
+            // move, so every screen shows the same number.
+            if (slotName && lobbyState.role !== null && guestBattleArenaCache && guestBattleArenaCache.moves) {
+                const chosen = guestBattleArenaCache.moves[slotName];
+                if (chosen && chosen.rule) return chosen.rule;
+            }
+            return getLocalBattleTypeRuleToggles();
+        }
+
+        // This device's own rule (its active save's, else the Type
+        // Matchup tool's toggles).
+        function getLocalBattleTypeRuleToggles() {
             const save = activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]
                 ? gameGuestSaves[activeGuestSaveId]
                 : (activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null);
@@ -28454,7 +28759,7 @@
             if (!target || !moveType) return null;
             const targetTypes = getBattleMemberTypes(target);
             if (!targetTypes.length) return null;
-            const rule = getBattleTypeRuleToggles();
+            const rule = getBattleTypeRuleToggles(slotName);
             const result = computeTypeMatchup(moveType, targetTypes[0], targetTypes[1] || null, rule.dual, rule.immunities);
             if (!result) return null;
             const bonus = parseInt(result.bonus, 10);
@@ -28583,6 +28888,7 @@
         // Pokémon swap made after the move was tapped shows up here on
         // the very next render same as everywhere else on this screen.
         function renderBattleCalcReadout(slotName) {
+            syncBattleMoveSelection(slotName);
             const el = document.getElementById(`game-battle-${slotName}-calc-readout`);
             if (!el) return;
             const moveName = battleCalcMoveName[slotName];
@@ -28676,6 +28982,21 @@
             battleCalcMoveName[pending.slotName] = pending.moveName;
             battleCalcBaseMove[pending.slotName] = pending.baseMoveName;
             renderBattleCalcReadout(pending.slotName);
+            shareBattleMoveSelection(pending.slotName);
+        }
+
+        // Sends this half's just-chosen move (with this device's Type
+        // Effectiveness Rule) to the lobby so everyone's screen shows
+        // it and the score. A no-op solo. The Host re-checks who may
+        // choose (see hostApplyBattleSetMove()).
+        function shareBattleMoveSelection(slotName) {
+            if (lobbyState.role === null || !battleCalcMoveName[slotName]) return;
+            requestBattleSetMove(slotName, {
+                moveName: battleCalcMoveName[slotName],
+                baseMove: battleCalcBaseMove[slotName] || null,
+                manual: battleCalcManualValue[slotName] || null,
+                rule: getLocalBattleTypeRuleToggles(),
+            });
         }
 
         // ---- Dynamax: Max Moves ------------------------------------
@@ -28801,7 +29122,8 @@
             const container = document.getElementById(`game-battle-${slotName}-moves`);
             if (!container) return;
             const member = getBattleSlotMember(slotName);
-            const buttons = member ? getBattleMemberMoveButtons(member) : [];
+            // Moves only exist while a battle is running (Begin Battle).
+            const buttons = (member && battleInProgress) ? getBattleMemberMoveButtons(member) : [];
             // The move list can change under a selected move (Dynamax
             // starting/ending, a new Pokémon) -- drop the selection if
             // that exact move-plus-base isn't offered any more, so the
@@ -28809,7 +29131,11 @@
             const selectedName = battleCalcMoveName[slotName];
             if (selectedName && !buttons.some(b => b.name === selectedName && (b.base || null) === (battleCalcBaseMove[slotName] || null))) {
                 resetBattleCalcResult(slotName);
+                // Chosen in a lobby: clear it for everyone too, but only
+                // from a device that may choose for this half.
+                if (lobbyState.role !== null && battleInProgress && canIChooseBattleMoves(slotName)) requestBattleSetMove(slotName, null);
             }
+            const lockedClass = canIChooseBattleMoves(slotName) ? '' : ' game-battle-move-locked';
             // Every Max Move button carries a small "from X" label naming
             // the known move it replaced -- it's what tells apart two
             // known moves that became the same Max Move (say two Normal
@@ -28828,8 +29154,9 @@
                 const fromLabel = b.base
                     ? `<span class="game-battle-move-from">from ${escapeHtml(b.base)}</span>`
                     : '';
-                return `<button class="filter-btn game-battle-move-btn${typeClasses}" data-battle-slot="${slotName}" data-move-name="${escapeHtml(b.name)}"${baseAttr}>${escapeHtml(b.name)}${fromLabel}</button>`;
+                return `<button class="filter-btn game-battle-move-btn${typeClasses}${lockedClass}" data-battle-slot="${slotName}" data-move-name="${escapeHtml(b.name)}"${baseAttr}>${escapeHtml(b.name)}${fromLabel}</button>`;
             }).join('');
+            syncBattleMoveSelection(slotName);
         }
 
 
@@ -29471,6 +29798,9 @@
         // itself branch, and the 'battle-caught' handler a Guest
         // receives once the Host confirms THEY won the claim.
         function finishLocalWildCatch(member) {
+            // A catch ends the battle: hide the moves and recall both
+            // halves before the caught Pokémon lands on the roster.
+            if (lobbyState.role === null) endBattle();
             applyCaughtWildMember(member);
             openGamePanel();
             setGameScreen('team');
@@ -32344,7 +32674,7 @@
             // alone -- solo Battle Arena keeps whatever this device had
             // showing before it ever joined/hosted, same as every other
             // solo tool on this reset.
-            hostBattleArenaState = { attacker: null, defender: null };
+            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null } };
             guestBattleArenaCache = null;
             refreshGameUI();
             applyGamePanelPlayerTheme();
@@ -33351,6 +33681,10 @@
                     hostApplyBattleSetSlot(data.slot, conn.peer, data.member || null, !!data.wild);
                 } else if (data.type === 'battle-catch-wild') {
                     hostApplyBattleCatchWild(conn.peer);
+                } else if (data.type === 'battle-set-move') {
+                    hostApplyBattleSetMove(data.slot, conn.peer, data.move || null);
+                } else if (data.type === 'battle-phase') {
+                    hostApplyBattlePhase(conn.peer, data.action);
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
                     handleIncomingTradeMessage(data, conn);
                 }
@@ -34353,6 +34687,8 @@
                     finishLocalWildCatch(data.member);
                 } else if (data.type === 'battle-displaced') {
                     showBattleDisplacedNotice(data);
+                } else if (data.type === 'battle-notice') {
+                    showBattleArenaNotice(data.reason || '');
                 } else if (data.type === 'battle-catch-failed') {
                     showBattleArenaNotice(data.reason || 'You can\u2019t catch this Pok\u00e9mon right now.');
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
@@ -35116,6 +35452,19 @@
                 return;
             }
 
+            if (e.target.closest('#game-battle-begin-btn')) {
+                beginBattle();
+                return;
+            }
+            if (e.target.closest('#game-battle-next-round-btn')) {
+                nextBattleRound();
+                return;
+            }
+            if (e.target.closest('#game-battle-end-btn')) {
+                endBattle();
+                return;
+            }
+
             const battleMoveBtn = e.target.closest('.game-battle-move-btn');
             if (battleMoveBtn) {
                 const slot = battleMoveBtn.dataset.battleSlot;
@@ -35124,6 +35473,10 @@
                 // known move each one replaced (see
                 // getBattleMemberMoveButtons()).
                 const baseMove = battleMoveBtn.dataset.baseMove || null;
+                if (!canIChooseBattleMoves(slot)) {
+                    showBattleArenaNotice(getMyBattleMoveLockReason(slot));
+                    return;
+                }
                 const manualName = getBattleManualSourceName(slot, moveName, baseMove);
                 if (manualName) {
                     openBattleManualOverlay(slot, moveName, baseMove, manualName);
@@ -35138,6 +35491,7 @@
                 battleCalcMoveName[slot] = moveName;
                 battleCalcBaseMove[slot] = baseMove;
                 renderBattleCalcReadout(slot);
+                shareBattleMoveSelection(slot);
                 return;
             }
 
