@@ -1681,6 +1681,75 @@
             flex: 1;
         }
 
+        /* One half's card row: Battle Card zone | slot card | Field Move
+           Effect zone. The slot-wrap in the middle keeps everything it
+           always had (the readout is still centered on the card alone);
+           the two zone badges are siblings of it, not part of it. */
+        .game-battle-slot-row {
+            display: flex;
+            align-items: stretch;
+            gap: 10px;
+            flex: 1;
+            width: 100%;
+        }
+
+        .game-battle-slot-row > .game-battle-slot-wrap {
+            width: auto;
+            min-width: 0;
+        }
+
+        /* Battle Card / Field Move Effect zone badge -- same look as the
+           slot card's corner badges (.game-team-slot-evolution and
+           friends: white ring, dark disc, circular crop), just a fixed
+           size here since it isn't positioned against the card. Dimmed
+           while empty; .filled brings it to full strength. The generic
+           .game-team-slot-cards-img/-crop classes cropIconMarkup() emits
+           already fill whatever badge they're in, so they work here
+           unchanged. */
+        .game-battle-zone-badge {
+            flex: 0 0 auto;
+            align-self: center;
+            width: 62px;
+            aspect-ratio: 1 / 1;
+            box-sizing: border-box;
+            border: 3.5px solid white;
+            border-radius: 50%;
+            background: rgba(50, 50, 50, 1);
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .game-battle-zone-badge svg {
+            width: 58%;
+            height: 58%;
+            opacity: 0.6;
+        }
+
+        .game-battle-zone-badge.filled svg {
+            opacity: 1;
+        }
+
+        .game-battle-zone-badge-img {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            object-fit: contain;
+        }
+
+        @media (max-width: 520px) {
+            .game-battle-slot-row {
+                gap: 6px;
+            }
+
+            .game-battle-zone-badge {
+                width: 46px;
+            }
+        }
+
         /* Move power + Pokémon's total level, for now (see
            computeBattleMoveValue()) -- centered over the slot card
            rather than laid out alongside it, and pointer-events: none so
@@ -1694,6 +1763,7 @@
             position: absolute;
             inset: 0;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             margin: 0;
@@ -1709,6 +1779,19 @@
 
         .game-battle-calc-readout:empty {
             display: none;
+        }
+
+        /* Small "where this number came from" line under the big total
+           (see renderBattleCalcReadout()). Inherits the readout's
+           white-fill/black-outline text; just smaller and lighter, and
+           allowed to wrap so a long line never runs off the card. */
+        .game-battle-calc-detail {
+            max-width: 92%;
+            margin-top: 2px;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.15;
+            text-align: center;
         }
 
         .game-battle-slot-empty-text {
@@ -13569,27 +13652,41 @@
                              #game-battle-defender-slot's own innerHTML
                              wholesale on every render, but never touches
                              this wrapper or its other child. -->
+                        <div class="game-battle-slot-row">
+                            <!-- Zone badges: left = Battle Card, right = Field Move
+                                 Effect. Outside the slot card on purpose -- they
+                                 belong to the half, so they stay when the Pokémon
+                                 changes. Filled in by renderAllBattleZones(). -->
+                            <div class="game-battle-zone-badge" role="button" tabindex="0" data-battle-slot="defender" data-battle-zone="battleCard" title="Defender Battle Card" aria-label="Defender Battle Card"></div>
                         <div class="game-battle-slot-wrap">
                             <div class="game-battle-slot" id="game-battle-defender-slot">
                                 <p class="game-battle-slot-empty-text">No Pok&eacute;mon selected.</p>
                             </div>
-                            <!-- Move power + total level, for now -- see
-                                 renderBattleCalcReadout()/computeBattleMoveValue()
-                                 in the script. Empty and inert
+                            <!-- Attack Strength (power + STAB) + total level +
+                                 Type Matchup bonus, with a small breakdown
+                                 line -- see renderBattleCalcReadout()/
+                                 computeBattleMoveBreakdown() in the script.
+                                 Empty and inert
                                  (pointer-events: none) until a move
                                  button is tapped. -->
                             <p class="game-battle-calc-readout" id="game-battle-defender-calc-readout"></p>
+                        </div>
+                            <div class="game-battle-zone-badge" role="button" tabindex="0" data-battle-slot="defender" data-battle-zone="fieldEffect" title="Defender Field Move Effect" aria-label="Defender Field Move Effect"></div>
                         </div>
                     </div>
 
                     <div class="game-battle-half game-battle-attacker">
                         <!-- Defender half's own equivalent just above -- same
                              wrapper reasoning. -->
+                        <div class="game-battle-slot-row">
+                            <div class="game-battle-zone-badge" role="button" tabindex="0" data-battle-slot="attacker" data-battle-zone="battleCard" title="Attacker Battle Card" aria-label="Attacker Battle Card"></div>
                         <div class="game-battle-slot-wrap">
                             <div class="game-battle-slot" id="game-battle-attacker-slot">
                                 <p class="game-battle-slot-empty-text">No Pok&eacute;mon selected.</p>
                             </div>
                             <p class="game-battle-calc-readout" id="game-battle-attacker-calc-readout"></p>
+                        </div>
+                            <div class="game-battle-zone-badge" role="button" tabindex="0" data-battle-slot="attacker" data-battle-zone="fieldEffect" title="Attacker Field Move Effect" aria-label="Attacker Field Move Effect"></div>
                         </div>
                         <div class="game-battle-moves" id="game-battle-attacker-moves"></div>
                         <!-- Recall (see recallBattleAttacker() in the
@@ -28046,6 +28143,120 @@
             battleNoticeTimer = setTimeout(() => el.classList.remove('visible'), 4000);
         }
 
+        // ---- Battle Card and Field Move Effect zones -----------------
+        //
+        // Two badges per half (Battle Card to the left of the slot card,
+        // Field Move Effect to the right), styled like the slot card's own
+        // corner badges but deliberately separate from it: they belong to
+        // the HALF, not the Pokémon in it, so they stay put when that
+        // Pokémon is swapped or recalled. (They live outside
+        // #game-battle-*-slot, whose contents get rebuilt on every
+        // render.)
+        //
+        // MOSTLY PLACEHOLDER for now -- the cards themselves don't exist
+        // in cards.json yet. What's planned:
+        //   - Field Move Effect: a new set of cards in cards.json with a
+        //     full card image (imageUrl) and thumbnail icon (iconUrl) like
+        //     every other card, some carrying values that feed the
+        //     calculation (e.g. Rain: +1 Water moves, -1 Fire moves --
+        //     see getBattleZoneModifiers()).
+        //   - Battle Card: a "battleCard" field on the appropriate cards
+        //     in cards.json, plus any bonuses/abilities they add to the
+        //     Battle Arena. Played from hand FACEDOWN only during battle
+        //     and flipped faceup partway through, hence `faceUp` below.
+        // Nothing reads those cards.json fields yet, and tapping a badge
+        // just says so; the state, badge rendering and the two setters
+        // are here so those pieces can drop in later. Local to this
+        // device for now (not yet shared through the lobby like the
+        // arena's Pokémon are) and not saved.
+        //
+        // battleCard:  { cardId, faceUp } | null
+        // fieldEffect: { cardId } | null
+        let battleZones = {
+            attacker: { battleCard: null, fieldEffect: null },
+            defender: { battleCard: null, fieldEffect: null },
+        };
+
+        const BATTLE_ZONES = {
+            battleCard: {
+                label: 'Battle Card',
+                placeholderNotice: "Battle Cards aren't available yet.",
+                // A facedown card, for the empty state and while a card
+                // is still facedown (card-back art doesn't exist yet).
+                placeholderSvg: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8.5l3 3.5-3 3.5-3-3.5z" fill="currentColor"/></svg>',
+            },
+            fieldEffect: {
+                label: 'Field Move Effect',
+                placeholderNotice: "Field Move Effect cards aren't available yet.",
+                placeholderSvg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.2 9.6 4.2 4.2 0 0 0 7 18z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>',
+            },
+        };
+
+        // Redraws one zone badge from battleZones. Empty -> the
+        // placeholder glyph, dimmed. Filled -> the card's own thumbnail
+        // (cardIconFor(), same icon/auto-crop the corner badges use); a
+        // Battle Card still facedown keeps the placeholder glyph, but
+        // undimmed, so it reads as "something's there" without showing
+        // which card.
+        function renderBattleZoneBadge(slotName, zoneName) {
+            const el = document.querySelector(`.game-battle-zone-badge[data-battle-slot="${slotName}"][data-battle-zone="${zoneName}"]`);
+            const zone = BATTLE_ZONES[zoneName];
+            if (!el || !zone) return;
+            const state = battleZones[slotName][zoneName];
+            const owner = slotName === 'attacker' ? 'Attacker' : 'Defender';
+            const faceDown = zoneName === 'battleCard' && !!state && !state.faceUp;
+            let inner = zone.placeholderSvg;
+            let title = `${owner} ${zone.label}`;
+            if (state && !faceDown) {
+                const icon = cardIconFor(state.cardId);
+                const card = CARDS_BY_ID[state.cardId];
+                const alt = escapeHtml((card && card.name) || zone.label);
+                if (icon) {
+                    inner = icon.crop
+                        ? cropIconMarkup({ ...icon, alt })
+                        : `<img class="game-battle-zone-badge-img" src="${icon.url}" alt="${alt}">`;
+                    title += `: ${(card && card.name) || ''}`;
+                }
+            } else if (faceDown) {
+                title += ': facedown';
+            }
+            el.innerHTML = inner;
+            el.classList.toggle('filled', !!state);
+            el.title = title;
+            el.setAttribute('aria-label', title);
+        }
+
+        function renderAllBattleZones() {
+            ['attacker', 'defender'].forEach(slotName => {
+                Object.keys(BATTLE_ZONES).forEach(zoneName => renderBattleZoneBadge(slotName, zoneName));
+            });
+        }
+
+        // Put a card in a half's zone (or, with cardId null, empty it).
+        // Nothing in the UI calls this yet -- it's what the eventual
+        // picker/play flow will use (and can be called from the console
+        // to try a card in a zone: setBattleZoneCard('attacker',
+        // 'fieldEffect', '<a cardId>')). `faceUp` only matters for
+        // battleCard; a Battle Card starts facedown.
+        function setBattleZoneCard(slotName, zoneName, cardId, faceUp = false) {
+            if (!battleZones[slotName] || !BATTLE_ZONES[zoneName]) return;
+            battleZones[slotName][zoneName] = cardId
+                ? (zoneName === 'battleCard' ? { cardId, faceUp: !!faceUp } : { cardId })
+                : null;
+            renderBattleZoneBadge(slotName, zoneName);
+            // Modifiers from a zone change the numbers, so refresh both
+            // readouts.
+            renderBattleCalcReadout('attacker');
+            renderBattleCalcReadout('defender');
+        }
+
+        // Tapping a badge -- placeholder for now, see the block comment
+        // above.
+        function handleBattleZoneTap(slotName, zoneName) {
+            const zone = BATTLE_ZONES[zoneName];
+            if (zone) showBattleArenaNotice(zone.placeholderNotice);
+        }
+
         // Same shiny/formOverride resolution renderTeamGrid() and
         // openTeamDetailOverlay() each already do for their own "which
         // art actually represents this member right now" question --
@@ -28083,6 +28294,8 @@
             // Same reasoning as renderBattleAttackerSlot() just above.
             renderBattleCalcReadout('attacker');
         }
+
+        renderAllBattleZones();
 
         // Whatever Pokémon this device is currently showing in a half,
         // from any source (my own live pick, another player's, the
@@ -28137,8 +28350,9 @@
         // ordinary move that's just its own attack_strength. A Max Move
         // ("derived_from_base_move") follows moves.json's own priority
         // list: the Pokémon's own pokemon-data.json `maxPower` first
-        // (only G-Max forms have one), else the power of the move it
-        // replaced (baseMoveName, when Dynamaxed). Returns null when
+        // (only G-Max forms have one), else the move it replaced
+        // (baseMoveName, when Dynamaxed) -- its power, and, via
+        // computeBattleAttackStrength(), its STAB. Returns null when
         // nothing resolves (no Pokémon, unknown move, a Max Move with
         // neither a maxPower nor a base move).
         function getBattleEffectiveStrength(slotName, moveName, baseMoveName) {
@@ -28186,42 +28400,166 @@
             return (eff && eff.strength.mode === 'manual') ? eff.name : null;
         }
 
-        // The Attack Calculator's own math -- for now, just the move's
-        // power plus the Pokémon's total level (more factors are
-        // coming later). Power comes from getBattleEffectiveStrength():
-        //   - "fixed": its plain `value`.
-        //   - "half_level": half of the user's ("self") or the
-        //     opponent's ("target") total level, rounded down -- see
-        //     getBattleHalfLevelPower().
-        //   - "manual": a number the player types into the
-        //     manual-power overlay, following the move's uniqueEffect
-        //     text -- see openBattleManualOverlay().
-        //   - a Max Move: the Pokémon's maxPower, else its base move's
-        //     power, resolved by any of the three above.
-        // Either way the user's OWN total level is what's added on top.
-        // Returns null when the slot has no Pokémon, when a half-level
-        // move's target isn't there, when a "manual" move hasn't had
-        // its number entered yet, or when a Max Move has nothing to
-        // derive its power from.
-        function computeBattleMoveValue(slotName, moveName, baseMoveName) {
-            const member = getBattleSlotMember(slotName);
-            if (!member) return null;
-            const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
+        // The extra power a move gets from STAB (Same-Type Attack Bonus).
+        const BATTLE_STAB_BONUS = 1;
+
+        // A Pokémon's types, lowercase and primary type first, from
+        // pokemon-data.json's `types` field. Reads the active form's own
+        // entry (a Mega/G-Max has its own types), same lookup as
+        // getBattleEffectiveStrength()'s maxPower. Empty when the
+        // Pokémon (or its `types`) isn't in the data, so STAB and type
+        // matchups quietly don't apply rather than guessing -- never
+        // falls back to `tags`, which mix in name words.
+        function getBattleMemberTypes(member) {
+            if (!member) return [];
+            const entry = POKEMON_BY_NAME[member.formOverride || member.name] || POKEMON_BY_NAME[member.name];
+            const types = entry && Array.isArray(entry.types) ? entry.types : [];
+            return types.map(t => String(t).toLowerCase().trim()).filter(t => BATTLE_MOVE_TYPE_NAMES.includes(t));
+        }
+
+        // Whether a move is allowed to get STAB at all: every entry in
+        // moves.json opts out with "stab": "false" (all 0-power,
+        // half-level, manual and Max/G-Max/Z moves, plus a few specials
+        // like Absorb and Sonic Boom). Anything without the flag is eligible.
+        function moveCanGetStab(moveName) {
+            const entry = getBattleMoveEntry(moveName);
+            return !!entry && String(entry.stab).toLowerCase() !== 'false';
+        }
+
+        // The Type Effectiveness Rule's two switches (dual defending
+        // types / immunities) for the Battle Arena to hand to
+        // computeTypeMatchup(): the active save's own rule when there is
+        // one (Guest Save first, same order as renderMatchupPanel(),
+        // which locks the Type Matchup tool to it), otherwise whatever
+        // the Type Matchup tool's own toggles currently say.
+        function getBattleTypeRuleToggles() {
+            const save = activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]
+                ? gameGuestSaves[activeGuestSaveId]
+                : (activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null);
+            if (save) return TYPE_RULE_TOGGLE_STATE[save.typeEffectivenessRule] || TYPE_RULE_TOGGLE_STATE.main;
+            return { dual: matchupUseDualTypes, immunities: matchupUseImmunities };
+        }
+
+        // The Type Matchup tool's result for the move against whatever's
+        // in the other half, as { label, bonus } with `bonus` a real
+        // number (the tool's own map holds display strings like "+3").
+        // Null when there's no target, no known move type, or no known
+        // target types -- no bonus or penalty then. Uses the MOVE ACTUALLY
+        // USED's type (a Dynamaxed Pokémon's Max Move shares its base
+        // move's type), and only the target's first type unless the
+        // save's rule turns dual defending types on.
+        function computeBattleTypeMatchup(slotName, moveName) {
+            const target = getBattleSlotMember(getBattleOpposingSlotName(slotName));
+            const moveType = getBattleMoveType(moveName);
+            if (!target || !moveType) return null;
+            const targetTypes = getBattleMemberTypes(target);
+            if (!targetTypes.length) return null;
+            const rule = getBattleTypeRuleToggles();
+            const result = computeTypeMatchup(moveType, targetTypes[0], targetTypes[1] || null, rule.dual, rule.immunities);
+            if (!result) return null;
+            const bonus = parseInt(result.bonus, 10);
+            return { label: result.label, bonus: Number.isNaN(bonus) ? 0 : bonus };
+        }
+
+        // The move's static power (see getBattleEffectiveStrength()
+        // for which move's attack_strength is in play), or null when it
+        // can't be worked out yet -- no Pokémon, a half-level move with
+        // no target, a "manual" move whose number hasn't been typed.
+        function resolveBattleMovePower(slotName, eff) {
             if (!eff) return null;
             const strength = eff.strength;
-            let power = null;
-            if (strength.mode === 'fixed' && typeof strength.value === 'number') {
-                power = strength.value;
-            } else if (strength.mode === 'half_level') {
-                power = getBattleHalfLevelPower(slotName, strength);
-            } else if (strength.mode === 'manual') {
+            if (strength.mode === 'fixed' && typeof strength.value === 'number') return strength.value;
+            if (strength.mode === 'half_level') return getBattleHalfLevelPower(slotName, strength);
+            if (strength.mode === 'manual') {
                 // The player-typed number for THIS move, if they've
                 // entered one (see openBattleManualOverlay()).
                 const manual = battleCalcManualValue[slotName];
-                if (manual && manual.moveName === eff.name) power = manual.value;
+                if (manual && manual.moveName === eff.name) return manual.value;
             }
+            return null;
+        }
+
+        // A move's Attack Strength: its static power plus STAB, kept
+        // together as one unit (rather than folded straight into the
+        // total) because card/game effects can alter specifically this
+        // part of the calculation. STAB applies when the move (the one
+        // whose attack_strength is in play -- for a Dynamaxed Pokémon
+        // that's the BASE move a Max Move stands in for, so the Max
+        // Move inherits the base move's STAB and doesn't add its own;
+        // the Max Move itself is flagged "stab": "false" -- confirmed
+        // against the TableTop Simulator mod) shares a type with the
+        // Pokémon using it. Returns { power, stab, total } or
+        // null when the power isn't known yet.
+        function computeBattleAttackStrength(slotName, moveName, baseMoveName) {
+            const member = getBattleSlotMember(slotName);
+            if (!member) return null;
+            const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
+            const power = resolveBattleMovePower(slotName, eff);
             if (power === null) return null;
-            return power + getBattleMemberTotalLevel(member);
+            const moveType = getBattleMoveType(eff.name);
+            const stab = (moveType && moveCanGetStab(eff.name) && getBattleMemberTypes(member).includes(moveType))
+                ? BATTLE_STAB_BONUS : 0;
+            return { power, stab, total: power + stab };
+        }
+
+        // PLACEHOLDER -- extra modifiers to the calculation from the
+        // Battle Card and Field Move Effect zones (see battleZones),
+        // as an array of { label, bonus } (bonus a whole number, may be
+        // negative) that computeBattleMoveBreakdown() adds to the total
+        // and the readout lists. Returns none until those cards carry
+        // calculation values in cards.json. Example of what's coming:
+        // a Rain Field Move Effect gives +1 on Water-type moves and -1
+        // on Fire-type moves, i.e. [{ label: 'Rain', bonus: 1 }] for a
+        // Water move. Still to decide when this gets filled in: whether
+        // a zone's modifiers apply to its own half's moves, the
+        // opposing half's, or both (a weather-style effect presumably
+        // affects everyone); this gets the moving half and the move,
+        // so it can go either way.
+        function getBattleZoneModifiers(slotName, moveName) {
+            return [];
+        }
+
+        // Every piece of the Attack Calculator's math, for the readout to
+        // show as well as add up:
+        //   total = Attack Strength (power + STAB)
+        //         + the user's own total level
+        //         + the Type Matchup bonus (when there's a target)
+        //         + any Battle Card / Field Move Effect modifiers
+        // Power itself comes from getBattleEffectiveStrength() -- see
+        // that and getBattleHalfLevelPower()/openBattleManualOverlay()
+        // for the fixed / half-level / manual / Max Move cases. Returns
+        // { power, stab, attackStrength, level, matchup, modifiers,
+        // total } (`matchup` null when there's no bonus to apply;
+        // `modifiers` an array, usually empty), or null when
+        // the slot has no Pokémon, a half-level move's target isn't
+        // there, a "manual" move hasn't had its number entered yet, or
+        // a Max Move has nothing to derive its power from.
+        function computeBattleMoveBreakdown(slotName, moveName, baseMoveName) {
+            const member = getBattleSlotMember(slotName);
+            if (!member) return null;
+            const attack = computeBattleAttackStrength(slotName, moveName, baseMoveName);
+            if (!attack) return null;
+            const level = getBattleMemberTotalLevel(member);
+            const matchup = computeBattleTypeMatchup(slotName, moveName);
+            const modifiers = getBattleZoneModifiers(slotName, moveName);
+            const modifierTotal = modifiers.reduce((sum, m) => sum + m.bonus, 0);
+            return {
+                power: attack.power,
+                stab: attack.stab,
+                attackStrength: attack.total,
+                level,
+                matchup,
+                modifiers,
+                total: attack.total + level + (matchup ? matchup.bonus : 0) + modifierTotal,
+            };
+        }
+
+        // Just the final number -- null exactly when
+        // computeBattleMoveBreakdown() is (what the tap handler checks
+        // to tell a usable move from an unsupported one).
+        function computeBattleMoveValue(slotName, moveName, baseMoveName) {
+            const breakdown = computeBattleMoveBreakdown(slotName, moveName, baseMoveName);
+            return breakdown ? breakdown.total : null;
         }
 
         // The one authoritative way to blank a half's calc result --
@@ -28248,8 +28586,28 @@
             const el = document.getElementById(`game-battle-${slotName}-calc-readout`);
             if (!el) return;
             const moveName = battleCalcMoveName[slotName];
-            const value = moveName ? computeBattleMoveValue(slotName, moveName, battleCalcBaseMove[slotName]) : null;
-            el.textContent = value === null ? '' : String(value);
+            const breakdown = moveName ? computeBattleMoveBreakdown(slotName, moveName, battleCalcBaseMove[slotName]) : null;
+            if (!breakdown) {
+                el.innerHTML = '';
+                return;
+            }
+            // The big number, with a small line under it showing where
+            // it came from, e.g. "Strength 4 (3 + 1 STAB) + Lv 7 + 3
+            // Super-Effective". The matchup part only appears when
+            // there's a target to compare against.
+            let detail = breakdown.stab
+                ? `Strength ${breakdown.attackStrength} (${breakdown.power} + ${breakdown.stab} STAB)`
+                : `Strength ${breakdown.attackStrength}`;
+            detail += ` + Lv ${breakdown.level}`;
+            if (breakdown.matchup) {
+                const label = breakdown.matchup.label.toLowerCase().replace(/(^|[\s-])(\w)/g, (m, sep, ch) => sep + ch.toUpperCase());
+                detail += ` ${breakdown.matchup.bonus < 0 ? '\u2212' : '+'} ${Math.abs(breakdown.matchup.bonus)} ${label}`;
+            }
+            breakdown.modifiers.forEach(m => {
+                detail += ` ${m.bonus < 0 ? '\u2212' : '+'} ${Math.abs(m.bonus)} ${m.label}`;
+            });
+            el.innerHTML = `<span class="game-battle-calc-total">${breakdown.total}</span>`
+                + `<span class="game-battle-calc-detail">${escapeHtml(detail)}</span>`;
         }
 
         // Manual-power prompt -- for moves whose moves.json
@@ -28344,7 +28702,12 @@
         // The Max Move a known move becomes while Dynamaxed: any move
         // with 0 power (status moves) becomes Max Guard regardless of
         // type; everything else becomes the Max Move of its own type
-        // (Normal -> Max Strike). Returns null when it can't tell
+        // (Normal -> Max Strike). Not limited to known_moves: per the
+        // game's rules TM Moves and Z-Moves also become Max Moves when
+        // Dynamaxed, and this works for any move moves.json lists
+        // (a Z-Move maps by its type like any other; its own "stab":
+        // "false" flag carries through to the Max Move it becomes, see
+        // computeBattleAttackStrength()). Returns null when it can't tell
         // (moves.json not loaded or the move isn't listed), so the
         // caller can leave that move as it was.
         function getMaxMoveForKnownMove(moveName) {
@@ -28376,6 +28739,14 @@
         // Moves come from pokemon-data.json's known_moves (see
         // POKEMON_BY_NAME). A Mega/G-Max form showing via formOverride
         // has its own entry with its own moves, so that one wins.
+        //
+        // NOTE FOR LATER: TM Moves and Z-Moves aren't in this list yet
+        // (only known_moves are). When they're added, no Dynamax code
+        // needs to change -- game rule: TM Moves and Z-Moves BOTH also
+        // become Max Moves while the Pokémon is Dynamaxed, and
+        // getBattleMemberMoveButtons()/getMaxMoveForKnownMove() already
+        // treat any move in this list that way (by type, or Max Guard
+        // for 0 power). Just append them to what this returns.
         function getBattleMemberMoves(member) {
             const entry = POKEMON_BY_NAME[member.formOverride || member.name];
             return (entry && Array.isArray(entry.known_moves)) ? entry.known_moves : [];
@@ -34697,6 +35068,12 @@
             // Available on read-only saves and another player's watched
             // Pokémon too -- this never writes anything back to any
             // save, it only changes what this device is showing itself.
+            const battleZoneBadge = e.target.closest('.game-battle-zone-badge');
+            if (battleZoneBadge) {
+                handleBattleZoneTap(battleZoneBadge.dataset.battleSlot, battleZoneBadge.dataset.battleZone);
+                return;
+            }
+
             const battleMoveBtn = e.target.closest('.game-battle-move-btn');
             if (battleMoveBtn) {
                 const slot = battleMoveBtn.dataset.battleSlot;
