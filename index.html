@@ -1865,6 +1865,102 @@
                 0 4px 10px rgba(0, 0, 0, 0.25);
         }
 
+        /* Dice block (see renderBattleDice()): three counters side by
+           side, then the Roll buttons, then whatever was rolled. First
+           pass -- function over looks. */
+        .game-battle-dice {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .game-battle-dice-counters {
+            display: flex;
+            justify-content: center;
+            gap: 14px;
+        }
+
+        .game-battle-dice-counter {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+
+        .game-battle-dice-counter-label,
+        .game-battle-dice-value,
+        .game-battle-dice-result {
+            font-weight: bold;
+            color: white;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
+        .game-battle-dice-counter-label {
+            font-size: 13px;
+            text-transform: uppercase;
+        }
+
+        .game-battle-dice-counter-controls {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .game-battle-dice-counter-controls .filter-btn {
+            margin: 0;
+            padding: 4px 10px;
+        }
+
+        .game-battle-dice-value {
+            min-width: 1.4em;
+            text-align: center;
+            font-size: 24px;
+        }
+
+        .game-battle-dice-roll-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .game-battle-dice-roll-row .filter-btn {
+            margin: 0;
+        }
+
+        .game-battle-dice-results {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .game-battle-dice-results:empty {
+            display: none;
+        }
+
+        .game-battle-dice-result-line {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: baseline;
+            gap: 6px;
+            font-size: 22px;
+        }
+
+        .game-battle-dice-result small {
+            font-size: 11px;
+            font-weight: normal;
+            text-transform: uppercase;
+            opacity: 0.85;
+            margin-right: 2px;
+        }
+
         /* Multiplayer: a move button for a Pokémon this player may not
            choose for (see canIChooseBattleMoves()) -- still visible, so
            everyone can see which move was picked, just dimmed. The
@@ -13690,6 +13786,11 @@
                         <div class="game-battle-defender-btn-row">
                             <button class="filter-btn" id="game-battle-defender-options-btn">Defender Options</button>
                         </div>
+                        <!-- Dice counters + Roll buttons + results (filled in by
+                             renderBattleDice()). Sits between Options and the
+                             Moves on this half; the Attacker half has the
+                             mirror-image spot between its Moves and Options. -->
+                        <div class="game-battle-dice" id="game-battle-defender-dice" data-battle-slot="defender"></div>
                         <div class="game-battle-moves" id="game-battle-defender-moves"></div>
                         <!-- Wrapper exists so #game-battle-calc-readout-defender can sit
                              on top of the card without being wiped out --
@@ -13745,6 +13846,7 @@
                             <div class="game-battle-zone-badge" role="button" tabindex="0" data-battle-slot="attacker" data-battle-zone="fieldEffect" title="Attacker Field Move Effect" aria-label="Attacker Field Move Effect"></div>
                         </div>
                         <div class="game-battle-moves" id="game-battle-attacker-moves"></div>
+                        <div class="game-battle-dice" id="game-battle-attacker-dice" data-battle-slot="attacker"></div>
                         <!-- Recall (see recallBattleAttacker() in the
                              script) starts hidden -- renderBattleAttackerSlot()
                              is the only thing that ever shows it, and
@@ -28516,6 +28618,97 @@
             renderBattleControls();
         }
 
+        // ---- Battle dice (per half, this device only for now) ----
+        // Three counters -- how many of each die a roll uses -- each
+        // 0 to 3. Raising one zeroes the other two, so only one kind of
+        // die is ever in play. Left to right: d4, d6, and the "High-
+        // Crit" d8 whose 7 and 8 faces are a second 5 and 6.
+        const BATTLE_DICE = [
+            { key: 'd4', label: 'd4', faces: [1, 2, 3, 4] },
+            { key: 'd6', label: 'd6', faces: [1, 2, 3, 4, 5, 6] },
+            { key: 'd8', label: 'High-Crit d8', faces: [1, 2, 3, 4, 5, 6, 5, 6] },
+        ];
+        const BATTLE_EFFECT_DIE_FACES = [1, 2, 3, 4, 5, 6];
+        const BATTLE_DICE_MAX = 3;
+
+        function makeDefaultBattleDiceCounts() {
+            return { d4: 0, d6: 1, d8: 0 };
+        }
+
+        let battleDiceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
+
+        // Last roll for each half: attack = [{ die, value }, ...] in
+        // counter order (left to right), effect = a number; null until
+        // rolled. The two rolls are independent -- rolling one leaves
+        // the other showing.
+        let battleDiceResults = { attacker: { attack: null, effect: null }, defender: { attack: null, effect: null } };
+
+        function rollBattleFace(faces) {
+            return faces[Math.floor(Math.random() * faces.length)];
+        }
+
+        // step is +1 or -1. Raising a counter zeroes the others.
+        function stepBattleDice(slotName, dieKey, step) {
+            const counts = battleDiceCounts[slotName];
+            if (!counts || !(dieKey in counts)) return;
+            const next = Math.max(0, Math.min(BATTLE_DICE_MAX, counts[dieKey] + step));
+            if (next === counts[dieKey]) return;
+            if (step > 0) BATTLE_DICE.forEach(d => { counts[d.key] = 0; });
+            counts[dieKey] = next;
+            renderBattleDice(slotName);
+        }
+
+        // One result per die rolled, listed in series (never summed).
+        function rollBattleAttackDice(slotName) {
+            const counts = battleDiceCounts[slotName];
+            const rolls = [];
+            BATTLE_DICE.forEach(d => {
+                for (let i = 0; i < counts[d.key]; i++) rolls.push({ die: d.label, value: rollBattleFace(d.faces) });
+            });
+            battleDiceResults[slotName].attack = rolls;
+            renderBattleDice(slotName);
+        }
+
+        function rollBattleEffectDie(slotName) {
+            battleDiceResults[slotName].effect = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
+            renderBattleDice(slotName);
+        }
+
+        function renderBattleDice(slotName) {
+            const container = document.getElementById(`game-battle-${slotName}-dice`);
+            if (!container) return;
+            const counts = battleDiceCounts[slotName];
+            const results = battleDiceResults[slotName];
+            const counters = BATTLE_DICE.map(d => `
+                <div class="game-battle-dice-counter">
+                    <span class="game-battle-dice-counter-label">${d.label}</span>
+                    <div class="game-battle-dice-counter-controls">
+                        <button class="filter-btn game-battle-dice-step-btn" data-battle-slot="${slotName}" data-die="${d.key}" data-step="-1" aria-label="Fewer ${d.label}"${counts[d.key] <= 0 ? ' disabled' : ''}>&minus;</button>
+                        <span class="game-battle-dice-value">${counts[d.key]}</span>
+                        <button class="filter-btn game-battle-dice-step-btn" data-battle-slot="${slotName}" data-die="${d.key}" data-step="1" aria-label="More ${d.label}"${counts[d.key] >= BATTLE_DICE_MAX ? ' disabled' : ''}>+</button>
+                    </div>
+                </div>`).join('');
+            let resultLines = '';
+            if (results.attack) {
+                resultLines += `<div class="game-battle-dice-result-line">${results.attack.length
+                    ? results.attack.map(r => `<span class="game-battle-dice-result"><small>${r.die}</small>${r.value}</span>`).join('')
+                    : '<span class="game-battle-dice-result"><small>No dice selected</small></span>'}</div>`;
+            }
+            if (results.effect !== null) {
+                resultLines += `<div class="game-battle-dice-result-line"><span class="game-battle-dice-result"><small>Effect d6</small>${results.effect}</span></div>`;
+            }
+            container.innerHTML = `
+                <div class="game-battle-dice-counters">${counters}</div>
+                <div class="game-battle-dice-roll-row">
+                    <button class="filter-btn game-battle-roll-attack-btn" data-battle-slot="${slotName}">Roll Attack Dice</button>
+                    <button class="filter-btn exclude game-battle-roll-effect-btn" data-battle-slot="${slotName}">Roll Effect Die</button>
+                </div>
+                <div class="game-battle-dice-results">${resultLines}</div>`;
+        }
+
+        renderBattleDice('attacker');
+        renderBattleDice('defender');
+
         // Which of Begin Battle / Next Round / End Battle is showing,
         // and whether Begin is tappable. Both halves count as populated
         // whatever their source (own pick, another player's, Wild).
@@ -35449,6 +35642,22 @@
             const battleZoneBadge = e.target.closest('.game-battle-zone-badge');
             if (battleZoneBadge) {
                 handleBattleZoneTap(battleZoneBadge.dataset.battleSlot, battleZoneBadge.dataset.battleZone);
+                return;
+            }
+
+            const battleDiceStepBtn = e.target.closest('.game-battle-dice-step-btn');
+            if (battleDiceStepBtn) {
+                stepBattleDice(battleDiceStepBtn.dataset.battleSlot, battleDiceStepBtn.dataset.die, parseInt(battleDiceStepBtn.dataset.step, 10));
+                return;
+            }
+            const battleRollAttackBtn = e.target.closest('.game-battle-roll-attack-btn');
+            if (battleRollAttackBtn) {
+                rollBattleAttackDice(battleRollAttackBtn.dataset.battleSlot);
+                return;
+            }
+            const battleRollEffectBtn = e.target.closest('.game-battle-roll-effect-btn');
+            if (battleRollEffectBtn) {
+                rollBattleEffectDie(battleRollEffectBtn.dataset.battleSlot);
                 return;
             }
 
