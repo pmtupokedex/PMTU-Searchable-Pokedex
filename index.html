@@ -1865,6 +1865,14 @@
                 0 4px 10px rgba(0, 0, 0, 0.25);
         }
 
+        /* The main menu's Battle Arena tile while it can't be opened (no
+           hosted save loaded and not in a lobby -- see
+           canUseBattleArena()). Dimmed, not disabled, so tapping it can
+           still explain why. */
+        .game-menu-tiles .filter-btn.game-menu-tile-locked {
+            opacity: 0.5;
+        }
+
         /* Dice block (see renderBattleDice()): three counters side by
            side, then the Roll buttons, then whatever was rolled. First
            pass -- function over looks. */
@@ -1951,6 +1959,31 @@
             align-items: baseline;
             gap: 6px;
             font-size: 22px;
+        }
+
+        /* A rolled Attack die is a button: tap to leave it out of (or put
+           it back into) the calculation. */
+        .game-battle-dice-result-btn {
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+            background: rgba(0, 0, 0, 0.35);
+            border: 2px solid white;
+            border-radius: 8px;
+            padding: 0 8px;
+            cursor: pointer;
+        }
+
+        .game-battle-dice-result-excluded {
+            opacity: 0.45;
+            text-decoration: line-through;
+            border-style: dashed;
+        }
+
+        .game-battle-dice-locked .game-battle-dice-roll-row .filter-btn,
+        .game-battle-dice-locked .game-battle-dice-result-btn {
+            opacity: 0.6;
+            cursor: default;
         }
 
         .game-battle-dice-result small {
@@ -6404,6 +6437,12 @@
             background: rgba(0, 0, 0, 0.55);
             border-radius: 6px;
             padding: 2px 6px;
+        }
+
+        /* A roster entry that can't be picked (Overlay Card on it). */
+        .game-battle-picker-item.game-battle-picker-item-ineligible {
+            opacity: 0.5;
+            cursor: default;
         }
 
         .game-battle-picker-empty-text {
@@ -13685,7 +13724,7 @@
                     <button class="filter-btn" data-target="badges">Badge Tracker</button>
                     <button class="filter-btn" data-target="matchup">Type Matchup</button>
                     <button class="filter-btn" data-target="calc">Attack Calculator</button>
-                    <button class="filter-btn" data-target="battle">Battle Arena</button>
+                    <button class="filter-btn" id="game-menu-battle-tile" data-target="battle">Battle Arena</button>
                     <button class="filter-btn" data-target="lobby">Multiplayer Lobby</button>
                     <button class="filter-btn" data-target="rulebook-picker">Rulebooks</button>
                 </div>
@@ -13790,7 +13829,7 @@
                              renderBattleDice()). Sits between Options and the
                              Moves on this half; the Attacker half has the
                              mirror-image spot between its Moves and Options. -->
-                        <div class="game-battle-dice" id="game-battle-defender-dice" data-battle-slot="defender"></div>
+                        <div class="game-battle-dice" id="game-battle-defender-dice" data-battle-slot="defender" style="display: none;"></div>
                         <div class="game-battle-moves" id="game-battle-defender-moves"></div>
                         <!-- Wrapper exists so #game-battle-calc-readout-defender can sit
                              on top of the card without being wiped out --
@@ -13846,7 +13885,7 @@
                             <div class="game-battle-zone-badge" role="button" tabindex="0" data-battle-slot="attacker" data-battle-zone="fieldEffect" title="Attacker Field Move Effect" aria-label="Attacker Field Move Effect"></div>
                         </div>
                         <div class="game-battle-moves" id="game-battle-attacker-moves"></div>
-                        <div class="game-battle-dice" id="game-battle-attacker-dice" data-battle-slot="attacker"></div>
+                        <div class="game-battle-dice" id="game-battle-attacker-dice" data-battle-slot="attacker" style="display: none;"></div>
                         <!-- Recall (see recallBattleAttacker() in the
                              script) starts hidden -- renderBattleAttackerSlot()
                              is the only thing that ever shows it, and
@@ -18972,6 +19011,9 @@
         }
 
         function renderTeamGrid() {
+            // A Pok\u00e9mon in the Battle Arena that just got an Overlay Card
+            // is recalled -- see ejectOverlayedBattleMembers().
+            ejectOverlayedBattleMembers();
             const grid = document.getElementById('game-team-grid');
             if (!grid) return;
             const data = getActiveSaveData();
@@ -19037,7 +19079,7 @@
             // team member -- unlike the other three, there's nothing
             // this one could possibly do on an empty roster.
             const sendToBattleBtn = document.getElementById('game-team-send-to-battle-btn');
-            if (sendToBattleBtn) sendToBattleBtn.style.display = (members.length === 0 || replacing || releasing || negotiatingTrade || attachingFromHand || sendingToBattle) ? 'none' : '';
+            if (sendToBattleBtn) sendToBattleBtn.style.display = (members.length === 0 || !canUseBattleArena() || replacing || releasing || negotiatingTrade || attachingFromHand || sendingToBattle) ? 'none' : '';
             const replaceBanner = document.getElementById('game-team-replace-banner');
             if (replaceBanner) replaceBanner.classList.toggle('visible', replacing);
             const replaceBannerImg = document.getElementById('game-team-replace-banner-img');
@@ -19058,9 +19100,10 @@
             const sendToBattleBannerText = document.getElementById('game-team-send-to-battle-banner-text');
             if (sendToBattleBannerText) {
                 const targetLabel = teamSendToBattleTargetSlot === 'attacker' ? 'Attacker' : teamSendToBattleTargetSlot === 'defender' ? 'Defender' : '';
-                sendToBattleBannerText.textContent = targetLabel
+                sendToBattleBannerText.textContent = (targetLabel
                     ? `Tap a Pok\u00e9mon on your team to send it to the Battle Arena as the ${targetLabel}.`
-                    : 'Tap a Pok\u00e9mon on your team to send it to the Battle Arena.';
+                    : 'Tap a Pok\u00e9mon on your team to send it to the Battle Arena.')
+                    + ' Pok\u00e9mon with an Overlay Card can\u2019t be sent.';
             }
             const tradeSelectBanner = document.getElementById('game-team-trade-select-banner');
             if (tradeSelectBanner) tradeSelectBanner.classList.toggle('visible', selectingTradeOffer);
@@ -19932,6 +19975,11 @@
             if (slot === 'attacker' && isBattleAttackerBlockedByActiveTeam()) return;
             if (slot === 'defender' && isBattleDefenderBlockedByActiveTeam()) return;
             const index = pendingBattleSlotChoiceIndex;
+            if (isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) {
+                closeBattleSlotChoiceOverlay();
+                showGameToast(BATTLE_OVERLAY_BLOCK_MESSAGE);
+                return;
+            }
             // The slot-choice overlay stays open underneath while the
             // replace confirmation (if any) is showing, so Cancel there
             // simply drops back to choosing a slot.
@@ -21722,7 +21770,13 @@
             if (!st.moves) st.moves = { attacker: null, defender: null };
             // A chosen move can't outlive the Pokémon it was chosen for,
             // and a battle with nothing left in either half is over.
-            ['attacker', 'defender'].forEach(slot => { if (!st[slot]) st.moves[slot] = null; });
+            if (!st.dice) st.dice = makeEmptyBattleDice();
+            ['attacker', 'defender'].forEach(slot => {
+                if (!st[slot]) {
+                    st.moves[slot] = null;
+                    st.dice[slot] = { attack: null, effect: null };
+                }
+            });
             if (!st.attacker && !st.defender) st.inProgress = false;
             const payload = {
                 type: 'battle-arena-state',
@@ -21730,6 +21784,7 @@
                 defender: st.defender,
                 inProgress: !!st.inProgress,
                 moves: { attacker: st.moves.attacker, defender: st.moves.defender },
+                dice: { attacker: st.dice.attacker, defender: st.dice.defender },
             };
             if (lobbyState.connections) {
                 lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
@@ -21769,6 +21824,13 @@
         // follow. wild:true tags the entry as ownerless instead.
         function hostApplyBattleSetSlot(slot, peerKey, member, wild) {
             if (slot !== 'attacker' && slot !== 'defender') return;
+            // Backstop for the client-side checks: a Pok\u00e9mon with an
+            // Overlay Card on it doesn't go in the Arena.
+            if (member && !wild && isBattleIneligibleMember(member)) {
+                sendBattleNotice(peerKey, BATTLE_OVERLAY_BLOCK_MESSAGE);
+                broadcastBattleArenaState();
+                return;
+            }
             const previous = hostBattleArenaState[slot];
             const newOwnerId = wild ? null : peerKey;
             hostBattleArenaState[slot] = member ? { member, ownerId: newOwnerId } : null;
@@ -21778,6 +21840,7 @@
             const sameOccupant = !!(member && previous && previous.ownerId === newOwnerId
                 && previous.member && previous.member.name === member.name && previous.member.dex === member.dex);
             if (!sameOccupant && hostBattleArenaState.moves) hostBattleArenaState.moves[slot] = null;
+            if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null };
             // A player whose Pokémon was just taken out of the Arena by
             // someone ELSE sending a Pokémon in (never by their own
             // recall or re-pick, which keeps the same owner) is told
@@ -21852,6 +21915,7 @@
             hostBattleArenaState.defender = null;
             hostBattleArenaState.inProgress = false;
             hostBattleArenaState.moves = { attacker: null, defender: null };
+            hostBattleArenaState.dice = makeEmptyBattleDice();
             if (peerKey === 'host') {
                 finishLocalWildCatch(entry.member);
             } else {
@@ -21917,6 +21981,17 @@
             }
         }
 
+        // req is {action: 'roll-attack', counts} | {action: 'roll-effect'} |
+        // {action: 'toggle', index}. The Host does the actual rolling, so
+        // every screen sees the same dice.
+        function requestBattleDice(slot, req) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-dice', slot, ...req });
+            } else if (lobbyState.role === 'host') {
+                hostApplyBattleDice(slot, 'host', req);
+            }
+        }
+
         // Same routing as sendBattleCatchFailure(), for any short notice.
         function sendBattleNotice(peerKey, reason) {
             if (peerKey === 'host') {
@@ -21936,14 +22011,19 @@
                     } else {
                         st.inProgress = true;
                         st.moves = { attacker: null, defender: null };
+                        st.dice = makeEmptyBattleDice();
                     }
                 }
             } else if (action === 'next') {
-                if (st.inProgress) st.moves = { attacker: null, defender: null };
+                if (st.inProgress) {
+                    st.moves = { attacker: null, defender: null };
+                    st.dice = makeEmptyBattleDice();
+                }
             } else if (action === 'end') {
                 // Everything is recalled, whoever owned it.
                 st.inProgress = false;
                 st.moves = { attacker: null, defender: null };
+                st.dice = makeEmptyBattleDice();
                 st.attacker = null;
                 st.defender = null;
             } else {
@@ -21972,6 +22052,29 @@
             }
             if (!st.moves) st.moves = { attacker: null, defender: null };
             st.moves[slot] = clean;
+            broadcastBattleArenaState();
+        }
+
+        function hostApplyBattleDice(slot, peerKey, req) {
+            if (slot !== 'attacker' && slot !== 'defender') return;
+            const st = hostBattleArenaState;
+            if (!st.dice) st.dice = makeEmptyBattleDice();
+            if (!st.inProgress || !battleMoveControlAllowed(st, slot, peerKey)) {
+                if (st.inProgress) sendBattleNotice(peerKey, battleMoveLockReason(st, slot, 'dice'));
+                broadcastBattleArenaState();
+                return;
+            }
+            const half = st.dice[slot];
+            if (req && req.action === 'roll-attack') {
+                half.attack = generateBattleAttackRolls(sanitizeBattleDiceCounts(req.counts));
+            } else if (req && req.action === 'roll-effect') {
+                half.effect = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
+            } else if (req && req.action === 'toggle') {
+                const i = Number(req.index);
+                if (half.attack && Number.isInteger(i) && half.attack[i]) half.attack[i].excluded = !half.attack[i].excluded;
+            } else {
+                return;
+            }
             broadcastBattleArenaState();
         }
 
@@ -22030,11 +22133,16 @@
             return other.ownerId !== playerId;
         }
 
-        function battleMoveLockReason(state, slotName) {
+        // kind: 'moves' (default) or 'dice'.
+        function battleMoveLockReason(state, slotName, kind) {
             const entry = state[slotName];
-            return (entry && entry.ownerId)
-                ? 'Only the player who owns this Pok\u00e9mon can choose its moves.'
-                : 'You can\u2019t choose moves for a Pok\u00e9mon your own is battling.';
+            const dice = kind === 'dice';
+            if (entry && entry.ownerId) {
+                return dice ? 'Only the player who owns this Pok\u00e9mon can roll for it.'
+                            : 'Only the player who owns this Pok\u00e9mon can choose its moves.';
+            }
+            return dice ? 'You can\u2019t roll for a Pok\u00e9mon your own is battling.'
+                        : 'You can\u2019t choose moves for a Pok\u00e9mon your own is battling.';
         }
 
         // This device's own answer -- solo, everything is allowed.
@@ -22045,9 +22153,9 @@
                 slotName, getMyLobbyPlayerId());
         }
 
-        function getMyBattleMoveLockReason(slotName) {
+        function getMyBattleMoveLockReason(slotName, kind) {
             return battleMoveLockReason(
-                { attacker: getArenaSlotEntry('attacker'), defender: getArenaSlotEntry('defender') }, slotName);
+                { attacker: getArenaSlotEntry('attacker'), defender: getArenaSlotEntry('defender') }, slotName, kind);
         }
 
         // Applies a battle-arena-state onto this device's local
@@ -22096,6 +22204,12 @@
                 } else {
                     resetBattleCalcResult(slot);
                 }
+                // What was rolled for this half (see battleDiceResults).
+                const rolled = payload.dice && payload.dice[slot];
+                battleDiceResults[slot] = {
+                    attack: (rolled && rolled.attack) ? rolled.attack.map(r => ({ die: r.die, value: r.value, excluded: !!r.excluded })) : null,
+                    effect: (rolled && rolled.effect !== undefined) ? rolled.effect : null,
+                };
             });
             renderBattleAttackerSlot();
             renderBattleDefenderSlot();
@@ -28203,6 +28317,35 @@
         // shared Lobby arena state.
         let battleInProgress = false;
 
+        // ---- Battle dice (per half) ----
+        // Three counters -- how many of each die a roll uses -- each
+        // 0 to 3. Raising one zeroes the other two, so only one kind of
+        // die is ever in play. Left to right: d4, d6, and the "High-
+        // Crit" d8 whose 7 and 8 faces are a second 5 and 6.
+        const BATTLE_DICE = [
+            { key: 'd4', label: 'd4', faces: [1, 2, 3, 4] },
+            { key: 'd6', label: 'd6', faces: [1, 2, 3, 4, 5, 6] },
+            { key: 'd8', label: 'High-Crit d8', faces: [1, 2, 3, 4, 5, 6, 5, 6] },
+        ];
+        const BATTLE_EFFECT_DIE_FACES = [1, 2, 3, 4, 5, 6];
+        const BATTLE_DICE_MAX = 3;
+
+        function makeDefaultBattleDiceCounts() {
+            return { d4: 0, d6: 1, d8: 0 };
+        }
+
+        let battleDiceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
+
+        // The counters are per device (they only matter to whoever is
+        // rolling). The RESULTS are shared: in a lobby they live in the
+        // Host's arena state and every screen mirrors them (see
+        // applyIncomingArenaState()). attack = [{ die, value, excluded },
+        // ...] in counter order (left to right), effect = a number; null
+        // until rolled. The two rolls are independent -- rolling one
+        // leaves the other showing. A die with excluded: true stays
+        // listed but isn't added into the Attack calculation.
+        let battleDiceResults = makeEmptyBattleDice();
+
         // Defender half's own equivalent of battleAttackerMemberIndex
         // just above -- same reasoning, just tracked independently so
         // Attacker and Defender can each hold their own pick. The one
@@ -28274,11 +28417,13 @@
         //
         // guestBattleArenaCache: the guest-side (and host's own) mirror
         // of the Host's last broadcastBattleArenaState() --
-        // {attacker, defender, inProgress, moves}: attacker/defender each
+        // {attacker, defender, inProgress, moves, dice}: attacker/defender each
         // {member, ownerId} | null (ownerId null meaning ownerless);
         // inProgress is whether Begin Battle has been pressed; moves is
         // {attacker, defender}, each the move currently chosen for that
-        // half ({moveName, baseMove, manual, rule}) or null. Same "one code path, host and guest
+        // half ({moveName, baseMove, manual, rule}) or null; dice is
+        // {attacker, defender}, each {attack: [{die, value, excluded}] |
+        // null, effect: number | null} -- what was rolled for that half. Same "one code path, host and guest
         // alike" trick guestDeckStateCache already uses.
         let guestBattleArenaCache = null;
 
@@ -28287,7 +28432,7 @@
         // whenever the lobby resets (see resetLobbyState()), never
         // persisted -- same "pure in-memory state for the current
         // battle" reasoning battleWildPokemon itself already carries.
-        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null } };
+        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice() };
 
         // Which move the Attack Calculator is currently reading for each
         // half -- just the move name, not a cached total, so a level or
@@ -28362,13 +28507,16 @@
         // (there's no single obvious Pokémon to evict here the way
         // there was for that one).
         function setBattleAttackerIndex(index) {
+            if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
             battleAttackerMemberIndex = index;
             battleAttackerTeamId = index !== null ? getActiveTeamId() : null;
             resetBattleCalcResult('attacker');
+            clearBattleDiceResults('attacker');
             if (index !== null && battleDefenderMemberIndex === index) {
                 battleDefenderMemberIndex = null;
                 battleDefenderTeamId = null;
                 resetBattleCalcResult('defender');
+                clearBattleDiceResults('defender');
             }
             syncMyBattleSlot('attacker');
             syncMyBattleSlot('defender');
@@ -28380,6 +28528,7 @@
         // rather than shared for the same independence reasoning as
         // every other near-identical pair in this doc.
         function setBattleDefenderIndex(index) {
+            if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
             battleDefenderMemberIndex = index;
             battleDefenderTeamId = index !== null ? getActiveTeamId() : null;
             // A real pick always replaces whatever was there before,
@@ -28389,10 +28538,12 @@
             // but there's no reason to let it linger in memory either.
             battleWildPokemon = null;
             resetBattleCalcResult('defender');
+            clearBattleDiceResults('defender');
             if (index !== null && battleAttackerMemberIndex === index) {
                 battleAttackerMemberIndex = null;
                 battleAttackerTeamId = null;
                 resetBattleCalcResult('attacker');
+                clearBattleDiceResults('attacker');
             }
             syncMyBattleSlot('attacker');
             syncMyBattleSlot('defender');
@@ -28418,6 +28569,7 @@
             battleDefenderMemberIndex = 'wild';
             battleDefenderTeamId = 'wild';
             resetBattleCalcResult('defender');
+            clearBattleDiceResults('defender');
             // Once a Lobby session exists this sets the ownerless Wild
             // Pokémon in the ONE shared Defender half. A no-op solo.
             requestBattleSetSlot('defender', member, true);
@@ -28455,6 +28607,92 @@
         // conflict, but written generically in case a later notice on
         // this screen needs the same treatment.
         let battleNoticeTimer = null;
+        // ---- Battle Arena gate ----
+        // The Arena is only meaningful with a real game behind it: a
+        // hosted save loaded (activeSaveSlot) or a live Multiplayer
+        // Lobby connection (host or guest). An unsaved session, or a
+        // Joined Game loaded while disconnected, doesn't qualify.
+        function canUseBattleArena() {
+            return activeSaveSlot !== null || lobbyState.role !== null;
+        }
+
+        const BATTLE_ARENA_GATE_MESSAGE = 'Load a hosted save or join a Multiplayer Lobby to use the Battle Arena.';
+
+        // Shows any short message in the shared #coming-soon-toast pill,
+        // letting a longer one wrap, then puts the toast back the way
+        // its other callers expect it.
+        let gameToastResetTimer = null;
+        function showGameToast(message) {
+            const toast = document.getElementById('coming-soon-toast');
+            if (!toast) return;
+            toast.textContent = message;
+            toast.style.whiteSpace = 'normal';
+            toast.style.maxWidth = '80vw';
+            toast.style.textAlign = 'center';
+            toast.style.borderRadius = '18px';
+            showComingSoonToast();
+            clearTimeout(gameToastResetTimer);
+            gameToastResetTimer = setTimeout(() => {
+                toast.textContent = 'Coming Soon';
+                toast.style.whiteSpace = '';
+                toast.style.maxWidth = '';
+                toast.style.textAlign = '';
+                toast.style.borderRadius = '';
+            }, 3400);
+        }
+
+        function showBattleArenaGateToast() {
+            showGameToast(BATTLE_ARENA_GATE_MESSAGE);
+        }
+
+        // ---- Overlay Card eligibility ----
+        // A Pok\u00e9mon with an Overlay Card on it (member.overlayCardId)
+        // can't be put in the Arena. Enforced everywhere one can enter:
+        // both Arena pickers, Team Tracker's send mode, the Host's own
+        // check (hostApplyBattleSetSlot()), and the two index setters.
+        // Wild Pok\u00e9mon never carry one.
+        const BATTLE_OVERLAY_BLOCK_MESSAGE = 'A Pok\u00e9mon with an Overlay Card on it can\u2019t go in the Battle Arena.';
+
+        function isBattleIneligibleMember(member) {
+            return !!(member && member.overlayCardId);
+        }
+
+        // If a Pok\u00e9mon already in the Arena picks up an Overlay Card
+        // (placed from the Hand or an active card), it's no longer
+        // eligible, so it's recalled. Called from renderTeamGrid(), which
+        // every team change passes through. Each half is checked only
+        // if it holds one of THIS device's active team's Pok\u00e9mon.
+        function ejectOverlayedBattleMembers() {
+            [['attacker', battleAttackerMemberIndex, battleAttackerTeamId],
+             ['defender', battleDefenderMemberIndex, battleDefenderTeamId]].forEach(([slot, index, teamId]) => {
+                if (typeof index !== 'number' || teamId !== getActiveTeamId()) return;
+                const member = (getActiveSaveData().team.members || [])[index];
+                if (!isBattleIneligibleMember(member)) return;
+                const name = getBattleMemberDisplay(member).name || 'Pok\u00e9mon';
+                if (slot === 'attacker') recallBattleAttacker();
+                else recallBattleDefender();
+                showGameToast(`${name} was removed from the Battle Arena \u2014 it has an Overlay Card on it.`);
+            });
+        }
+
+        // Keeps the menu tile's look in step with the gate, and steps
+        // out of the Arena if the gate closes while it's open (the
+        // active save was unloaded/deleted, or the lobby was left or
+        // dropped). Called from refreshGameUI() and whenever the main
+        // menu is shown.
+        function renderBattleArenaGate() {
+            const allowed = canUseBattleArena();
+            const tile = document.getElementById('game-menu-battle-tile');
+            if (tile) {
+                tile.classList.toggle('game-menu-tile-locked', !allowed);
+                tile.setAttribute('aria-disabled', allowed ? 'false' : 'true');
+            }
+            if (!allowed && currentGameScreen === 'battle') {
+                setGameScreen('main');
+                showBattleArenaGateToast();
+            }
+        }
+
         function showBattleArenaNotice(message) {
             const el = document.getElementById('game-battle-notice-banner');
             if (!el) return;
@@ -28607,6 +28845,7 @@
             // changes -- refresh it too.
             renderBattleCalcReadout('defender');
             renderBattleControls();
+            renderBattleDice('defender');
         }
 
         function renderBattleDefenderSlot() {
@@ -28616,35 +28855,46 @@
             // Same reasoning as renderBattleAttackerSlot() just above.
             renderBattleCalcReadout('attacker');
             renderBattleControls();
+            renderBattleDice('attacker');
         }
 
-        // ---- Battle dice (per half, this device only for now) ----
-        // Three counters -- how many of each die a roll uses -- each
-        // 0 to 3. Raising one zeroes the other two, so only one kind of
-        // die is ever in play. Left to right: d4, d6, and the "High-
-        // Crit" d8 whose 7 and 8 faces are a second 5 and 6.
-        const BATTLE_DICE = [
-            { key: 'd4', label: 'd4', faces: [1, 2, 3, 4] },
-            { key: 'd6', label: 'd6', faces: [1, 2, 3, 4, 5, 6] },
-            { key: 'd8', label: 'High-Crit d8', faces: [1, 2, 3, 4, 5, 6, 5, 6] },
-        ];
-        const BATTLE_EFFECT_DIE_FACES = [1, 2, 3, 4, 5, 6];
-        const BATTLE_DICE_MAX = 3;
-
-        function makeDefaultBattleDiceCounts() {
-            return { d4: 0, d6: 1, d8: 0 };
+        function makeEmptyBattleDice() {
+            return { attacker: { attack: null, effect: null }, defender: { attack: null, effect: null } };
         }
-
-        let battleDiceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
-
-        // Last roll for each half: attack = [{ die, value }, ...] in
-        // counter order (left to right), effect = a number; null until
-        // rolled. The two rolls are independent -- rolling one leaves
-        // the other showing.
-        let battleDiceResults = { attacker: { attack: null, effect: null }, defender: { attack: null, effect: null } };
 
         function rollBattleFace(faces) {
             return faces[Math.floor(Math.random() * faces.length)];
+        }
+
+        // Counter values pulled into 0..3 (the Host runs this on
+        // whatever a guest sends).
+        function sanitizeBattleDiceCounts(counts) {
+            const clean = {};
+            BATTLE_DICE.forEach(d => {
+                const n = parseInt(counts && counts[d.key], 10);
+                clean[d.key] = Number.isFinite(n) ? Math.max(0, Math.min(BATTLE_DICE_MAX, n)) : 0;
+            });
+            return clean;
+        }
+
+        // One result per die, in counter order -- listed, never summed
+        // here. The Host calls this in a lobby; solo it runs locally.
+        function generateBattleAttackRolls(counts) {
+            const rolls = [];
+            BATTLE_DICE.forEach(d => {
+                for (let i = 0; i < counts[d.key]; i++) rolls.push({ die: d.label, value: rollBattleFace(d.faces), excluded: false });
+            });
+            return rolls;
+        }
+
+        function clearBattleDiceResults(slotName) {
+            battleDiceResults[slotName] = { attack: null, effect: null };
+        }
+
+        // Repaints the dice block and the readout it feeds.
+        function refreshBattleDice(slotName) {
+            renderBattleDice(slotName);
+            renderBattleCalcReadout(slotName);
         }
 
         // step is +1 or -1. Raising a counter zeroes the others.
@@ -28658,25 +28908,49 @@
             renderBattleDice(slotName);
         }
 
-        // One result per die rolled, listed in series (never summed).
+        // Rolling, and excluding dice, follow the same "who may act for
+        // this half" rule as choosing its move (canIChooseBattleMoves()).
+        function guardBattleDiceAction(slotName) {
+            if (!battleInProgress) return false;
+            if (canIChooseBattleMoves(slotName)) return true;
+            showBattleArenaNotice(getMyBattleMoveLockReason(slotName, 'dice'));
+            return false;
+        }
+
         function rollBattleAttackDice(slotName) {
-            const counts = battleDiceCounts[slotName];
-            const rolls = [];
-            BATTLE_DICE.forEach(d => {
-                for (let i = 0; i < counts[d.key]; i++) rolls.push({ die: d.label, value: rollBattleFace(d.faces) });
-            });
-            battleDiceResults[slotName].attack = rolls;
-            renderBattleDice(slotName);
+            if (!guardBattleDiceAction(slotName)) return;
+            const counts = sanitizeBattleDiceCounts(battleDiceCounts[slotName]);
+            if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-attack', counts }); return; }
+            battleDiceResults[slotName].attack = generateBattleAttackRolls(counts);
+            refreshBattleDice(slotName);
         }
 
         function rollBattleEffectDie(slotName) {
+            if (!guardBattleDiceAction(slotName)) return;
+            if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-effect' }); return; }
             battleDiceResults[slotName].effect = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
-            renderBattleDice(slotName);
+            refreshBattleDice(slotName);
         }
 
+        // Tapping a rolled attack die drops it from (or puts it back
+        // into) the calculation -- for effects like Disadvantage, which
+        // roll two and drop the highest.
+        function toggleBattleDieExcluded(slotName, index) {
+            if (!guardBattleDiceAction(slotName)) return;
+            const rolls = battleDiceResults[slotName].attack;
+            if (!rolls || !rolls[index]) return;
+            if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'toggle', index }); return; }
+            rolls[index].excluded = !rolls[index].excluded;
+            refreshBattleDice(slotName);
+        }
+
+        // Only exists once the battle has begun (like the Move
+        // buttons); until then the whole block is hidden.
         function renderBattleDice(slotName) {
             const container = document.getElementById(`game-battle-${slotName}-dice`);
             if (!container) return;
+            container.style.display = battleInProgress ? '' : 'none';
+            container.classList.toggle('game-battle-dice-locked', !canIChooseBattleMoves(slotName));
             const counts = battleDiceCounts[slotName];
             const results = battleDiceResults[slotName];
             const counters = BATTLE_DICE.map(d => `
@@ -28691,10 +28965,10 @@
             let resultLines = '';
             if (results.attack) {
                 resultLines += `<div class="game-battle-dice-result-line">${results.attack.length
-                    ? results.attack.map(r => `<span class="game-battle-dice-result"><small>${r.die}</small>${r.value}</span>`).join('')
+                    ? results.attack.map((r, i) => `<button class="game-battle-dice-result game-battle-dice-result-btn${r.excluded ? ' game-battle-dice-result-excluded' : ''}" data-battle-slot="${slotName}" data-index="${i}" aria-pressed="${r.excluded ? 'true' : 'false'}" title="Tap to ${r.excluded ? 'include this die in' : 'exclude this die from'} the calculation"><small>${r.die}</small>${r.value}</button>`).join('')
                     : '<span class="game-battle-dice-result"><small>No dice selected</small></span>'}</div>`;
             }
-            if (results.effect !== null) {
+            if (results.effect !== null && results.effect !== undefined) {
                 resultLines += `<div class="game-battle-dice-result-line"><span class="game-battle-dice-result"><small>Effect d6</small>${results.effect}</span></div>`;
             }
             container.innerHTML = `
@@ -28706,8 +28980,9 @@
                 <div class="game-battle-dice-results">${resultLines}</div>`;
         }
 
-        renderBattleDice('attacker');
-        renderBattleDice('defender');
+        // (No render at load: the dice block is drawn by renderBattleAttackerSlot()/
+        // renderBattleDefenderSlot(), which run once lobbyState exists. Until then
+        // the two containers stay hidden -- see their inline style in the markup.)
 
         // Which of Begin Battle / Next Round / End Battle is showing,
         // and whether Begin is tappable. Both halves count as populated
@@ -28735,22 +29010,31 @@
             if (!getBattleSlotMember('attacker') || !getBattleSlotMember('defender')) return;
             if (lobbyState.role !== null) { requestBattlePhase('begin'); return; } // shared: comes back via applyIncomingArenaState()
             battleInProgress = true;
+            clearBattleDiceResults('attacker');
+            clearBattleDiceResults('defender');
             renderBattleMoves('attacker');
             renderBattleMoves('defender');
             renderBattleControls();
+            renderBattleDice('attacker');
+            renderBattleDice('defender');
         }
 
         // Next Round -- clears both halves' selected moves (and any
-        // typed manual power), keeps the battle and both Pokémon.
+        // typed manual power) and all dice results, keeps the battle,
+        // both Pokémon and the dice counters.
         function nextBattleRound() {
             if (!battleInProgress) return;
             if (lobbyState.role !== null) { requestBattlePhase('next'); return; }
             resetBattleCalcResult('attacker');
             resetBattleCalcResult('defender');
+            clearBattleDiceResults('attacker');
+            clearBattleDiceResults('defender');
             renderBattleMoves('attacker');
             renderBattleMoves('defender');
             renderBattleCalcReadout('attacker');
             renderBattleCalcReadout('defender');
+            renderBattleDice('attacker');
+            renderBattleDice('defender');
         }
 
         // End Battle -- also what a successful catch does (see
@@ -29023,11 +29307,13 @@
         //         + the user's own total level
         //         + the Type Matchup bonus (when there's a target)
         //         + any Battle Card / Field Move Effect modifiers
+        //         + the Attack Dice rolled for this half, minus any the
+        //           player tapped to exclude (see battleDiceResults)
         // Power itself comes from getBattleEffectiveStrength() -- see
         // that and getBattleHalfLevelPower()/openBattleManualOverlay()
         // for the fixed / half-level / manual / Max Move cases. Returns
-        // { power, stab, attackStrength, level, matchup, modifiers,
-        // total } (`matchup` null when there's no bonus to apply;
+        // { power, stab, attackStrength, level, matchup, modifiers, dice,
+        // total } (`dice` null until Attack Dice have been rolled) (`matchup` null when there's no bonus to apply;
         // `modifiers` an array, usually empty), or null when
         // the slot has no Pokémon, a half-level move's target isn't
         // there, a "manual" move hasn't had its number entered yet, or
@@ -29041,6 +29327,10 @@
             const matchup = computeBattleTypeMatchup(slotName, moveName);
             const modifiers = getBattleZoneModifiers(slotName, moveName);
             const modifierTotal = modifiers.reduce((sum, m) => sum + m.bonus, 0);
+            // Attack Dice rolled for this half (the Effect die never
+            // counts). An excluded die stays on screen but adds nothing.
+            const rolls = (battleDiceResults[slotName] && battleDiceResults[slotName].attack) || [];
+            const diceTotal = rolls.reduce((sum, r) => sum + (r.excluded ? 0 : r.value), 0);
             return {
                 power: attack.power,
                 stab: attack.stab,
@@ -29048,7 +29338,8 @@
                 level,
                 matchup,
                 modifiers,
-                total: attack.total + level + (matchup ? matchup.bonus : 0) + modifierTotal,
+                dice: rolls.length ? { total: diceTotal, rolled: rolls.length, counted: rolls.filter(r => !r.excluded).length } : null,
+                total: attack.total + level + (matchup ? matchup.bonus : 0) + modifierTotal + diceTotal,
             };
         }
 
@@ -29105,6 +29396,7 @@
             breakdown.modifiers.forEach(m => {
                 detail += ` ${m.bonus < 0 ? '\u2212' : '+'} ${Math.abs(m.bonus)} ${m.label}`;
             });
+            if (breakdown.dice) detail += ` + ${breakdown.dice.total} Dice`;
             el.innerHTML = `<span class="game-battle-calc-total">${breakdown.total}</span>`
                 + `<span class="game-battle-calc-detail">${escapeHtml(detail)}</span>`;
         }
@@ -29480,10 +29772,13 @@
                 // so the badge is what tells the player that's about to
                 // happen before they tap it. Not shown for the Attacker's
                 // own current pick -- reselecting that one is a no-op.
-                const badge = index === battleDefenderMemberIndex
-                    ? '<span class="game-battle-picker-item-badge">Defender</span>'
-                    : '';
-                return `<button type="button" class="game-battle-picker-item" data-index="${index}">
+                const ineligible = isBattleIneligibleMember(member);
+                const badge = ineligible
+                    ? '<span class="game-battle-picker-item-badge">Overlay Card</span>'
+                    : (index === battleDefenderMemberIndex
+                        ? '<span class="game-battle-picker-item-badge">Defender</span>'
+                        : '');
+                return `<button type="button" class="game-battle-picker-item${ineligible ? ' game-battle-picker-item-ineligible' : ''}" data-index="${index}"${ineligible ? ' disabled' : ''}>
                     <img class="game-battle-picker-item-img" src="${display.src || ''}" alt="${escapeHtml(display.name)}">
                     <span class="game-battle-picker-item-name">${escapeHtml(display.name)}</span>
                     ${badge}
@@ -29564,6 +29859,10 @@
         }
 
         function selectBattleAttacker(index) {
+            if (isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) {
+                showBattleArenaNotice(BATTLE_OVERLAY_BLOCK_MESSAGE);
+                return;
+            }
             confirmBattleSlotReplace('attacker', () => applyBattleAttackerSelection(index));
         }
 
@@ -29591,6 +29890,7 @@
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
             resetBattleCalcResult('attacker');
+            clearBattleDiceResults('attacker');
             renderBattleAttackerSlot();
             syncMyBattleSlot('attacker');
         }
@@ -29840,10 +30140,13 @@
                 // Defender picker's own equivalent of the Attacker
                 // picker's badge just above -- flagged when this
                 // individual is currently the Attacker instead.
-                const badge = index === battleAttackerMemberIndex
-                    ? '<span class="game-battle-picker-item-badge">Attacker</span>'
-                    : '';
-                return `<button type="button" class="game-battle-picker-item" data-index="${index}">
+                const ineligible = isBattleIneligibleMember(member);
+                const badge = ineligible
+                    ? '<span class="game-battle-picker-item-badge">Overlay Card</span>'
+                    : (index === battleAttackerMemberIndex
+                        ? '<span class="game-battle-picker-item-badge">Attacker</span>'
+                        : '');
+                return `<button type="button" class="game-battle-picker-item${ineligible ? ' game-battle-picker-item-ineligible' : ''}" data-index="${index}"${ineligible ? ' disabled' : ''}>
                     <img class="game-battle-picker-item-img" src="${display.src || ''}" alt="${escapeHtml(display.name)}">
                     <span class="game-battle-picker-item-name">${escapeHtml(display.name)}</span>
                     ${badge}
@@ -29870,6 +30173,10 @@
         }
 
         function selectBattleDefender(index) {
+            if (isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) {
+                showBattleArenaNotice(BATTLE_OVERLAY_BLOCK_MESSAGE);
+                return;
+            }
             confirmBattleSlotReplace('defender', () => applyBattleDefenderSelection(index));
         }
 
@@ -29895,6 +30202,7 @@
             battleDefenderTeamId = null;
             battleWildPokemon = null;
             resetBattleCalcResult('defender');
+            clearBattleDiceResults('defender');
             renderBattleDefenderSlot();
             // Once a Lobby session exists, clear the shared half too: an
             // ownerless Wild Pokémon can be recalled by anyone who can
@@ -31581,6 +31889,7 @@
         }
 
         function refreshGameUI() {
+            renderBattleArenaGate();
             renderSavePicker();
             renderGuestSavePicker();
             renderActiveSaveLabel();
@@ -32403,6 +32712,13 @@
         }
 
         function setGameScreen(screenId) {
+            // Backstop for anything that navigates here directly: the
+            // Arena never opens without a hosted save or a lobby (the
+            // menu tile and Team Tracker's send button check first).
+            if (screenId === 'battle' && !canUseBattleArena()) {
+                showBattleArenaGateToast();
+                screenId = 'main';
+            }
             // A pending replacement (see teamReplacePendingMember/
             // beginTeamReplaceMode()) only makes sense while actually
             // looking at Team Tracker -- leaving that screen any other
@@ -32497,6 +32813,7 @@
             // showing before shouldn't carry over to the new one.
             const scrollEl = document.getElementById('game-scroll');
             if (scrollEl) scrollEl.scrollTop = 0;
+            if (screenId === 'main') renderBattleArenaGate();
             if (screenId === 'lobby') prefillLobbyHostName();
             if (screenId === 'decks') renderDecksScreen();
             if (screenId !== 'battle') closeBattleOptionsOverlays();
@@ -32867,7 +33184,7 @@
             // alone -- solo Battle Arena keeps whatever this device had
             // showing before it ever joined/hosted, same as every other
             // solo tool on this reset.
-            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null } };
+            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice() };
             guestBattleArenaCache = null;
             refreshGameUI();
             applyGamePanelPlayerTheme();
@@ -33878,6 +34195,8 @@
                     hostApplyBattleSetMove(data.slot, conn.peer, data.move || null);
                 } else if (data.type === 'battle-phase') {
                     hostApplyBattlePhase(conn.peer, data.action);
+                } else if (data.type === 'battle-dice') {
+                    hostApplyBattleDice(data.slot, conn.peer, data);
                 } else if (typeof data.type === 'string' && data.type.indexOf('trade-') === 0) {
                     handleIncomingTradeMessage(data, conn);
                 }
@@ -35254,6 +35573,10 @@
 
             const navTarget = e.target.closest('[data-target]');
             if (navTarget) {
+                if (navTarget.dataset.target === 'battle' && !canUseBattleArena()) {
+                    showBattleArenaGateToast();
+                    return;
+                }
                 setGameScreen(navTarget.dataset.target);
                 return;
             }
@@ -35650,6 +35973,11 @@
                 stepBattleDice(battleDiceStepBtn.dataset.battleSlot, battleDiceStepBtn.dataset.die, parseInt(battleDiceStepBtn.dataset.step, 10));
                 return;
             }
+            const battleDieResultBtn = e.target.closest('.game-battle-dice-result-btn');
+            if (battleDieResultBtn) {
+                toggleBattleDieExcluded(battleDieResultBtn.dataset.battleSlot, parseInt(battleDieResultBtn.dataset.index, 10));
+                return;
+            }
             const battleRollAttackBtn = e.target.closest('.game-battle-roll-attack-btn');
             if (battleRollAttackBtn) {
                 rollBattleAttackDice(battleRollAttackBtn.dataset.battleSlot);
@@ -36001,6 +36329,10 @@
                 if (teamSendToBattleModeActive) {
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
+                    if (teamSlot.dataset.hasOverlay === 'true') {
+                        showGameToast(BATTLE_OVERLAY_BLOCK_MESSAGE);
+                        return;
+                    }
                     if (teamSendToBattleTargetSlot) {
                         // Half already decided by the arena's Choose
                         // button -- skip the Attacker/Defender chooser.
