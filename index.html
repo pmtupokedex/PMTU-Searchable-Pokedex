@@ -6900,6 +6900,26 @@
             display: flex;
         }
 
+        /* Field Move Effect picker for one Battle Arena half -- see
+           openBattleFieldOverlay() in the script. Same positioning/
+           backdrop rules as #game-team-cards-overlay just above (its
+           panel and accordion reuse that overlay's own classes). */
+        #game-battle-field-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-battle-field-overlay.visible {
+            display: flex;
+        }
+
         .game-team-cards-section + .game-team-cards-section {
             margin-top: 16px;
         }
@@ -6980,6 +7000,14 @@
             border-radius: 16px;
             background: rgba(255, 255, 255, 0.06);
             cursor: pointer;
+        }
+
+        /* Field Move Effect card art (cardType "Field") -- a rounder
+           corner than every other use of .game-team-cards-photo above,
+           which stay at 16px. The class is added by
+           renderTeamCardSlotPanel() when the card is a Field card. */
+        .game-team-cards-photo.game-team-cards-photo-field {
+            border-radius: 24px;
         }
 
         /* The one place this class is used without the tap-to-enlarge
@@ -7252,6 +7280,51 @@
 
         #game-team-status-overlay.visible {
             display: flex;
+        }
+
+        /* Status overlay: the card art gets a wrapper so the Status roll's
+           number can sit over its upper-right corner, and the Flip Card /
+           Roll Status Die buttons share a row under it -- see
+           renderTeamStatusRoll(). */
+        .game-team-status-card-art {
+            position: relative;
+            width: 100%;
+            max-width: 240px;
+        }
+
+        .game-team-status-card-actions {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+        .game-team-status-card-actions .filter-btn {
+            margin: 0;
+        }
+
+        .game-team-status-card-actions .filter-btn.game-team-status-roll-locked {
+            opacity: 0.6;
+        }
+
+        .game-team-status-roll-result {
+            position: absolute;
+            top: 6px;
+            right: 12px;
+            pointer-events: none;
+            font-size: 40px;
+            line-height: 1;
+            font-weight: bold;
+            color: white;
+            text-shadow:
+                -2px -2px 0 black, 0 -2px 0 black, 2px -2px 0 black,
+                -2px  0   0 black,                 2px  0   0 black,
+                -2px  2px 0 black, 0  2px 0 black, 2px  2px 0 black;
+        }
+
+        .game-team-status-roll-result:empty {
+            display: none;
         }
 
         /* Evolution / Mega Evolution / Gigantamax picker -- see
@@ -14881,6 +14954,26 @@
             </div>
         </div>
 
+        <!-- Field Move Effect picker for one Battle Arena half -- see
+             openBattleFieldOverlay()/closeBattleFieldOverlay()/
+             renderBattleFieldOverlay() in the script. Opened by tapping
+             a half's Field Move Effect zone badge. Same shape as
+             #game-team-cards-overlay above: the panel is rebuilt by
+             renderTeamCardSlotPanel(), and picking or removing a card
+             applies immediately (setBattleZoneCard()), so Close is the
+             only action here. -->
+        <div id="game-battle-field-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-battle-field-title">Field Move Effect</p>
+                <div class="game-team-cards-section">
+                    <div class="game-team-cards-detail" id="game-battle-field-detail"></div>
+                </div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-battle-field-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Discard pile viewer -- see openDiscardViewer()/
              closeDiscardViewer()/renderDiscardViewer() in the script.
              Reuses .game-confirm-card for the same scroll-capped white
@@ -15114,8 +15207,21 @@
                 <p class="game-team-detail-status-name-text" id="game-team-status-name-text">No Status</p>
                 <div class="game-team-detail-status-card-panel" id="game-team-status-card-panel">
                     <div class="game-team-detail-status-card-panel-inner" id="game-team-status-card-panel-inner">
-                        <img class="game-team-detail-status-card-img" id="game-team-status-card-img" src="" alt="">
-                        <button class="filter-btn game-team-detail-status-card-flip-btn" id="game-team-status-card-flip-btn" type="button">Flip Card</button>
+                        <!-- The Status roll's number sits over the card art's
+                             upper-right corner (see renderTeamStatusRoll()). -->
+                        <div class="game-team-status-card-art">
+                            <img class="game-team-detail-status-card-img" id="game-team-status-card-img" src="" alt="">
+                            <span class="game-team-status-roll-result" id="game-team-status-roll-result"></span>
+                        </div>
+                        <!-- Flip Card (Paralyzed / Sleep only) and Roll Status
+                             Die (a d4; Sleep / Paralyzed / Frozen, only while
+                             the Pokémon is in a running Arena battle) share
+                             this row -- the roll button takes the flip
+                             button's spot when there's nothing to flip. -->
+                        <div class="game-team-status-card-actions">
+                            <button class="filter-btn game-team-detail-status-card-flip-btn" id="game-team-status-card-flip-btn" type="button">Flip Card</button>
+                            <button class="filter-btn exclude" id="game-team-status-roll-btn" type="button" style="display: none;">Roll Status Die</button>
+                        </div>
                     </div>
                 </div>
                 <div class="game-team-detail-status-picker visible" id="game-team-status-picker">
@@ -20127,6 +20233,10 @@
         // (renderTeamDetailOverlaySection()) the same way 'attach'/
         // 'nature' are used by the Attach/Nature one.
         function getAttachableCardsForSlot(slot) {
+            // A fourth pseudo-slot, 'field', is the Battle Arena's Field
+            // Move Effect picker (see openBattleFieldOverlay()): every
+            // cardType === "Field" card, again unrelated to canAttach.
+            if (slot === 'field') return Object.values(CARDS_BY_ID).filter(c => c.cardType === 'Field');
             if (slot === 'overlay') return Object.values(CARDS_BY_ID).filter(c => c.canOverlay === 'yes');
             return Object.values(CARDS_BY_ID).filter(c => {
                 if (c.canAttach !== 'yes') return false;
@@ -20224,6 +20334,7 @@
             'Basic TM Deck', 'Advanced TM Deck', 'Expert TM Deck',
             'Poké Ball Deck', 'Tera Type Deck', 'Type-Enhancer Deck',
             'Z-Crystal Deck', 'Reward Item Deck', 'Nature Deck',
+            'Field Move Effect Cards',
         ];
 
         // Groups getAttachableCardsForSlot(slot)'s own list by cardDeck,
@@ -21771,10 +21882,14 @@
             // A chosen move can't outlive the Pokémon it was chosen for,
             // and a battle with nothing left in either half is over.
             if (!st.dice) st.dice = makeEmptyBattleDice();
+            // Which halves' Pokémon entered this round (see
+            // battleEnteredThisRound); an empty half has nobody who could have.
+            if (!st.entered) st.entered = { attacker: false, defender: false };
             ['attacker', 'defender'].forEach(slot => {
                 if (!st[slot]) {
                     st.moves[slot] = null;
-                    st.dice[slot] = { attack: null, effect: null };
+                    st.dice[slot] = { attack: null, effect: null, status: null };
+                    st.entered[slot] = false;
                 }
             });
             if (!st.attacker && !st.defender) st.inProgress = false;
@@ -21785,6 +21900,7 @@
                 inProgress: !!st.inProgress,
                 moves: { attacker: st.moves.attacker, defender: st.moves.defender },
                 dice: { attacker: st.dice.attacker, defender: st.dice.defender },
+                entered: { attacker: !!st.entered.attacker, defender: !!st.entered.defender },
             };
             if (lobbyState.connections) {
                 lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
@@ -21840,7 +21956,14 @@
             const sameOccupant = !!(member && previous && previous.ownerId === newOwnerId
                 && previous.member && previous.member.name === member.name && previous.member.dex === member.dex);
             if (!sameOccupant && hostBattleArenaState.moves) hostBattleArenaState.moves[slot] = null;
-            if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null };
+            if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, status: null };
+            // A different Pokémon arriving while the battle is running
+            // entered its half this round (see battleEnteredThisRound);
+            // the same one re-sent after an HP/status edit doesn't
+            // change anything, and an empty half has no one to flag.
+            if (!hostBattleArenaState.entered) hostBattleArenaState.entered = { attacker: false, defender: false };
+            if (!member) hostBattleArenaState.entered[slot] = false;
+            else if (!sameOccupant) hostBattleArenaState.entered[slot] = !!hostBattleArenaState.inProgress;
             // A player whose Pokémon was just taken out of the Arena by
             // someone ELSE sending a Pokémon in (never by their own
             // recall or re-pick, which keeps the same owner) is told
@@ -21916,6 +22039,7 @@
             hostBattleArenaState.inProgress = false;
             hostBattleArenaState.moves = { attacker: null, defender: null };
             hostBattleArenaState.dice = makeEmptyBattleDice();
+            hostBattleArenaState.entered = { attacker: false, defender: false };
             if (peerKey === 'host') {
                 finishLocalWildCatch(entry.member);
             } else {
@@ -21982,6 +22106,7 @@
         }
 
         // req is {action: 'roll-attack', counts} | {action: 'roll-effect'} |
+        // {action: 'roll-status'} |
         // {action: 'toggle', index}. The Host does the actual rolling, so
         // every screen sees the same dice.
         function requestBattleDice(slot, req) {
@@ -22012,18 +22137,21 @@
                         st.inProgress = true;
                         st.moves = { attacker: null, defender: null };
                         st.dice = makeEmptyBattleDice();
+                        st.entered = { attacker: false, defender: false };
                     }
                 }
             } else if (action === 'next') {
                 if (st.inProgress) {
                     st.moves = { attacker: null, defender: null };
                     st.dice = makeEmptyBattleDice();
+                    st.entered = { attacker: false, defender: false }; // nobody is new next round
                 }
             } else if (action === 'end') {
                 // Everything is recalled, whoever owned it.
                 st.inProgress = false;
                 st.moves = { attacker: null, defender: null };
                 st.dice = makeEmptyBattleDice();
+                st.entered = { attacker: false, defender: false };
                 st.attacker = null;
                 st.defender = null;
             } else {
@@ -22069,6 +22197,8 @@
                 half.attack = generateBattleAttackRolls(sanitizeBattleDiceCounts(req.counts));
             } else if (req && req.action === 'roll-effect') {
                 half.effect = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
+            } else if (req && req.action === 'roll-status') {
+                half.status = rollBattleFace(BATTLE_STATUS_DIE_FACES);
             } else if (req && req.action === 'toggle') {
                 const i = Number(req.index);
                 if (half.attack && Number.isInteger(i) && half.attack[i]) half.attack[i].excluded = !half.attack[i].excluded;
@@ -22195,6 +22325,10 @@
             // chooser's Type Effectiveness Rule (see
             // getBattleTypeRuleToggles()).
             battleInProgress = !!payload.inProgress;
+            battleEnteredThisRound = {
+                attacker: !!(payload.entered && payload.entered.attacker),
+                defender: !!(payload.entered && payload.entered.defender),
+            };
             ['attacker', 'defender'].forEach(slot => {
                 const chosen = payload.moves && payload.moves[slot];
                 if (chosen) {
@@ -22209,6 +22343,7 @@
                 battleDiceResults[slot] = {
                     attack: (rolled && rolled.attack) ? rolled.attack.map(r => ({ die: r.die, value: r.value, excluded: !!r.excluded })) : null,
                     effect: (rolled && rolled.effect !== undefined) ? rolled.effect : null,
+                    status: (rolled && rolled.status !== undefined) ? rolled.status : null,
                 };
             });
             renderBattleAttackerSlot();
@@ -25063,7 +25198,7 @@
             if (!card) return { url: CARD_SLOT_IMAGES.filled, crop: null };
             const hasCustomIcon = card.iconUrl && card.iconUrl !== 'placeholder';
             if (hasCustomIcon) return { url: card.iconUrl, crop: null };
-            if (card.imageUrl) {
+            if (card.imageUrl && card.imageUrl !== 'placeholder') {
                 const crop = ICON_CROP_BY_CARD_TYPE[card.cardType] || ICON_CROP_BY_CARD_TYPE.default;
                 return { url: card.imageUrl, crop };
             }
@@ -25288,15 +25423,16 @@
         // does for the corner badge's own count. null/undefined (Nature,
         // or an Attach card with no itemCounters field) skips the row
         // entirely.
-        function renderTeamCardSlotPanel(elId, slot, cardId, emptyText, addingSlot, expandedDecks, counterValue) {
+        function renderTeamCardSlotPanel(elId, slot, cardId, emptyText, addingSlot, expandedDecks, counterValue, allowWithVirtualDecks = false) {
+            const pickingAllowed = allowWithVirtualDecks || !isVirtualDecksEnabledForActiveSave();
             const el = document.getElementById(elId);
             if (!el) return;
             const card = cardId ? CARDS_BY_ID[cardId] : null;
             if (card) {
                 const showCounter = typeof counterValue === 'number';
                 el.innerHTML = `
-                    ${card.imageUrl
-                        ? `<img class="game-team-cards-photo" src="${card.imageUrl}" alt="${escapeHtml(card.name)}" data-card-id="${card.id}">`
+                    ${(card.imageUrl && card.imageUrl !== 'placeholder')
+                        ? `<img class="game-team-cards-photo${card.cardType === 'Field' ? ' game-team-cards-photo-field' : ''}" src="${card.imageUrl}" alt="${escapeHtml(card.name)}" data-card-id="${card.id}">`
                         : `<p class="game-team-cards-detail-empty">${escapeHtml(card.name)}</p>`}
                     ${showCounter ? `
                         <div class="game-permanent-card-viewer-counter-row">
@@ -25310,7 +25446,7 @@
                 `;
                 return;
             }
-            if (addingSlot === slot && !isVirtualDecksEnabledForActiveSave()) {
+            if (addingSlot === slot && pickingAllowed) {
                 const groups = groupCardsForSlotByDeck(slot);
                 el.innerHTML = `
                     <div class="game-team-cards-accordion">
@@ -25339,7 +25475,7 @@
             }
             el.innerHTML = `
                 <p class="game-team-cards-detail-empty">${emptyText}</p>
-                ${isVirtualDecksEnabledForActiveSave() ? '' : `<button class="filter-btn game-team-cards-card-btn game-team-cards-add-btn" type="button" data-slot="${slot}">Add Card</button>`}
+                ${pickingAllowed ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-add-btn" type="button" data-slot="${slot}">Add Card</button>` : ''}
             `;
         }
 
@@ -25662,6 +25798,7 @@
             }
             if (nameEl) nameEl.textContent = entry.name;
             renderTeamStatusCard(pendingTeamStatusId, pendingTeamStatusCardSide);
+            renderTeamStatusRoll();
         }
 
         // Paints (or hides) the live status-card panel for whichever
@@ -25716,6 +25853,45 @@
             `).join('');
         }
 
+        // The three statuses that get the Roll Status Die button (Sleep,
+        // Paralyzed, Frozen).
+        const STATUS_EFFECT_DIE_IDS = ['sleep', 'paralyzed', 'frozen'];
+
+        // Which Battle Arena half (if any) this Team Tracker slot is
+        // currently in: the Wild Pokémon is always the Defender; one of
+        // the active team's own is whichever half it was sent to.
+        function getBattleHalfForTeamSlot(index) {
+            if (index === 'wild') return (battleWildPokemon && battleDefenderMemberIndex === 'wild') ? 'defender' : null;
+            if (typeof index !== 'number') return null;
+            if (index === battleAttackerMemberIndex && getActiveTeamId() === battleAttackerTeamId) return 'attacker';
+            if (index === battleDefenderMemberIndex && getActiveTeamId() === battleDefenderTeamId) return 'defender';
+            return null;
+        }
+
+        // Shows (or hides) the overlay's Roll Status Die button, and puts
+        // the half's latest Status roll over the card art as a bare
+        // number. The button rolls a d4 (rollBattleStatusDie(): same
+        // permission rule as the Arena's rolls, Host does the roll in a
+        // lobby), and the result is shared and listed on the Arena as
+        // its own "Status" roll type. It isn't part of the Attack
+        // calculation. Repainted whenever the pending status changes and
+        // whenever the Arena's dice do (see the end of
+        // renderBattleDice()), which also covers a roll's result coming
+        // back from the Host.
+        function renderTeamStatusRoll() {
+            const btn = document.getElementById('game-team-status-roll-btn');
+            const resultEl = document.getElementById('game-team-status-roll-result');
+            if (!btn) return;
+            const half = pendingTeamStatusIndex === null ? null : getBattleHalfForTeamSlot(pendingTeamStatusIndex);
+            const show = !!half && battleInProgress && STATUS_EFFECT_DIE_IDS.includes(pendingTeamStatusId);
+            btn.style.display = show ? '' : 'none';
+            if (resultEl) {
+                const rolled = show ? battleDiceResults[half].status : null;
+                resultEl.textContent = (rolled === null || rolled === undefined) ? '' : String(rolled);
+            }
+            if (show) btn.classList.toggle('game-team-status-roll-locked', !canIChooseBattleMoves(half));
+        }
+
         // Builds the picker and paints the pending choice fresh every
         // time rather than once up front, since which member (and
         // therefore which status is already selected, if any) this is
@@ -25747,6 +25923,7 @@
             pendingTeamStatusCardSide = 1;
             const overlay = document.getElementById('game-team-status-overlay');
             if (overlay) overlay.classList.remove('visible');
+            renderTeamStatusRoll();
         }
 
         // Switches the picker's own pending choice -- called directly by
@@ -28317,6 +28494,19 @@
         // shared Lobby arena state.
         let battleInProgress = false;
 
+        // Per half: whether the Pokémon there entered its half during
+        // the CURRENT round (what a Field Move Effect entry's
+        // "enteredThisRound": true condition reads -- see
+        // getBattleZoneModifiers(), e.g. Spikes). Set when a Pokémon is
+        // placed in a half while a battle is in progress, cleared for
+        // both halves by Next Round / End Battle / a recall. A Pokémon
+        // placed BEFORE Begin Battle is never flagged (no field effect
+        // can be in play at the start of a battle, so round 1 can't
+        // come up). Solo it's kept right here by the placement
+        // setters; in a Lobby the Host owns it (hostBattleArenaState.
+        // entered) and applyIncomingArenaState() copies it in.
+        let battleEnteredThisRound = { attacker: false, defender: false };
+
         // ---- Battle dice (per half) ----
         // Three counters -- how many of each die a roll uses -- each
         // 0 to 3. Raising one zeroes the other two, so only one kind of
@@ -28328,6 +28518,10 @@
             { key: 'd8', label: 'High-Crit d8', faces: [1, 2, 3, 4, 5, 6, 5, 6] },
         ];
         const BATTLE_EFFECT_DIE_FACES = [1, 2, 3, 4, 5, 6];
+        // The Status roll: a plain d4, rolled from the Status Condition
+        // overlay (see renderTeamStatusRoll()). It has no button in the
+        // Arena itself, and is never added into the Attack total.
+        const BATTLE_STATUS_DIE_FACES = [1, 2, 3, 4];
         const BATTLE_DICE_MAX = 3;
 
         function makeDefaultBattleDiceCounts() {
@@ -28423,7 +28617,9 @@
         // {attacker, defender}, each the move currently chosen for that
         // half ({moveName, baseMove, manual, rule}) or null; dice is
         // {attacker, defender}, each {attack: [{die, value, excluded}] |
-        // null, effect: number | null} -- what was rolled for that half. Same "one code path, host and guest
+        // null, effect: number | null, status: number | null} -- what was
+        // rolled for that half (status is the d4 rolled from the Status
+        // Condition overlay, never counted in the Attack total). Same "one code path, host and guest
         // alike" trick guestDeckStateCache already uses.
         let guestBattleArenaCache = null;
 
@@ -28432,7 +28628,7 @@
         // whenever the lobby resets (see resetLobbyState()), never
         // persisted -- same "pure in-memory state for the current
         // battle" reasoning battleWildPokemon itself already carries.
-        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice() };
+        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false } };
 
         // Which move the Attack Calculator is currently reading for each
         // half -- just the move name, not a cached total, so a level or
@@ -28508,15 +28704,24 @@
         // there was for that one).
         function setBattleAttackerIndex(index) {
             if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
+            const newTeamId = index !== null ? getActiveTeamId() : null;
+            const isNewOccupant = index !== null && (battleAttackerMemberIndex !== index || battleAttackerTeamId !== newTeamId);
             battleAttackerMemberIndex = index;
-            battleAttackerTeamId = index !== null ? getActiveTeamId() : null;
+            battleAttackerTeamId = newTeamId;
             resetBattleCalcResult('attacker');
             clearBattleDiceResults('attacker');
+            // Solo only -- in a Lobby the Host decides (see hostApplyBattleSetSlot()).
+            // (Re-picking whoever is already there changes nothing.)
+            if (lobbyState.role === null) {
+                if (index === null) battleEnteredThisRound.attacker = false;
+                else if (isNewOccupant) battleEnteredThisRound.attacker = battleInProgress;
+            }
             if (index !== null && battleDefenderMemberIndex === index) {
                 battleDefenderMemberIndex = null;
                 battleDefenderTeamId = null;
                 resetBattleCalcResult('defender');
                 clearBattleDiceResults('defender');
+                if (lobbyState.role === null) battleEnteredThisRound.defender = false;
             }
             syncMyBattleSlot('attacker');
             syncMyBattleSlot('defender');
@@ -28529,8 +28734,15 @@
         // every other near-identical pair in this doc.
         function setBattleDefenderIndex(index) {
             if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
+            const newTeamId = index !== null ? getActiveTeamId() : null;
+            const isNewOccupant = index !== null && (battleDefenderMemberIndex !== index || battleDefenderTeamId !== newTeamId);
             battleDefenderMemberIndex = index;
-            battleDefenderTeamId = index !== null ? getActiveTeamId() : null;
+            battleDefenderTeamId = newTeamId;
+            // Solo only -- in a Lobby the Host decides (see hostApplyBattleSetSlot()).
+            if (lobbyState.role === null) {
+                if (index === null) battleEnteredThisRound.defender = false;
+                else if (isNewOccupant) battleEnteredThisRound.defender = battleInProgress;
+            }
             // A real pick always replaces whatever was there before,
             // wild or not -- stale battleWildPokemon data left behind
             // here would never actually be shown again (renderBattleDefenderSlot()
@@ -28544,6 +28756,7 @@
                 battleAttackerTeamId = null;
                 resetBattleCalcResult('attacker');
                 clearBattleDiceResults('attacker');
+                if (lobbyState.role === null) battleEnteredThisRound.attacker = false;
             }
             syncMyBattleSlot('attacker');
             syncMyBattleSlot('defender');
@@ -28570,6 +28783,7 @@
             battleDefenderTeamId = 'wild';
             resetBattleCalcResult('defender');
             clearBattleDiceResults('defender');
+            if (lobbyState.role === null) battleEnteredThisRound.defender = battleInProgress;
             // Once a Lobby session exists this sets the ownerless Wild
             // Pokémon in the ONE shared Defender half. A no-op solo.
             requestBattleSetSlot('defender', member, true);
@@ -28694,6 +28908,10 @@
         }
 
         function showBattleArenaNotice(message) {
+            // The banner only exists on the Arena screen; anywhere else
+            // (e.g. the Status Condition overlay's Roll Effect Die) the
+            // same message goes out as a toast.
+            if (currentGameScreen !== 'battle') { showGameToast(message); return; }
             const el = document.getElementById('game-battle-notice-banner');
             if (!el) return;
             clearTimeout(battleNoticeTimer);
@@ -28774,8 +28992,8 @@
                     inner = icon.crop
                         ? cropIconMarkup({ ...icon, alt })
                         : `<img class="game-battle-zone-badge-img" src="${icon.url}" alt="${alt}">`;
-                    title += `: ${(card && card.name) || ''}`;
                 }
+                title += `: ${(card && card.name) || ''}`;
             } else if (faceDown) {
                 title += ': facedown';
             }
@@ -28792,10 +29010,10 @@
         }
 
         // Put a card in a half's zone (or, with cardId null, empty it).
-        // Nothing in the UI calls this yet -- it's what the eventual
-        // picker/play flow will use (and can be called from the console
-        // to try a card in a zone: setBattleZoneCard('attacker',
-        // 'fieldEffect', '<a cardId>')). `faceUp` only matters for
+        // The Field Move Effect picker (see openBattleFieldOverlay())
+        // calls this; the Battle Card zone has no UI yet, but can be
+        // tried from the console: setBattleZoneCard('attacker',
+        // 'fieldEffect', '<a cardId>'). `faceUp` only matters for
         // battleCard; a Battle Card starts facedown.
         function setBattleZoneCard(slotName, zoneName, cardId, faceUp = false) {
             if (!battleZones[slotName] || !BATTLE_ZONES[zoneName]) return;
@@ -28809,11 +29027,108 @@
             renderBattleCalcReadout('defender');
         }
 
-        // Tapping a badge -- placeholder for now, see the block comment
-        // above.
+        // Tapping a badge. Field Move Effect opens its picker (see
+        // openBattleFieldOverlay() just below); Battle Card is still a
+        // placeholder, see the block comment above.
         function handleBattleZoneTap(slotName, zoneName) {
+            if (zoneName === 'fieldEffect') {
+                openBattleFieldOverlay(slotName);
+                return;
+            }
             const zone = BATTLE_ZONES[zoneName];
             if (zone) showBattleArenaNotice(zone.placeholderNotice);
+        }
+
+        // ---- Field Move Effect picker ---------------------------------
+        //
+        // Same three states as the Team Tracker's Attach Card panel
+        // (see renderTeamCardSlotPanel(), which this reuses for the
+        // markup): a card in the zone shows its art plus Remove Card;
+        // an empty zone shows a message plus Add Card; Add Card opens
+        // the collapsible-by-deck list of every Field Move Effect card
+        // (groupCardsForSlotByDeck('field')), and picking one commits
+        // immediately via setBattleZoneCard() -- no Confirm step.
+        //
+        // One difference from the Attach Card panel: this picker works
+        // whether or not the save uses virtual decks. That setting
+        // hides Add Card on the Attach panel because every attach card
+        // there has real hand/deck inventory behind it, but Field Move
+        // Effect cards aren't part of any virtual deck (see
+        // DECK_TOOL_LIST_BASE), so there's nothing to keep honest.
+        //
+        // No read-only/trade/replace guards either: the zones are local
+        // to this device and never written to a save (see the block
+        // comment above battleZones), same as the rest of the Attack
+        // Calculator.
+        let battleFieldOverlaySlot = null;
+        let battleFieldOverlayAdding = false;
+        let battleFieldOverlayExpandedDecks = new Set();
+
+        function renderBattleFieldOverlay() {
+            if (battleFieldOverlaySlot === null) return;
+            const state = battleZones[battleFieldOverlaySlot].fieldEffect;
+            const owner = battleFieldOverlaySlot === 'attacker' ? 'Attacker' : 'Defender';
+            const titleEl = document.getElementById('game-battle-field-title');
+            if (titleEl) titleEl.textContent = `${owner} Field Move Effect`;
+            renderTeamCardSlotPanel(
+                'game-battle-field-detail', 'field',
+                state ? state.cardId : null,
+                'No Field Move Effect card in play.',
+                battleFieldOverlayAdding ? 'field' : null,
+                battleFieldOverlayExpandedDecks,
+                null,
+                true
+            );
+        }
+
+        function openBattleFieldOverlay(slotName) {
+            if (!battleZones[slotName]) return;
+            battleFieldOverlaySlot = slotName;
+            battleFieldOverlayAdding = false;
+            battleFieldOverlayExpandedDecks = new Set();
+            renderBattleFieldOverlay();
+            const overlay = document.getElementById('game-battle-field-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        function closeBattleFieldOverlay() {
+            battleFieldOverlaySlot = null;
+            battleFieldOverlayAdding = false;
+            const overlay = document.getElementById('game-battle-field-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        function openBattleFieldOverlayAdd() {
+            battleFieldOverlayAdding = true;
+            // Every deck starts expanded here (unlike the Attach Card
+            // panel, which starts collapsed): there's only the one
+            // Field Move Effect deck to choose from.
+            battleFieldOverlayExpandedDecks = new Set(groupCardsForSlotByDeck('field').map(g => g.deck));
+            renderBattleFieldOverlay();
+        }
+
+        function cancelBattleFieldOverlayAdd() {
+            battleFieldOverlayAdding = false;
+            renderBattleFieldOverlay();
+        }
+
+        function toggleBattleFieldOverlayDeck(deck) {
+            if (battleFieldOverlayExpandedDecks.has(deck)) battleFieldOverlayExpandedDecks.delete(deck);
+            else battleFieldOverlayExpandedDecks.add(deck);
+            renderBattleFieldOverlay();
+        }
+
+        function selectBattleFieldOverlayCard(cardId) {
+            if (battleFieldOverlaySlot === null || !cardId) return;
+            setBattleZoneCard(battleFieldOverlaySlot, 'fieldEffect', cardId);
+            battleFieldOverlayAdding = false;
+            renderBattleFieldOverlay();
+        }
+
+        function removeBattleFieldOverlayCard() {
+            if (battleFieldOverlaySlot === null) return;
+            setBattleZoneCard(battleFieldOverlaySlot, 'fieldEffect', null);
+            renderBattleFieldOverlay();
         }
 
         // Same shiny/formOverride resolution renderTeamGrid() and
@@ -28845,6 +29160,7 @@
             // changes -- refresh it too.
             renderBattleCalcReadout('defender');
             renderBattleControls();
+            renderBattleDice('attacker');
             renderBattleDice('defender');
         }
 
@@ -28856,10 +29172,11 @@
             renderBattleCalcReadout('attacker');
             renderBattleControls();
             renderBattleDice('attacker');
+            renderBattleDice('defender');
         }
 
         function makeEmptyBattleDice() {
-            return { attacker: { attack: null, effect: null }, defender: { attack: null, effect: null } };
+            return { attacker: { attack: null, effect: null, status: null }, defender: { attack: null, effect: null, status: null } };
         }
 
         function rollBattleFace(faces) {
@@ -28888,7 +29205,7 @@
         }
 
         function clearBattleDiceResults(slotName) {
-            battleDiceResults[slotName] = { attack: null, effect: null };
+            battleDiceResults[slotName] = { attack: null, effect: null, status: null };
         }
 
         // Repaints the dice block and the readout it feeds.
@@ -28932,6 +29249,17 @@
             refreshBattleDice(slotName);
         }
 
+        // The Status roll (a d4) -- only ever triggered from the Status
+        // Condition overlay's button; same permission rule and the same
+        // shared result path as the other rolls. Shows on the Arena as
+        // its own roll type.
+        function rollBattleStatusDie(slotName) {
+            if (!guardBattleDiceAction(slotName)) return;
+            if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-status' }); return; }
+            battleDiceResults[slotName].status = rollBattleFace(BATTLE_STATUS_DIE_FACES);
+            refreshBattleDice(slotName);
+        }
+
         // Tapping a rolled attack die drops it from (or puts it back
         // into) the calculation -- for effects like Disadvantage, which
         // roll two and drop the highest.
@@ -28971,6 +29299,9 @@
             if (results.effect !== null && results.effect !== undefined) {
                 resultLines += `<div class="game-battle-dice-result-line"><span class="game-battle-dice-result"><small>Effect d6</small>${results.effect}</span></div>`;
             }
+            if (results.status !== null && results.status !== undefined) {
+                resultLines += `<div class="game-battle-dice-result-line"><span class="game-battle-dice-result"><small>Status d4</small>${results.status}</span></div>`;
+            }
             container.innerHTML = `
                 <div class="game-battle-dice-counters">${counters}</div>
                 <div class="game-battle-dice-roll-row">
@@ -28978,6 +29309,7 @@
                     <button class="filter-btn exclude game-battle-roll-effect-btn" data-battle-slot="${slotName}">Roll Effect Die</button>
                 </div>
                 <div class="game-battle-dice-results">${resultLines}</div>`;
+            renderTeamStatusRoll(); // the Status Condition overlay shows the same Status roll
         }
 
         // (No render at load: the dice block is drawn by renderBattleAttackerSlot()/
@@ -29010,6 +29342,7 @@
             if (!getBattleSlotMember('attacker') || !getBattleSlotMember('defender')) return;
             if (lobbyState.role !== null) { requestBattlePhase('begin'); return; } // shared: comes back via applyIncomingArenaState()
             battleInProgress = true;
+            battleEnteredThisRound = { attacker: false, defender: false };
             clearBattleDiceResults('attacker');
             clearBattleDiceResults('defender');
             renderBattleMoves('attacker');
@@ -29020,11 +29353,13 @@
         }
 
         // Next Round -- clears both halves' selected moves (and any
-        // typed manual power) and all dice results, keeps the battle,
-        // both Pokémon and the dice counters.
+        // typed manual power) and all dice results, and every half's
+        // "entered this round" flag (nobody is new any more), keeps the
+        // battle, both Pokémon and the dice counters.
         function nextBattleRound() {
             if (!battleInProgress) return;
             if (lobbyState.role !== null) { requestBattlePhase('next'); return; }
+            battleEnteredThisRound = { attacker: false, defender: false };
             resetBattleCalcResult('attacker');
             resetBattleCalcResult('defender');
             clearBattleDiceResults('attacker');
@@ -29284,21 +29619,106 @@
             return { power, stab, total: power + stab };
         }
 
-        // PLACEHOLDER -- extra modifiers to the calculation from the
-        // Battle Card and Field Move Effect zones (see battleZones),
-        // as an array of { label, bonus } (bonus a whole number, may be
-        // negative) that computeBattleMoveBreakdown() adds to the total
-        // and the readout lists. Returns none until those cards carry
-        // calculation values in cards.json. Example of what's coming:
-        // a Rain Field Move Effect gives +1 on Water-type moves and -1
-        // on Fire-type moves, i.e. [{ label: 'Rain', bonus: 1 }] for a
-        // Water move. Still to decide when this gets filled in: whether
-        // a zone's modifiers apply to its own half's moves, the
-        // opposing half's, or both (a weather-style effect presumably
-        // affects everyone); this gets the moving half and the move,
-        // so it can go either way.
+        // Extra modifiers to the calculation from the Field Move Effect
+        // zones (see battleZones), as an array of { label, bonus }
+        // (bonus a whole number, may be negative) that
+        // computeBattleMoveBreakdown() adds to the total and the
+        // readout lists. The Battle Card zone contributes nothing yet.
+        //
+        // Field Move Effect cards in cards.json carry either or both of:
+        //
+        //   typeModifiers: [{ types: ["water"], bonus: 1 }, ...]
+        //       -- keyed on the MOVE: a move whose type is in `types`
+        //          gets `bonus`. One entry can list several types, and
+        //          one card can have several entries (Rain: Water +1,
+        //          Fire -1).
+        //
+        //   pokemonModifiers: [{ ...conditions, bonus | bonusByEffectiveness }]
+        //       -- keyed on the POKÉMON using the move. Every condition
+        //          present must hold for the entry to apply:
+        //            unlessTypes: ["ice"]    skipped if the Pokémon has
+        //                                    ANY of these types
+        //            enteredThisRound: true  only if it entered its half
+        //                                    this round
+        //                                    (battleEnteredThisRound)
+        //          and the amount is either
+        //            bonus: -1               a flat number, or
+        //            effectivenessVs: "rock",
+        //            bonusByEffectiveness: { weak: -2, neutral: -1, resist: 0 }
+        //                                    by how the Pokémon matches up
+        //                                    against a move of that type
+        //                                    (computeTypeMatchup(), under
+        //                                    the save's Type Effectiveness
+        //                                    Rule; immune counts as
+        //                                    resist). A missing key = 0.
+        //          Type-based conditions don't apply when the Pokémon's
+        //          types aren't in pokemon-data.json (same "never guess"
+        //          rule as STAB and the matchup bonus).
+        //
+        //   appliesTo: "both" | "own"  (optional, default "both")
+        //       -- "both": applies to either half. "own": only the half
+        //          whose zone holds the card. (No card affects only the
+        //          opposing half.)
+        //
+        // The same card in both halves' zones counts only once -- copies
+        // of one card don't stack. Two DIFFERENT field cards do both
+        // apply. Entries that work out to 0 aren't listed.
         function getBattleZoneModifiers(slotName, moveName) {
-            return [];
+            const moveType = getBattleMoveType(moveName);
+            const userTypes = getBattleMemberTypes(getBattleSlotMember(slotName));
+            const otherSlot = getBattleOpposingSlotName(slotName);
+            const counted = new Set();
+            const modifiers = [];
+            // Own half's zone first, then the other half's (which only
+            // counts when the card applies to both halves).
+            [[slotName, true], [otherSlot, false]].forEach(([zoneSlot, isOwn]) => {
+                const state = battleZones[zoneSlot] && battleZones[zoneSlot].fieldEffect;
+                const card = state ? CARDS_BY_ID[state.cardId] : null;
+                if (!card) return;
+                if (!isOwn && card.appliesTo === 'own') return;
+                if (counted.has(card.id)) return;
+                counted.add(card.id);
+                if (Array.isArray(card.typeModifiers) && moveType) {
+                    card.typeModifiers.forEach(m => {
+                        if (!m || !Array.isArray(m.types) || !Number.isFinite(m.bonus)) return;
+                        if (m.types.includes(moveType)) modifiers.push({ label: card.name, bonus: m.bonus });
+                    });
+                }
+                if (Array.isArray(card.pokemonModifiers)) {
+                    card.pokemonModifiers.forEach(m => {
+                        const bonus = getBattlePokemonModifierBonus(slotName, userTypes, m);
+                        if (bonus) modifiers.push({ label: card.name, bonus });
+                    });
+                }
+            });
+            return modifiers;
+        }
+
+        // One pokemonModifiers entry's amount for the Pokémon in
+        // slotName (userTypes = its types), or 0 when a condition
+        // fails or the entry is malformed -- see the block comment
+        // above getBattleZoneModifiers() for the keywords.
+        function getBattlePokemonModifierBonus(slotName, userTypes, m) {
+            if (!m || typeof m !== 'object') return 0;
+            if (Array.isArray(m.unlessTypes)) {
+                if (!userTypes.length) return 0; // types unknown: don't guess
+                if (m.unlessTypes.some(t => userTypes.includes(String(t).toLowerCase()))) return 0;
+            }
+            if (m.enteredThisRound === true && !battleEnteredThisRound[slotName]) return 0;
+            if (m.bonusByEffectiveness && typeof m.bonusByEffectiveness === 'object') {
+                const against = String(m.effectivenessVs || '').toLowerCase();
+                if (!BATTLE_MOVE_TYPE_NAMES.includes(against) || !userTypes.length) return 0;
+                const rule = getBattleTypeRuleToggles(slotName);
+                const result = computeTypeMatchup(against, userTypes[0], userTypes[1] || null, rule.dual, rule.immunities);
+                if (!result) return 0;
+                // The matchup tool's bonus is positive when the defender
+                // is weak to the move, negative when it resists or is immune.
+                const n = parseInt(result.bonus, 10);
+                const key = n > 0 ? 'weak' : (n < 0 ? 'resist' : 'neutral');
+                const amount = m.bonusByEffectiveness[key];
+                return Number.isFinite(amount) ? amount : 0;
+            }
+            return Number.isFinite(m.bonus) ? m.bonus : 0;
         }
 
         // Every piece of the Attack Calculator's math, for the readout to
@@ -29532,7 +29952,31 @@
         // known move it replaced (null when not Dynamaxed). A move that
         // can't be mapped, or that's already a Max/G-Max move, stays
         // as itself.
+        // The move a status card forces in place of the Pokémon's own
+        // (a typeless, 0-power entry in moves.json).
+        const BATTLE_STRUGGLE_MOVE_NAME = 'Struggle';
+
+        // The status condition (as { id, name }) currently forcing this
+        // Pokémon to use Struggle, or null. Decided by the card the
+        // Pokémon's status is showing: cards.json marks each status
+        // card that does this with "useStruggle": "yes", and Sleep and
+        // Paralyzed have a card per side, so flipping the card can turn
+        // it on or off (see statusCardIdFor()).
+        function getBattleStruggleStatus(member) {
+            if (!member || !member.status || member.status === 'none') return null;
+            const cardId = statusCardIdFor(member.status, member.statusCardSide === 2 ? 2 : 1);
+            const card = cardId ? CARDS_BY_ID[cardId] : null;
+            if (!card || String(card.useStruggle).toLowerCase() !== 'yes') return null;
+            const condition = STATUS_CONDITIONS.find(st => st.id === member.status);
+            return { id: member.status, name: condition ? condition.name : member.status };
+        }
+
         function getBattleMemberMoveButtons(member) {
+            // A status that forces Struggle replaces the whole move list
+            // with that one button -- and beats Dynamax, so a Dynamaxed
+            // Pokémon gets Struggle, not Max Moves.
+            const forcedBy = getBattleStruggleStatus(member);
+            if (forcedBy) return [{ name: BATTLE_STRUGGLE_MOVE_NAME, base: null, forcedBy: forcedBy.name }];
             const moves = getBattleMemberMoves(member);
             if (!member.dynamaxed) return moves.map(name => ({ name, base: null }));
             return moves.map(move => {
@@ -29621,6 +30065,8 @@
                 if (lobbyState.role !== null && battleInProgress && canIChooseBattleMoves(slotName)) requestBattleSetMove(slotName, null);
             }
             const lockedClass = canIChooseBattleMoves(slotName) ? '' : ' game-battle-move-locked';
+            // The forced Struggle button carries a "forced by <status>" label
+            // in the same spot (see getBattleStruggleStatus()).
             // Every Max Move button carries a small "from X" label naming
             // the known move it replaced -- it's what tells apart two
             // known moves that became the same Max Move (say two Normal
@@ -29638,7 +30084,7 @@
                 const baseAttr = b.base ? ` data-base-move="${escapeHtml(b.base)}"` : '';
                 const fromLabel = b.base
                     ? `<span class="game-battle-move-from">from ${escapeHtml(b.base)}</span>`
-                    : '';
+                    : (b.forcedBy ? `<span class="game-battle-move-from">forced by ${escapeHtml(b.forcedBy)}</span>` : '');
                 return `<button class="filter-btn game-battle-move-btn${typeClasses}${lockedClass}" data-battle-slot="${slotName}" data-move-name="${escapeHtml(b.name)}"${baseAttr}>${escapeHtml(b.name)}${fromLabel}</button>`;
             }).join('');
             syncBattleMoveSelection(slotName);
@@ -29889,6 +30335,7 @@
         function recallBattleAttacker() {
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
+            battleEnteredThisRound.attacker = false;
             resetBattleCalcResult('attacker');
             clearBattleDiceResults('attacker');
             renderBattleAttackerSlot();
@@ -30201,6 +30648,7 @@
             battleDefenderMemberIndex = null;
             battleDefenderTeamId = null;
             battleWildPokemon = null;
+            battleEnteredThisRound.defender = false;
             resetBattleCalcResult('defender');
             clearBattleDiceResults('defender');
             renderBattleDefenderSlot();
@@ -33184,7 +33632,7 @@
             // alone -- solo Battle Arena keeps whatever this device had
             // showing before it ever joined/hosted, same as every other
             // solo tool on this reset.
-            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice() };
+            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false } };
             guestBattleArenaCache = null;
             refreshGameUI();
             applyGamePanelPlayerTheme();
@@ -36744,6 +37192,11 @@
                 confirmTeamStatusSelection();
                 return;
             }
+            if (e.target.closest('#game-team-status-roll-btn')) {
+                const half = getBattleHalfForTeamSlot(pendingTeamStatusIndex);
+                if (half) rollBattleStatusDie(half);
+                return;
+            }
             // Counter -- same "one element, two click zones" shape as
             // .game-team-slot-level (see its own CSS comment and the
             // #game-scroll delegated listener further down for why
@@ -36942,6 +37395,46 @@
             const cardPick = e.target.closest('[data-card-pick]');
             if (cardPick) {
                 selectTeamCardsOverlayOption(cardPick.dataset.slot, cardPick.dataset.cardPick);
+                return;
+            }
+        });
+
+        // Field Move Effect picker (see openBattleFieldOverlay()) --
+        // same delegated shape as the Attach/Nature Cards overlay's
+        // listener just above, minus the counter row (field cards don't
+        // have one). The buttons carry the same classes
+        // renderTeamCardSlotPanel() gives them everywhere else.
+        document.getElementById('game-battle-field-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-battle-field-overlay' || e.target.closest('.game-battle-field-close-btn')) {
+                closeBattleFieldOverlay();
+                return;
+            }
+            const thumb = e.target.closest('.game-team-cards-photo');
+            if (thumb) {
+                const card = CARDS_BY_ID[thumb.dataset.cardId];
+                if (card) openTeamCardImageViewer(card.imageUrl, card.name);
+                return;
+            }
+            if (e.target.closest('.game-team-cards-add-btn')) {
+                openBattleFieldOverlayAdd();
+                return;
+            }
+            if (e.target.closest('.game-team-cards-card-cancel-btn')) {
+                cancelBattleFieldOverlayAdd();
+                return;
+            }
+            if (e.target.closest('.game-team-cards-remove-btn')) {
+                removeBattleFieldOverlayCard();
+                return;
+            }
+            const deckToggle = e.target.closest('[data-deck-toggle]');
+            if (deckToggle) {
+                toggleBattleFieldOverlayDeck(deckToggle.dataset.deckToggle);
+                return;
+            }
+            const cardPick = e.target.closest('[data-card-pick]');
+            if (cardPick) {
+                selectBattleFieldOverlayCard(cardPick.dataset.cardPick);
                 return;
             }
         });
@@ -37501,7 +37994,7 @@
         // collapsing a category shifts everything below it without
         // necessarily firing a scroll event on its own.
         function refreshAccordionStuckHeaders() {
-            document.querySelectorAll('#game-team-cards-overlay .game-confirm-card, #game-team-detail-overlay .game-confirm-card').forEach(cardEl => {
+            document.querySelectorAll('#game-team-cards-overlay .game-confirm-card, #game-team-detail-overlay .game-confirm-card, #game-battle-field-overlay .game-confirm-card').forEach(cardEl => {
                 const cardTop = cardEl.getBoundingClientRect().top;
                 cardEl.querySelectorAll('.game-team-cards-accordion-header').forEach(header => {
                     header.classList.toggle('stuck', header.getBoundingClientRect().top <= cardTop + 1);
@@ -37509,7 +38002,7 @@
             });
         }
 
-        document.querySelectorAll('#game-team-cards-overlay .game-confirm-card, #game-team-detail-overlay .game-confirm-card').forEach(cardEl => {
+        document.querySelectorAll('#game-team-cards-overlay .game-confirm-card, #game-team-detail-overlay .game-confirm-card, #game-battle-field-overlay .game-confirm-card').forEach(cardEl => {
             cardEl.addEventListener('scroll', refreshAccordionStuckHeaders);
         });
 
