@@ -21930,6 +21930,7 @@
             // battleEnteredThisRound); an empty half has nobody who could have.
             if (!st.entered) st.entered = { attacker: false, defender: false };
             if (!st.rerolls) st.rerolls = { attacker: 0, defender: 0 };
+            if (!st.record) st.record = makeEmptyBattleRecord();
             ['attacker', 'defender'].forEach(slot => {
                 if (!st[slot]) {
                     st.moves[slot] = null;
@@ -21938,7 +21939,7 @@
                     st.rerolls[slot] = 0;
                 }
             });
-            if (!st.attacker && !st.defender) st.inProgress = false;
+            if (!st.attacker && !st.defender) { st.inProgress = false; st.record = makeEmptyBattleRecord(); }
             // Battle Cards (see hostApplyBattleCardPlay()): nothing is
             // left to play them against once both halves are empty, and
             // a card whose owner has dropped out of the lobby goes too.
@@ -21960,6 +21961,7 @@
                 dice: { attacker: st.dice.attacker, defender: st.dice.defender },
                 entered: { attacker: !!st.entered.attacker, defender: !!st.entered.defender },
                 rerolls: { attacker: st.rerolls.attacker | 0, defender: st.rerolls.defender | 0 },
+                record: st.record,
                 // Field Move Effect cards (see hostApplyBattleFieldEffect()):
                 // public to everyone, so the same object goes to all.
                 fields: getBattleFieldStore(),
@@ -22026,6 +22028,8 @@
             if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, status: null, rerolled: false };
             if (!hostBattleArenaState.rerolls) hostBattleArenaState.rerolls = { attacker: 0, defender: 0 };
             if (!member || !sameOccupant) hostBattleArenaState.rerolls[slot] = 0;
+            // A team member taking a half during a battle has taken part.
+            if (member && !wild && hostBattleArenaState.inProgress) noteBattleParticipant(getBattleRecordStore(), peerKey, member);
             // A different Pokémon arriving while the battle is running
             // entered its half this round (see battleEnteredThisRound);
             // the same one re-sent after an HP/status edit doesn't
@@ -22110,6 +22114,7 @@
             hostBattleArenaState.dice = makeEmptyBattleDice();
             hostBattleArenaState.entered = { attacker: false, defender: false };
             hostBattleArenaState.rerolls = { attacker: 0, defender: 0 };
+            hostBattleArenaState.record = makeEmptyBattleRecord();
             if (peerKey === 'host') {
                 finishLocalWildCatch(entry.member);
             } else {
@@ -22209,10 +22214,16 @@
                         st.dice = makeEmptyBattleDice();
                         st.entered = { attacker: false, defender: false };
                         st.rerolls = { attacker: 0, defender: 0 };
+                        st.record = makeEmptyBattleRecord();
+                        ['attacker', 'defender'].forEach(slot => { if (st[slot] && st[slot].ownerId) noteBattleParticipant(st.record, st[slot].ownerId, st[slot].member); });
                     }
                 }
             } else if (action === 'next') {
                 if (st.inProgress) {
+                    // Once-per-battle bonuses in effect this round are spent.
+                    const record = getBattleRecordStore();
+                    collectOnceBonusKeys().forEach(key => { record.spent[key] = true; });
+                    record.round += 1;
                     st.moves = { attacker: null, defender: null };
                     st.dice = makeEmptyBattleDice();
                     st.entered = { attacker: false, defender: false }; // nobody is new next round
@@ -22227,6 +22238,7 @@
                 st.dice = makeEmptyBattleDice();
                 st.entered = { attacker: false, defender: false };
                 st.rerolls = { attacker: 0, defender: 0 };
+                st.record = makeEmptyBattleRecord();
                 st.attacker = null;
                 st.defender = null;
                 hostClearBattleCards();
@@ -22443,6 +22455,9 @@
                 attacker: (payload.rerolls && payload.rerolls.attacker) | 0,
                 defender: (payload.rerolls && payload.rerolls.defender) | 0,
             };
+            // What's happened this battle (see makeEmptyBattleRecord()) --
+            // copied, so the Host's own never aliases this device's.
+            battleRecord = payload.record ? JSON.parse(JSON.stringify(payload.record)) : makeEmptyBattleRecord();
             renderBattleCardZones(payload.cards);
             // Field Move Effects are shared too. A payload without
             // `fields` (an older Host) leaves this device's alone.
@@ -25071,6 +25086,7 @@
             member.formOverride = null;
             member.dynamaxed = false;
             persistTeamSlotChange(index);
+            reportBattleFaint(member, false); // see makeEmptyBattleRecord()
         }
 
         // Which slot the revive confirm is open for -- only meaningful
@@ -25116,6 +25132,7 @@
             const max = getTeamMemberHpMax(member, hpRule);
             if (max !== null) member.hp = max;
             persistTeamSlotChange(index);
+            reportBattleFaint(member, true);
         }
 
         // Yes on the revive confirm routes here -- just closes the
@@ -28750,7 +28767,7 @@
         // whenever the lobby resets (see resetLobbyState()), never
         // persisted -- same "pure in-memory state for the current
         // battle" reasoning battleWildPokemon itself already carries.
-        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null }, rerolls: { attacker: 0, defender: 0 } };
+        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null }, rerolls: { attacker: 0, defender: 0 }, record: makeEmptyBattleRecord() };
 
         // Which move the Attack Calculator is currently reading for each
         // half -- just the move name, not a cached total, so a level or
@@ -28799,6 +28816,7 @@
                 return;
             }
             const members = getActiveSaveData().team.members || [];
+            ensureMemberUid(members[index]); // so the shared copy carries it
             requestBattleSetSlot(slot, members[index] || null, false);
         }
 
@@ -28839,6 +28857,7 @@
                 else if (isNewOccupant) battleEnteredThisRound.attacker = battleInProgress;
                 if (index === null || isNewOccupant) battleRerollsUsed.attacker = 0;
             }
+            if (isNewOccupant && lobbyState.role === null) noteSoloBattleParticipants();
             if (index !== null && battleDefenderMemberIndex === index) {
                 battleDefenderMemberIndex = null;
                 battleDefenderTeamId = null;
@@ -29946,6 +29965,8 @@
             battleInProgress = true;
             battleEnteredThisRound = { attacker: false, defender: false };
             battleRerollsUsed = { attacker: 0, defender: 0 };
+            battleRecord = makeEmptyBattleRecord();
+            noteSoloBattleParticipants();
             clearBattleDiceResults('attacker');
             clearBattleDiceResults('defender');
             renderBattleMoves('attacker');
@@ -29962,6 +29983,9 @@
         function nextBattleRound() {
             if (!battleInProgress) return;
             if (lobbyState.role !== null) { requestBattlePhase('next'); return; }
+            // Once-per-battle bonuses in effect this round are spent.
+            collectOnceBonusKeys().forEach(key => { battleRecord.spent[key] = true; });
+            battleRecord.round += 1;
             battleEnteredThisRound = { attacker: false, defender: false };
             hostClearBattleCards();
             syncSoloBattleCards();
@@ -30023,6 +30047,7 @@
                     entered: { attacker: false, defender: false },
                     fields: { attacker: null, defender: null },
                     rerolls: { attacker: 0, defender: 0 },
+                    record: makeEmptyBattleRecord(),
                     cards: hostBattleArenaState.cards,
                 };
                 hostClearBattleCards(undefined, discard);
@@ -30057,11 +30082,13 @@
             battleInProgress = false;
             battleEnteredThisRound = { attacker: false, defender: false };
             battleRerollsUsed = { attacker: 0, defender: 0 };
+            battleRecord = makeEmptyBattleRecord();
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
             battleDefenderMemberIndex = null;
             battleDefenderTeamId = null;
             battleWildPokemon = null;
+            battleRecord = makeEmptyBattleRecord();
             ['attacker', 'defender'].forEach(slot => {
                 resetBattleCalcResult(slot);
                 clearBattleDiceResults(slot);
@@ -30363,27 +30390,328 @@
             return list ? list.map(t => String(t).toLowerCase().trim()) : null;
         }
 
-        // Do this card's conditions allow its bonus for a move of
-        // moveType whose own Attack Strength is power?
-        function battleCardBonusApplies(card, moveType, power) {
+        // ---- Conditional rules: attackBonuses --------------------------
+        //
+        // For bonuses with conditions, a card carries an array of rules:
+        //
+        //   "attackBonuses": [
+        //     { "applyTo": "total", "amount": 1,
+        //       "when": { "opponentLevelHigherBy": 2 } }
+        //   ]
+        //
+        // applyTo   "strength" or "total" (the Attack Strength or the
+        //           final Attack Total)
+        // amount    whole number, negative allowed
+        // amountByEffectDie  instead of amount: { "1": -1, "6": 2 } --
+        //           the bonus by Effect Die result (0 for any other
+        //           result, or if it hasn't been rolled)
+        // when      conditions, ALL of which must hold (none = always):
+        //             moveTypes: ["fire"]            the move's type
+        //             minMoveStrength: 1             the move's own power
+        //             opponentLevelHigherBy: 2       opponent's level minus own
+        //             moveEffective: true            effective/super-effective
+        //             hasStatusCondition: false      has any status condition
+        //             status: "confused"             has that status
+        //             teamMemberFaintedLastRound: true   one of the owner's
+        //                                            Pok\u00e9mon fainted last round
+        //             hasDefeatedThisBattle: true    this one defeated a Pok\u00e9mon
+        //             otherTeamMemberParticipated: true  another team member has
+        //                                            held a slot this battle
+        //             totalLeadAtLeast: 3            own Attack Total beats the
+        //                                            opponent's by this much
+        // oncePerBattle  true: counts for one round per battle -- spent
+        //           when a round ends with it in effect (Next Round)
+        // last      (strength rules) apply after everything else,
+        //           even the status penalty
+        // strengthCap  (strength rules) the bonus never takes the Attack
+        //           Strength above this
+        // label     shown in the readout instead of the card's name
+        //
+        // The flat tags above are just shorthand for one rule each.
+        // "totalLeadAtLeast" rules compare each side's total WITHOUT any
+        // such rules, so two of them never depend on each other.
+
+        const battleRulesCache = new WeakMap();
+        const battleRuleWarned = new Set();
+
+        function parseBattleRuleFlag(value, fallback) {
+            if (value === true || value === 'yes' || value === 'true' || value === 1) return true;
+            if (value === false || value === 'no' || value === 'false' || value === 0) return false;
+            return fallback;
+        }
+
+        function getBattleCardRules(card) {
+            if (battleRulesCache.has(card)) return battleRulesCache.get(card);
+            const rules = [];
+            const baseWhen = {};
             const types = normalizeBattleTypeList(card.bonusMoveTypes) || (card.teraType ? normalizeBattleTypeList(card.teraType) : null);
-            if (types && (!moveType || !types.includes(moveType))) return false;
-            const min = parseInt(card.bonusMinMoveStrength, 10);
-            if (Number.isFinite(min) && !(power >= min)) return false;
+            if (types) baseWhen.moveTypes = types;
+            const minStrength = parseInt(card.bonusMinMoveStrength, 10);
+            if (Number.isFinite(minStrength)) baseWhen.minMoveStrength = minStrength;
+            [['attackStrengthBonus', 'strength'], ['attackTotalBonus', 'total']].forEach(([tag, applyTo]) => {
+                const n = parseInt(card[tag], 10);
+                if (Number.isFinite(n) && n !== 0) rules.push({ applyTo, amount: n, amountByEffectDie: null, when: { ...baseWhen }, oncePerBattle: false, last: false, strengthCap: null, label: null });
+            });
+            (Array.isArray(card.attackBonuses) ? card.attackBonuses : []).forEach(r => {
+                if (!r || typeof r !== 'object' || (r.applyTo !== 'strength' && r.applyTo !== 'total')) return;
+                const cap = parseInt(r.strengthCap, 10);
+                rules.push({
+                    applyTo: r.applyTo,
+                    amount: parseInt(r.amount, 10) || 0,
+                    amountByEffectDie: (r.amountByEffectDie && typeof r.amountByEffectDie === 'object') ? r.amountByEffectDie : null,
+                    when: (r.when && typeof r.when === 'object') ? { ...r.when } : {},
+                    oncePerBattle: parseBattleRuleFlag(r.oncePerBattle, false),
+                    last: r.applyTo === 'strength' && parseBattleRuleFlag(r.last, false),
+                    strengthCap: Number.isFinite(cap) ? cap : null,
+                    label: typeof r.label === 'string' && r.label ? r.label : null,
+                });
+            });
+            rules.forEach((r, i) => {
+                r.index = i;
+                r.phase = (r.applyTo === 'total' && r.when.totalLeadAtLeast !== undefined) ? 'lead' : (r.last ? 'last' : 'normal');
+            });
+            battleRulesCache.set(card, rules);
+            return rules;
+        }
+
+        // ---- What happened this battle (shared through the Host) ----
+        //
+        // { round, faints: [{ o: owner, u: member uid, r: round, d?: the
+        // defeat it was credited as }], defeats: { 'owner|uid': n },
+        // seen: { owner: [uid, ...] }, spent: { ruleKey: true } }.
+        // It's what the conditions about fainting, defeating, team
+        // members taking part, and once-per-battle bonuses read.
+        // Solo it's battleRecord; in a Lobby the Host keeps it in
+        // hostBattleArenaState.record and everyone's battleRecord is a
+        // copy. A team member fainting (faintTeamMember()) is reported
+        // to the Host, who decides if it was a defeat. "Owner" is the
+        // lobby player id, or 'solo'.
+        function makeEmptyBattleRecord() {
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {} };
+        }
+        let battleRecord = makeEmptyBattleRecord();
+
+        function getBattleRecordStore() {
+            if (lobbyState.role === 'host') {
+                if (!hostBattleArenaState.record) hostBattleArenaState.record = makeEmptyBattleRecord();
+                return hostBattleArenaState.record;
+            }
+            return battleRecord;
+        }
+
+        // Team members need a stable identity to be told apart; it's
+        // handed out the first time one matters and saved with it.
+        function ensureMemberUid(member) {
+            if (member && !member.uid) member.uid = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+            return member ? member.uid : null;
+        }
+
+        function getBattleSlotOwnerId(slotName) {
+            if (lobbyState.role !== null) {
+                const entry = getArenaSlotEntry(slotName);
+                return entry ? (entry.ownerId || null) : null;
+            }
+            const index = slotName === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+            return typeof index === 'number' ? 'solo' : null;
+        }
+
+        function noteBattleParticipant(record, ownerId, member) {
+            if (!ownerId || !member) return;
+            const uid = ensureMemberUid(member);
+            const list = record.seen[ownerId] || (record.seen[ownerId] = []);
+            if (!list.includes(uid)) list.push(uid);
+        }
+
+        // Solo: whoever of the player's is in the arena has taken part.
+        function noteSoloBattleParticipants() {
+            if (lobbyState.role !== null || !battleInProgress) return;
+            ['attacker', 'defender'].forEach(slot => {
+                if (getBattleSlotOwnerId(slot) === 'solo') noteBattleParticipant(battleRecord, 'solo', getBattleSlotMember(slot));
+            });
+        }
+
+        function getSoloBattleEntries() {
+            const entries = { attacker: null, defender: null };
+            ['attacker', 'defender'].forEach(slot => {
+                const member = getBattleSlotMember(slot);
+                if (member) entries[slot] = { member, ownerId: getBattleSlotOwnerId(slot) };
+            });
+            return entries;
+        }
+
+        // A team member of `ownerId` fainted (or was revived, which
+        // undoes this round's faint). A faint of a Pok\u00e9mon in one half
+        // credits the opposing Pok\u00e9mon with a defeat.
+        function applyBattleFaintToRecord(record, entries, ownerId, uid, revive) {
+            if (revive) {
+                for (let i = record.faints.length - 1; i >= 0; i--) {
+                    const f = record.faints[i];
+                    if (f.o === ownerId && f.u === uid && f.r === record.round) {
+                        if (f.d && record.defeats[f.d]) {
+                            record.defeats[f.d] -= 1;
+                            if (!record.defeats[f.d]) delete record.defeats[f.d];
+                        }
+                        record.faints.splice(i, 1);
+                        break;
+                    }
+                }
+                return;
+            }
+            const fall = { o: ownerId, u: uid, r: record.round };
+            ['attacker', 'defender'].forEach(slot => {
+                const mine = entries[slot];
+                const other = entries[slot === 'attacker' ? 'defender' : 'attacker'];
+                if (mine && mine.ownerId === ownerId && mine.member && mine.member.uid === uid
+                    && other && other.ownerId && other.member && other.member.uid) {
+                    fall.d = other.ownerId + '|' + other.member.uid;
+                    record.defeats[fall.d] = (record.defeats[fall.d] || 0) + 1;
+                }
+            });
+            record.faints.push(fall);
+        }
+
+        function hostRecordBattleFaint(ownerId, uid, revive) {
+            const st = hostBattleArenaState;
+            if (!st.inProgress) return;
+            applyBattleFaintToRecord(getBattleRecordStore(), { attacker: st.attacker, defender: st.defender }, ownerId, uid, revive);
+            broadcastBattleArenaState();
+        }
+
+        // Called by faintTeamMember()/reviveTeamMember() for this
+        // device's own team.
+        function reportBattleFaint(member, revive) {
+            if (!member) return;
+            const uid = ensureMemberUid(member);
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-faint', uid, revive: !!revive });
+            } else if (lobbyState.role === 'host') {
+                hostRecordBattleFaint('host', uid, revive);
+            } else if (battleInProgress) {
+                applyBattleFaintToRecord(battleRecord, getSoloBattleEntries(), 'solo', uid, revive);
+                renderBattleCalcReadout('attacker');
+                renderBattleCalcReadout('defender');
+            }
+        }
+
+        // The keys of the once-per-battle bonuses in effect right now --
+        // spent when the round ends (Next Round).
+        function collectOnceBonusKeys() {
+            const keys = [];
+            ['attacker', 'defender'].forEach(slot => {
+                const moveName = battleCalcMoveName[slot];
+                if (!moveName || !getBattleSlotMember(slot)) return;
+                const b = computeBattleMoveBreakdown(slot, moveName, battleCalcBaseMove[slot]);
+                if (!b) return;
+                [].concat(b.strengthBonuses, b.strengthLastBonuses, b.modifiers).forEach(x => { if (x && x.onceKey) keys.push(x.onceKey); });
+            });
+            return keys;
+        }
+
+        // What the conditions look at, for one half and the move it's using.
+        function buildBattleRuleContext(slotName, moveName, power) {
+            const member = getBattleSlotMember(slotName);
+            const opponent = getBattleSlotMember(getBattleOpposingSlotName(slotName));
+            const matchup = opponent ? computeBattleTypeMatchup(slotName, moveName) : null;
+            return {
+                member,
+                owner: getBattleSlotOwnerId(slotName),
+                uid: member ? member.uid : null,
+                moveType: getBattleMoveType(moveName),
+                power,
+                level: member ? getBattleMemberTotalLevel(member) : 0,
+                oppLevel: opponent ? getBattleMemberTotalLevel(opponent) : null,
+                matchupBonus: matchup ? matchup.bonus : null,
+                effectDie: battleDiceResults[slotName] ? battleDiceResults[slotName].effect : null,
+                record: battleRecord,
+                lead: null,
+            };
+        }
+
+        function battleRuleConditionsMet(when, ctx) {
+            for (const key of Object.keys(when)) {
+                const v = when[key];
+                switch (key) {
+                    case 'moveTypes': {
+                        const list = normalizeBattleTypeList(v);
+                        if (!list || !ctx.moveType || !list.includes(ctx.moveType)) return false;
+                        break;
+                    }
+                    case 'minMoveStrength':
+                        if (!(ctx.power >= parseInt(v, 10))) return false;
+                        break;
+                    case 'opponentLevelHigherBy':
+                        if (ctx.oppLevel === null || !(ctx.oppLevel - ctx.level >= parseInt(v, 10))) return false;
+                        break;
+                    case 'moveEffective':
+                        if ((ctx.matchupBonus !== null && ctx.matchupBonus > 0) !== parseBattleRuleFlag(v, true)) return false;
+                        break;
+                    case 'hasStatusCondition':
+                        if (!!(ctx.member && ctx.member.status) !== parseBattleRuleFlag(v, true)) return false;
+                        break;
+                    case 'status': {
+                        const list = Array.isArray(v) ? v : [v];
+                        if (!ctx.member || !list.includes(ctx.member.status)) return false;
+                        break;
+                    }
+                    case 'teamMemberFaintedLastRound': {
+                        const did = !!ctx.owner && ctx.record.faints.some(f => f.o === ctx.owner && f.r === ctx.record.round - 1);
+                        if (did !== parseBattleRuleFlag(v, true)) return false;
+                        break;
+                    }
+                    case 'hasDefeatedThisBattle': {
+                        const did = !!ctx.owner && !!ctx.uid && (ctx.record.defeats[ctx.owner + '|' + ctx.uid] || 0) > 0;
+                        if (did !== parseBattleRuleFlag(v, true)) return false;
+                        break;
+                    }
+                    case 'otherTeamMemberParticipated': {
+                        const did = !!ctx.owner && (ctx.record.seen[ctx.owner] || []).some(u => u !== ctx.uid);
+                        if (did !== parseBattleRuleFlag(v, true)) return false;
+                        break;
+                    }
+                    case 'totalLeadAtLeast':
+                        if (ctx.lead === null || !(ctx.lead >= parseInt(v, 10))) return false;
+                        break;
+                    default:
+                        if (!battleRuleWarned.has(key)) { battleRuleWarned.add(key); console.warn('Unknown card bonus condition:', key); }
+                        return false;
+                }
+            }
             return true;
         }
 
-        // [{ label: card name, bonus }] for one tag (attackStrengthBonus
-        // or attackTotalBonus), for the move being used.
-        function getBattleCardBonuses(slotName, tag, moveType, power) {
+        // The rules of one phase ('normal', 'last' or 'lead') that apply
+        // to a half, as [{ label, bonus, onceKey? }]. `current` is the
+        // Attack Strength so far (for strengthCap); `lead` the Attack
+        // Total lead over the opponent (for 'lead' rules).
+        function evaluateBattleCardRules(slotName, applyTo, phase, moveName, power, lead, current) {
             const out = [];
-            getBattleBonusCards(slotName).forEach(card => {
-                const n = parseInt(card[tag], 10);
-                if (!Number.isFinite(n) || n === 0) return;
-                if (!battleCardBonusApplies(card, moveType, power)) return;
-                out.push({ label: card.name || 'Card', bonus: n });
+            const cards = getBattleBonusCards(slotName);
+            if (!cards.length) return out;
+            let ctx = null;
+            let strength = current;
+            cards.forEach(card => {
+                getBattleCardRules(card).forEach(rule => {
+                    if (rule.applyTo !== applyTo || rule.phase !== phase) return;
+                    if (!ctx) { ctx = buildBattleRuleContext(slotName, moveName, power); ctx.lead = (lead === undefined ? null : lead); }
+                    const onceKey = rule.oncePerBattle ? `${ctx.owner || 'x'}|${ctx.uid || (ctx.member && ctx.member.name) || 'x'}|${card.id}|${rule.index}` : null;
+                    if (onceKey && ctx.record.spent[onceKey]) return;
+                    if (!battleRuleConditionsMet(rule.when, ctx)) return;
+                    let bonus = rule.amount;
+                    if (rule.amountByEffectDie) {
+                        const n = ctx.effectDie === null ? NaN : parseInt(rule.amountByEffectDie[String(ctx.effectDie)], 10);
+                        bonus = Number.isFinite(n) ? n : 0;
+                    }
+                    if (rule.strengthCap !== null && bonus > 0 && strength !== undefined) bonus = Math.max(0, Math.min(bonus, rule.strengthCap - strength));
+                    if (!bonus) return;
+                    if (strength !== undefined) strength += bonus;
+                    out.push({ label: rule.label || card.name || 'Card', bonus, onceKey });
+                });
             });
             return out;
+        }
+
+        function battleSlotHasLeadRules(slotName) {
+            return getBattleBonusCards(slotName).some(card => getBattleCardRules(card).some(r => r.phase === 'lead'));
         }
 
         // { allowed, penalty, label } when a card grants Attack Roll
@@ -30440,7 +30768,7 @@
             const stab = (moveType && moveCanGetStab(eff.name) && getBattleMemberTypes(member).includes(moveType))
                 ? BATTLE_STAB_BONUS : 0;
             // Card bonuses to the Attack Strength (see the notes above).
-            const bonuses = getBattleCardBonuses(slotName, 'attackStrengthBonus', getBattleMoveType(moveName), power);
+            const bonuses = evaluateBattleCardRules(slotName, 'strength', 'normal', moveName, power);
             const bonusSum = bonuses.reduce((sum, b) => sum + b.bonus, 0);
             return { power, stab, bonuses, total: Math.max(0, power + stab + bonusSum) };
         }
@@ -30600,11 +30928,16 @@
             if (!attack) return null;
             const requested = getBattleAttackStrengthPenalty(getBattleSlotMember(slotName));
             const taken = requested ? Math.min(requested.amount, attack.total) : 0;
+            // Rules marked `last` (Alpha) come after even the penalty,
+            // limited by their strengthCap.
+            const afterPenalty = attack.total - taken;
+            const lastBonuses = evaluateBattleCardRules(slotName, 'strength', 'last', moveName, attack.power, null, afterPenalty);
             return {
                 power: attack.power,
                 stab: attack.stab,
                 bonuses: attack.bonuses,
-                total: attack.total - taken,
+                lastBonuses,
+                total: afterPenalty + lastBonuses.reduce((sum, b) => sum + b.bonus, 0),
                 penalty: taken > 0 ? { amount: taken, name: requested.name } : null,
             };
         }
@@ -30626,7 +30959,7 @@
             return strength ? { amount: strength.total, status: status.name } : null;
         }
 
-        function computeBattleMoveBreakdown(slotName, moveName, baseMoveName) {
+        function computeBattleMoveBreakdown(slotName, moveName, baseMoveName, skipLead) {
             const member = getBattleSlotMember(slotName);
             if (!member) return null;
             const attack = getBattleAdjustedAttackStrength(slotName, moveName, baseMoveName);
@@ -30634,7 +30967,7 @@
             const level = getBattleMemberTotalLevel(member);
             const matchup = computeBattleTypeMatchup(slotName, moveName);
             const modifiers = getBattleZoneModifiers(slotName, moveName).concat(
-                getBattleCardBonuses(slotName, 'attackTotalBonus', getBattleMoveType(moveName), attack.power));
+                evaluateBattleCardRules(slotName, 'total', 'normal', moveName, attack.power));
             // A reroll used this round (Leftovers) costs the Attack Total.
             if (battleDiceResults[slotName] && battleDiceResults[slotName].rerolled) {
                 const grant = getBattleRerollGrant(getBattleBonusCards(slotName));
@@ -30653,11 +30986,25 @@
             const backfireOut = (confusion && isBattleAttackRollOdd(slotName) && getBattleSlotMember(getBattleOpposingSlotName(slotName)))
                 ? { amount: attack.total, status: confusion.name } : null;
             const backfireIn = getBattleBackfireBonusAgainst(slotName);
+            let total = attack.total + level + (matchup ? matchup.bonus : 0) + modifierTotal + diceTotal + (backfireIn ? backfireIn.amount : 0);
+            // Bonuses for leading the opponent's Attack Total (Impish,
+            // Naughty) compare both sides' totals without such bonuses.
+            if (!skipLead && battleSlotHasLeadRules(slotName)) {
+                const otherSlot = getBattleOpposingSlotName(slotName);
+                const otherMove = battleCalcMoveName[otherSlot];
+                const other = (otherMove && getBattleSlotMember(otherSlot))
+                    ? computeBattleMoveBreakdown(otherSlot, otherMove, battleCalcBaseMove[otherSlot], true) : null;
+                if (other) {
+                    const leadBonuses = evaluateBattleCardRules(slotName, 'total', 'lead', moveName, attack.power, total - other.total);
+                    leadBonuses.forEach(b => { modifiers.push(b); total += b.bonus; });
+                }
+            }
             return {
                 power: attack.power,
                 stab: attack.stab,
                 penalty: attack.penalty,
                 strengthBonuses: attack.bonuses || [],
+                strengthLastBonuses: attack.lastBonuses || [],
                 backfireOut,
                 backfireIn,
                 attackStrength: attack.total,
@@ -30665,7 +31012,7 @@
                 matchup,
                 modifiers,
                 dice: rolls.length ? { total: diceTotal, rolled: rolls.length, counted: rolls.filter(r => !r.excluded).length } : null,
-                total: attack.total + level + (matchup ? matchup.bonus : 0) + modifierTotal + diceTotal + (backfireIn ? backfireIn.amount : 0),
+                total,
             };
         }
 
@@ -30720,6 +31067,7 @@
             if (breakdown.stab) strengthParts.push(`+ ${breakdown.stab} STAB`);
             (breakdown.strengthBonuses || []).forEach(b => strengthParts.push(`${b.bonus < 0 ? '\u2212' : '+'} ${Math.abs(b.bonus)} ${b.label}`));
             if (breakdown.penalty) strengthParts.push(`\u2212 ${breakdown.penalty.amount} ${breakdown.penalty.name}`);
+            (breakdown.strengthLastBonuses || []).forEach(b => strengthParts.push(`${b.bonus < 0 ? '\u2212' : '+'} ${Math.abs(b.bonus)} ${b.label}`));
             let detail = strengthParts.length > 1
                 ? `Strength ${breakdown.attackStrength} (${strengthParts.join(' ')})`
                 : `Strength ${breakdown.attackStrength}`;
@@ -34591,7 +34939,7 @@
             // alone -- solo Battle Arena keeps whatever this device had
             // showing before it ever joined/hosted, same as every other
             // solo tool on this reset.
-            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null }, rerolls: { attacker: 0, defender: 0 } };
+            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null }, rerolls: { attacker: 0, defender: 0 }, record: makeEmptyBattleRecord() };
             guestBattleArenaCache = null;
             syncSoloBattleCards(); // back to this device's own solo Battle Cards
             renderBattleFieldZones(soloBattleFields); // ...and solo Field Move Effects
@@ -35584,6 +35932,10 @@
                     hostApplyBattleCardPlay(conn.peer, data.slot, data.cardId, !!data.fromHand);
                 } else if (data.type === 'battle-card-remove' && typeof data.slot === 'string') {
                     hostApplyBattleCardRemove(conn.peer, data.slot);
+                } else if (data.type === 'battle-faint' && typeof data.uid === 'string') {
+                    // A team member fainted/revived on that player's own
+                    // device -- see reportBattleFaint().
+                    hostRecordBattleFaint(conn.peer, data.uid, !!data.revive);
                 } else if (data.type === 'battle-field-set' && typeof data.slot === 'string') {
                     // A Field Move Effect placed/removed -- see
                     // hostApplyBattleFieldEffect().
