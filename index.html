@@ -1794,6 +1794,18 @@
             text-align: center;
         }
 
+        /* Under a Confused Pokémon's own number when an odd roll is
+           sending its Attack Strength to the opponent. */
+        .game-battle-calc-note {
+            max-width: 92%;
+            margin-top: 2px;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1.15;
+            text-align: center;
+            color: #ffd27a;
+        }
+
         .game-battle-slot-empty-text {
             margin: auto;
             font-size: 16px;
@@ -13941,6 +13953,10 @@
                     <div class="game-battle-controls" id="game-battle-controls">
                         <button class="filter-btn include" id="game-battle-begin-btn" disabled>Begin Battle</button>
                         <button class="filter-btn" id="game-battle-next-round-btn" style="display: none;">Next Round</button>
+                        <!-- Flips every facedown Battle Card face up -- shown only
+                             while a battle is running and one is waiting (see
+                             renderBattleControls()/revealBattleCards()). -->
+                        <button class="filter-btn include" id="game-battle-reveal-cards-btn" style="display: none;">Reveal Battle Cards</button>
                         <button class="filter-btn exclude" id="game-battle-end-btn" style="display: none;">End Battle</button>
                     </div>
 
@@ -18029,11 +18045,17 @@
                 activeCard: null,
             };
             persistGameSaves();
+            // "Save This Progress" is the same session moving into a
+            // real save, not a different save: the arena is kept (its
+            // picks are re-stamped just below). Anything else is a switch.
+            if (!pendingUnsavedCommit) clearBattleArenaForSaveChange('save:' + slotIndex);
             activeGuestSaveId = null;
             persistActiveGuestSaveId();
             activeSaveSlot = slotIndex;
             persistActiveSaveSlot();
             if (pendingUnsavedCommit) {
+                if (battleAttackerTeamId === 'unsaved') battleAttackerTeamId = getActiveTeamId();
+                if (battleDefenderTeamId === 'unsaved') battleDefenderTeamId = getActiveTeamId();
                 // Its contents live in a real save now -- getActiveSaveData()
                 // resolves to that save from here on regardless, this just
                 // keeps a stale duplicate out of memory.
@@ -18059,6 +18081,7 @@
             if (!gameSaves[slotIndex]) return;
             gameSaves[slotIndex].lastPlayed = new Date().toISOString();
             persistGameSaves();
+            clearBattleArenaForSaveChange('save:' + slotIndex);
             activeGuestSaveId = null;
             persistActiveGuestSaveId();
             activeSaveSlot = slotIndex;
@@ -18071,6 +18094,7 @@
 
         function deleteSaveSlot(slotIndex) {
             const deletedSave = gameSaves[slotIndex];
+            if (activeSaveSlot === slotIndex) clearBattleArenaForSaveChange('unsaved', true);
             gameSaves[slotIndex] = null;
             persistGameSaves();
             if (activeSaveSlot === slotIndex) {
@@ -18374,6 +18398,7 @@
 
         function loadGuestSave(hostSaveId) {
             if (!gameGuestSaves[hostSaveId]) return;
+            clearBattleArenaForSaveChange('guest:' + hostSaveId);
             activeSaveSlot = null;
             persistActiveSaveSlot();
             activeGuestSaveId = hostSaveId;
@@ -18392,6 +18417,7 @@
 
         function deleteGuestSave(hostSaveId) {
             const wasLinked = lobbyState.role === 'guest' && lobbyState.linkedGuestSaveId === hostSaveId;
+            if (activeGuestSaveId === hostSaveId) clearBattleArenaForSaveChange('unsaved', true);
             delete gameGuestSaves[hostSaveId];
             persistGameGuestSaves();
             if (activeGuestSaveId === hostSaveId) {
@@ -19014,7 +19040,12 @@
         function startEvolutionBadgeCycle(badgeEl) {
             const layers = badgeEl.querySelectorAll('.evolution-cycle-layer');
             if (layers.length < 2) return null;
-            let activeIndex = 0;
+            // Start from whichever layer is showing right now (index 0 for
+            // a freshly built badge; possibly a later one for a clone of a
+            // badge that's already mid-cycle -- see
+            // startClonedEvolutionBadgeCycle()), so the first tick always
+            // advances to a different icon.
+            let activeIndex = Math.max(0, Array.prototype.findIndex.call(layers, layer => layer.classList.contains('evolution-cycle-active')));
             const intervalId = setInterval(() => {
                 activeIndex = (activeIndex + 1) % layers.length;
                 layers.forEach((layer, idx) => layer.classList.toggle('evolution-cycle-active', idx === activeIndex));
@@ -20237,6 +20268,9 @@
             // Move Effect picker (see openBattleFieldOverlay()): every
             // cardType === "Field" card, again unrelated to canAttach.
             if (slot === 'field') return Object.values(CARDS_BY_ID).filter(c => c.cardType === 'Field');
+            // A fifth, 'battle', is the Arena's Battle Card picker (see
+            // openBattleCardZone()): every card tagged "battleCard": "yes".
+            if (slot === 'battle') return Object.values(CARDS_BY_ID).filter(isBattleCardTagged);
             if (slot === 'overlay') return Object.values(CARDS_BY_ID).filter(c => c.canOverlay === 'yes');
             return Object.values(CARDS_BY_ID).filter(c => {
                 if (c.canAttach !== 'yes') return false;
@@ -21332,7 +21366,12 @@
         // announces it into the Active Card zone as already-committed
         // (see setHostActiveCard()'s own comment on that flag) so every
         // other player sees what was just attached and to what.
-        function hostApplyRemoveFromHandOnly(peerKey, cardId) {
+        //
+        // announce=false is for a Battle Card played facedown (see
+        // playBattleCardFromHand()): it leaves the hand the same way
+        // but is NOT revealed into the shared Active Card zone, since
+        // nobody else is supposed to see which card it is yet.
+        function hostApplyRemoveFromHandOnly(peerKey, cardId, announce = true) {
             if (peerKey === 'host') {
                 const hand = getLocalHandArray();
                 const idx = hand.indexOf(cardId);
@@ -21349,6 +21388,11 @@
                 // See hostApplyDiscard()'s own comment on 'hand-remove'.
                 const entry = lobbyState.connections.get(peerKey);
                 if (entry && entry.conn.open) entry.conn.send({ type: 'hand-remove', cardId });
+            }
+            if (!announce) {
+                broadcastDeckState(); // hand counts changed
+                renderDecksScreen();
+                return;
             }
             const card = CARDS_BY_ID[cardId];
             setHostActiveCard(cardId, (card && getEffectiveCardDeck(card)) || '', peerKey, true);
@@ -21893,7 +21937,19 @@
                 }
             });
             if (!st.attacker && !st.defender) st.inProgress = false;
-            const payload = {
+            // Battle Cards (see hostApplyBattleCardPlay()): nothing is
+            // left to play them against once both halves are empty, and
+            // a card whose owner has dropped out of the lobby goes too.
+            if (lobbyState.role === 'host') {
+                if (!st.attacker && !st.defender) hostClearBattleCards();
+                ['attacker', 'defender'].forEach(slot => {
+                    const c = getBattleCardsStore()[slot];
+                    if (!c || c.ownerId === 'host') return;
+                    const connEntry = lobbyState.connections && lobbyState.connections.get(c.ownerId);
+                    if (!connEntry || !connEntry.conn || !connEntry.conn.open) hostClearBattleCards([slot]);
+                });
+            }
+            const basePayload = {
                 type: 'battle-arena-state',
                 attacker: st.attacker,
                 defender: st.defender,
@@ -21901,10 +21957,18 @@
                 moves: { attacker: st.moves.attacker, defender: st.moves.defender },
                 dice: { attacker: st.dice.attacker, defender: st.dice.defender },
                 entered: { attacker: !!st.entered.attacker, defender: !!st.entered.defender },
+                // Field Move Effect cards (see hostApplyBattleFieldEffect()):
+                // public to everyone, so the same object goes to all.
+                fields: getBattleFieldStore(),
             };
+            // Each connection gets its own view of the Battle Cards, so
+            // a facedown card's identity only ever goes to its owner.
             if (lobbyState.connections) {
-                lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
+                lobbyState.connections.forEach(({ conn }, peerId) => {
+                    if (conn.open) conn.send({ ...basePayload, fields: { ...basePayload.fields }, cards: battleCardsViewFor(peerId) });
+                });
             }
+            const payload = { ...basePayload, cards: battleCardsViewFor('host') };
             guestBattleArenaCache = payload; // one code path for host and guest alike
             applyIncomingArenaState(payload);
         }
@@ -22145,7 +22209,10 @@
                     st.moves = { attacker: null, defender: null };
                     st.dice = makeEmptyBattleDice();
                     st.entered = { attacker: false, defender: false }; // nobody is new next round
+                    hostClearBattleCards();
                 }
+            } else if (action === 'reveal') {
+                hostRevealBattleCards();
             } else if (action === 'end') {
                 // Everything is recalled, whoever owned it.
                 st.inProgress = false;
@@ -22154,6 +22221,7 @@
                 st.entered = { attacker: false, defender: false };
                 st.attacker = null;
                 st.defender = null;
+                hostClearBattleCards();
             } else {
                 return;
             }
@@ -22346,6 +22414,10 @@
                     status: (rolled && rolled.status !== undefined) ? rolled.status : null,
                 };
             });
+            renderBattleCardZones(payload.cards);
+            // Field Move Effects are shared too. A payload without
+            // `fields` (an older Host) leaves this device's alone.
+            if (payload.fields) renderBattleFieldZones(payload.fields);
             renderBattleAttackerSlot();
             renderBattleDefenderSlot();
         }
@@ -22602,6 +22674,13 @@
             if (isActiveSaveReadOnly()) return;
             const card = CARDS_BY_ID[cardId];
             if (!card) return;
+            // A card tagged "battleCard": "yes" goes facedown into the
+            // Battle Arena's Battle Card zone instead of the Active Card
+            // zone -- see playBattleCardFromHand().
+            if (isBattleCardTagged(card)) {
+                playBattleCardFromHand(cardId);
+                return;
+            }
             const deckName = getEffectiveCardDeck(card) || getDeckToolList()[0];
             pendingActiveCardScrollTrigger = true;
             if (lobbyState.role === 'guest') {
@@ -28569,6 +28648,12 @@
         // because by the time a later screen might ask "what team was
         // this Attacker from", getActiveSaveData() may already have
         // moved on to a different save.
+        //
+        // NOTE: the arena now belongs to ONE save -- it's cleared
+        // whenever the active save changes (see
+        // clearBattleArenaForSaveChange()), so a pick from a different
+        // save should never be found here any more. The mismatch
+        // handling in the slot renderers is just a defensive backstop.
         let battleAttackerTeamId = null;
 
         // Defender half's own equivalent of battleAttackerTeamId just
@@ -28628,7 +28713,7 @@
         // whenever the lobby resets (see resetLobbyState()), never
         // persisted -- same "pure in-memory state for the current
         // battle" reasoning battleWildPokemon itself already carries.
-        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false } };
+        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null } };
 
         // Which move the Attack Calculator is currently reading for each
         // half -- just the move name, not a cached total, so a level or
@@ -28943,9 +29028,9 @@
         //     and flipped faceup partway through, hence `faceUp` below.
         // Nothing reads those cards.json fields yet, and tapping a badge
         // just says so; the state, badge rendering and the two setters
-        // are here so those pieces can drop in later. Local to this
-        // device for now (not yet shared through the lobby like the
-        // arena's Pokémon are) and not saved.
+        // are here so those pieces can drop in later. Not saved. Both
+        // zones are shared through the lobby Host (see "Field Move
+        // Effects: shared through the Host" and "Battle Cards" below).
         //
         // battleCard:  { cardId, faceUp } | null
         // fieldEffect: { cardId } | null
@@ -29020,11 +29105,19 @@
             battleZones[slotName][zoneName] = cardId
                 ? (zoneName === 'battleCard' ? { cardId, faceUp: !!faceUp } : { cardId })
                 : null;
+            // Solo, remember Field Move Effects so they survive a
+            // trip through a lobby (see resetLobbyState()). In a lobby
+            // the Host's store is the truth -- see
+            // requestBattleFieldEffect().
+            if (zoneName === 'fieldEffect' && lobbyState.role === null) {
+                soloBattleFields[slotName] = cardId || null;
+            }
             renderBattleZoneBadge(slotName, zoneName);
             // Modifiers from a zone change the numbers, so refresh both
             // readouts.
             renderBattleCalcReadout('attacker');
             renderBattleCalcReadout('defender');
+            renderBattleControls(); // the Reveal button depends on facedown cards
         }
 
         // Tapping a badge. Field Move Effect opens its picker (see
@@ -29035,8 +29128,421 @@
                 openBattleFieldOverlay(slotName);
                 return;
             }
+            if (zoneName === 'battleCard') {
+                openBattleCardZone(slotName);
+                return;
+            }
             const zone = BATTLE_ZONES[zoneName];
             if (zone) showBattleArenaNotice(zone.placeholderNotice);
+        }
+
+        // ---- Field Move Effects: shared through the Host ---------------
+        //
+        // Same shape as the Battle Cards below, minus the hidden-info
+        // and hand/discard handling: a Field Move Effect is public and
+        // isn't part of any virtual deck, so the Host's store is just
+        // { attacker: cardId | null, defender: cardId | null } in
+        // hostBattleArenaState.fields, broadcast to everyone with the
+        // rest of the arena state. Everyone's battleZones[...].
+        // fieldEffect is a display mirror of it (renderBattleFieldZones()),
+        // and every device recomputes the modifiers from it locally
+        // (getBattleZoneModifiers()). Solo, soloBattleFields holds it.
+        //
+        // Any player at the table may place or remove one -- the
+        // effects belong to the field, not to a Pokémon's owner.
+        // Next Round / End Battle leave them alone, same as before.
+        let soloBattleFields = { attacker: null, defender: null };
+
+        function getBattleFieldStore() {
+            if (lobbyState.role === 'host') {
+                if (!hostBattleArenaState.fields) hostBattleArenaState.fields = { attacker: null, defender: null };
+                return hostBattleArenaState.fields;
+            }
+            return soloBattleFields;
+        }
+
+        // Redraws both Field Move Effect badges (and what depends on
+        // them) from a { attacker, defender } of cardIds.
+        function renderBattleFieldZones(fields) {
+            ['attacker', 'defender'].forEach(slot => {
+                const id = fields && fields[slot];
+                battleZones[slot].fieldEffect = (id && CARDS_BY_ID[id]) ? { cardId: id } : null;
+                renderBattleZoneBadge(slot, 'fieldEffect');
+            });
+            renderBattleCalcReadout('attacker');
+            renderBattleCalcReadout('defender');
+            if (battleFieldOverlaySlot !== null && battleFieldOverlayZone === 'fieldEffect') renderBattleFieldOverlay();
+        }
+
+        // Host side (peerKey is 'host' for the Host's own requests).
+        // cardId null empties the zone.
+        function hostApplyBattleFieldEffect(peerKey, slot, cardId) {
+            if (slot !== 'attacker' && slot !== 'defender') return;
+            if (cardId !== null) {
+                const card = typeof cardId === 'string' ? CARDS_BY_ID[cardId] : null;
+                if (!card || card.cardType !== 'Field') return;
+            }
+            getBattleFieldStore()[slot] = cardId;
+            broadcastBattleArenaState();
+        }
+
+        // This device's request: a Guest asks the Host, the Host
+        // applies directly, solo just sets it locally.
+        function requestBattleFieldEffect(slot, cardId) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'battle-field-set', slot, cardId: cardId || null });
+                }
+            } else if (lobbyState.role === 'host') {
+                hostApplyBattleFieldEffect('host', slot, cardId || null);
+            } else {
+                setBattleZoneCard(slot, 'fieldEffect', cardId || null);
+            }
+        }
+
+        // ---- Battle Cards ---------------------------------------------
+        //
+        // A card tagged "battleCard": "yes" in cards.json. Played
+        // FACEDOWN: the badge shows the card-back glyph, and in a lobby
+        // nobody but the player who played it is told which card it is.
+        // Until it's revealed the owner can change their mind -- Remove
+        // Card, or play a different one (the replaced card goes back to
+        // their hand if it came from there). Once everyone has had the
+        // chance to play one, Reveal Battle Cards turns every facedown
+        // one face up for the whole table, after which it's locked in.
+        // Next Round and End Battle clear both zones; a card that came
+        // out of a hand goes to its deck's discard pile then.
+        //
+        // Only the player who owns the Pokémon on a half may put a card
+        // there -- never the Wild Pokémon's half, never another player's.
+        // (A player has only one Pokémon in the Arena at a time, so
+        // there's only one legal half for them.)
+        //
+        // Two ways in, chosen by the save's virtual-decks rule:
+        //   - ON:  tapping your empty badge opens Hand & Decks,
+        //          remembering which half (battleCardPlayTarget); Play on
+        //          a tagged card puts it there (playBattleCardFromHand()).
+        //   - OFF: there's no hand to play from, so the badge opens the
+        //          zone picker overlay with only the tagged cards
+        //          (openBattleFieldOverlay(slot, 'battleCard')).
+        // Tapping your own facedown card opens that same overlay with
+        // the card and Remove Card (plus Play a Different Card under
+        // virtual decks); tapping any revealed card just enlarges it.
+        //
+        // WHERE THE STATE LIVES: one entry per half,
+        //   { ownerId, cardId, faceUp, fromHand }
+        // in the Host's hostBattleArenaState.cards in a lobby (the Host
+        // does every hand/discard change, so it must know the card), or
+        // in soloBattleCards solo -- the same hostApplyBattleCard*()
+        // functions run against either (peer 'host' solo). Everyone's
+        // battleZones[...].battleCard is just a display mirror of it,
+        // filled by renderBattleCardZones(): in a lobby each player is
+        // sent their own view (battleCardsViewFor()), where a facedown
+        // card's cardId is withheld from everyone but its owner.
+        function isBattleCardTagged(card) {
+            return !!card && String(card.battleCard).toLowerCase() === 'yes';
+        }
+
+        // Set when a badge tap sends the player to Hand & Decks; cleared
+        // on leaving that screen (see setGameScreen()) and once a card
+        // has been played.
+        let battleCardPlayTarget = null;
+
+        let soloBattleCards = { attacker: null, defender: null };
+
+        function getBattleCardsStore() {
+            if (lobbyState.role === 'host') {
+                if (!hostBattleArenaState.cards) hostBattleArenaState.cards = { attacker: null, defender: null };
+                return hostBattleArenaState.cards;
+            }
+            return soloBattleCards;
+        }
+
+        // The id a Battle Card's ownerId uses for this device's player.
+        function myBattleCardOwnerId() {
+            return getMyLobbyPlayerId() || 'host';
+        }
+
+        function isMyBattleCard(card) {
+            return !!card && card.ownerId === myBattleCardOwnerId();
+        }
+
+        // What viewerId is allowed to see of the Host's store: everything
+        // except the identity of another player's facedown card.
+        function battleCardsViewFor(viewerId) {
+            const store = getBattleCardsStore();
+            const view = {};
+            ['attacker', 'defender'].forEach(slot => {
+                const c = store[slot];
+                view[slot] = c
+                    ? { ownerId: c.ownerId, faceUp: !!c.faceUp, cardId: (c.faceUp || c.ownerId === viewerId) ? c.cardId : null }
+                    : null;
+            });
+            return view;
+        }
+
+        // Redraws both Battle Card badges (and what depends on them)
+        // from a view in battleCardsViewFor()'s shape.
+        function renderBattleCardZones(cardsView) {
+            ['attacker', 'defender'].forEach(slot => {
+                const c = cardsView && cardsView[slot];
+                battleZones[slot].battleCard = c ? { cardId: c.cardId, faceUp: !!c.faceUp, ownerId: c.ownerId } : null;
+                renderBattleZoneBadge(slot, 'battleCard');
+            });
+            renderBattleCalcReadout('attacker');
+            renderBattleCalcReadout('defender');
+            renderBattleControls(); // the Reveal button depends on facedown cards
+            if (battleFieldOverlaySlot !== null && battleFieldOverlayZone === 'battleCard') renderBattleFieldOverlay();
+        }
+
+        function syncSoloBattleCards() {
+            renderBattleCardZones(soloBattleCards);
+        }
+
+        // Host/solo: push a change out -- a lobby broadcast (which also
+        // applies it to this device), or a local redraw solo.
+        function afterBattleCardsChanged() {
+            if (lobbyState.role === 'host') broadcastBattleArenaState();
+            else syncSoloBattleCards();
+        }
+
+        // '' when this device's player may put a Battle Card on
+        // slotName's half, otherwise the reason why not (shown as a
+        // notice). Same ownership rules as getBattleSlotMember() /
+        // renderBattleAttackerSlotCard(): in a lobby a half holding
+        // someone else's (or the Wild) Pokémon belongs to them.
+        function getBattleCardBlockReason(slotName) {
+            const entry = getArenaSlotEntry(slotName);
+            const index = slotName === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+            const teamId = slotName === 'attacker' ? battleAttackerTeamId : battleDefenderTeamId;
+            const notMine = 'Battle Cards can only be played for your own Pok\u00e9mon.';
+            if (entry && entry.ownerId !== getMyLobbyPlayerId()) return notMine;
+            if (index === null) return 'Send one of your Pok\u00e9mon to this side first.';
+            if (index === 'wild') return notMine;
+            if (teamId !== getActiveTeamId()) return 'That Pok\u00e9mon\u2019s save isn\u2019t currently loaded.';
+            return '';
+        }
+
+        // The above, plus what's already sitting in the zone: a
+        // revealed card is locked in, and another player's leftover
+        // card isn't mine to replace.
+        function getBattleCardPlayBlockReason(slotName) {
+            const reason = getBattleCardBlockReason(slotName);
+            if (reason) return reason;
+            const card = battleZones[slotName].battleCard;
+            if (card && card.faceUp) return 'That Battle Card has already been revealed.';
+            if (card && !isMyBattleCard(card)) return 'Another player\u2019s Battle Card is already there.';
+            return '';
+        }
+
+        function hasFacedownBattleCard() {
+            return ['attacker', 'defender'].some(s => {
+                const st = battleZones[s].battleCard;
+                return !!st && !st.faceUp;
+            });
+        }
+
+        // ---- Host/solo side (peerKey is 'host' solo) ----
+
+        // Does peerKey own the Pokémon on slot right now?
+        function battleCardOccupantOk(peerKey, slot) {
+            if (lobbyState.role === 'host') {
+                const entry = hostBattleArenaState[slot];
+                return !!entry && entry.ownerId === peerKey;
+            }
+            return getBattleCardBlockReason(slot) === ''; // solo: only this device asks
+        }
+
+        // A card going back into a hand without touching any deck.
+        // (Reuses 'deck-drawn', minus the deck name so nothing treats
+        // it as a fresh draw/claim.)
+        function hostAddCardToHand(peerKey, cardId) {
+            if (peerKey === 'host') {
+                getLocalHandArray().push(cardId);
+                persistLocalHand();
+            } else {
+                const hand = getPeerHandArray(peerKey);
+                if (!hand) return;
+                hand.push(cardId);
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) entry.conn.send({ type: 'deck-drawn', cardId });
+            }
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Put a card facedown in slot, replacing this player's own
+        // still-facedown one (which goes back to their hand if it came
+        // from there). fromHand: the card is taken out of peerKey's
+        // hand; otherwise (the picker, no virtual decks) it isn't
+        // tied to any hand.
+        function hostApplyBattleCardPlay(peerKey, slot, cardId, fromHand) {
+            if (slot !== 'attacker' && slot !== 'defender') return;
+            if (!isBattleCardTagged(CARDS_BY_ID[cardId])) return;
+            if (!battleCardOccupantOk(peerKey, slot)) {
+                sendBattleNotice(peerKey, 'Battle Cards can only be played for your own Pok\u00e9mon.');
+                return;
+            }
+            const store = getBattleCardsStore();
+            const previous = store[slot];
+            if (previous && (previous.ownerId !== peerKey || previous.faceUp)) {
+                sendBattleNotice(peerKey, previous.faceUp ? 'That Battle Card has already been revealed.' : 'Another player\u2019s Battle Card is already there.');
+                return;
+            }
+            if (fromHand) {
+                const hand = peerKey === 'host' ? getLocalHandArray() : getPeerHandArray(peerKey);
+                if (!hand || !hand.includes(cardId)) return;
+                hostApplyRemoveFromHandOnly(peerKey, cardId, false);
+            }
+            if (previous && previous.fromHand) hostAddCardToHand(peerKey, previous.cardId);
+            store[slot] = { ownerId: peerKey, cardId, faceUp: false, fromHand: !!fromHand };
+            afterBattleCardsChanged();
+        }
+
+        // Take back your own facedown card.
+        function hostApplyBattleCardRemove(peerKey, slot) {
+            if (slot !== 'attacker' && slot !== 'defender') return;
+            const store = getBattleCardsStore();
+            const card = store[slot];
+            if (!card || card.ownerId !== peerKey) return;
+            if (card.faceUp) {
+                sendBattleNotice(peerKey, 'That Battle Card has already been revealed.');
+                return;
+            }
+            if (card.fromHand) hostAddCardToHand(peerKey, card.cardId);
+            store[slot] = null;
+            afterBattleCardsChanged();
+        }
+
+        // Turns every facedown card face up. Doesn't broadcast itself
+        // (the caller does).
+        function hostRevealBattleCards() {
+            const store = getBattleCardsStore();
+            ['attacker', 'defender'].forEach(slot => {
+                if (store[slot]) store[slot].faceUp = true;
+            });
+        }
+
+        // Empties the given halves' zones (both by default): a card
+        // that came out of a hand goes to its deck's discard pile, any
+        // other is just removed. Doesn't broadcast the arena state
+        // (the caller does).
+        function hostClearBattleCards(slots = ['attacker', 'defender'], discard = true) {
+            const store = getBattleCardsStore();
+            let discarded = false;
+            slots.forEach(slot => {
+                const c = store[slot];
+                if (!c) return;
+                if (c.fromHand && discard) {
+                    const card = CARDS_BY_ID[c.cardId];
+                    discardToHostDeck((card && getEffectiveCardDeck(card)) || getDeckToolList()[0], c.cardId);
+                    discarded = true;
+                }
+                store[slot] = null;
+            });
+            if (discarded) {
+                broadcastDeckState();
+                renderDecksScreen();
+            }
+        }
+
+        // ---- This device's requests ----
+
+        // false when a guest can't reach the Host (nothing happened).
+        function requestBattleCardPlay(slot, cardId, fromHand) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'battle-card-play', slot, cardId, fromHand: !!fromHand });
+                    return true;
+                }
+                return false;
+            }
+            hostApplyBattleCardPlay('host', slot, cardId, !!fromHand);
+            return true;
+        }
+
+        function requestBattleCardRemove(slot) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'battle-card-remove', slot });
+                }
+                return;
+            }
+            hostApplyBattleCardRemove('host', slot);
+        }
+
+        // The Reveal Battle Cards button -- anyone at the table can
+        // press it once everyone's had their chance.
+        function revealBattleCards() {
+            if (lobbyState.role !== null) { requestBattlePhase('reveal'); return; }
+            hostRevealBattleCards();
+            syncSoloBattleCards();
+        }
+
+        // ---- Taps and plays ----
+
+        function beginBattleCardHandPlay(slotName) {
+            battleCardPlayTarget = slotName;
+            setGameScreen('decks');
+            showDecksNotice(`Play a Battle Card from your hand for the ${slotName === 'attacker' ? 'Attacker' : 'Defender'}.`);
+        }
+
+        // A revealed card just gets enlarged, whoever's it is.
+        function viewRevealedBattleCard(zoneCard) {
+            const card = zoneCard ? CARDS_BY_ID[zoneCard.cardId] : null;
+            if (!card) return;
+            if (card.imageUrl && card.imageUrl !== 'placeholder') openTeamCardImageViewer(card.imageUrl, card.name);
+            else showBattleArenaNotice(card.name);
+        }
+
+        function openBattleCardZone(slotName) {
+            const zoneCard = battleZones[slotName].battleCard;
+            if (zoneCard && zoneCard.faceUp) { viewRevealedBattleCard(zoneCard); return; }
+            // My own facedown card: look at it, take it back, or swap it
+            // -- even if its Pokémon has since been recalled.
+            if (zoneCard && isMyBattleCard(zoneCard)) { openBattleFieldOverlay(slotName, 'battleCard'); return; }
+            if (zoneCard) { showBattleArenaNotice('A Battle Card is facedown here.'); return; }
+            const reason = getBattleCardBlockReason(slotName);
+            if (reason) { showBattleArenaNotice(reason); return; }
+            if (isVirtualDecksEnabledForActiveSave()) {
+                if (isActiveSaveReadOnly()) {
+                    showBattleArenaNotice('This save is read-only, so cards can\u2019t be played from its hand.');
+                    return;
+                }
+                beginBattleCardHandPlay(slotName);
+                return;
+            }
+            openBattleFieldOverlay(slotName, 'battleCard');
+        }
+
+        // Play on a hand card tagged "battleCard": "yes" (see
+        // requestPlayFromHand()). It goes facedown into the half the
+        // player tapped, or else the one legal half (the one holding
+        // their Pokémon). If there isn't one the card stays in hand
+        // and a notice says why.
+        function playBattleCardFromHand(cardId) {
+            let target = battleCardPlayTarget;
+            if (target && getBattleCardPlayBlockReason(target)) target = null;
+            const cameFromBadge = !!target;
+            if (!target) {
+                const halves = ['attacker', 'defender'];
+                target = halves.find(s => !getBattleCardPlayBlockReason(s)) || null;
+                if (!target) {
+                    const mineHalf = halves.find(s => !getBattleCardBlockReason(s));
+                    showDecksNotice(mineHalf
+                        ? getBattleCardPlayBlockReason(mineHalf)
+                        : 'Battle Cards are played in the Battle Arena \u2014 send one of your Pok\u00e9mon there first.');
+                    return;
+                }
+            }
+            if (!requestBattleCardPlay(target, cardId, true)) return; // can't reach the Host: stays in hand
+            battleCardPlayTarget = null;
+            if (cameFromBadge) {
+                setGameScreen('battle');
+            } else {
+                showDecksNotice(`Battle Card played facedown for the ${target === 'attacker' ? 'Attacker' : 'Defender'}.`);
+            }
         }
 
         // ---- Field Move Effect picker ---------------------------------
@@ -29056,33 +29562,53 @@
         // Effect cards aren't part of any virtual deck (see
         // DECK_TOOL_LIST_BASE), so there's nothing to keep honest.
         //
-        // No read-only/trade/replace guards either: the zones are local
-        // to this device and never written to a save (see the block
-        // comment above battleZones), same as the rest of the Attack
-        // Calculator.
+        // No read-only/trade/replace guards either: the zones are never
+        // written to a save (see the block comment above battleZones).
+        // In a lobby a pick goes through the Host
+        // (requestBattleFieldEffect()) rather than being set locally.
+        //
+        // The same overlay also serves the Battle Card zone when the
+        // save does NOT use virtual decks (see openBattleCardZone()):
+        // battleFieldOverlayZone says which zone it's editing, and
+        // getBattleFieldOverlayPanelSlot() which card list ('field' or
+        // 'battle') its Add Card accordion draws from. A card put in
+        // the Battle Card zone this way also goes down facedown.
+        let battleFieldOverlayZone = 'fieldEffect';
         let battleFieldOverlaySlot = null;
         let battleFieldOverlayAdding = false;
         let battleFieldOverlayExpandedDecks = new Set();
 
+        function getBattleFieldOverlayPanelSlot() {
+            return battleFieldOverlayZone === 'battleCard' ? 'battle' : 'field';
+        }
+
         function renderBattleFieldOverlay() {
             if (battleFieldOverlaySlot === null) return;
-            const state = battleZones[battleFieldOverlaySlot].fieldEffect;
+            const state = battleZones[battleFieldOverlaySlot][battleFieldOverlayZone];
             const owner = battleFieldOverlaySlot === 'attacker' ? 'Attacker' : 'Defender';
+            const panelSlot = getBattleFieldOverlayPanelSlot();
             const titleEl = document.getElementById('game-battle-field-title');
-            if (titleEl) titleEl.textContent = `${owner} Field Move Effect`;
+            if (titleEl) titleEl.textContent = `${owner} ${BATTLE_ZONES[battleFieldOverlayZone].label}`;
             renderTeamCardSlotPanel(
-                'game-battle-field-detail', 'field',
+                'game-battle-field-detail', panelSlot,
                 state ? state.cardId : null,
-                'No Field Move Effect card in play.',
-                battleFieldOverlayAdding ? 'field' : null,
+                battleFieldOverlayZone === 'battleCard' ? 'No Battle Card played.' : 'No Field Move Effect card in play.',
+                battleFieldOverlayAdding ? panelSlot : null,
                 battleFieldOverlayExpandedDecks,
                 null,
                 true
             );
+            // Under virtual decks a facedown card can also be swapped
+            // for a different one from the hand.
+            const detailEl = document.getElementById('game-battle-field-detail');
+            if (detailEl && battleFieldOverlayZone === 'battleCard' && state && isVirtualDecksEnabledForActiveSave() && !isActiveSaveReadOnly()) {
+                detailEl.insertAdjacentHTML('beforeend', '<button class="filter-btn game-team-cards-card-btn game-battle-card-replace-btn" type="button">Play a Different Card</button>');
+            }
         }
 
-        function openBattleFieldOverlay(slotName) {
-            if (!battleZones[slotName]) return;
+        function openBattleFieldOverlay(slotName, zoneName = 'fieldEffect') {
+            if (!battleZones[slotName] || !BATTLE_ZONES[zoneName]) return;
+            battleFieldOverlayZone = zoneName;
             battleFieldOverlaySlot = slotName;
             battleFieldOverlayAdding = false;
             battleFieldOverlayExpandedDecks = new Set();
@@ -29103,7 +29629,7 @@
             // Every deck starts expanded here (unlike the Attach Card
             // panel, which starts collapsed): there's only the one
             // Field Move Effect deck to choose from.
-            battleFieldOverlayExpandedDecks = new Set(groupCardsForSlotByDeck('field').map(g => g.deck));
+            battleFieldOverlayExpandedDecks = new Set(groupCardsForSlotByDeck(getBattleFieldOverlayPanelSlot()).map(g => g.deck));
             renderBattleFieldOverlay();
         }
 
@@ -29120,14 +29646,21 @@
 
         function selectBattleFieldOverlayCard(cardId) {
             if (battleFieldOverlaySlot === null || !cardId) return;
-            setBattleZoneCard(battleFieldOverlaySlot, 'fieldEffect', cardId);
+            if (battleFieldOverlayZone === 'battleCard') {
+                const reason = getBattleCardPlayBlockReason(battleFieldOverlaySlot);
+                if (reason) { showBattleArenaNotice(reason); return; }
+                requestBattleCardPlay(battleFieldOverlaySlot, cardId, false);
+            } else {
+                requestBattleFieldEffect(battleFieldOverlaySlot, cardId);
+            }
             battleFieldOverlayAdding = false;
             renderBattleFieldOverlay();
         }
 
         function removeBattleFieldOverlayCard() {
             if (battleFieldOverlaySlot === null) return;
-            setBattleZoneCard(battleFieldOverlaySlot, 'fieldEffect', null);
+            if (battleFieldOverlayZone === 'battleCard') requestBattleCardRemove(battleFieldOverlaySlot);
+            else requestBattleFieldEffect(battleFieldOverlaySlot, null);
             renderBattleFieldOverlay();
         }
 
@@ -29333,6 +29866,8 @@
             beginBtn.disabled = !(attackerIn && defenderIn);
             nextBtn.style.display = battleInProgress ? '' : 'none';
             endBtn.style.display = battleInProgress ? '' : 'none';
+            const revealBtn = document.getElementById('game-battle-reveal-cards-btn');
+            if (revealBtn) revealBtn.style.display = (battleInProgress && hasFacedownBattleCard()) ? '' : 'none';
         }
 
         // Begin Battle -- only possible with a Pokémon in both halves;
@@ -29360,6 +29895,8 @@
             if (!battleInProgress) return;
             if (lobbyState.role !== null) { requestBattlePhase('next'); return; }
             battleEnteredThisRound = { attacker: false, defender: false };
+            hostClearBattleCards();
+            syncSoloBattleCards();
             resetBattleCalcResult('attacker');
             resetBattleCalcResult('defender');
             clearBattleDiceResults('attacker');
@@ -29380,8 +29917,89 @@
             // In a lobby the Host clears both shared halves for everyone.
             if (lobbyState.role !== null) { requestBattlePhase('end'); return; }
             battleInProgress = false;
+            hostClearBattleCards();
+            syncSoloBattleCards();
             recallBattleAttacker();
             recallBattleDefender();
+            renderBattleControls();
+        }
+
+        // ---- One save, one arena -------------------------------------
+        //
+        // The Battle Arena stands for battles within a SINGLE save (solo,
+        // or one lobby), never a mix of two saves on one device. So
+        // whenever this device's active save is about to change, the
+        // arena is cleared first. Called by createSave(), loadSaveSlot(),
+        // deleteSaveSlot(), loadGuestSave(), deleteGuestSave() and
+        // finalizeGuestJoin(), each right BEFORE it switches -- on
+        // purpose: a Battle Card played from a hand goes back to its deck's
+        // discard pile, and that has to land on the save it came from.
+        //
+        // newTeamId is what getActiveTeamId() will return afterwards (a
+        // no-op if it's the same save). saveGone: the old save is being
+        // deleted, so there's no deck left to discard to.
+        //   - Solo: everything goes (both halves, a Wild Pokémon, the
+        //     battle phase, moves, dice, Battle Cards, Field Move Effects).
+        //   - Host: the shared arena goes, for everyone -- it belonged to
+        //     the save being left -- and the lobby is told.
+        //   - Guest: only this player's own Pokémon leave the shared
+        //     arena (the table's arena isn't theirs to wipe); anything
+        //     left over from before they joined goes too.
+        function clearBattleArenaForSaveChange(newTeamId, saveGone = false) {
+            if (newTeamId === getActiveTeamId()) return;
+            const discard = !saveGone;
+            if (lobbyState.role === 'host') {
+                hostBattleArenaState = {
+                    attacker: null, defender: null, inProgress: false,
+                    moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(),
+                    entered: { attacker: false, defender: false },
+                    fields: { attacker: null, defender: null },
+                    cards: hostBattleArenaState.cards,
+                };
+                hostClearBattleCards(undefined, discard);
+                broadcastBattleArenaState();
+                return;
+            }
+            if (lobbyState.role === 'guest') {
+                ['attacker', 'defender'].forEach(slot => {
+                    const index = slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+                    if (index === 'wild') return; // ownerless -- not mine to clear
+                    if (slot === 'attacker') { battleAttackerMemberIndex = null; battleAttackerTeamId = null; }
+                    else { battleDefenderMemberIndex = null; battleDefenderTeamId = null; }
+                    resetBattleCalcResult(slot);
+                    clearBattleDiceResults(slot);
+                    const entry = getArenaSlotEntry(slot);
+                    if (entry && entry.ownerId === getMyLobbyPlayerId()) requestBattleSetSlot(slot, null, false);
+                });
+                // Solo leftovers (from before joining) -- not shown
+                // while connected, but they'd come back on leaving.
+                ['attacker', 'defender'].forEach(slot => {
+                    const c = soloBattleCards[slot];
+                    if (c && c.fromHand && discard) {
+                        const card = CARDS_BY_ID[c.cardId];
+                        discardToHostDeck((card && getEffectiveCardDeck(card)) || getDeckToolList()[0], c.cardId);
+                    }
+                    soloBattleCards[slot] = null;
+                });
+                soloBattleFields = { attacker: null, defender: null };
+                return;
+            }
+            // Solo.
+            battleInProgress = false;
+            battleEnteredThisRound = { attacker: false, defender: false };
+            battleAttackerMemberIndex = null;
+            battleAttackerTeamId = null;
+            battleDefenderMemberIndex = null;
+            battleDefenderTeamId = null;
+            battleWildPokemon = null;
+            ['attacker', 'defender'].forEach(slot => {
+                resetBattleCalcResult(slot);
+                clearBattleDiceResults(slot);
+            });
+            soloBattleFields = { attacker: null, defender: null };
+            hostClearBattleCards(undefined, discard);
+            syncSoloBattleCards();
+            renderBattleFieldZones(soloBattleFields);
             renderBattleControls();
         }
 
@@ -29738,10 +30356,71 @@
         // the slot has no Pokémon, a half-level move's target isn't
         // there, a "manual" move hasn't had its number entered yet, or
         // a Max Move has nothing to derive its power from.
+        // The Attack Strength reduction a Pokémon's status card imposes
+        // ("attackStrengthPenalty", Burned's -1), as { amount, name }, or
+        // null when there isn't one.
+        function getBattleAttackStrengthPenalty(member) {
+            const info = getBattleStatusCard(member);
+            const amount = info ? parseInt(info.card.attackStrengthPenalty, 10) : 0;
+            return amount > 0 ? { amount, name: info.name } : null;
+        }
+
+        // { id, name } when the Pokémon's status card has
+        // "oddRollBackfire": "yes" (Confused), else null.
+        function getBattleOddRollBackfireStatus(member) {
+            const info = getBattleStatusCard(member);
+            if (!info || String(info.card.oddRollBackfire).toLowerCase() !== 'yes') return null;
+            return { id: info.id, name: info.name };
+        }
+
+        // True when the Attack Dice COUNTED for this half (ones tapped
+        // to exclude don't count, same as the total) add up to an odd
+        // number. No roll yet, or every die excluded, is not odd.
+        function isBattleAttackRollOdd(slotName) {
+            const rolls = (battleDiceResults[slotName] && battleDiceResults[slotName].attack) || [];
+            const counted = rolls.filter(r => !r.excluded);
+            return counted.length > 0 && counted.reduce((sum, r) => sum + r.value, 0) % 2 === 1;
+        }
+
+        // A move's Attack Strength (power + STAB) after the status
+        // penalty: { power, stab, total, penalty }, where `penalty` is
+        // { amount (what was actually taken off -- the total stops at
+        // 0), name } or null when nothing was taken. Null when the move
+        // has no usable strength.
+        function getBattleAdjustedAttackStrength(slotName, moveName, baseMoveName) {
+            const attack = computeBattleAttackStrength(slotName, moveName, baseMoveName);
+            if (!attack) return null;
+            const requested = getBattleAttackStrengthPenalty(getBattleSlotMember(slotName));
+            const taken = requested ? Math.min(requested.amount, attack.total) : 0;
+            return {
+                power: attack.power,
+                stab: attack.stab,
+                total: attack.total - taken,
+                penalty: taken > 0 ? { amount: taken, name: requested.name } : null,
+            };
+        }
+
+        // What the OPPOSING half's confusion adds to this half's total:
+        // { amount, status } when the other Pokémon is Confused, has
+        // picked a move, and its counted dice came up odd -- amount is
+        // that Pokémon's own Attack Strength. Built straight from the
+        // other half's own pieces (never its full breakdown), so two
+        // Confused Pokémon can't chase each other in a loop. Everything
+        // it reads is shared state, so every screen agrees.
+        function getBattleBackfireBonusAgainst(slotName) {
+            const other = getBattleOpposingSlotName(slotName);
+            const otherMove = battleCalcMoveName[other];
+            if (!otherMove) return null;
+            const status = getBattleOddRollBackfireStatus(getBattleSlotMember(other));
+            if (!status || !isBattleAttackRollOdd(other)) return null;
+            const strength = getBattleAdjustedAttackStrength(other, otherMove, battleCalcBaseMove[other]);
+            return strength ? { amount: strength.total, status: status.name } : null;
+        }
+
         function computeBattleMoveBreakdown(slotName, moveName, baseMoveName) {
             const member = getBattleSlotMember(slotName);
             if (!member) return null;
-            const attack = computeBattleAttackStrength(slotName, moveName, baseMoveName);
+            const attack = getBattleAdjustedAttackStrength(slotName, moveName, baseMoveName);
             if (!attack) return null;
             const level = getBattleMemberTotalLevel(member);
             const matchup = computeBattleTypeMatchup(slotName, moveName);
@@ -29751,15 +30430,26 @@
             // counts). An excluded die stays on screen but adds nothing.
             const rolls = (battleDiceResults[slotName] && battleDiceResults[slotName].attack) || [];
             const diceTotal = rolls.reduce((sum, r) => sum + (r.excluded ? 0 : r.value), 0);
+            // Confused: an odd roll adds this Pokémon's own Attack Strength to
+            // the opponent (its own total is unchanged) -- `backfireOut`
+            // is that, for the note under this half's number; `backfireIn`
+            // is the opponent's confusion landing on THIS half.
+            const confusion = getBattleOddRollBackfireStatus(member);
+            const backfireOut = (confusion && isBattleAttackRollOdd(slotName) && getBattleSlotMember(getBattleOpposingSlotName(slotName)))
+                ? { amount: attack.total, status: confusion.name } : null;
+            const backfireIn = getBattleBackfireBonusAgainst(slotName);
             return {
                 power: attack.power,
                 stab: attack.stab,
+                penalty: attack.penalty,
+                backfireOut,
+                backfireIn,
                 attackStrength: attack.total,
                 level,
                 matchup,
                 modifiers,
                 dice: rolls.length ? { total: diceTotal, rolled: rolls.length, counted: rolls.filter(r => !r.excluded).length } : null,
-                total: attack.total + level + (matchup ? matchup.bonus : 0) + modifierTotal + diceTotal,
+                total: attack.total + level + (matchup ? matchup.bonus : 0) + modifierTotal + diceTotal + (backfireIn ? backfireIn.amount : 0),
             };
         }
 
@@ -29791,7 +30481,12 @@
         // rather than reading a cached number, so a level bump or a
         // Pokémon swap made after the move was tapped shows up here on
         // the very next render same as everywhere else on this screen.
-        function renderBattleCalcReadout(slotName) {
+        // isMirror: this call is only the refresh of the other half's
+        // readout that every readout draw triggers (Confused makes each
+        // half's number depend on the other's roll) -- it doesn't
+        // trigger one back.
+        function renderBattleCalcReadout(slotName, isMirror) {
+            if (!isMirror) renderBattleCalcReadout(getBattleOpposingSlotName(slotName), true);
             syncBattleMoveSelection(slotName);
             const el = document.getElementById(`game-battle-${slotName}-calc-readout`);
             if (!el) return;
@@ -29805,8 +30500,11 @@
             // it came from, e.g. "Strength 4 (3 + 1 STAB) + Lv 7 + 3
             // Super-Effective". The matchup part only appears when
             // there's a target to compare against.
-            let detail = breakdown.stab
-                ? `Strength ${breakdown.attackStrength} (${breakdown.power} + ${breakdown.stab} STAB)`
+            const strengthParts = [`${breakdown.power}`];
+            if (breakdown.stab) strengthParts.push(`+ ${breakdown.stab} STAB`);
+            if (breakdown.penalty) strengthParts.push(`\u2212 ${breakdown.penalty.amount} ${breakdown.penalty.name}`);
+            let detail = strengthParts.length > 1
+                ? `Strength ${breakdown.attackStrength} (${strengthParts.join(' ')})`
                 : `Strength ${breakdown.attackStrength}`;
             detail += ` + Lv ${breakdown.level}`;
             if (breakdown.matchup) {
@@ -29817,8 +30515,12 @@
                 detail += ` ${m.bonus < 0 ? '\u2212' : '+'} ${Math.abs(m.bonus)} ${m.label}`;
             });
             if (breakdown.dice) detail += ` + ${breakdown.dice.total} Dice`;
+            if (breakdown.backfireIn) detail += ` + ${breakdown.backfireIn.amount} ${breakdown.backfireIn.status}`;
             el.innerHTML = `<span class="game-battle-calc-total">${breakdown.total}</span>`
-                + `<span class="game-battle-calc-detail">${escapeHtml(detail)}</span>`;
+                + `<span class="game-battle-calc-detail">${escapeHtml(detail)}</span>`
+                + (breakdown.backfireOut
+                    ? `<span class="game-battle-calc-note">Odd roll: +${breakdown.backfireOut.amount} to opponent</span>`
+                    : '');
         }
 
         // Manual-power prompt -- for moves whose moves.json
@@ -29956,19 +30658,33 @@
         // (a typeless, 0-power entry in moves.json).
         const BATTLE_STRUGGLE_MOVE_NAME = 'Struggle';
 
-        // The status condition (as { id, name }) currently forcing this
-        // Pokémon to use Struggle, or null. Decided by the card the
-        // Pokémon's status is showing: cards.json marks each status
-        // card that does this with "useStruggle": "yes", and Sleep and
-        // Paralyzed have a card per side, so flipping the card can turn
-        // it on or off (see statusCardIdFor()).
-        function getBattleStruggleStatus(member) {
+        // The card a Pokémon's status condition is currently showing, as
+        // { card, id, name } (null with no status). cards.json carries
+        // each status's battle effects as fields on these cards, so
+        // they're per card side (Sleep and Paralyzed have one card per
+        // side -- see statusCardIdFor()):
+        //   "useStruggle": "yes"        forces Struggle (below)
+        //   "attackStrengthPenalty": n  Attack Strength -n, never below 0
+        //   "oddRollBackfire": "yes"    an odd Attack Die total adds this
+        //                               Pokémon's own Attack Strength to
+        //                               the opponent's total
+        function getBattleStatusCard(member) {
             if (!member || !member.status || member.status === 'none') return null;
             const cardId = statusCardIdFor(member.status, member.statusCardSide === 2 ? 2 : 1);
             const card = cardId ? CARDS_BY_ID[cardId] : null;
-            if (!card || String(card.useStruggle).toLowerCase() !== 'yes') return null;
+            if (!card) return null;
             const condition = STATUS_CONDITIONS.find(st => st.id === member.status);
-            return { id: member.status, name: condition ? condition.name : member.status };
+            return { card, id: member.status, name: condition ? condition.name : member.status };
+        }
+
+        // The status condition (as { id, name }) currently forcing this
+        // Pokémon to use Struggle, or null -- decided by the card the
+        // Pokémon's status is showing ("useStruggle": "yes"), so
+        // flipping a two-sided card can turn it on or off.
+        function getBattleStruggleStatus(member) {
+            const info = getBattleStatusCard(member);
+            if (!info || String(info.card.useStruggle).toLowerCase() !== 'yes') return null;
+            return { id: info.id, name: info.name };
         }
 
         function getBattleMemberMoveButtons(member) {
@@ -30091,6 +30807,24 @@
         }
 
 
+        // A cloned .game-team-slot (see renderBattleAttackerSlotCard() /
+        // renderBattleDefenderSlotCard()) copies the Evolution corner's
+        // stacked icons but not the setInterval driving them -- that
+        // timer keeps flipping classes on the ORIGINAL tile in Team
+        // Tracker's grid -- so a multi-icon badge would sit frozen on
+        // one frame. This starts a timer against the clone's own badge
+        // and stores it in battleReadonlyEvolutionIntervals[slotName],
+        // which the slot-card renders already clear before every
+        // redraw (clearBattleReadonlyEvolutionTimer()), so nothing
+        // leaks. A single-icon badge has no .evolution-cycle-layer
+        // elements at all, and startEvolutionBadgeCycle() returns null
+        // for it, so this is a no-op there.
+        function startClonedEvolutionBadgeCycle(slotName, clonedSlot) {
+            const badge = clonedSlot.querySelector('.game-team-slot-evolution');
+            if (!badge) return;
+            battleReadonlyEvolutionIntervals[slotName] = startEvolutionBadgeCycle(badge);
+        }
+
         // Redraws the Attacker slot against whatever
         // battleAttackerMemberIndex currently points at -- called on
         // opening the screen (see setGameScreen()), right after a new
@@ -30116,12 +30850,11 @@
         // data-index, not on which specific node fired it, and every
         // overlay those corners open is itself a sibling of #game-scroll
         // (positioned against #game-panel as a whole), so it displays
-        // correctly on top of Battle Arena too. The one thing that
-        // doesn't carry over is an in-progress Evolution corner's
-        // multi-icon animation (see startEvolutionBadgeCycle()) -- that
-        // interval keeps updating the original node it was started
-        // against, not this clone, so the clone just shows a static
-        // frame of it instead. Falls back to the empty state if the
+        // correctly on top of Battle Arena too. An Evolution
+        // corner's multi-icon animation (see startEvolutionBadgeCycle())
+        // doesn't come along with cloneNode() -- its interval keeps
+        // updating the original node -- so the clone gets its own timer
+        // from startClonedEvolutionBadgeCycle(). Falls back to the empty state if the
         // index no longer resolves to anything (roster changed since
         // the pick, or nothing picked yet).
         function renderBattleAttackerSlotCard() {
@@ -30191,7 +30924,9 @@
                 return;
             }
             slot.innerHTML = '';
-            slot.appendChild(sourceSlot.cloneNode(true));
+            const clonedSlot = sourceSlot.cloneNode(true);
+            slot.appendChild(clonedSlot);
+            startClonedEvolutionBadgeCycle('attacker', clonedSlot);
             if (recallBtn) recallBtn.style.display = '';
         }
 
@@ -30454,7 +31189,9 @@
             }
             if (catchBtn) catchBtn.style.display = 'none';
             slot.innerHTML = '';
-            slot.appendChild(sourceSlot.cloneNode(true));
+            const clonedSlot = sourceSlot.cloneNode(true);
+            slot.appendChild(clonedSlot);
+            startClonedEvolutionBadgeCycle('defender', clonedSlot);
             if (recallBtn) recallBtn.style.display = '';
         }
 
@@ -33244,6 +33981,9 @@
                 closeDeckLookPrompt();
                 closeDeckLookViewer();
             }
+            // A Battle Card badge tap remembers which half it came from
+            // (see battleCardPlayTarget) only while on Hand & Decks.
+            if (screenId !== 'decks') battleCardPlayTarget = null;
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
                 el.classList.toggle('active', el.id === `game-screen-${screenId}`);
@@ -33264,7 +34004,7 @@
             if (screenId === 'main') renderBattleArenaGate();
             if (screenId === 'lobby') prefillLobbyHostName();
             if (screenId === 'decks') renderDecksScreen();
-            if (screenId !== 'battle') closeBattleOptionsOverlays();
+            if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); }
             if (screenId === 'battle') {
                 renderBattleAttackerSlot();
                 renderBattleDefenderSlot();
@@ -33632,8 +34372,10 @@
             // alone -- solo Battle Arena keeps whatever this device had
             // showing before it ever joined/hosted, same as every other
             // solo tool on this reset.
-            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false } };
+            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null } };
             guestBattleArenaCache = null;
+            syncSoloBattleCards(); // back to this device's own solo Battle Cards
+            renderBattleFieldZones(soloBattleFields); // ...and solo Field Move Effects
             refreshGameUI();
             applyGamePanelPlayerTheme();
         }
@@ -34617,6 +35359,16 @@
                     // all the Host needs to do here is the hand-removal
                     // half.
                     hostApplyRemoveFromHandOnly(conn.peer, data.cardId);
+                } else if (data.type === 'battle-card-play' && typeof data.slot === 'string' && typeof data.cardId === 'string') {
+                    // A Battle Card played facedown -- see
+                    // hostApplyBattleCardPlay().
+                    hostApplyBattleCardPlay(conn.peer, data.slot, data.cardId, !!data.fromHand);
+                } else if (data.type === 'battle-card-remove' && typeof data.slot === 'string') {
+                    hostApplyBattleCardRemove(conn.peer, data.slot);
+                } else if (data.type === 'battle-field-set' && typeof data.slot === 'string') {
+                    // A Field Move Effect placed/removed -- see
+                    // hostApplyBattleFieldEffect().
+                    hostApplyBattleFieldEffect(conn.peer, data.slot, typeof data.cardId === 'string' ? data.cardId : null);
                 } else if (data.type === 'deck-play' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyPlay(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'active-card-discard') {
@@ -35850,6 +36602,7 @@
             }
             persistGameGuestSaves();
 
+            clearBattleArenaForSaveChange('guest:' + hostSaveId);
             activeSaveSlot = null;
             persistActiveSaveSlot();
             activeGuestSaveId = hostSaveId;
@@ -36439,6 +37192,10 @@
 
             if (e.target.closest('#game-battle-begin-btn')) {
                 beginBattle();
+                return;
+            }
+            if (e.target.closest('#game-battle-reveal-cards-btn')) {
+                revealBattleCards();
                 return;
             }
             if (e.target.closest('#game-battle-next-round-btn')) {
@@ -37421,6 +38178,12 @@
             }
             if (e.target.closest('.game-team-cards-card-cancel-btn')) {
                 cancelBattleFieldOverlayAdd();
+                return;
+            }
+            if (e.target.closest('.game-battle-card-replace-btn')) {
+                const slotName = battleFieldOverlaySlot;
+                closeBattleFieldOverlay();
+                if (slotName) beginBattleCardHandPlay(slotName);
                 return;
             }
             if (e.target.closest('.game-team-cards-remove-btn')) {
