@@ -21929,11 +21929,13 @@
             // Which halves' Pokémon entered this round (see
             // battleEnteredThisRound); an empty half has nobody who could have.
             if (!st.entered) st.entered = { attacker: false, defender: false };
+            if (!st.rerolls) st.rerolls = { attacker: 0, defender: 0 };
             ['attacker', 'defender'].forEach(slot => {
                 if (!st[slot]) {
                     st.moves[slot] = null;
-                    st.dice[slot] = { attack: null, effect: null, status: null };
+                    st.dice[slot] = { attack: null, effect: null, status: null, rerolled: false };
                     st.entered[slot] = false;
+                    st.rerolls[slot] = 0;
                 }
             });
             if (!st.attacker && !st.defender) st.inProgress = false;
@@ -21957,6 +21959,7 @@
                 moves: { attacker: st.moves.attacker, defender: st.moves.defender },
                 dice: { attacker: st.dice.attacker, defender: st.dice.defender },
                 entered: { attacker: !!st.entered.attacker, defender: !!st.entered.defender },
+                rerolls: { attacker: st.rerolls.attacker | 0, defender: st.rerolls.defender | 0 },
                 // Field Move Effect cards (see hostApplyBattleFieldEffect()):
                 // public to everyone, so the same object goes to all.
                 fields: getBattleFieldStore(),
@@ -22020,7 +22023,9 @@
             const sameOccupant = !!(member && previous && previous.ownerId === newOwnerId
                 && previous.member && previous.member.name === member.name && previous.member.dex === member.dex);
             if (!sameOccupant && hostBattleArenaState.moves) hostBattleArenaState.moves[slot] = null;
-            if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, status: null };
+            if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, status: null, rerolled: false };
+            if (!hostBattleArenaState.rerolls) hostBattleArenaState.rerolls = { attacker: 0, defender: 0 };
+            if (!member || !sameOccupant) hostBattleArenaState.rerolls[slot] = 0;
             // A different Pokémon arriving while the battle is running
             // entered its half this round (see battleEnteredThisRound);
             // the same one re-sent after an HP/status edit doesn't
@@ -22104,6 +22109,7 @@
             hostBattleArenaState.moves = { attacker: null, defender: null };
             hostBattleArenaState.dice = makeEmptyBattleDice();
             hostBattleArenaState.entered = { attacker: false, defender: false };
+            hostBattleArenaState.rerolls = { attacker: 0, defender: 0 };
             if (peerKey === 'host') {
                 finishLocalWildCatch(entry.member);
             } else {
@@ -22202,6 +22208,7 @@
                         st.moves = { attacker: null, defender: null };
                         st.dice = makeEmptyBattleDice();
                         st.entered = { attacker: false, defender: false };
+                        st.rerolls = { attacker: 0, defender: 0 };
                     }
                 }
             } else if (action === 'next') {
@@ -22219,6 +22226,7 @@
                 st.moves = { attacker: null, defender: null };
                 st.dice = makeEmptyBattleDice();
                 st.entered = { attacker: false, defender: false };
+                st.rerolls = { attacker: 0, defender: 0 };
                 st.attacker = null;
                 st.defender = null;
                 hostClearBattleCards();
@@ -22267,6 +22275,22 @@
                 half.effect = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
             } else if (req && req.action === 'roll-status') {
                 half.status = rollBattleFace(BATTLE_STATUS_DIE_FACES);
+            } else if (req && req.action === 'reroll-attack') {
+                // A card's once-per-battle Attack Roll reroll (see the
+                // card-bonus notes above getBattleBonusCards()): the Host
+                // re-checks the grant from its own copy of the half.
+                if (!st.rerolls) st.rerolls = { attacker: 0, defender: 0 };
+                const entry = st[slot];
+                const grant = getBattleRerollGrant(collectBattleBonusCards(entry && entry.member, getBattleCardsStore()[slot]));
+                const reason = getBattleRerollBlockReason(grant, st.rerolls[slot], half.attack);
+                if (reason) {
+                    sendBattleNotice(peerKey, reason);
+                    broadcastBattleArenaState();
+                    return;
+                }
+                half.attack = generateBattleAttackRolls(countBattleDiceFromRolls(half.attack));
+                half.rerolled = true;
+                st.rerolls[slot] += 1;
             } else if (req && req.action === 'toggle') {
                 const i = Number(req.index);
                 if (half.attack && Number.isInteger(i) && half.attack[i]) half.attack[i].excluded = !half.attack[i].excluded;
@@ -22412,8 +22436,13 @@
                     attack: (rolled && rolled.attack) ? rolled.attack.map(r => ({ die: r.die, value: r.value, excluded: !!r.excluded })) : null,
                     effect: (rolled && rolled.effect !== undefined) ? rolled.effect : null,
                     status: (rolled && rolled.status !== undefined) ? rolled.status : null,
+                    rerolled: !!(rolled && rolled.rerolled),
                 };
             });
+            battleRerollsUsed = {
+                attacker: (payload.rerolls && payload.rerolls.attacker) | 0,
+                defender: (payload.rerolls && payload.rerolls.defender) | 0,
+            };
             renderBattleCardZones(payload.cards);
             // Field Move Effects are shared too. A payload without
             // `fields` (an older Host) leaves this device's alone.
@@ -28586,6 +28615,14 @@
         // entered) and applyIncomingArenaState() copies it in.
         let battleEnteredThisRound = { attacker: false, defender: false };
 
+        // Per half: how many Attack Roll rerolls the Pokémon there has
+        // used this battle (see attackRerollsPerBattle in the card-bonus
+        // notes above getBattleBonusCards()). Resets when the battle
+        // begins or ends or the half's occupant changes. Solo it's kept
+        // right here; in a Lobby the Host owns it (hostBattleArenaState.
+        // rerolls) and applyIncomingArenaState() copies it in.
+        let battleRerollsUsed = { attacker: 0, defender: 0 };
+
         // ---- Battle dice (per half) ----
         // Three counters -- how many of each die a roll uses -- each
         // 0 to 3. Raising one zeroes the other two, so only one kind of
@@ -28713,7 +28750,7 @@
         // whenever the lobby resets (see resetLobbyState()), never
         // persisted -- same "pure in-memory state for the current
         // battle" reasoning battleWildPokemon itself already carries.
-        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null } };
+        let hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null }, rerolls: { attacker: 0, defender: 0 } };
 
         // Which move the Attack Calculator is currently reading for each
         // half -- just the move name, not a cached total, so a level or
@@ -28800,13 +28837,14 @@
             if (lobbyState.role === null) {
                 if (index === null) battleEnteredThisRound.attacker = false;
                 else if (isNewOccupant) battleEnteredThisRound.attacker = battleInProgress;
+                if (index === null || isNewOccupant) battleRerollsUsed.attacker = 0;
             }
             if (index !== null && battleDefenderMemberIndex === index) {
                 battleDefenderMemberIndex = null;
                 battleDefenderTeamId = null;
                 resetBattleCalcResult('defender');
                 clearBattleDiceResults('defender');
-                if (lobbyState.role === null) battleEnteredThisRound.defender = false;
+                if (lobbyState.role === null) { battleEnteredThisRound.defender = false; battleRerollsUsed.defender = 0; }
             }
             syncMyBattleSlot('attacker');
             syncMyBattleSlot('defender');
@@ -28827,6 +28865,7 @@
             if (lobbyState.role === null) {
                 if (index === null) battleEnteredThisRound.defender = false;
                 else if (isNewOccupant) battleEnteredThisRound.defender = battleInProgress;
+                if (index === null || isNewOccupant) battleRerollsUsed.defender = 0;
             }
             // A real pick always replaces whatever was there before,
             // wild or not -- stale battleWildPokemon data left behind
@@ -28841,7 +28880,7 @@
                 battleAttackerTeamId = null;
                 resetBattleCalcResult('attacker');
                 clearBattleDiceResults('attacker');
-                if (lobbyState.role === null) battleEnteredThisRound.attacker = false;
+                if (lobbyState.role === null) { battleEnteredThisRound.attacker = false; battleRerollsUsed.attacker = 0; }
             }
             syncMyBattleSlot('attacker');
             syncMyBattleSlot('defender');
@@ -28868,7 +28907,7 @@
             battleDefenderTeamId = 'wild';
             resetBattleCalcResult('defender');
             clearBattleDiceResults('defender');
-            if (lobbyState.role === null) battleEnteredThisRound.defender = battleInProgress;
+            if (lobbyState.role === null) { battleEnteredThisRound.defender = battleInProgress; battleRerollsUsed.defender = 0; }
             // Once a Lobby session exists this sets the ownerless Wild
             // Pokémon in the ONE shared Defender half. A no-op solo.
             requestBattleSetSlot('defender', member, true);
@@ -29292,6 +29331,8 @@
             renderBattleCalcReadout('attacker');
             renderBattleCalcReadout('defender');
             renderBattleControls(); // the Reveal button depends on facedown cards
+            renderBattleDice('attacker'); // a face-up card can grant a reroll
+            renderBattleDice('defender');
             if (battleFieldOverlaySlot !== null && battleFieldOverlayZone === 'battleCard') renderBattleFieldOverlay();
         }
 
@@ -29709,7 +29750,7 @@
         }
 
         function makeEmptyBattleDice() {
-            return { attacker: { attack: null, effect: null, status: null }, defender: { attack: null, effect: null, status: null } };
+            return { attacker: { attack: null, effect: null, status: null, rerolled: false }, defender: { attack: null, effect: null, status: null, rerolled: false } };
         }
 
         function rollBattleFace(faces) {
@@ -29738,7 +29779,7 @@
         }
 
         function clearBattleDiceResults(slotName) {
-            battleDiceResults[slotName] = { attack: null, effect: null, status: null };
+            battleDiceResults[slotName] = { attack: null, effect: null, status: null, rerolled: false };
         }
 
         // Repaints the dice block and the readout it feeds.
@@ -29772,6 +29813,21 @@
             const counts = sanitizeBattleDiceCounts(battleDiceCounts[slotName]);
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-attack', counts }); return; }
             battleDiceResults[slotName].attack = generateBattleAttackRolls(counts);
+            refreshBattleDice(slotName);
+        }
+
+        // A card's once-per-battle reroll of the Attack Roll (Leftovers):
+        // rolls the same dice again and costs this half's Attack Total
+        // for the round. In a lobby the Host re-checks and rolls.
+        function rerollBattleAttackDice(slotName) {
+            if (!guardBattleDiceAction(slotName)) return;
+            if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'reroll-attack' }); return; }
+            const grant = getBattleRerollGrant(getBattleBonusCards(slotName));
+            const reason = getBattleRerollBlockReason(grant, battleRerollsUsed[slotName], battleDiceResults[slotName].attack);
+            if (reason) { showBattleArenaNotice(reason); return; }
+            battleDiceResults[slotName].attack = generateBattleAttackRolls(countBattleDiceFromRolls(battleDiceResults[slotName].attack));
+            battleDiceResults[slotName].rerolled = true;
+            battleRerollsUsed[slotName] += 1;
             refreshBattleDice(slotName);
         }
 
@@ -29835,11 +29891,22 @@
             if (results.status !== null && results.status !== undefined) {
                 resultLines += `<div class="game-battle-dice-result-line"><span class="game-battle-dice-result"><small>Status d4</small>${results.status}</span></div>`;
             }
+            // A card on this half (Leftovers) can grant a once-per-battle
+            // reroll of the Attack Roll.
+            const rerollGrant = getBattleRerollGrant(getBattleBonusCards(slotName));
+            let rerollBtn = '';
+            if (rerollGrant) {
+                const left = Math.max(0, rerollGrant.allowed - (battleRerollsUsed[slotName] | 0));
+                const hasRoll = !!(results.attack && results.attack.length);
+                const cost = rerollGrant.penalty ? ` \u2212${rerollGrant.penalty}` : '';
+                rerollBtn = `<button class="filter-btn game-battle-reroll-attack-btn" data-battle-slot="${slotName}"${(left <= 0 || !hasRoll) ? ' disabled' : ''}>Reroll (${escapeHtml(rerollGrant.label)}${cost} \u00b7 ${left} left)</button>`;
+            }
             container.innerHTML = `
                 <div class="game-battle-dice-counters">${counters}</div>
                 <div class="game-battle-dice-roll-row">
                     <button class="filter-btn game-battle-roll-attack-btn" data-battle-slot="${slotName}">Roll Attack Dice</button>
                     <button class="filter-btn exclude game-battle-roll-effect-btn" data-battle-slot="${slotName}">Roll Effect Die</button>
+                    ${rerollBtn}
                 </div>
                 <div class="game-battle-dice-results">${resultLines}</div>`;
             renderTeamStatusRoll(); // the Status Condition overlay shows the same Status roll
@@ -29878,6 +29945,7 @@
             if (lobbyState.role !== null) { requestBattlePhase('begin'); return; } // shared: comes back via applyIncomingArenaState()
             battleInProgress = true;
             battleEnteredThisRound = { attacker: false, defender: false };
+            battleRerollsUsed = { attacker: 0, defender: 0 };
             clearBattleDiceResults('attacker');
             clearBattleDiceResults('defender');
             renderBattleMoves('attacker');
@@ -29954,6 +30022,7 @@
                     moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(),
                     entered: { attacker: false, defender: false },
                     fields: { attacker: null, defender: null },
+                    rerolls: { attacker: 0, defender: 0 },
                     cards: hostBattleArenaState.cards,
                 };
                 hostClearBattleCards(undefined, discard);
@@ -29987,6 +30056,7 @@
             // Solo.
             battleInProgress = false;
             battleEnteredThisRound = { attacker: false, defender: false };
+            battleRerollsUsed = { attacker: 0, defender: 0 };
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
             battleDefenderMemberIndex = null;
@@ -30135,6 +30205,11 @@
         // falls back to `tags`, which mix in name words.
         function getBattleMemberTypes(member) {
             if (!member) return [];
+            // A Tera Type card on the Pok\u00e9mon replaces its types outright
+            // (STAB, what it's weak to, and field-effect type conditions
+            // all follow) -- see the card-bonus notes below.
+            const teraType = getBattleMemberTeraType(member);
+            if (teraType) return [teraType];
             const entry = POKEMON_BY_NAME[member.formOverride || member.name] || POKEMON_BY_NAME[member.name];
             const types = entry && Array.isArray(entry.types) ? entry.types : [];
             return types.map(t => String(t).toLowerCase().trim()).filter(t => BATTLE_MOVE_TYPE_NAMES.includes(t));
@@ -30214,6 +30289,136 @@
             return null;
         }
 
+        // ---- Card bonuses (Attach/Nature cards on the Pok\u00e9mon, and a
+        // face-up Battle Card in its half's zone) ----------------------
+        //
+        // Optional tags on a cards.json entry; a card without them does
+        // nothing here. All numbers are whole numbers (negative allowed).
+        //
+        //   attackStrengthBonus: n   added to the move's Attack Strength
+        //                            (power + STAB), BEFORE a status
+        //                            penalty comes off -- so it also
+        //                            raises what a Confused backfire sends.
+        //   attackTotalBonus: n      added to the final Attack Total only.
+        //
+        // Optional conditions, applying to both bonuses on that card:
+        //   bonusMoveTypes: ["fire"]   only for moves of those types
+        //   bonusMinMoveStrength: 1    only if the move's own Attack
+        //                              Strength (power, before STAB and
+        //                              bonuses) is at least this -- a
+        //                              Type Enhancer uses 1 to skip
+        //                              0-strength moves
+        //
+        // Tera Type cards:
+        //   teraType: "fire"   the Pok\u00e9mon's types become just this
+        //                      (getBattleMemberTypes()). Unless the card
+        //                      sets bonusMoveTypes, its bonuses default
+        //                      to moves of this type. Tera Stellar has
+        //                      no teraType, so it does nothing here.
+        //
+        // Leftovers-style reroll:
+        //   attackRerollsPerBattle: 1     rerolls of the Attack Roll per
+        //                                 battle, for the Pok\u00e9mon
+        //   attackRerollTotalPenalty: 1   Attack Total cost, for the round
+        //                                 the reroll is used in
+        //
+        // Battle Cards count only once face up (a facedown card's
+        // identity is hidden), for the half whose zone holds them.
+
+        // The cards that count for a Pok\u00e9mon: its Attach and Nature
+        // cards, plus a revealed Battle Card (zoneState is
+        // { cardId, faceUp } or null). Pure, so the Host can use it too.
+        function collectBattleBonusCards(member, zoneState) {
+            const cards = [];
+            if (member) {
+                [member.attachCardId, member.natureCardId].forEach(id => {
+                    const c = id ? CARDS_BY_ID[id] : null;
+                    if (c) cards.push(c);
+                });
+            }
+            if (zoneState && zoneState.faceUp && zoneState.cardId) {
+                const c = CARDS_BY_ID[zoneState.cardId];
+                if (c) cards.push(c);
+            }
+            return cards;
+        }
+
+        function getBattleBonusCards(slotName) {
+            return collectBattleBonusCards(getBattleSlotMember(slotName), battleZones[slotName] && battleZones[slotName].battleCard);
+        }
+
+        // A Tera Type card's type for this Pok\u00e9mon, or null.
+        function getBattleMemberTeraType(member) {
+            if (!member) return null;
+            for (const id of [member.attachCardId, member.natureCardId]) {
+                const c = id ? CARDS_BY_ID[id] : null;
+                const t = c && c.teraType ? String(c.teraType).toLowerCase().trim() : '';
+                if (t && BATTLE_MOVE_TYPE_NAMES.includes(t)) return t;
+            }
+            return null;
+        }
+
+        function normalizeBattleTypeList(value) {
+            const list = Array.isArray(value) ? value : (typeof value === 'string' && value ? [value] : null);
+            return list ? list.map(t => String(t).toLowerCase().trim()) : null;
+        }
+
+        // Do this card's conditions allow its bonus for a move of
+        // moveType whose own Attack Strength is power?
+        function battleCardBonusApplies(card, moveType, power) {
+            const types = normalizeBattleTypeList(card.bonusMoveTypes) || (card.teraType ? normalizeBattleTypeList(card.teraType) : null);
+            if (types && (!moveType || !types.includes(moveType))) return false;
+            const min = parseInt(card.bonusMinMoveStrength, 10);
+            if (Number.isFinite(min) && !(power >= min)) return false;
+            return true;
+        }
+
+        // [{ label: card name, bonus }] for one tag (attackStrengthBonus
+        // or attackTotalBonus), for the move being used.
+        function getBattleCardBonuses(slotName, tag, moveType, power) {
+            const out = [];
+            getBattleBonusCards(slotName).forEach(card => {
+                const n = parseInt(card[tag], 10);
+                if (!Number.isFinite(n) || n === 0) return;
+                if (!battleCardBonusApplies(card, moveType, power)) return;
+                out.push({ label: card.name || 'Card', bonus: n });
+            });
+            return out;
+        }
+
+        // { allowed, penalty, label } when a card grants Attack Roll
+        // rerolls, else null.
+        function getBattleRerollGrant(cards) {
+            let allowed = 0, penalty = 0, label = '';
+            cards.forEach(c => {
+                const n = parseInt(c.attackRerollsPerBattle, 10);
+                if (!Number.isFinite(n) || n <= 0) return;
+                allowed += n;
+                const p = parseInt(c.attackRerollTotalPenalty, 10);
+                if (Number.isFinite(p) && p > 0) penalty += p;
+                if (!label) label = c.name || 'Card';
+            });
+            return allowed > 0 ? { allowed, penalty, label } : null;
+        }
+
+        // '' when a reroll may go ahead, else why not.
+        function getBattleRerollBlockReason(grant, used, rolls) {
+            if (!grant) return 'No card lets this Pok\u00e9mon reroll.';
+            if (!rolls || !rolls.length) return 'Roll the Attack Dice first.';
+            if ((used | 0) >= grant.allowed) return `${grant.label} has already been used this battle.`;
+            return '';
+        }
+
+        // How many of each die a set of rolls used ({ d4, d6, d8 }).
+        function countBattleDiceFromRolls(rolls) {
+            const counts = { d4: 0, d6: 0, d8: 0 };
+            (rolls || []).forEach(r => {
+                const d = BATTLE_DICE.find(x => x.label === r.die);
+                if (d) counts[d.key] += 1;
+            });
+            return sanitizeBattleDiceCounts(counts);
+        }
+
         // A move's Attack Strength: its static power plus STAB, kept
         // together as one unit (rather than folded straight into the
         // total) because card/game effects can alter specifically this
@@ -30234,7 +30439,10 @@
             const moveType = getBattleMoveType(eff.name);
             const stab = (moveType && moveCanGetStab(eff.name) && getBattleMemberTypes(member).includes(moveType))
                 ? BATTLE_STAB_BONUS : 0;
-            return { power, stab, total: power + stab };
+            // Card bonuses to the Attack Strength (see the notes above).
+            const bonuses = getBattleCardBonuses(slotName, 'attackStrengthBonus', getBattleMoveType(moveName), power);
+            const bonusSum = bonuses.reduce((sum, b) => sum + b.bonus, 0);
+            return { power, stab, bonuses, total: Math.max(0, power + stab + bonusSum) };
         }
 
         // Extra modifiers to the calculation from the Field Move Effect
@@ -30395,6 +30603,7 @@
             return {
                 power: attack.power,
                 stab: attack.stab,
+                bonuses: attack.bonuses,
                 total: attack.total - taken,
                 penalty: taken > 0 ? { amount: taken, name: requested.name } : null,
             };
@@ -30424,7 +30633,13 @@
             if (!attack) return null;
             const level = getBattleMemberTotalLevel(member);
             const matchup = computeBattleTypeMatchup(slotName, moveName);
-            const modifiers = getBattleZoneModifiers(slotName, moveName);
+            const modifiers = getBattleZoneModifiers(slotName, moveName).concat(
+                getBattleCardBonuses(slotName, 'attackTotalBonus', getBattleMoveType(moveName), attack.power));
+            // A reroll used this round (Leftovers) costs the Attack Total.
+            if (battleDiceResults[slotName] && battleDiceResults[slotName].rerolled) {
+                const grant = getBattleRerollGrant(getBattleBonusCards(slotName));
+                if (grant && grant.penalty > 0) modifiers.push({ label: `${grant.label} reroll`, bonus: -grant.penalty });
+            }
             const modifierTotal = modifiers.reduce((sum, m) => sum + m.bonus, 0);
             // Attack Dice rolled for this half (the Effect die never
             // counts). An excluded die stays on screen but adds nothing.
@@ -30442,6 +30657,7 @@
                 power: attack.power,
                 stab: attack.stab,
                 penalty: attack.penalty,
+                strengthBonuses: attack.bonuses || [],
                 backfireOut,
                 backfireIn,
                 attackStrength: attack.total,
@@ -30502,6 +30718,7 @@
             // there's a target to compare against.
             const strengthParts = [`${breakdown.power}`];
             if (breakdown.stab) strengthParts.push(`+ ${breakdown.stab} STAB`);
+            (breakdown.strengthBonuses || []).forEach(b => strengthParts.push(`${b.bonus < 0 ? '\u2212' : '+'} ${Math.abs(b.bonus)} ${b.label}`));
             if (breakdown.penalty) strengthParts.push(`\u2212 ${breakdown.penalty.amount} ${breakdown.penalty.name}`);
             let detail = strengthParts.length > 1
                 ? `Strength ${breakdown.attackStrength} (${strengthParts.join(' ')})`
@@ -31071,6 +31288,7 @@
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
             battleEnteredThisRound.attacker = false;
+            battleRerollsUsed.attacker = 0;
             resetBattleCalcResult('attacker');
             clearBattleDiceResults('attacker');
             renderBattleAttackerSlot();
@@ -31386,6 +31604,7 @@
             battleDefenderTeamId = null;
             battleWildPokemon = null;
             battleEnteredThisRound.defender = false;
+            battleRerollsUsed.defender = 0;
             resetBattleCalcResult('defender');
             clearBattleDiceResults('defender');
             renderBattleDefenderSlot();
@@ -34372,7 +34591,7 @@
             // alone -- solo Battle Arena keeps whatever this device had
             // showing before it ever joined/hosted, same as every other
             // solo tool on this reset.
-            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null } };
+            hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null }, rerolls: { attacker: 0, defender: 0 } };
             guestBattleArenaCache = null;
             syncSoloBattleCards(); // back to this device's own solo Battle Cards
             renderBattleFieldZones(soloBattleFields); // ...and solo Field Move Effects
@@ -37177,6 +37396,11 @@
             const battleDieResultBtn = e.target.closest('.game-battle-dice-result-btn');
             if (battleDieResultBtn) {
                 toggleBattleDieExcluded(battleDieResultBtn.dataset.battleSlot, parseInt(battleDieResultBtn.dataset.index, 10));
+                return;
+            }
+            const battleRerollAttackBtn = e.target.closest('.game-battle-reroll-attack-btn');
+            if (battleRerollAttackBtn) {
+                rerollBattleAttackDice(battleRerollAttackBtn.dataset.battleSlot);
                 return;
             }
             const battleRollAttackBtn = e.target.closest('.game-battle-roll-attack-btn');
