@@ -15114,6 +15114,20 @@
                     <div class="game-save-slot-actions" id="game-permanent-card-add-to-team-row" style="display: none;">
                         <button class="filter-btn game-permanent-card-add-to-team-btn" type="button">Add to Team</button>
                     </div>
+                    <!-- Only shown for cards.json cards carrying
+                         canAttachFromPermanent: "yes" (see
+                         cardCanAttachFromPermanent()) -- hands off to
+                         the Team Tracker's tap-a-Pokémon attach mode
+                         (see requestAttachFromPermanent()). -->
+                    <div class="game-save-slot-actions" id="game-permanent-card-attach-row" style="display: none;">
+                        <button class="filter-btn game-permanent-card-attach-btn" type="button">Attach</button>
+                    </div>
+                    <!-- Wild fork of the row above -- only shown for
+                         canAttachWildFromPermanent: "yes" (see
+                         cardCanAttachWildFromPermanent()). -->
+                    <div class="game-save-slot-actions" id="game-permanent-card-attach-wild-row" style="display: none;">
+                        <button class="filter-btn game-permanent-card-attach-wild-btn" type="button">Attach to Wild Pok&eacute;mon</button>
+                    </div>
                     <div class="game-save-slot-actions">
                         <button class="filter-btn exclude game-permanent-card-discard-btn" type="button">Discard</button>
                     </div>
@@ -15584,7 +15598,7 @@
          a picture. -->
     <div id="gallery-battle-wild-confirm-overlay">
         <div class="game-confirm-card">
-            <p class="game-confirm-title">Send This Wild Pok&eacute;mon to the Battle Arena?</p>
+            <p class="game-confirm-title" id="gallery-battle-wild-confirm-title">Send This Wild Pok&eacute;mon to the Battle Arena?</p>
             <div class="game-team-slot gallery-battle-wild-confirm-frame">
                 <img class="game-team-slot-img" id="gallery-battle-wild-confirm-img" alt="">
             </div>
@@ -15595,6 +15609,12 @@
                 <input type="checkbox" id="gallery-battle-wild-confirm-shiny-checkbox">
                 Shiny
             </label>
+            <!-- Only used when the pick came from a Permanent card's
+                 Attach to Wild Pok&eacute;mon (see
+                 openGalleryBattleWildConfirm()) -- says why a token
+                 can't be sent when the card forces Shiny and this one
+                 has no shiny art. -->
+            <p class="game-confirm-subtext" id="gallery-battle-wild-confirm-note" style="display: none;"></p>
             <div class="gallery-battle-wild-confirm-actions">
                 <button class="filter-btn gallery-battle-wild-confirm-add-btn">Send This Wild Pok&eacute;mon to the Battle Arena.</button>
                 <button class="filter-btn gallery-battle-wild-confirm-keep-btn">Keep Searching for a Wild Pok&eacute;mon.</button>
@@ -15610,7 +15630,7 @@
          unrelated, never active at the same time" reasoning as that
          one's own comment. -->
     <div id="battle-wild-pick-mode-banner">
-        <span>Tap a Pok&eacute;mon to send it to the Battle Arena as a Wild Pok&eacute;mon.</span>
+        <span id="battle-wild-pick-mode-banner-text">Tap a Pok&eacute;mon to send it to the Battle Arena as a Wild Pok&eacute;mon.</span>
         <button type="button" id="battle-wild-pick-mode-banner-cancel-btn">Cancel</button>
     </div>
 
@@ -21049,6 +21069,42 @@
             return !!card && typeof card.itemCounters === 'number';
         }
 
+        // ---- Attach-from-Permanent ----
+        // cards.json's canAttachFromPermanent: "yes" marks a card that,
+        // once it's sitting in the Permanent Cards panel, can be moved
+        // onto a Pokémon's Attach Card slot from there (see the Attach
+        // button in #game-permanent-card-viewer-overlay and
+        // requestAttachFromPermanent()). Deliberately independent of
+        // canAttach (which only governs attaching straight from a hand
+        // or the Active Card zone, and the Team Tracker's manual
+        // picker) and of canPermanent (which governs getting INTO
+        // Permanent in the first place) -- same "yes"/"no" string
+        // convention as both.
+        function cardCanAttachFromPermanent(card) {
+            return !!card && card.canAttachFromPermanent === 'yes';
+        }
+
+        // The Wild fork of the same idea: canAttachWildFromPermanent:
+        // "yes" marks a card that, from the Permanent Cards panel, gets
+        // attached to a WILD Pok\u00e9mon instead of a team member -- the
+        // player picks a Pok\u00e9mon off the gallery and it goes straight
+        // into the Battle Arena's Defender slot as a Wild Pok\u00e9mon
+        // carrying this card (see requestAttachWildFromPermanent()).
+        // Independent of canAttachFromPermanent above: a card can carry
+        // either, both (two buttons), or neither.
+        function cardCanAttachWildFromPermanent(card) {
+            return !!card && card.canAttachWildFromPermanent === 'yes';
+        }
+
+        // forceShiny: "yes" -- the Wild Pok\u00e9mon this card is attached to
+        // is always Shiny (see openGalleryBattleWildConfirm()/
+        // confirmBattleWildSelection()). Only read by the Wild fork
+        // above; a token with no shiny art can't be chosen for such a
+        // card at all, rather than quietly arriving non-shiny.
+        function cardForcesShiny(card) {
+            return !!card && card.forceShiny === 'yes';
+        }
+
         function normalizePermanentEntry(entry) {
             if (typeof entry === 'string') {
                 return { instanceId: generatePermanentInstanceId(), cardId: entry, counter: getDefaultPermanentCounter(CARDS_BY_ID[entry]), noteColor: null, pokemonPick: null };
@@ -21582,6 +21638,42 @@
             }
             discardToHostDeck((card && getEffectiveCardDeck(card)) || getDeckToolList()[0], removed.cardId);
             broadcastDeckState();
+            renderDecksScreen();
+        }
+
+        // Attach-from-Permanent's own final step (see
+        // requestAttachFromPermanent()) -- the equip itself already
+        // happened locally on the acting player's own device via
+        // commitTeamMemberCard() (team data needs no Host round-trip,
+        // see that function's own comment), so all that's left is
+        // pulling the one entry out of that player's Permanent array.
+        // Same shape as hostApplyPermanentDiscard() just above, minus
+        // the discardToHostDeck() -- the card isn't discarded, it's
+        // now equipped, so it must not show up in (or be reclaimable
+        // from) any discard pile. Re-checks canAttachFromPermanent
+        // itself rather than trusting the request, same as every other
+        // hostApply* function re-checks its own preconditions.
+        function hostApplyPermanentAttach(peerKey, instanceId) {
+            const arr = peerKey === 'host' ? getLocalPermanentArray() : getPeerPermanentArray(peerKey);
+            if (!arr) return;
+            const idx = arr.findIndex(entry => entry.instanceId === instanceId);
+            if (idx === -1) return;
+            // Either fork's field counts -- the removal itself is
+            // identical (only what the card is attached TO differs).
+            const attachingCard = CARDS_BY_ID[arr[idx].cardId];
+            if (!cardCanAttachFromPermanent(attachingCard) && !cardCanAttachWildFromPermanent(attachingCard)) return;
+            arr.splice(idx, 1);
+            if (peerKey === 'host') {
+                persistLocalPermanent();
+                if (permanentCardViewerInstanceId === instanceId) closePermanentCardViewer();
+            } else {
+                persistGameSaves();
+                const entry = lobbyState.connections.get(peerKey);
+                // Reuses 'permanent-removed' -- from the owning guest's
+                // point of view a card leaving its Permanent panel is
+                // the same event whether it was discarded or attached.
+                if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-removed', instanceId });
+            }
             renderDecksScreen();
         }
 
@@ -23147,6 +23239,14 @@
         // requestAttachFromActiveCard() below).
         let handAttachPendingSource = 'hand';
 
+        // Only meaningful while handAttachPendingSource is 'permanent'
+        // (see requestAttachFromPermanent()) -- which Permanent Cards
+        // entry (by instanceId, not cardId, since the same card can be
+        // there more than once) is the one being attached, so
+        // commitAttachFromHandToMember() knows exactly which copy to
+        // remove from Permanent once a Pokémon is actually chosen.
+        let handAttachPendingPermanentInstanceId = null;
+
         // Which member index the Attach-from-hand replace confirmation
         // (#game-team-attach-confirm-overlay) is currently open for --
         // only meaningful while that overlay is visible, same shape as
@@ -23239,6 +23339,93 @@
             beginAttachFlow(cardId, 'active-card');
         }
 
+        // The Permanent Cards viewer's own Attach button -- only ever
+        // reachable for a card with canAttachFromPermanent: "yes" (see
+        // cardCanAttachFromPermanent()). Same "stash it, switch to Team
+        // Tracker, tap a Pokémon" machinery as beginAttachFlow() --
+        // handAttachPendingCardId/-Source are shared so every existing
+        // "block this control while an attach is pending" guard keeps
+        // working unchanged -- plus handAttachPendingPermanentInstanceId
+        // so the exact Permanent entry can be removed once it's
+        // actually equipped. Nothing leaves Permanent until a Pokémon
+        // is tapped (and any replace confirmation accepted); Cancel
+        // just leaves the card where it is.
+        function requestAttachFromPermanent(instanceId) {
+            if (isActiveSaveReadOnly()) return;
+            if (teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
+            if (!entry) return;
+            const card = CARDS_BY_ID[entry.cardId];
+            if (!cardCanAttachFromPermanent(card)) return;
+            closePermanentCardViewer();
+            if (!((getActiveSaveData().team.members || []).length)) {
+                showDecksNotice('You don\u2019t have any team members yet \u2014 add one in Team Tracker first.');
+                return;
+            }
+            handAttachPendingCardId = entry.cardId;
+            handAttachPendingSource = 'permanent';
+            handAttachPendingPermanentInstanceId = instanceId;
+            openGamePanel();
+            setGameScreen('team');
+            renderTeamGrid();
+        }
+
+        // Whether a pending Attach-from-Permanent can still actually be
+        // carried out right now -- the entry's still in this device's
+        // Permanent array and still opted in, and (as a guest) the Host
+        // connection that has to confirm the removal is up. Checked
+        // BEFORE anything gets equipped, since equipping is purely
+        // local and there's no undoing it if the Permanent half then
+        // fails -- the card would end up in both places.
+        function canResolvePermanentAttach(instanceId, wild) {
+            if (!instanceId) return false;
+            const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
+            const card = entry ? CARDS_BY_ID[entry.cardId] : null;
+            if (!entry || !(wild ? cardCanAttachWildFromPermanent(card) : cardCanAttachFromPermanent(card))) return false;
+            if (lobbyState.role === 'guest') return !!(lobbyState.hostConn && lobbyState.hostConn.open);
+            return true;
+        }
+
+        // Same role-based routing as requestPermanentDiscard() -- this
+        // device's own Permanent card, so peerKey is always 'host' from
+        // its own point of view; hostApplyPermanentAttach() sorts out
+        // whether that means the real Host or a connected guest.
+        function requestPermanentAttachResolve(instanceId) {
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'permanent-attach', instanceId });
+                }
+            } else {
+                hostApplyPermanentAttach('host', instanceId);
+            }
+        }
+
+        // The Permanent Cards viewer's own Attach to Wild Pok\u00e9mon
+        // button -- only reachable for a card with
+        // canAttachWildFromPermanent: "yes". Hands off to the Battle
+        // Arena's existing Choose Wild Pok\u00e9mon gallery pick (see
+        // beginBattleWildPickMode()), carrying which Permanent entry
+        // it's for; the pick ends in confirmBattleWildSelection(),
+        // which puts the chosen Pok\u00e9mon in the Defender slot as a Wild
+        // Pok\u00e9mon already holding this card and only THEN removes the
+        // card from Permanent (so backing out at any point -- the
+        // banner's Cancel, \"Don't Send\", declining the Defender replace
+        // confirmation -- leaves it exactly where it was).
+        function requestAttachWildFromPermanent(instanceId) {
+            if (isActiveSaveReadOnly()) return;
+            const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
+            if (!entry) return;
+            const card = CARDS_BY_ID[entry.cardId];
+            if (!cardCanAttachWildFromPermanent(card)) return;
+            closePermanentCardViewer();
+            if (!canUseBattleArena()) {
+                showBattleArenaGateToast();
+                return;
+            }
+            closeGamePanel();
+            beginBattleWildPickMode({ instanceId, cardId: entry.cardId });
+        }
+
         // Overlay's own counterpart to beginAttachFlow() above -- can't
         // just reuse that function with a different source string, since
         // it hard-checks card.canAttach === 'yes' and every
@@ -23282,6 +23469,7 @@
         function exitAttachFromHandMode() {
             handAttachPendingCardId = null;
             handAttachPendingSource = 'hand';
+            handAttachPendingPermanentInstanceId = null;
             closeAttachFromHandConfirmOverlay();
             renderTeamGrid();
         }
@@ -23308,6 +23496,15 @@
             if (!member) return;
             const slot = getAttachSlotForCard(handAttachPendingCardId);
             const currentCardId = slot === 'nature' ? member.natureCardId : member.attachCardId;
+            // A Permanent card moved onto a Pokémon already carrying
+            // this exact same card would just vanish for nothing (the
+            // equip is a no-op) -- so, unlike a hand attach, say so and
+            // stay in attach mode for another tap instead.
+            if (handAttachPendingSource === 'permanent' && currentCardId === handAttachPendingCardId) {
+                const pendingCard = CARDS_BY_ID[handAttachPendingCardId];
+                showGameToast(`${member.name || 'This Pok\u00e9mon'} already has ${pendingCard ? pendingCard.name : 'this card'} attached.`);
+                return;
+            }
             if (currentCardId && currentCardId !== handAttachPendingCardId) {
                 pendingAttachReplaceIndex = memberIndex;
                 const titleEl = document.getElementById('game-team-attach-confirm-title');
@@ -23365,7 +23562,16 @@
         function commitAttachFromHandToMember(memberIndex) {
             const cardId = handAttachPendingCardId;
             const source = handAttachPendingSource;
+            const permanentInstanceId = handAttachPendingPermanentInstanceId;
             if (!cardId) return;
+            // Bail out BEFORE equipping if the Permanent half can't be
+            // carried out -- see canResolvePermanentAttach()'s own
+            // comment.
+            if (source === 'permanent' && !canResolvePermanentAttach(permanentInstanceId)) {
+                showGameToast('That card can\u2019t be attached from Permanent right now.');
+                exitAttachFromHandMode();
+                return;
+            }
             const slot = getAttachSlotForCard(cardId);
             const member = (getActiveSaveData().team.members || [])[memberIndex];
             const previousCardId = member ? (slot === 'nature' ? member.natureCardId : member.attachCardId) : null;
@@ -23373,7 +23579,11 @@
             if (previousCardId && previousCardId !== cardId && isVirtualDecksEnabledForActiveSave()) {
                 discardUnattachedCard(previousCardId);
             }
-            if (source === 'active-card') {
+            if (source === 'permanent') {
+                // Not a hand card and not the Active Card zone -- the
+                // card is leaving Permanent, without being discarded.
+                requestPermanentAttachResolve(permanentInstanceId);
+            } else if (source === 'active-card') {
                 if (lobbyState.role === 'guest') {
                     if (lobbyState.hostConn && lobbyState.hostConn.open) {
                         lobbyState.hostConn.send({ type: 'active-card-attach' });
@@ -24359,6 +24569,18 @@
             if (discardBtn) discardBtn.disabled = readOnly;
             const addToTeamBtn = overlay.querySelector('.game-permanent-card-add-to-team-btn');
             if (addToTeamBtn) addToTeamBtn.disabled = readOnly;
+            // Attach row -- keyed off the card's own
+            // canAttachFromPermanent field (see
+            // cardCanAttachFromPermanent()), same "opt in per card via
+            // cards.json" convention as the counter row above.
+            const attachRowEl = document.getElementById('game-permanent-card-attach-row');
+            if (attachRowEl) attachRowEl.style.display = cardCanAttachFromPermanent(card) ? '' : 'none';
+            const attachBtn = overlay.querySelector('.game-permanent-card-attach-btn');
+            if (attachBtn) attachBtn.disabled = readOnly;
+            const attachWildRowEl = document.getElementById('game-permanent-card-attach-wild-row');
+            if (attachWildRowEl) attachWildRowEl.style.display = cardCanAttachWildFromPermanent(card) ? '' : 'none';
+            const attachWildBtn = overlay.querySelector('.game-permanent-card-attach-wild-btn');
+            if (attachWildBtn) attachWildBtn.disabled = readOnly;
             const counterEl = document.getElementById('game-permanent-card-viewer-counter');
             if (counterEl) counterEl.classList.toggle('game-permanent-card-viewer-counter--disabled', readOnly);
         }
@@ -28278,10 +28500,27 @@
         // no "first member becomes the starter" rule to enforce here.
         let battleWildPickModeActive = false;
 
-        function beginBattleWildPickMode() {
+        // Non-null only while this pick mode was entered from a
+        // Permanent card's Attach to Wild Pok\u00e9mon button (see
+        // requestAttachWildFromPermanent()): { instanceId, cardId } --
+        // which Permanent entry the chosen Wild Pok\u00e9mon is going to
+        // carry. The plain Choose Wild Pok\u00e9mon button leaves this null.
+        let battleWildPickAttach = null;
+        const BATTLE_WILD_BANNER_DEFAULT_TEXT = 'Tap a Pok\u00e9mon to send it to the Battle Arena as a Wild Pok\u00e9mon.';
+        const BATTLE_WILD_CONFIRM_DEFAULT_TITLE = 'Send This Wild Pok\u00e9mon to the Battle Arena?';
+
+        function beginBattleWildPickMode(attachContext) {
             // Replacing whatever's already in Defender (another player's
             // Pokémon, or an existing Wild one) is confirmed once the
             // pick is actually made -- see confirmBattleWildSelection().
+            battleWildPickAttach = attachContext || null;
+            const attachCardForBanner = battleWildPickAttach ? CARDS_BY_ID[battleWildPickAttach.cardId] : null;
+            const bannerText = document.getElementById('battle-wild-pick-mode-banner-text');
+            if (bannerText) {
+                bannerText.textContent = attachCardForBanner
+                    ? `Tap a Pok\u00e9mon to send it to the Battle Arena as a Wild Pok\u00e9mon with ${attachCardForBanner.name} attached.`
+                    : BATTLE_WILD_BANNER_DEFAULT_TEXT;
+            }
             battleWildPickModeActive = true;
             document.body.classList.add('battle-wild-pick-mode');
             filterGallery();
@@ -28300,6 +28539,7 @@
             if (!battleWildPickModeActive) return;
             battleWildPickModeActive = false;
             battleWildCandidateImg = null;
+            battleWildPickAttach = null;
             document.body.classList.remove('battle-wild-pick-mode');
             const overlay = document.getElementById('gallery-battle-wild-confirm-overlay');
             if (overlay) overlay.classList.remove('visible');
@@ -28321,10 +28561,34 @@
                 frameImg.alt = img.alt || '';
             }
             const shinyCheckbox = document.getElementById('gallery-battle-wild-confirm-shiny-checkbox');
-            if (shinyCheckbox) {
-                shinyCheckbox.checked = false;
-                shinyCheckbox.disabled = !hasShinyForm(img.dataset.shinysrc);
+            const titleEl = document.getElementById('gallery-battle-wild-confirm-title');
+            const noteEl = document.getElementById('gallery-battle-wild-confirm-note');
+            const sendBtn = document.querySelector('#gallery-battle-wild-confirm-overlay .gallery-battle-wild-confirm-add-btn');
+            const attachCard = battleWildPickAttach ? CARDS_BY_ID[battleWildPickAttach.cardId] : null;
+            const hasShiny = hasShinyForm(img.dataset.shinysrc);
+            const forceShiny = cardForcesShiny(attachCard);
+            if (titleEl) {
+                titleEl.textContent = attachCard
+                    ? `Send This Wild Pok\u00e9mon to the Battle Arena with ${attachCard.name} attached?`
+                    : BATTLE_WILD_CONFIRM_DEFAULT_TITLE;
             }
+            if (shinyCheckbox) {
+                // A forced-Shiny card pre-checks the box and locks it
+                // (the player has no say in it); otherwise it's the
+                // usual optional checkbox, only available when this
+                // token actually has shiny art.
+                shinyCheckbox.checked = forceShiny && hasShiny;
+                shinyCheckbox.disabled = forceShiny || !hasShiny;
+            }
+            if (frameImg) frameImg.src = (forceShiny && hasShiny) ? img.dataset.shinysrc : img.src;
+            // A forced-Shiny card can't use a token with no shiny art --
+            // say so and block Send (Keep Searching still works).
+            const blocked = forceShiny && !hasShiny;
+            if (noteEl) {
+                noteEl.textContent = blocked ? `${img.alt || 'This Pok\u00e9mon'} has no Shiny form, so it can\u2019t be chosen for ${attachCard.name}.` : '';
+                noteEl.style.display = blocked ? '' : 'none';
+            }
+            if (sendBtn) sendBtn.disabled = blocked;
             const overlay = document.getElementById('gallery-battle-wild-confirm-overlay');
             if (overlay) overlay.classList.add('visible');
         }
@@ -28385,8 +28649,17 @@
                 exitBattleWildPickMode();
                 return;
             }
+            // Read BEFORE exitBattleWildPickMode() below clears it.
+            const attachContext = battleWildPickAttach;
+            const attachCard = attachContext ? CARDS_BY_ID[attachContext.cardId] : null;
+            const forceShiny = cardForcesShiny(attachCard);
             const shinyCheckbox = document.getElementById('gallery-battle-wild-confirm-shiny-checkbox');
-            const shiny = !!(shinyCheckbox && shinyCheckbox.checked && hasShinyForm(img.dataset.shinysrc));
+            // A forced-Shiny card makes the pick Shiny regardless of the
+            // checkbox -- and, if this token has no shiny art, not
+            // sendable at all (the Send button is already disabled for
+            // that case; this is the backstop).
+            if (forceShiny && !hasShinyForm(img.dataset.shinysrc)) return;
+            const shiny = forceShiny || !!(shinyCheckbox && shinyCheckbox.checked && hasShinyForm(img.dataset.shinysrc));
             const memberSource = {
                 dex: img.dataset.dex || '',
                 name: img.alt || '',
@@ -28394,6 +28667,16 @@
                 shinysrc: img.dataset.shinysrc || '',
                 shiny,
             };
+            // The Permanent card this pick is for has to still be
+            // attachable (it could have been Discarded from another
+            // device while the gallery was open) -- checked up front, and
+            // again inside the callback below since a Defender replace
+            // confirmation can leave a gap before it actually runs.
+            if (attachContext && !canResolvePermanentAttach(attachContext.instanceId, true)) {
+                exitBattleWildPickMode();
+                showGameToast('That card can\u2019t be attached from Permanent right now.');
+                return;
+            }
             exitBattleWildPickMode();
             // Land on the Battle Arena first so a replace confirmation
             // (see confirmBattleSlotReplace()) has the Game panel to
@@ -28401,9 +28684,23 @@
             openGamePanel();
             setGameScreen('battle');
             confirmBattleSlotReplace('defender', () => {
-                setBattleDefenderWild(buildWildPokemonMember(memberSource));
+                if (attachContext && !canResolvePermanentAttach(attachContext.instanceId, true)) {
+                    showGameToast('That card can\u2019t be attached from Permanent right now.');
+                    return;
+                }
+                const wildMember = buildWildPokemonMember(memberSource);
+                if (attachContext) {
+                    // Set BEFORE setBattleDefenderWild(), which is what
+                    // shares the member with everyone else in a Lobby.
+                    wildMember.attachCardId = attachContext.cardId;
+                    wildMember.attachCounter = getDefaultItemCounter(attachCard);
+                }
+                setBattleDefenderWild(wildMember);
                 renderBattleDefenderSlot();
                 renderBattleAttackerSlot();
+                // Only now does the card leave Permanent (not discarded
+                // -- it's attached to the Wild Pok\u00e9mon).
+                if (attachContext) requestPermanentAttachResolve(attachContext.instanceId);
             });
         }
 
@@ -34600,9 +34897,10 @@
                 if (handAttachPendingCardId) {
                     // Same "only makes sense while looking at Team
                     // Tracker" reasoning as teamReplacePendingMember
-                    // above -- the card simply stays in hand, ready to
-                    // try Attach again later.
+                    // above -- the card simply stays in hand (or
+                    // Permanent), ready to try Attach again later.
                     handAttachPendingCardId = null;
+                    handAttachPendingPermanentInstanceId = null;
                     renderTeamGrid();
                 }
                 closeTeamAddPromptOverlay();
@@ -36019,6 +36317,8 @@
                     hostApplyActiveCardPermanent(conn.peer, data.color, data.pokemonPick);
                 } else if (data.type === 'permanent-discard' && typeof data.instanceId === 'string') {
                     hostApplyPermanentDiscard(conn.peer, data.instanceId);
+                } else if (data.type === 'permanent-attach' && typeof data.instanceId === 'string') {
+                    hostApplyPermanentAttach(conn.peer, data.instanceId);
                 } else if (data.type === 'permanent-counter-adjust' && typeof data.instanceId === 'string' && typeof data.delta === 'number') {
                     hostApplyPermanentCounterAdjust(conn.peer, data.instanceId, data.delta);
                 } else if (data.type === 'active-card-shuffle') {
@@ -39000,6 +39300,16 @@
             if (permCardFace) {
                 const img = document.getElementById('game-permanent-card-viewer-img');
                 if (img && img.src) openTeamCardImageViewer(img.src, img.alt);
+                return;
+            }
+            const attachBtn = e.target.closest('.game-permanent-card-attach-btn');
+            if (attachBtn && permanentCardViewerInstanceId) {
+                requestAttachFromPermanent(permanentCardViewerInstanceId);
+                return;
+            }
+            const attachWildBtn = e.target.closest('.game-permanent-card-attach-wild-btn');
+            if (attachWildBtn && permanentCardViewerInstanceId) {
+                requestAttachWildFromPermanent(permanentCardViewerInstanceId);
                 return;
             }
             const discardBtn = e.target.closest('.game-permanent-card-discard-btn');
