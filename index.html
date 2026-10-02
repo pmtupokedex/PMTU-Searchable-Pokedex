@@ -22016,6 +22016,7 @@
                 broadcastBattleArenaState();
                 return;
             }
+            ensureMemberUid(member); // (no-op for an empty half)
             const previous = hostBattleArenaState[slot];
             const newOwnerId = wild ? null : peerKey;
             hostBattleArenaState[slot] = member ? { member, ownerId: newOwnerId } : null;
@@ -25079,6 +25080,10 @@
         function faintTeamMember(index) {
             const member = getTeamSlotMember(index);
             if (!member || member.fainted) return;
+            // Reported first, while its status/form still count: an
+            // earned bonus is judged on the totals as they were when it
+            // fell (see earnBattleBonusesForDefeat()).
+            reportBattleFaint(member, false, index === 'wild'); // see makeEmptyBattleRecord()
             member.fainted = true;
             member.status = null;
             member.statusCounter = undefined;
@@ -25086,7 +25091,6 @@
             member.formOverride = null;
             member.dynamaxed = false;
             persistTeamSlotChange(index);
-            reportBattleFaint(member, false); // see makeEmptyBattleRecord()
         }
 
         // Which slot the revive confirm is open for -- only meaningful
@@ -25132,7 +25136,7 @@
             const max = getTeamMemberHpMax(member, hpRule);
             if (max !== null) member.hp = max;
             persistTeamSlotChange(index);
-            reportBattleFaint(member, true);
+            reportBattleFaint(member, true, index === 'wild');
         }
 
         // Yes on the revive confirm routes here -- just closes the
@@ -28921,6 +28925,7 @@
         // doesn't repaint or navigate itself" convention as every other
         // setter in this file.
         function setBattleDefenderWild(member) {
+            ensureMemberUid(member); // so a defeat of it can be told apart
             battleWildPokemon = member;
             battleDefenderMemberIndex = 'wild';
             battleDefenderTeamId = 'wild';
@@ -30418,7 +30423,14 @@
         //             otherTeamMemberParticipated: true  another team member has
         //                                            held a slot this battle
         //             totalLeadAtLeast: 3            own Attack Total beats the
-        //                                            opponent's by this much
+        //                                            opponent's by this much, right now
+        //             defeatedWithTotalLeadAtLeast: 3  EARNED: when this Pok\u00e9mon
+        //                                            defeats its opponent in a round in
+        //                                            which its Attack Total led by this
+        //                                            much, it carries the bonus for every
+        //                                            round after that, the rest of the
+        //                                            battle (Impish, Naughty). Only
+        //                                            earned once per battle.
         // oncePerBattle  true: counts for one round per battle -- spent
         //           when a round ends with it in effect (Next Round)
         // last      (strength rules) apply after everything else,
@@ -30429,7 +30441,8 @@
         //
         // The flat tags above are just shorthand for one rule each.
         // "totalLeadAtLeast" rules compare each side's total WITHOUT any
-        // such rules, so two of them never depend on each other.
+        // such rules, so two of them never depend on each other. The same
+        // goes for the lead measured at a defeat.
 
         const battleRulesCache = new WeakMap();
         const battleRuleWarned = new Set();
@@ -30468,7 +30481,9 @@
             });
             rules.forEach((r, i) => {
                 r.index = i;
-                r.phase = (r.applyTo === 'total' && r.when.totalLeadAtLeast !== undefined) ? 'lead' : (r.last ? 'last' : 'normal');
+                r.phase = (r.applyTo === 'total' && r.when.defeatedWithTotalLeadAtLeast !== undefined) ? 'earned'
+                    : (r.applyTo === 'total' && r.when.totalLeadAtLeast !== undefined) ? 'lead'
+                    : (r.last ? 'last' : 'normal');
             });
             battleRulesCache.set(card, rules);
             return rules;
@@ -30477,8 +30492,9 @@
         // ---- What happened this battle (shared through the Host) ----
         //
         // { round, faints: [{ o: owner, u: member uid, r: round, d?: the
-        // defeat it was credited as }], defeats: { 'owner|uid': n },
-        // seen: { owner: [uid, ...] }, spent: { ruleKey: true } }.
+        // defeat it was credited as, e?: bonuses it earned }],
+        // defeats: { 'owner|uid': n }, seen: { owner: [uid, ...] },
+        // spent: { ruleKey: true }, earned: { ruleKey: round earned } }.
         // It's what the conditions about fainting, defeating, team
         // members taking part, and once-per-battle bonuses read.
         // Solo it's battleRecord; in a Lobby the Host keeps it in
@@ -30487,7 +30503,7 @@
         // to the Host, who decides if it was a defeat. "Owner" is the
         // lobby player id, or 'solo'.
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {} };
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
 
@@ -30551,11 +30567,12 @@
                             record.defeats[f.d] -= 1;
                             if (!record.defeats[f.d]) delete record.defeats[f.d];
                         }
+                        (f.e || []).forEach(key => { delete record.earned[key]; });
                         record.faints.splice(i, 1);
                         break;
                     }
                 }
-                return;
+                return null;
             }
             const fall = { o: ownerId, u: uid, r: record.round };
             ['attacker', 'defender'].forEach(slot => {
@@ -30564,30 +30581,72 @@
                 if (mine && mine.ownerId === ownerId && mine.member && mine.member.uid === uid
                     && other && other.ownerId && other.member && other.member.uid) {
                     fall.d = other.ownerId + '|' + other.member.uid;
+                    fall.cs = slot === 'attacker' ? 'defender' : 'attacker'; // the half credited
                     record.defeats[fall.d] = (record.defeats[fall.d] || 0) + 1;
                 }
             });
             record.faints.push(fall);
+            return fall;
+        }
+
+        // A defeat just happened (fall.cs is the half that got the
+        // credit): any bonus on that Pok\u00e9mon that's earned by defeating
+        // its opponent with a big enough Attack Total lead is earned now,
+        // judged on this round's totals as they stand. Needs both halves
+        // to have a move chosen; carries from the next round on.
+        function earnBattleBonusesForDefeat(record, fall) {
+            if (!fall || !fall.cs || !fall.d) return;
+            const slot = fall.cs;
+            const otherSlot = getBattleOpposingSlotName(slot);
+            const cards = getBattleBonusCards(slot);
+            const hasEarnable = cards.some(card => getBattleCardRules(card).some(r => r.phase === 'earned'));
+            if (!hasEarnable) return;
+            const moveName = battleCalcMoveName[slot];
+            const otherMove = battleCalcMoveName[otherSlot];
+            if (!moveName || !otherMove) return;
+            const mine = computeBattleMoveBreakdown(slot, moveName, battleCalcBaseMove[slot], true);
+            const theirs = computeBattleMoveBreakdown(otherSlot, otherMove, battleCalcBaseMove[otherSlot], true);
+            if (!mine || !theirs) return;
+            const ctx = buildBattleRuleContext(slot, moveName, mine.power);
+            ctx.lead = mine.total - theirs.total;
+            ctx.earnMode = true;
+            ctx.record = record;
+            cards.forEach(card => {
+                getBattleCardRules(card).forEach(rule => {
+                    if (rule.phase !== 'earned') return;
+                    const key = `${fall.d}|${card.id}|${rule.index}`;
+                    if (record.earned[key] !== undefined) return; // once per battle
+                    if (!battleRuleConditionsMet(rule.when, ctx)) return;
+                    record.earned[key] = record.round;
+                    (fall.e || (fall.e = [])).push(key);
+                });
+            });
         }
 
         function hostRecordBattleFaint(ownerId, uid, revive) {
             const st = hostBattleArenaState;
             if (!st.inProgress) return;
-            applyBattleFaintToRecord(getBattleRecordStore(), { attacker: st.attacker, defender: st.defender }, ownerId, uid, revive);
+            const record = getBattleRecordStore();
+            earnBattleBonusesForDefeat(record, applyBattleFaintToRecord(record, { attacker: st.attacker, defender: st.defender }, ownerId, uid, revive));
             broadcastBattleArenaState();
         }
 
         // Called by faintTeamMember()/reviveTeamMember() for this
         // device's own team.
-        function reportBattleFaint(member, revive) {
+        // isWild: the fainting one is the ownerless Wild Pok\u00e9mon in the
+        // Defender half (fainted from its HP badge there) rather than
+        // one of this player's team -- it's recorded with no owner, so
+        // it still counts as a defeat for whoever it was facing but
+        // never as "one of your Pok\u00e9mon fainted" (Brave).
+        function reportBattleFaint(member, revive, isWild) {
             if (!member) return;
             const uid = ensureMemberUid(member);
             if (lobbyState.role === 'guest') {
-                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-faint', uid, revive: !!revive });
+                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-faint', uid, revive: !!revive, wild: !!isWild });
             } else if (lobbyState.role === 'host') {
-                hostRecordBattleFaint('host', uid, revive);
+                hostRecordBattleFaint(isWild ? null : 'host', uid, revive);
             } else if (battleInProgress) {
-                applyBattleFaintToRecord(battleRecord, getSoloBattleEntries(), 'solo', uid, revive);
+                earnBattleBonusesForDefeat(battleRecord, applyBattleFaintToRecord(battleRecord, getSoloBattleEntries(), isWild ? null : 'solo', uid, revive));
                 renderBattleCalcReadout('attacker');
                 renderBattleCalcReadout('defender');
             }
@@ -30671,6 +30730,14 @@
                     case 'totalLeadAtLeast':
                         if (ctx.lead === null || !(ctx.lead >= parseInt(v, 10))) return false;
                         break;
+                    case 'defeatedWithTotalLeadAtLeast':
+                        // Judging a defeat as it happens: was the lead big
+                        // enough? Otherwise: has it been earned already,
+                        // in an earlier round?
+                        if (ctx.earnMode) {
+                            if (ctx.lead === null || !(ctx.lead >= parseInt(v, 10))) return false;
+                        } else if (!ctx.earnedOk) return false;
+                        break;
                     default:
                         if (!battleRuleWarned.has(key)) { battleRuleWarned.add(key); console.warn('Unknown card bonus condition:', key); }
                         return false;
@@ -30691,10 +30758,14 @@
             let strength = current;
             cards.forEach(card => {
                 getBattleCardRules(card).forEach(rule => {
-                    if (rule.applyTo !== applyTo || rule.phase !== phase) return;
+                    if (rule.applyTo !== applyTo) return;
+                    if (!(rule.phase === phase || (phase === 'normal' && rule.phase === 'earned'))) return;
                     if (!ctx) { ctx = buildBattleRuleContext(slotName, moveName, power); ctx.lead = (lead === undefined ? null : lead); }
-                    const onceKey = rule.oncePerBattle ? `${ctx.owner || 'x'}|${ctx.uid || (ctx.member && ctx.member.name) || 'x'}|${card.id}|${rule.index}` : null;
+                    const ruleKey = `${ctx.owner || 'x'}|${ctx.uid || (ctx.member && ctx.member.name) || 'x'}|${card.id}|${rule.index}`;
+                    const onceKey = rule.oncePerBattle ? ruleKey : null;
                     if (onceKey && ctx.record.spent[onceKey]) return;
+                    // An earned bonus counts from the round AFTER it was earned.
+                    ctx.earnedOk = ctx.record.earned[ruleKey] !== undefined && ctx.record.round > ctx.record.earned[ruleKey];
                     if (!battleRuleConditionsMet(rule.when, ctx)) return;
                     let bonus = rule.amount;
                     if (rule.amountByEffectDie) {
@@ -35935,7 +36006,7 @@
                 } else if (data.type === 'battle-faint' && typeof data.uid === 'string') {
                     // A team member fainted/revived on that player's own
                     // device -- see reportBattleFaint().
-                    hostRecordBattleFaint(conn.peer, data.uid, !!data.revive);
+                    hostRecordBattleFaint(data.wild ? null : conn.peer, data.uid, !!data.revive);
                 } else if (data.type === 'battle-field-set' && typeof data.slot === 'string') {
                     // A Field Move Effect placed/removed -- see
                     // hostApplyBattleFieldEffect().
