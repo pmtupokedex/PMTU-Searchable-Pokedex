@@ -8566,6 +8566,26 @@
            rather than that overlay's 99999, since this only ever needs
            to sit above the gallery/nav/other panels, not literally
            everything the way a hard device-orientation block does. */
+        /* Back-button guard (see the "Back-button guard" script section).
+           Body-level and above every other overlay tier in this file
+           (the highest is 99999), since a back press can land while any
+           panel or overlay is open. Reuses .game-confirm-card. */
+        #app-exit-confirm-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 100000;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #app-exit-confirm-overlay.visible {
+            display: flex;
+        }
+
         #gallery-team-add-confirm-overlay {
             display: none;
             position: fixed;
@@ -15637,6 +15657,19 @@
          confirmTeamAddSelection() in the script. Body-level like
          #image-overlay/#gallery below (not nested in #game-panel -- see
          #gallery-team-add-confirm-overlay's own CSS comment for why). -->
+    <!-- "Leave the app?" -- shown when the browser's Back button is
+         pressed (see the "Back-button guard" section of the script). -->
+    <div id="app-exit-confirm-overlay">
+        <div class="game-confirm-card">
+            <p class="game-confirm-title">Leave the app?</p>
+            <p class="game-confirm-subtext" id="app-exit-confirm-subtext"></p>
+            <div class="game-save-slot-actions">
+                <button class="filter-btn app-exit-confirm-stay-btn" type="button">Stay</button>
+                <button class="filter-btn exclude app-exit-confirm-leave-btn" type="button">Leave</button>
+            </div>
+        </div>
+    </div>
+
     <div id="gallery-team-add-confirm-overlay">
         <div class="game-confirm-card">
             <p class="game-confirm-title">Add This Pokémon to Your Team?</p>
@@ -26392,9 +26425,14 @@
                 refreshAccordionStuckHeaders();
                 return;
             }
+            // Empty Nature slot with virtual decks on: the manual picker
+            // above is off the table then, so offer the virtual-deck way
+            // in instead -- see attachNatureCardToMember().
+            const showNatureAttach = slot === 'nature' && isVirtualDecksEnabledForActiveSave();
             el.innerHTML = `
                 <p class="game-team-cards-detail-empty">${emptyText}</p>
                 ${pickingAllowed ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-add-btn" type="button" data-slot="${slot}">Add Card</button>` : ''}
+                ${showNatureAttach ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-nature-attach-btn" type="button" data-slot="nature" title="Attaches the Nature card in the Active Card zone, or draws the top card of the Nature Deck." ${isActiveSaveReadOnly() ? 'disabled' : ''}>Attach Nature Card</button>` : ''}
             `;
         }
 
@@ -28147,6 +28185,162 @@
         function sendTeamDetailCardToPermanent(slot) {
             if (teamDetailIndex === null) return;
             sendEquippedCardToPermanent(teamDetailIndex, slot);
+            renderTeamDetailCardsSection();
+            renderTeamDetailHeader();
+            renderTeamDetailHpSection();
+            renderTeamDetailEvolutionSection();
+        }
+
+        // ---- "Attach Nature Card" (empty Nature slot, virtual decks on) ----
+        //
+        // One button, two sources, tried in this order:
+        //   1. The Nature card sitting in the Active Card zone, if it's
+        //      this player's own, still awaiting a decision, and
+        //      attachable -- attached through the exact same
+        //      perform/commit steps the zone's own Attach button ends
+        //      in (so the zone clears, Egg Move's on-attach draw fires,
+        //      etc.), just aimed at this Pok\u00e9mon directly instead of
+        //      via Team Tracker.
+        //   2. Otherwise the top card of the Nature Deck -- see
+        //      hostApplyDrawNatureAttach().
+        // `index` is a roster index or 'wild' (same as every other
+        // slot action here -- a Wild Pok\u00e9mon's Cards badge gets the
+        // same button).
+        function getUsableActiveNatureCard() {
+            const info = getActiveCardInfo();
+            if (!info || info.committed) return null;
+            if (lobbyState.role !== null && info.actorKey !== getMyLobbyPlayerId()) return null;
+            const card = CARDS_BY_ID[info.cardId];
+            if (!card || card.canAttach !== 'yes' || getAttachSlotForCard(info.cardId) !== 'nature') return null;
+            return info;
+        }
+
+        function attachNatureCardToMember(index) {
+            if (index === null || index === undefined) return;
+            if (isActiveSaveReadOnly() || !isVirtualDecksEnabledForActiveSave()) return;
+            if (teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
+            const member = getTeamSlotMember(index);
+            if (!member || member.natureCardId) return;
+            // Both sources end with the Host (clearing the zone / drawing
+            // from the shared deck) -- bail before touching anything if a
+            // guest can't reach it.
+            if (lobbyState.role === 'guest' && !(lobbyState.hostConn && lobbyState.hostConn.open)) {
+                showGameToast('Can\u2019t reach the Host right now \u2014 try again in a moment.');
+                return;
+            }
+            const zoneInfo = getUsableActiveNatureCard();
+            if (zoneInfo) {
+                handAttachPendingCardId = zoneInfo.cardId;
+                handAttachPendingSource = 'active-card';
+                performAttachFromHandToSlot(index);
+                // An empty slot never needs the replace confirmation, so
+                // nothing should still be pending -- but never leave attach
+                // mode half-open if something did stop it.
+                if (handAttachPendingCardId) exitAttachFromHandMode();
+                return;
+            }
+            if (!getDeckToolList().includes('Nature Deck')) return;
+            const memberUid = ensureMemberUid(member);
+            if (lobbyState.role === 'guest') {
+                lobbyState.hostConn.send({ type: 'deck-draw-nature-attach', memberUid });
+            } else {
+                hostApplyDrawNatureAttach('host', memberUid);
+            }
+        }
+
+        // Host side of the draw route: takes the top card of the Nature
+        // Deck and announces it into the shared Active Card zone on the
+        // asking player's behalf, so everyone else sees it there as the
+        // last card played -- committed:true when it's going straight
+        // onto the Pok\u00e9mon (nothing left for anyone to decide, same as
+        // an Item card attached from a hand, see
+        // hostApplyRemoveFromHandOnly()), or a normal pending draw when
+        // it can't be attached (e.g. a Nature card with canAttach:
+        // "no"), so its owner can Discard/Permanent/Shuffle it exactly as
+        // if they'd drawn it from the deck tool. Like any draw into the
+        // zone, it takes over from whatever uncommitted card was there
+        // (see setHostActiveCard()). Nothing is drawn for a guest that's
+        // dropped, so there's no delivery failure to clean up after.
+        // memberUid says which Pok\u00e9mon it's for, resolved back on the
+        // asker's own device (see finishDrawnNatureAttach()).
+        function hostApplyDrawNatureAttach(peerKey, memberUid) {
+            const deckName = 'Nature Deck';
+            if (typeof memberUid !== 'string' || !getDeckToolList().includes(deckName)) return;
+            let guestConn = null;
+            if (peerKey !== 'host') {
+                const entry = lobbyState.connections.get(peerKey);
+                if (!entry || !entry.conn.open) return;
+                guestConn = entry.conn;
+            }
+            const drawnId = drawFromHostDeck(deckName);
+            let attach = false;
+            if (drawnId !== null) {
+                const card = CARDS_BY_ID[drawnId];
+                attach = !!card && card.canAttach === 'yes' && getAttachSlotForCard(drawnId) === 'nature';
+                setHostActiveCard(drawnId, deckName, peerKey, attach);
+            }
+            if (guestConn) {
+                guestConn.send({ type: 'deck-draw-nature-attach-result', cardId: drawnId, memberUid, attach });
+            } else {
+                finishDrawnNatureAttach(drawnId, memberUid, attach);
+            }
+        }
+
+        // The asker's end: puts the drawn card in the Nature slot of the
+        // Pok\u00e9mon it was drawn for. attach is false when the card
+        // can't be attached -- it's just sitting in the Active Card
+        // zone as a normal pending draw then. A Pok\u00e9mon that's gone in
+        // the meantime sends the card to the discard pile instead of
+        // vanishing (it stays shown as last played either way).
+        function finishDrawnNatureAttach(drawnId, memberUid, attach) {
+            if (drawnId === null || drawnId === undefined) {
+                showGameToast('The Nature Deck is empty.');
+                return;
+            }
+            const card = CARDS_BY_ID[drawnId];
+            if (!card) return;
+            if (!attach) {
+                showGameToast(`${card.name} was drawn, but it can\u2019t be attached \u2014 it\u2019s in the Active Card zone.`);
+                return;
+            }
+            const members = getActiveSaveData().team.members || [];
+            let index = members.findIndex(m => m && m.uid === memberUid);
+            if (index === -1) {
+                const wild = getArenaWildDefender();
+                if (wild && wild.uid === memberUid) index = 'wild';
+            }
+            if (index === -1) {
+                discardUnattachedCard(drawnId);
+                showGameToast(`${card.name} was drawn, but its Pok\u00e9mon is gone \u2014 it went to the discard pile.`);
+                return;
+            }
+            const member = getTeamSlotMember(index);
+            const previousCardId = member.natureCardId;
+            commitTeamMemberCard(index, 'nature', drawnId);
+            if (previousCardId && previousCardId !== drawnId) discardUnattachedCard(previousCardId);
+            showGameToast(`${card.name} was attached to ${member.name || 'your Pok\u00e9mon'}.`);
+            // Same on-attach effect any other attach of this card has
+            // (Egg Move) -- see commitAttachFromHandToMember().
+            if (previousCardId !== drawnId) runOnAttachTopCardEffect(index, drawnId);
+            if (teamCardsOverlayIndex === index) renderTeamCardsOverlay();
+            if (teamDetailIndex === index) {
+                renderTeamDetailCardsSection();
+                renderTeamDetailHeader();
+                renderTeamDetailHpSection();
+                renderTeamDetailEvolutionSection();
+            }
+            renderTeamGrid();
+        }
+
+        function attachNatureCardFromOverlay() {
+            if (teamCardsOverlayIndex === null) return;
+            attachNatureCardToMember(teamCardsOverlayIndex);
+            renderTeamCardsOverlay();
+        }
+
+        function attachNatureCardFromDetails() {
+            if (teamDetailIndex === null) return;
+            attachNatureCardToMember(teamDetailIndex);
             renderTeamDetailCardsSection();
             renderTeamDetailHeader();
             renderTeamDetailHpSection();
@@ -37124,6 +37318,10 @@
                     // An on-attach top-card effect (Egg Move) -- see
                     // hostApplyDrawForAttach().
                     hostApplyDrawForAttach(conn.peer, data.decks.slice(0, 3), data.memberUid, data.sourceCardId);
+                } else if (data.type === 'deck-draw-nature-attach' && typeof data.memberUid === 'string') {
+                    // The Pok\u00e9mon panels' own Attach Nature Card button
+                    // (draw half) -- see hostApplyDrawNatureAttach().
+                    hostApplyDrawNatureAttach(conn.peer, data.memberUid);
                 } else if (data.type === 'deck-attach' && typeof data.cardId === 'string') {
                     // The Attach itself (which team member, if any) is
                     // purely local to the guest's own device/save -- see
@@ -38091,6 +38289,10 @@
                     // The Host's answer to this device's own on-attach
                     // top-card request -- cardId is null if the deck was empty.
                     finishDrawnCardAttach(typeof data.cardId === 'string' ? data.cardId : null, data.memberUid, data.sourceCardId);
+                } else if (data.type === 'deck-draw-nature-attach-result' && typeof data.memberUid === 'string') {
+                    // The Host's answer to this device's own Attach Nature
+                    // Card draw -- cardId is null if the deck was empty.
+                    finishDrawnNatureAttach(typeof data.cardId === 'string' ? data.cardId : null, data.memberUid, !!data.attach);
                 } else if (data.type === 'deck-look-result' && typeof data.deck === 'string' && Array.isArray(data.cards)) {
                     // The private reply to this device's own
                     // requestLookAtTopCards() -- see
@@ -39938,6 +40140,10 @@
                 sendTeamCardsOverlayCardToPermanent(cardToPermanentBtn.dataset.slot);
                 return;
             }
+            if (e.target.closest('.game-team-cards-nature-attach-btn')) {
+                attachNatureCardFromOverlay();
+                return;
+            }
             // Same tap-left/tap-right counter convention as the
             // Permanent Card viewer's own listener (see its own
             // comment) -- this reuses that widget's classes/styling
@@ -40511,6 +40717,10 @@
             const cardToPermanentBtn = e.target.closest('.game-team-cards-to-permanent-btn');
             if (cardToPermanentBtn) {
                 sendTeamDetailCardToPermanent(cardToPermanentBtn.dataset.slot);
+                return;
+            }
+            if (e.target.closest('.game-team-cards-nature-attach-btn')) {
+                attachNatureCardFromDetails();
                 return;
             }
             const overlayAddBtn = e.target.closest('.game-team-detail-overlay-add-btn');
@@ -44576,6 +44786,97 @@
         setSavesSectionCollapsed(true);
         setGuestSavesSectionCollapsed(true);
         setGameSaveDefaultsCollapsed(true);
+
+
+        // ---- Back-button guard ------------------------------------------
+        //
+        // Pressing the browser's/phone's Back button on the app's first
+        // page would close the PWA outright, which is easy to do by
+        // accident mid-game. So the app keeps one extra history entry
+        // above its real one: Back lands on the real entry, popstate
+        // fires, and instead of letting that stand we re-add the extra
+        // entry and ask first. "Stay" just dismisses; "Leave" lets the
+        // next Back through.
+        //
+        // - Armed on the FIRST user gesture, not at load: Chrome skips
+        //   history entries a page adds without any user interaction
+        //   (its history-manipulation intervention), so an entry pushed
+        //   at load wouldn't actually catch the Back press.
+        // - Only on touch devices or an installed (standalone) app, so a
+        //   normal desktop tab's Back button keeps working as usual.
+        // - Browsers give pages no way to close themselves, so "Leave"
+        //   steps back out of the app's history and tries window.close();
+        //   where that's not permitted (most installed apps on iOS, for
+        //   one), it says to press Back once more -- the guard is off by
+        //   then, so that press goes straight through.
+        (function setupBackButtonGuard() {
+            const overlay = document.getElementById('app-exit-confirm-overlay');
+            if (!overlay || !window.history || !history.pushState) return;
+            const isStandalone = window.matchMedia && (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
+            const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+            if (!isStandalone && !isTouch) return;
+
+            const GUARD_KEY = 'pmtuBackGuard';
+            let armed = false;       // the extra history entry has been added
+            let leaving = false;     // the player confirmed -- stop guarding
+
+            function isGuardEntry(state) { return !!(state && state[GUARD_KEY]); }
+
+            function subtextForState() {
+                const parts = [];
+                if (lobbyState.role !== null) parts.push('You\u2019re in a multiplayer lobby \u2014 leaving will disconnect you from it.');
+                if (activeSaveSlot === null && activeGuestSaveId === null && unsavedSessionTouched) parts.push('You have unsaved progress that will be lost.');
+                return parts.join(' ');
+            }
+
+            function showConfirm() {
+                const subtext = document.getElementById('app-exit-confirm-subtext');
+                const text = subtextForState();
+                subtext.textContent = text;
+                subtext.style.display = text ? '' : 'none';
+                overlay.classList.add('visible');
+            }
+
+            function hideConfirm() { overlay.classList.remove('visible'); }
+
+            function arm() {
+                if (armed) return;
+                armed = true;
+                ['pointerdown', 'touchend', 'keydown'].forEach(evt => document.removeEventListener(evt, arm, true));
+                // Mark the real entry, then add the guard entry above it.
+                history.replaceState({ ...(history.state || {}), [GUARD_KEY + 'Base']: true }, '');
+                history.pushState({ [GUARD_KEY]: true }, '');
+            }
+            ['pointerdown', 'touchend', 'keydown'].forEach(evt => document.addEventListener(evt, arm, { capture: true, once: false }));
+
+            window.addEventListener('popstate', (e) => {
+                if (!armed || leaving) return;
+                // Back from the guard entry onto the real one (or any entry
+                // that isn't the guard): put the guard back and ask.
+                if (!isGuardEntry(e.state)) {
+                    history.pushState({ [GUARD_KEY]: true }, '');
+                    showConfirm();
+                }
+            });
+
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay || e.target.closest('.app-exit-confirm-stay-btn')) {
+                    hideConfirm();
+                    return;
+                }
+                if (e.target.closest('.app-exit-confirm-leave-btn')) {
+                    leaving = true;
+                    hideConfirm();
+                    // Step back off the guard entry onto the real one...
+                    history.back();
+                    // ...then try to close; if the browser won't, say so.
+                    setTimeout(() => {
+                        try { window.close(); } catch (err) { /* not allowed */ }
+                        setTimeout(() => { showGameToast('Press Back once more to leave.'); }, 400);
+                    }, 250);
+                }
+            });
+        })();
 
         // Other half of the Multiplayer Lobby's QR idea (see
         // lobbyJoinUrl() and GAME_PANEL_NOTES.md §3) -- scanning the
