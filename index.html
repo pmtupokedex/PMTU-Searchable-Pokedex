@@ -6426,6 +6426,26 @@
             display: flex;
         }
 
+        /* Team Pok\u00e9mon / Wild Pok\u00e9mon choice for a Nature card's
+           Attach -- same positioning and backdrop as the slot-choice
+           overlay just above (and reuses its .game-battle-slot-choice-note
+           for the \"why is this button disabled\" line). */
+        #game-nature-attach-choice-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-nature-attach-choice-overlay.visible {
+            display: flex;
+        }
+
         /* Defender Options / Attacker Options -- same positioning and
            backdrop as the slot-choice overlay just above. Buttons stack
            full width, one per line. */
@@ -14650,6 +14670,22 @@
             </div>
         </div>
 
+        <!-- Nature card Attach: team member or Wild Pok\u00e9mon? -- see
+             openNatureAttachChoice()/chooseNatureAttachTarget() in the
+             script. Opened by beginAttachFlow() for a Nature Deck card
+             only (everything else goes straight to Team Tracker). -->
+        <div id="game-nature-attach-choice-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-nature-attach-choice-title">Attach to Which Pok&eacute;mon?</p>
+                <p class="game-battle-slot-choice-note" id="game-nature-attach-choice-note"></p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn" id="game-nature-attach-choice-team-btn">Team Pok&eacute;mon</button>
+                    <button class="filter-btn" id="game-nature-attach-choice-wild-btn">Wild Pok&eacute;mon</button>
+                    <button class="filter-btn exclude" id="game-nature-attach-choice-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Defender Options / Attacker Options -- the Choose, Recall
              (and, for Defender, Choose Wild and Catch) buttons that used
              to sit under each half. The buttons keep their original ids,
@@ -22209,6 +22245,7 @@
             const payload = { ...basePayload, cards: battleCardsViewFor('host') };
             guestBattleArenaCache = payload; // one code path for host and guest alike
             applyIncomingArenaState(payload);
+            syncBattleMusicToArena(); // Battle music on start, back to Route on end
         }
 
         // Frees any slot whose owner is no longer a live connection.
@@ -23457,6 +23494,14 @@
         // remove from Permanent once a Pokémon is actually chosen.
         let handAttachPendingPermanentInstanceId = null;
 
+        // True only while a Nature card is being attached straight to
+        // the Wild Pok\u00e9mon already in the Arena (see
+        // beginWildAttach()) -- that path never switches to Team
+        // Tracker, so there's no banner to fall back to picking in
+        // when its replace confirmation is declined; backing out has to
+        // end the whole attach instead.
+        let handAttachWildAutoPending = false;
+
         // Which member index the Attach-from-hand replace confirmation
         // (#game-team-attach-confirm-overlay) is currently open for --
         // only meaningful while that overlay is visible, same shape as
@@ -23521,6 +23566,22 @@
             if (teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             const card = CARDS_BY_ID[cardId];
             if (!card || card.canAttach !== 'yes') return;
+            // A Nature card is added when a Pok\u00e9mon is encountered in
+            // the wild OR when one joins a team through a game effect,
+            // so it can go to either -- ask which first. Every other
+            // attachable card is team-only and goes straight to Team
+            // Tracker.
+            if (getAttachSlotForCard(cardId) === 'nature') {
+                openNatureAttachChoice(cardId, source);
+                return;
+            }
+            beginTeamAttachPick(cardId, source);
+        }
+
+        // The \"stash it and switch to Team Tracker so the player taps a
+        // Pok\u00e9mon\" half of beginAttachFlow() -- also what the Team
+        // Pok\u00e9mon button on the Nature choice overlay lands on.
+        function beginTeamAttachPick(cardId, source) {
             // Nothing to attach ONTO -- rather than switching to a Team
             // Tracker with an empty grid and a banner nobody can act on,
             // stay put and say so; the card stays wherever it currently is.
@@ -23532,6 +23593,158 @@
             handAttachPendingSource = source;
             setGameScreen('team');
             renderTeamGrid();
+        }
+
+        // ---- Nature card: team member or Wild Pok\u00e9mon? ----
+
+        // { cardId, source } while #game-nature-attach-choice-overlay is
+        // up, null otherwise.
+        let pendingNatureAttachChoice = null;
+
+        function openNatureAttachChoice(cardId, source) {
+            pendingNatureAttachChoice = { cardId, source };
+            renderNatureAttachChoiceOverlay();
+            const overlay = document.getElementById('game-nature-attach-choice-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        // Re-run every time the overlay opens, since both buttons'
+        // availability depends on live state: Team Pok\u00e9mon needs a
+        // roster to put it on, Wild Pok\u00e9mon needs the Battle Arena
+        // (see canUseBattleArena()) -- the only place a Wild Pok\u00e9mon
+        // can exist or be chosen.
+        function renderNatureAttachChoiceOverlay() {
+            const pending = pendingNatureAttachChoice;
+            const card = pending ? CARDS_BY_ID[pending.cardId] : null;
+            const titleEl = document.getElementById('game-nature-attach-choice-title');
+            const teamBtn = document.getElementById('game-nature-attach-choice-team-btn');
+            const wildBtn = document.getElementById('game-nature-attach-choice-wild-btn');
+            const note = document.getElementById('game-nature-attach-choice-note');
+            const hasTeam = !!((getActiveSaveData().team.members || []).length);
+            const arenaOk = canUseBattleArena();
+            if (titleEl) titleEl.textContent = card ? `Attach ${card.name} to\u2026` : 'Attach to Which Pok\u00e9mon?';
+            if (teamBtn) teamBtn.disabled = !hasTeam;
+            if (wildBtn) wildBtn.disabled = !arenaOk;
+            const reasons = [];
+            if (!hasTeam) reasons.push('You don\u2019t have any team members yet.');
+            if (!arenaOk) reasons.push(BATTLE_ARENA_GATE_MESSAGE);
+            if (note) {
+                note.textContent = reasons.join(' ');
+                note.classList.toggle('visible', reasons.length > 0);
+            }
+        }
+
+        function closeNatureAttachChoice() {
+            pendingNatureAttachChoice = null;
+            const overlay = document.getElementById('game-nature-attach-choice-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        function chooseNatureAttachTarget(target) {
+            const pending = pendingNatureAttachChoice;
+            if (!pending) return;
+            closeNatureAttachChoice();
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
+            if (target === 'team') beginTeamAttachPick(pending.cardId, pending.source);
+            else beginWildAttach(pending.cardId, pending.source);
+        }
+
+        // The Wild Pok\u00e9mon currently in the Arena's Defender slot,
+        // or null. In a Lobby that's the shared ownerless Defender
+        // entry (mirrored into battleWildPokemon for everyone, see
+        // applyIncomingArenaState()); solo it's battleWildPokemon
+        // while Defender points at 'wild'. Same object the Wild slot's
+        // own Cards badge edits (see getTeamSlotMember('wild')).
+        function getArenaWildDefender() {
+            if (lobbyState.role !== null) {
+                const entry = getArenaSlotEntry('defender');
+                if (!entry || entry.ownerId) return null;
+            } else if (battleDefenderMemberIndex !== 'wild') {
+                return null;
+            }
+            return battleWildPokemon || null;
+        }
+
+        // Whether a pending attach-to-Wild can still actually be carried
+        // out right now -- i.e. whether the card's source can still be
+        // resolved (the half that needs the Host's say-so, see
+        // resolveAttachSource()). Checked BEFORE anything is equipped or
+        // placed, since both are purely local and there's no undoing
+        // them if the source half then fails -- the card would end up
+        // in two places. ctx = { source, cardId, instanceId? }.
+        function canResolveWildAttachContext(ctx) {
+            if (!ctx || !ctx.cardId) return false;
+            if (ctx.source === 'permanent') return canResolvePermanentAttach(ctx.instanceId, true);
+            if (lobbyState.role === 'guest' && !(lobbyState.hostConn && lobbyState.hostConn.open)) return false;
+            if (ctx.source === 'active-card') {
+                const info = getActiveCardInfo();
+                if (!info || info.committed || info.cardId !== ctx.cardId) return false;
+                return lobbyState.role === null || info.actorKey === getMyLobbyPlayerId();
+            }
+            if (ctx.source === 'hand') return getLocalHandArray().includes(ctx.cardId);
+            return false;
+        }
+
+        // Wild Pok\u00e9mon on the Nature choice overlay. Not gated by
+        // canControlWildDefender() -- that rule keeps the Attacker's
+        // owner from steering the Wild Pok\u00e9mon's choices in battle,
+        // but they're exactly the player who ENCOUNTERED it, and a
+        // Nature card is theirs to attach to it (the Host's own
+        // set-slot handler doesn't gate this either).
+        //   - A Wild Pok\u00e9mon is already in the Arena: attach straight
+        //     to it, through the exact same perform/commit steps as a
+        //     team Pok\u00e9mon tap (index 'wild' -- so the replace
+        //     confirmation and discard bookkeeping are shared).
+        //   - None is: pick one from the gallery -- the Battle Arena's
+        //     own Choose Wild Pok\u00e9mon pick, which sends the choice to
+        //     the Defender slot already carrying this card (see
+        //     confirmBattleWildSelection()).
+        function beginWildAttach(cardId, source) {
+            if (!canUseBattleArena()) {
+                showBattleArenaGateToast();
+                return;
+            }
+            if (!canResolveWildAttachContext({ source, cardId })) {
+                showGameToast('That card can\u2019t be attached right now.');
+                return;
+            }
+            if (getArenaWildDefender()) {
+                handAttachPendingCardId = cardId;
+                handAttachPendingSource = source;
+                handAttachWildAutoPending = true;
+                performAttachFromHandToSlot('wild');
+                return;
+            }
+            closeGamePanel();
+            beginBattleWildPickMode({ source, cardId });
+        }
+
+        // Resolves the half of an attach that DOES need the Host's
+        // say-so, branching on where the card came from -- shared by
+        // commitAttachFromHandToMember() (equipping onto a roster
+        // member or the Arena's Wild Pok\u00e9mon) and
+        // confirmBattleWildSelection() (the Wild Pok\u00e9mon that was just
+        // created from the gallery). 'permanent': the entry leaves the
+        // Permanent Cards panel (not discarded). 'active-card': the
+        // shared zone clears. Otherwise ('hand'): it leaves the hand.
+        function resolveAttachSource(source, cardId, permanentInstanceId) {
+            if (source === 'permanent') {
+                requestPermanentAttachResolve(permanentInstanceId);
+            } else if (source === 'active-card') {
+                if (lobbyState.role === 'guest') {
+                    if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                        lobbyState.hostConn.send({ type: 'active-card-attach' });
+                    }
+                } else {
+                    hostApplyActiveCardResolveAttach('host');
+                }
+            } else if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-attach', cardId });
+                }
+            } else {
+                hostApplyRemoveFromHandOnly('host', cardId);
+            }
         }
 
         function requestAttachFromHand(cardId) {
@@ -23633,7 +23846,7 @@
                 return;
             }
             closeGamePanel();
-            beginBattleWildPickMode({ instanceId, cardId: entry.cardId });
+            beginBattleWildPickMode({ source: 'permanent', instanceId, cardId: entry.cardId });
         }
 
         // Overlay's own counterpart to beginAttachFlow() above -- can't
@@ -23680,6 +23893,7 @@
             handAttachPendingCardId = null;
             handAttachPendingSource = 'hand';
             handAttachPendingPermanentInstanceId = null;
+            handAttachWildAutoPending = false;
             closeAttachFromHandConfirmOverlay();
             renderTeamGrid();
         }
@@ -23701,9 +23915,14 @@
         // only opens #game-team-attach-confirm-overlay when it'd
         // actually replace a DIFFERENT equipped card.
         function performAttachFromHandToSlot(memberIndex) {
-            const data = getActiveSaveData();
-            const member = (data.team.members || [])[memberIndex];
-            if (!member) return;
+            // memberIndex is 'wild' when a Nature card is being attached
+            // to the Wild Pok\u00e9mon already in the Arena (see
+            // beginWildAttach()) -- getTeamSlotMember() resolves both.
+            const member = getTeamSlotMember(memberIndex);
+            if (!member) {
+                if (memberIndex === 'wild') exitAttachFromHandMode();
+                return;
+            }
             const slot = getAttachSlotForCard(handAttachPendingCardId);
             const currentCardId = slot === 'nature' ? member.natureCardId : member.attachCardId;
             // A Permanent card moved onto a Pokémon already carrying
@@ -23782,33 +24001,170 @@
                 exitAttachFromHandMode();
                 return;
             }
+            // Attaching to the Wild Pok\u00e9mon: it has to still be there
+            // (it could have been recalled while a replace confirmation
+            // was open), and the card's source still resolvable -- both
+            // checked before anything is equipped.
+            if (memberIndex === 'wild') {
+                if (!getArenaWildDefender()) {
+                    showGameToast('The Wild Pok\u00e9mon is no longer in the Battle Arena.');
+                    exitAttachFromHandMode();
+                    return;
+                }
+                if (!canResolveWildAttachContext({ source, cardId, instanceId: permanentInstanceId })) {
+                    showGameToast('That card can\u2019t be attached right now.');
+                    exitAttachFromHandMode();
+                    return;
+                }
+            }
             const slot = getAttachSlotForCard(cardId);
-            const member = (getActiveSaveData().team.members || [])[memberIndex];
+            const member = getTeamSlotMember(memberIndex);
             const previousCardId = member ? (slot === 'nature' ? member.natureCardId : member.attachCardId) : null;
+            // Needs a stable id BEFORE the equip persists, in case the
+            // card's on-attach effect has to find this member again later
+            // (see runOnAttachTopCardEffect()).
+            if (member && getCardOnAttachTopCard(CARDS_BY_ID[cardId])) ensureMemberUid(member);
             commitTeamMemberCard(memberIndex, slot, cardId);
             if (previousCardId && previousCardId !== cardId && isVirtualDecksEnabledForActiveSave()) {
                 discardUnattachedCard(previousCardId);
             }
-            if (source === 'permanent') {
-                // Not a hand card and not the Active Card zone -- the
-                // card is leaving Permanent, without being discarded.
-                requestPermanentAttachResolve(permanentInstanceId);
-            } else if (source === 'active-card') {
-                if (lobbyState.role === 'guest') {
-                    if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                        lobbyState.hostConn.send({ type: 'active-card-attach' });
-                    }
-                } else {
-                    hostApplyActiveCardResolveAttach('host');
-                }
-            } else if (lobbyState.role === 'guest') {
+            resolveAttachSource(source, cardId, permanentInstanceId);
+            if (memberIndex === 'wild' && member) {
+                const attachedCard = CARDS_BY_ID[cardId];
+                showGameToast(`${attachedCard ? attachedCard.name : 'The card'} was attached to ${member.name || 'the Wild Pok\u00e9mon'}.`);
+            }
+            // A card that does something when it lands on a Pok\u00e9mon
+            // (Egg Move) -- only when it actually became attached, not
+            // when the Pok\u00e9mon was already carrying this same card.
+            if (member && previousCardId !== cardId) runOnAttachTopCardEffect(memberIndex, cardId);
+            exitAttachFromHandMode();
+        }
+
+        // ---- On-attach top-of-deck effects (Egg Move) ----------------
+        //
+        // A card can carry
+        //   "onAttachTopCard": { "deck": "TM Deck", "action": "attach" }
+        // meaning: when it becomes attached to a Pok\u00e9mon -- on the
+        // team or the Wild Pok\u00e9mon in the Arena alike -- the top card
+        // of that deck is dealt with automatically.
+        //   action "attach"  the card is attached to the same Pok\u00e9mon
+        //                    (into its own slot -- a TM goes in the
+        //                    Attach Card slot, replacing and discarding
+        //                    whatever was there).
+        // (Other actions are for cards still to be wired up.) Only for
+        // saves using virtual decks -- on paper cards there's no deck to
+        // draw from. The deck itself is shared, so the Host does the
+        // drawing (see hostApplyDrawForAttach()).
+        function getCardOnAttachTopCard(card) {
+            const spec = card && card.onAttachTopCard;
+            if (!spec || typeof spec !== 'object' || typeof spec.deck !== 'string') return null;
+            return { deck: spec.deck, action: spec.action === 'attach' ? 'attach' : String(spec.action || '') };
+        }
+
+        // The deck name(s) to try, best first. "TM Deck" with Tiered TM
+        // Decks on means the highest tier this player has unlocked
+        // (Expert, then Advanced, then Basic -- see
+        // isTMDeckUnlockedForActiveSave()); the Host moves on to the next
+        // one if that deck has run out.
+        function getOnAttachDeckCandidates(deckName) {
+            if (deckName === 'TM Deck' && isTieredTMDecksEnabledForActiveSave()) {
+                return [TM_TIER_DECK_NAMES.Expert, TM_TIER_DECK_NAMES.Advanced, TM_TIER_DECK_NAMES.Basic]
+                    .filter(name => isTMDeckUnlockedForActiveSave(name));
+            }
+            return [deckName];
+        }
+
+        function runOnAttachTopCardEffect(memberIndex, cardId) {
+            const spec = getCardOnAttachTopCard(CARDS_BY_ID[cardId]);
+            if (!spec || spec.action !== 'attach') return;
+            if (!isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return;
+            // memberIndex is a roster index, or 'wild' for the Wild
+            // Pok\u00e9mon in the Arena -- the effect doesn't care where
+            // the Pok\u00e9mon is, only that the card just landed on it
+            // (getTeamSlotMember() resolves both).
+            const member = getTeamSlotMember(memberIndex);
+            if (!member) return;
+            const memberUid = ensureMemberUid(member);
+            const decks = getOnAttachDeckCandidates(spec.deck);
+            if (!decks.length) return;
+            if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                    lobbyState.hostConn.send({ type: 'deck-attach', cardId });
+                    lobbyState.hostConn.send({ type: 'deck-draw-attach', decks, memberUid, sourceCardId: cardId });
+                } else {
+                    showGameToast('Can\u2019t reach the Host right now \u2014 the top card wasn\u2019t drawn.');
                 }
             } else {
-                hostApplyRemoveFromHandOnly('host', cardId);
+                hostApplyDrawForAttach('host', decks, memberUid, cardId);
             }
-            exitAttachFromHandMode();
+        }
+
+        // Host side: draws the top card of the first of `decks` that has
+        // one, and hands it to whoever asked -- straight to the code that
+        // attaches it for the Host's own player, or in a 'deck-draw-
+        // attach-result' message for a guest. Never touches a hand.
+        function hostApplyDrawForAttach(peerKey, decks, memberUid, sourceCardId) {
+            if (!Array.isArray(decks)) return;
+            const valid = getDeckToolList();
+            let drawnId = null, drawnDeck = null;
+            for (const deckName of decks) {
+                if (typeof deckName !== 'string' || !valid.includes(deckName)) continue;
+                const id = drawFromHostDeck(deckName);
+                if (id !== null) { drawnId = id; drawnDeck = deckName; break; }
+            }
+            if (drawnId !== null) {
+                broadcastDeckState();
+                renderDecksScreen();
+            }
+            if (peerKey === 'host') {
+                finishDrawnCardAttach(drawnId, memberUid, sourceCardId);
+            } else {
+                const entry = lobbyState.connections.get(peerKey);
+                if (entry && entry.conn.open) {
+                    entry.conn.send({ type: 'deck-draw-attach-result', cardId: drawnId, deck: drawnDeck, memberUid, sourceCardId });
+                } else if (drawnId !== null) {
+                    // They dropped before it could be delivered -- put it back where it came from.
+                    hostApplyDiscardUnattached(drawnDeck, drawnId);
+                }
+            }
+        }
+
+        // The receiving end (this device's own player): attaches the
+        // drawn card to the Pok\u00e9mon it was drawn for. A card for a
+        // Pok\u00e9mon that's gone in the meantime goes to the discard pile
+        // instead of vanishing; no card at all (deck empty) just says so.
+        function finishDrawnCardAttach(drawnId, memberUid, sourceCardId) {
+            const source = CARDS_BY_ID[sourceCardId];
+            if (drawnId === null || drawnId === undefined) {
+                showGameToast(`${source ? source.name : 'The card'} found nothing \u2014 that deck is empty.`);
+                return;
+            }
+            const card = CARDS_BY_ID[drawnId];
+            if (!card) return;
+            const members = getActiveSaveData().team.members || [];
+            let index = members.findIndex(m => m && m.uid === memberUid);
+            // Not on the roster -- it may be the Wild Pok\u00e9mon in the
+            // Arena the card was attached to (see
+            // runOnAttachTopCardEffect()), matched the same way.
+            if (index === -1) {
+                const wild = getArenaWildDefender();
+                if (wild && wild.uid === memberUid) index = 'wild';
+            }
+            if (index === -1) {
+                discardUnattachedCard(drawnId);
+                showGameToast(`${card.name} was drawn, but its Pok\u00e9mon is gone \u2014 it went to the discard pile.`);
+                return;
+            }
+            const member = getTeamSlotMember(index);
+            const previousCardId = member.attachCardId;
+            commitTeamMemberCard(index, 'attach', drawnId);
+            if (previousCardId && previousCardId !== drawnId) discardUnattachedCard(previousCardId);
+            showGameToast(`${card.name} was attached to ${member.name || 'your Pok\u00e9mon'}.`);
+            if (teamCardsOverlayIndex === index) renderTeamCardsOverlay();
+            if (teamDetailIndex === index) {
+                renderTeamDetailCardsSection();
+                renderTeamDetailHeader();
+            }
+            renderTeamGrid();
         }
 
         // Overlay's own counterpart to performAttachFromHandToSlot()
@@ -28928,9 +29284,9 @@
             // device while the gallery was open) -- checked up front, and
             // again inside the callback below since a Defender replace
             // confirmation can leave a gap before it actually runs.
-            if (attachContext && !canResolvePermanentAttach(attachContext.instanceId, true)) {
+            if (attachContext && !canResolveWildAttachContext(attachContext)) {
                 exitBattleWildPickMode();
-                showGameToast('That card can\u2019t be attached from Permanent right now.');
+                showGameToast('That card can\u2019t be attached right now.');
                 return;
             }
             exitBattleWildPickMode();
@@ -28940,23 +29296,40 @@
             openGamePanel();
             setGameScreen('battle');
             confirmBattleSlotReplace('defender', () => {
-                if (attachContext && !canResolvePermanentAttach(attachContext.instanceId, true)) {
-                    showGameToast('That card can\u2019t be attached from Permanent right now.');
+                if (attachContext && !canResolveWildAttachContext(attachContext)) {
+                    showGameToast('That card can\u2019t be attached right now.');
                     return;
                 }
                 const wildMember = buildWildPokemonMember(memberSource);
                 if (attachContext) {
                     // Set BEFORE setBattleDefenderWild(), which is what
                     // shares the member with everyone else in a Lobby.
-                    wildMember.attachCardId = attachContext.cardId;
-                    wildMember.attachCounter = getDefaultItemCounter(attachCard);
+                    // Slot-aware: a Nature Deck card lands in the Nature
+                    // slot, everything else in Attach (see
+                    // getAttachSlotForCard()).
+                    if (getAttachSlotForCard(attachContext.cardId) === 'nature') {
+                        wildMember.natureCardId = attachContext.cardId;
+                    } else {
+                        wildMember.attachCardId = attachContext.cardId;
+                        wildMember.attachCounter = getDefaultItemCounter(attachCard);
+                    }
                 }
                 setBattleDefenderWild(wildMember);
                 renderBattleDefenderSlot();
                 renderBattleAttackerSlot();
-                // Only now does the card leave Permanent (not discarded
-                // -- it's attached to the Wild Pok\u00e9mon).
-                if (attachContext) requestPermanentAttachResolve(attachContext.instanceId);
+                // Only now does the card leave wherever it came from
+                // (Permanent, the Active Card zone, or a hand) -- see
+                // resolveAttachSource(). Never discarded: it's attached
+                // to the Wild Pok\u00e9mon.
+                if (attachContext) {
+                    resolveAttachSource(attachContext.source, attachContext.cardId, attachContext.instanceId);
+                    // A brand new Wild Pok\u00e9mon carrying a card that does
+                    // something when it lands on a Pok\u00e9mon (Egg Move) --
+                    // same effect as attaching it to one already there
+                    // (see commitAttachFromHandToMember()). A no-op for
+                    // every card without an onAttachTopCard.
+                    runOnAttachTopCardEffect('wild', attachContext.cardId);
+                }
             });
         }
 
@@ -35356,6 +35729,7 @@
                     // Permanent), ready to try Attach again later.
                     handAttachPendingCardId = null;
                     handAttachPendingPermanentInstanceId = null;
+                    handAttachWildAutoPending = false;
                     renderTeamGrid();
                 }
                 closeTeamAddPromptOverlay();
@@ -35765,6 +36139,8 @@
             // solo tool on this reset.
             hostBattleArenaState = { attacker: null, defender: null, inProgress: false, moves: { attacker: null, defender: null }, dice: makeEmptyBattleDice(), diceCounts: { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() }, entered: { attacker: false, defender: false }, fields: { attacker: null, defender: null }, rerolls: { attacker: 0, defender: 0 }, record: makeEmptyBattleRecord() };
             guestBattleArenaCache = null;
+            battleMusicWasInProgress = false;
+            battleMusicCueApplied = false;
             syncSoloBattleCards(); // back to this device's own solo Battle Cards
             renderBattleFieldZones(soloBattleFields); // ...and solo Field Move Effects
             refreshGameUI();
@@ -36743,6 +37119,10 @@
                     hostApplyLookAddToHand(data.deck, conn.peer, data.cardId);
                 } else if (data.type === 'deck-return-unattached' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
                     hostApplyDiscardUnattached(data.deck, data.cardId);
+                } else if (data.type === 'deck-draw-attach' && Array.isArray(data.decks) && typeof data.memberUid === 'string') {
+                    // An on-attach top-card effect (Egg Move) -- see
+                    // hostApplyDrawForAttach().
+                    hostApplyDrawForAttach(conn.peer, data.decks.slice(0, 3), data.memberUid, data.sourceCardId);
                 } else if (data.type === 'deck-attach' && typeof data.cardId === 'string') {
                     // The Attach itself (which team member, if any) is
                     // purely local to the guest's own device/save -- see
@@ -37706,6 +38086,10 @@
                     }
                     renderDecksScreen();
                     renderRewardMenu(); // no-op unless this exact menu is open
+                } else if (data.type === 'deck-draw-attach-result' && typeof data.memberUid === 'string') {
+                    // The Host's answer to this device's own on-attach
+                    // top-card request -- cardId is null if the deck was empty.
+                    finishDrawnCardAttach(typeof data.cardId === 'string' ? data.cardId : null, data.memberUid, data.sourceCardId);
                 } else if (data.type === 'deck-look-result' && typeof data.deck === 'string' && Array.isArray(data.cards)) {
                     // The private reply to this device's own
                     // requestLookAtTopCards() -- see
@@ -39249,6 +39633,21 @@
             }
         });
 
+        document.getElementById('game-nature-attach-choice-overlay').addEventListener('click', (e) => {
+            if (e.target.id === 'game-nature-attach-choice-overlay' || e.target.closest('#game-nature-attach-choice-cancel-btn')) {
+                closeNatureAttachChoice();
+                return;
+            }
+            if (e.target.closest('#game-nature-attach-choice-team-btn')) {
+                chooseNatureAttachTarget('team');
+                return;
+            }
+            if (e.target.closest('#game-nature-attach-choice-wild-btn')) {
+                chooseNatureAttachTarget('wild');
+                return;
+            }
+        });
+
         // Defender Options / Attacker Options overlays -- siblings of
         // #game-scroll, so the delegated listener there never sees these
         // clicks. Each action closes the overlay first, then does what
@@ -39319,6 +39718,10 @@
         document.getElementById('game-team-attach-confirm-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'game-team-attach-confirm-overlay' || e.target.closest('.game-team-attach-confirm-no-btn')) {
                 closeAttachFromHandConfirmOverlay();
+                // The Wild auto-assign path (see beginWildAttach()) never
+                // switched to Team Tracker, so there's no attach banner to
+                // fall back to picking in -- declining ends the attach.
+                if (handAttachWildAutoPending) exitAttachFromHandMode();
                 return;
             }
             if (e.target.closest('.game-team-attach-confirm-yes-btn')) {
@@ -40705,6 +41108,25 @@
         // every playlist at the top again.
         let musicLastTrackIdByCategory = {};
 
+        // A single track pinned over the whole playlist (see
+        // applyMusicCue()) -- while set, the queue is just that track,
+        // so it loops, and region/stage filters don't drop it. Cleared
+        // by any ordinary playlist change, so a player tapping a
+        // playlist button always wins. Session-only, never saved.
+        let musicPinnedTrackId = null;
+
+        // While a cue (see applyMusicCue()) is in effect with
+        // `genericOnly`, the playlist leaves out every track that's
+        // reserved for specific Pok\u00e9mon (a "pokemon" list in
+        // music-tracks.json), so a Pok\u00e9mon only ever hears its own
+        // track or one of the region's generic ones. Cleared by any
+        // ordinary playlist change. Session-only, never saved.
+        let musicGenericOnly = false;
+
+        function isMusicTrackGeneric(track) {
+            return !(Array.isArray(track.pokemon) && track.pokemon.length);
+        }
+
         const musicPlaylistButtons = document.getElementById('music-playlist-buttons');
         const musicRegionHeader = document.getElementById('music-region-header');
         const musicRegionHeaderText = document.getElementById('music-region-header-text-inner');
@@ -40799,9 +41221,153 @@
         }
 
         function setActiveMusicCategory(category) {
+            musicPinnedTrackId = null;
+            musicGenericOnly = false;
             musicState.activeCategory = category;
             saveMusicPlayerState();
             rebuildMusicQueue({ keepCurrentTrack: false });
+        }
+
+        // ---- Music cues ------------------------------------------------
+        //
+        // A "cue" is a request for the music to change because of
+        // something that happened in the game, rather than because a
+        // player tapped a playlist button:
+        //
+        //   { playlists: ['wild-legendary-battle', 'wild-battle'],
+        //     track: <a music-tracks.json entry> | null }
+        //
+        //   track      a specific track to pin over the whole playlist
+        //              (a Legendary's own theme). Wins when present.
+        //   playlists  categories to try, best first -- the first one
+        //              with at least one track under the current Region
+        //              + Game Stage filters is used, so a missing
+        //              Legendary playlist falls back to plain Wild.
+        //   genericOnly  true: leave out tracks reserved for specific
+        //              Pok\u00e9mon (see isMusicTrackGeneric()) when judging
+        //              and playing those playlists.
+        //
+        // Nothing happens if neither resolves (the music is left as it
+        // was). Host (or solo) only, like all real playback -- guests
+        // just see the result through the normal music broadcast.
+        // Returns true if the music was changed.
+        function musicCategoryHasTracks(category, genericOnly) {
+            return musicTracks.some(track => {
+                if (track.category !== category) return false;
+                if (genericOnly && !isMusicTrackGeneric(track)) return false;
+                const regionMatches = musicState.activeRegion === 'all' || (track.regions || []).includes(musicState.activeRegion);
+                const stageMatches = musicState.activeGameStage === 'any' || (track.gamestage || []).includes(musicState.activeGameStage);
+                return regionMatches && stageMatches;
+            });
+        }
+
+        function applyMusicCue(cue) {
+            if (!cue || lobbyState.role === 'guest') return false;
+            if (cue.track && cue.track.id) {
+                if (musicPinnedTrackId === cue.track.id) return true;
+                musicPinnedTrackId = cue.track.id;
+                musicGenericOnly = false;
+                musicState.activeCategory = cue.track.category;
+                saveMusicPlayerState();
+                rebuildMusicQueue({ keepCurrentTrack: false });
+                return true;
+            }
+            const genericOnly = !!cue.genericOnly;
+            const category = (cue.playlists || []).find(c => musicCategoryHasTracks(c, genericOnly));
+            if (!category) return false;
+            if (!musicPinnedTrackId && musicState.activeCategory === category && musicGenericOnly === genericOnly) return true; // already there
+            musicPinnedTrackId = null;
+            musicGenericOnly = genericOnly;
+            musicState.activeCategory = category;
+            saveMusicPlayerState();
+            rebuildMusicQueue({ keepCurrentTrack: false });
+            return true;
+        }
+
+        // ---- Battle music --------------------------------------------
+        //
+        // When a battle starts in a multiplayer Battle Arena the Host's
+        // music changes to match the kind of battle, and when it ends,
+        // however it ends, goes back to Route. Everything funnels
+        // through syncBattleMusicToArena(), called every time the Host
+        // broadcasts the arena (which every start/end path does), so
+        // there's no separate hook per way of ending.
+        //
+        // TO ADD A NEW KIND OF BATTLE: add an entry to
+        // BATTLE_MUSIC_RULES (and, if it needs a new fact about the
+        // battle, a field in buildBattleMusicContext()). First rule whose
+        // match() is true wins.
+        //
+        // A SPECIFIC TRACK FOR A SPECIFIC POK\u00c9MON: in music-tracks.json,
+        // give the track a "pokemon" list of names as they appear in
+        // pokemon-data.json, e.g.
+        //   { "id": "johto-battle-raikou", ..., "pokemon": ["Raikou"] }
+        // A rule with pinByPokemon: true plays that track (looping, and
+        // regardless of Game Stage) instead of the playlist when that
+        // Pok\u00e9mon is the wild opponent -- but ONLY a track from the
+        // active Region: a Lugia met in Sinnoh doesn't get Johto's Lugia
+        // theme. (With Region set to All Regions, any region's counts.)
+        // A track that lists Pok\u00e9mon is reserved for them: every
+        // battle playlist skips it for anyone else (genericOnly), so a
+        // Pok\u00e9mon with no track of its own in this region gets one of
+        // the region's generic tracks (the ones with no "pokemon" list)
+        // instead. No generic track in the region at all? The next
+        // playlist in the rule's list is tried.
+        const BATTLE_MUSIC_LEGENDARY_TAGS = ['legendary'];
+        const BATTLE_MUSIC_RULES = [
+            { id: 'wild-legendary',
+              match: ctx => ctx.opponentIsWild && ctx.opponentTags.some(t => BATTLE_MUSIC_LEGENDARY_TAGS.includes(t)),
+              playlists: ['wild-legendary-battle', 'wild-battle'], pinByPokemon: true, genericOnly: true },
+            { id: 'wild',
+              match: ctx => ctx.opponentIsWild,
+              playlists: ['wild-battle'], pinByPokemon: true, genericOnly: true },
+        ];
+        // Where the music goes once a battle (that had battle music) is over.
+        const BATTLE_MUSIC_END_CUE = { playlists: ['route'], track: null };
+
+        let battleMusicWasInProgress = false;
+        let battleMusicCueApplied = false;
+
+        // What the rules can look at, from the Host's arena state.
+        function buildBattleMusicContext(st) {
+            const wildEntry = [st.defender, st.attacker].find(e => e && !e.ownerId && e.member) || null;
+            const member = wildEntry ? wildEntry.member : null;
+            const names = member ? [member.formOverride, member.name].filter(Boolean) : [];
+            const dataEntry = member ? (POKEMON_BY_NAME[member.formOverride] || POKEMON_BY_NAME[member.name] || null) : null;
+            return {
+                opponentIsWild: !!member,
+                opponentNames: names.map(n => String(n).toLowerCase()),
+                opponentTags: ((dataEntry && dataEntry.tags) || []).map(t => String(t).toLowerCase()),
+            };
+        }
+
+        function findPinnedBattleTrack(ctx) {
+            if (!ctx.opponentNames.length) return null;
+            // Only the active Region's own track counts (any region's
+            // when Region is All).
+            const matches = musicTracks.filter(t => Array.isArray(t.pokemon)
+                && t.pokemon.some(n => ctx.opponentNames.includes(String(n).toLowerCase()))
+                && (musicState.activeRegion === 'all' || (t.regions || []).includes(musicState.activeRegion)));
+            return matches[0] || null;
+        }
+
+        function resolveBattleMusicCue(ctx) {
+            const rule = BATTLE_MUSIC_RULES.find(r => r.match(ctx));
+            if (!rule) return null;
+            return { playlists: rule.playlists, track: rule.pinByPokemon ? findPinnedBattleTrack(ctx) : null, genericOnly: !!rule.genericOnly };
+        }
+
+        function syncBattleMusicToArena() {
+            if (lobbyState.role !== 'host') { battleMusicWasInProgress = false; battleMusicCueApplied = false; return; }
+            const inProgress = !!hostBattleArenaState.inProgress;
+            if (inProgress === battleMusicWasInProgress) return;
+            battleMusicWasInProgress = inProgress;
+            if (inProgress) {
+                battleMusicCueApplied = applyMusicCue(resolveBattleMusicCue(buildBattleMusicContext(hostBattleArenaState)));
+            } else if (battleMusicCueApplied) {
+                battleMusicCueApplied = false;
+                applyMusicCue(BATTLE_MUSIC_END_CUE);
+            }
         }
 
         // Entry point the Master Playlist buttons actually call (see
@@ -41025,13 +41591,16 @@
             const currentTrack = musicQueueIndex >= 0 ? musicQueue[musicQueueIndex] : null;
             const category = musicState.activeCategory;
 
-            musicQueue = musicTracks.filter(track => {
+            const pinnedTrack = musicPinnedTrackId ? musicTracks.find(t => t.id === musicPinnedTrackId) : null;
+            if (musicPinnedTrackId && !pinnedTrack) musicPinnedTrackId = null;
+            musicQueue = pinnedTrack ? [pinnedTrack] : musicTracks.filter(track => {
                 const categoryMatches = track.category === category;
                 const regionMatches = musicState.activeRegion === 'all' ||
                     track.regions.includes(musicState.activeRegion);
                 const stageMatches = musicState.activeGameStage === 'any' ||
                     (track.gamestage || []).includes(musicState.activeGameStage);
-                return categoryMatches && regionMatches && stageMatches;
+                const genericOk = !musicGenericOnly || isMusicTrackGeneric(track);
+                return categoryMatches && regionMatches && stageMatches && genericOk;
             });
 
             const preservedIndex = (keepCurrentTrack && currentTrack)
