@@ -13450,9 +13450,10 @@
                     </datalist>
                     <!-- Built in populateMusicControls() -- one button per
                          category, in the order categories first appear in
-                         music-tracks.json. See .music-playlist-buttons /
-                         .music-playlist-btn CSS for the 2-column-plus-
-                         final-own-row layout. -->
+                         music-tracks.json (Special Battle is pinned just
+                         before Victory). See .music-playlist-buttons /
+                         .music-playlist-btn CSS for the 2-column layout;
+                         an odd last button gets its own row. -->
                     <div id="music-playlist-buttons" class="music-playlist-buttons"></div>
                     
                     <div class="music-now-playing" id="music-now-playing">No track loaded</div>
@@ -41001,6 +41002,7 @@
             'trainer-battle': 'Trainer Battle',
             'gym-battle': 'Gym Battle',
             'legendary-battle': 'Legendary Battle',
+            'special-battle': 'Special Battle',
         };
         // Shortened label used only below the desktopFilterQuery breakpoint
         // (see .music-playlist-btn-label CSS), where button width is
@@ -41030,6 +41032,7 @@
             'villain-battle': 'https://dl.dropboxusercontent.com/scl/fi/r4mbr0yjllemcg1326iqk/Playlist_Villain.png?rlkey=tfp5aysptgrlqyp11ax0trnqb&st=s8unfow2&dl=1',
             'elite-four-battle': 'https://dl.dropboxusercontent.com/scl/fi/qgizkmfv9wmzdfx5zaomq/Playlist_EliteFour.png?rlkey=456r5mgz7dpsv4nggie754a1a&st=9ki766hw&dl=1',
             'champion-battle': 'https://dl.dropboxusercontent.com/scl/fi/pqw7cxogz4eg9m4zjrnrv/Playlist_Champion.png?rlkey=5ki24xvkn5gs4tik0vrzohnu2&st=bai9mo32&dl=1',
+            'special-battle': 'PLACEHOLDER_ICON_URL_special-battle',
             'victory': 'https://dl.dropboxusercontent.com/scl/fi/fsf7od8nemefi736i9zh4/Playlist_Victory.png?rlkey=7rfom0c8dy0gfm8sblusmh57l&st=6n9fiuf6&dl=1',
         };
         const MUSIC_ICON_PLACEHOLDER_FALLBACK = 'PLACEHOLDER_ICON_URL_default';
@@ -41108,12 +41111,14 @@
         // every playlist at the top again.
         let musicLastTrackIdByCategory = {};
 
-        // A single track pinned over the whole playlist (see
-        // applyMusicCue()) -- while set, the queue is just that track,
-        // so it loops, and region/stage filters don't drop it. Cleared
-        // by any ordinary playlist change, so a player tapping a
-        // playlist button always wins. Session-only, never saved.
-        let musicPinnedTrackId = null;
+        // Specific tracks pinned over the whole playlist (see
+        // applyMusicCue()) -- while set, the queue is just these tracks
+        // (in music-tracks.json order, so they play one after another,
+        // or shuffled/repeated per the usual transport settings), and
+        // region/stage filters don't drop them. Cleared by any ordinary
+        // playlist change, so a player tapping a playlist button always
+        // wins. Session-only, never saved.
+        let musicPinnedTrackIds = [];
 
         // While a cue (see applyMusicCue()) is in effect with
         // `genericOnly`, the playlist leaves out every track that's
@@ -41123,8 +41128,12 @@
         // ordinary playlist change. Session-only, never saved.
         let musicGenericOnly = false;
 
+        // Generic = not reserved for anything: no "pokemon" list (a
+        // Pokémon's own track) and no "battleType" (a track for a kind
+        // of battle with its own rules, e.g. "max-raid", "alpha" --
+        // only ever picked by a rule that asks for it).
         function isMusicTrackGeneric(track) {
-            return !(Array.isArray(track.pokemon) && track.pokemon.length);
+            return !(Array.isArray(track.pokemon) && track.pokemon.length) && !track.battleType;
         }
 
         const musicPlaylistButtons = document.getElementById('music-playlist-buttons');
@@ -41221,7 +41230,7 @@
         }
 
         function setActiveMusicCategory(category) {
-            musicPinnedTrackId = null;
+            musicPinnedTrackIds = [];
             musicGenericOnly = false;
             musicState.activeCategory = category;
             saveMusicPlayerState();
@@ -41235,10 +41244,11 @@
         // player tapped a playlist button:
         //
         //   { playlists: ['wild-legendary-battle', 'wild-battle'],
-        //     track: <a music-tracks.json entry> | null }
+        //     tracks: [<music-tracks.json entries>] }
         //
-        //   track      a specific track to pin over the whole playlist
-        //              (a Legendary's own theme). Wins when present.
+        //   tracks     specific tracks to pin over the whole playlist
+        //              (a Legendary's own themes -- ALL of them play,
+        //              not just the first). Wins when non-empty.
         //   playlists  categories to try, best first -- the first one
         //              with at least one track under the current Region
         //              + Game Stage filters is used, so a missing
@@ -41263,11 +41273,12 @@
 
         function applyMusicCue(cue) {
             if (!cue || lobbyState.role === 'guest') return false;
-            if (cue.track && cue.track.id) {
-                if (musicPinnedTrackId === cue.track.id) return true;
-                musicPinnedTrackId = cue.track.id;
+            if (Array.isArray(cue.tracks) && cue.tracks.length) {
+                const ids = cue.tracks.map(t => t.id);
+                if (ids.length === musicPinnedTrackIds.length && ids.every(id => musicPinnedTrackIds.includes(id))) return true;
+                musicPinnedTrackIds = ids;
                 musicGenericOnly = false;
-                musicState.activeCategory = cue.track.category;
+                musicState.activeCategory = cue.tracks[0].category;
                 saveMusicPlayerState();
                 rebuildMusicQueue({ keepCurrentTrack: false });
                 return true;
@@ -41275,8 +41286,8 @@
             const genericOnly = !!cue.genericOnly;
             const category = (cue.playlists || []).find(c => musicCategoryHasTracks(c, genericOnly));
             if (!category) return false;
-            if (!musicPinnedTrackId && musicState.activeCategory === category && musicGenericOnly === genericOnly) return true; // already there
-            musicPinnedTrackId = null;
+            if (!musicPinnedTrackIds.length && musicState.activeCategory === category && musicGenericOnly === genericOnly) return true; // already there
+            musicPinnedTrackIds = [];
             musicGenericOnly = genericOnly;
             musicState.activeCategory = category;
             saveMusicPlayerState();
@@ -41302,11 +41313,13 @@
         // give the track a "pokemon" list of names as they appear in
         // pokemon-data.json, e.g.
         //   { "id": "johto-battle-raikou", ..., "pokemon": ["Raikou"] }
-        // A rule with pinByPokemon: true plays that track (looping, and
-        // regardless of Game Stage) instead of the playlist when that
-        // Pok\u00e9mon is the wild opponent -- but ONLY a track from the
-        // active Region: a Lugia met in Sinnoh doesn't get Johto's Lugia
-        // theme. (With Region set to All Regions, any region's counts.)
+        // A rule with pinByPokemon: true plays every track that lists
+        // that Pokémon (regardless of Game Stage) instead of the
+        // playlist when it's the wild opponent -- one after another, in
+        // music-tracks.json order, or shuffled if Shuffle is on. But
+        // ONLY tracks from the active Region: a Lugia met in Sinnoh
+        // doesn't get Johto's Lugia theme. (With Region set to All
+        // Regions, any region's count.)
         // A track that lists Pok\u00e9mon is reserved for them: every
         // battle playlist skips it for anyone else (genericOnly), so a
         // Pok\u00e9mon with no track of its own in this region gets one of
@@ -41321,6 +41334,11 @@
             { id: 'wild',
               match: ctx => ctx.opponentIsWild,
               playlists: ['wild-battle'], pinByPokemon: true, genericOnly: true },
+            // Player vs. player: both halves hold a Pokémon that belongs
+            // to a player (neither is a Wild Pokémon).
+            { id: 'trainer',
+              match: ctx => ctx.bothPlayerOwned,
+              playlists: ['trainer-battle'], genericOnly: true },
         ];
         // Where the music goes once a battle (that had battle music) is over.
         const BATTLE_MUSIC_END_CUE = { playlists: ['route'], track: null };
@@ -41335,26 +41353,26 @@
             const names = member ? [member.formOverride, member.name].filter(Boolean) : [];
             const dataEntry = member ? (POKEMON_BY_NAME[member.formOverride] || POKEMON_BY_NAME[member.name] || null) : null;
             return {
+                bothPlayerOwned: !!(st.attacker && st.attacker.ownerId && st.defender && st.defender.ownerId),
                 opponentIsWild: !!member,
                 opponentNames: names.map(n => String(n).toLowerCase()),
                 opponentTags: ((dataEntry && dataEntry.tags) || []).map(t => String(t).toLowerCase()),
             };
         }
 
-        function findPinnedBattleTrack(ctx) {
-            if (!ctx.opponentNames.length) return null;
-            // Only the active Region's own track counts (any region's
+        function findPinnedBattleTracks(ctx) {
+            if (!ctx.opponentNames.length) return [];
+            // Only the active Region's own tracks count (any region's
             // when Region is All).
-            const matches = musicTracks.filter(t => Array.isArray(t.pokemon)
+            return musicTracks.filter(t => Array.isArray(t.pokemon)
                 && t.pokemon.some(n => ctx.opponentNames.includes(String(n).toLowerCase()))
                 && (musicState.activeRegion === 'all' || (t.regions || []).includes(musicState.activeRegion)));
-            return matches[0] || null;
         }
 
         function resolveBattleMusicCue(ctx) {
             const rule = BATTLE_MUSIC_RULES.find(r => r.match(ctx));
             if (!rule) return null;
-            return { playlists: rule.playlists, track: rule.pinByPokemon ? findPinnedBattleTrack(ctx) : null, genericOnly: !!rule.genericOnly };
+            return { playlists: rule.playlists, tracks: rule.pinByPokemon ? findPinnedBattleTracks(ctx) : [], genericOnly: !!rule.genericOnly };
         }
 
         function syncBattleMusicToArena() {
@@ -41591,9 +41609,9 @@
             const currentTrack = musicQueueIndex >= 0 ? musicQueue[musicQueueIndex] : null;
             const category = musicState.activeCategory;
 
-            const pinnedTrack = musicPinnedTrackId ? musicTracks.find(t => t.id === musicPinnedTrackId) : null;
-            if (musicPinnedTrackId && !pinnedTrack) musicPinnedTrackId = null;
-            musicQueue = pinnedTrack ? [pinnedTrack] : musicTracks.filter(track => {
+            const pinnedTracks = musicPinnedTrackIds.length ? musicTracks.filter(t => musicPinnedTrackIds.includes(t.id)) : [];
+            if (musicPinnedTrackIds.length && !pinnedTracks.length) musicPinnedTrackIds = [];
+            musicQueue = pinnedTracks.length ? pinnedTracks : musicTracks.filter(track => {
                 const categoryMatches = track.category === category;
                 const regionMatches = musicState.activeRegion === 'all' ||
                     track.regions.includes(musicState.activeRegion);
@@ -41836,6 +41854,13 @@
             // already in that order straight out of the fetch, so a plain
             // first-seen Set dedupe preserves it without any extra sort.
             const categories = [...new Set(musicTracks.map(t => t.category))];
+            // Special Battle always sits just before Victory (the last
+            // line), whatever order the JSON happens to introduce them in.
+            const specialIdx = categories.indexOf('special-battle');
+            if (specialIdx !== -1 && categories.includes('victory')) {
+                categories.splice(specialIdx, 1);
+                categories.splice(categories.indexOf('victory'), 0, 'special-battle');
+            }
             const regions = [...new Set(musicTracks.flatMap(t => t.regions))];
             // Save creation's own Region dropdown (see the Game panel's
             // script) reads off this exact same derivation, so the two
@@ -41846,9 +41871,10 @@
                 const label = MUSIC_CATEGORY_LABELS[id] || titleCaseFromId(id);
                 const mobileLabel = MUSIC_CATEGORY_LABELS_MOBILE[id] || label;
                 const icon = MUSIC_CATEGORY_ICONS[id] || MUSIC_ICON_PLACEHOLDER_FALLBACK;
-                // Last button spans both grid columns on its own line;
-                // every other one sits in the regular 2-up grid.
-                const ownRow = index === categories.length - 1 ? ' own-row' : '';
+                // With an odd number of buttons the last one spans both
+                // grid columns on its own line; with an even number it
+                // just pairs up like the rest (Special Battle + Victory).
+                const ownRow = (categories.length % 2 === 1 && index === categories.length - 1) ? ' own-row' : '';
                 return `<button type="button" class="filter-btn music-playlist-btn${ownRow}" data-category="${id}" title="${label}">` +
                     `<img class="music-playlist-btn-icon" src="${icon}" alt="">` +
                     `<span class="music-playlist-btn-label full-label">${label}</span>` +
