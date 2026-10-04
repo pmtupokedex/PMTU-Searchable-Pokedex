@@ -2208,6 +2208,18 @@
             gap: 14px;
         }
 
+        /* Saves block at the top of Play a Game -- hidden for the steps
+           that replace the whole screen's content with a single form. */
+        .game-lobby-saves {
+            margin-bottom: 14px;
+        }
+
+        .game-lobby[data-state="naming"] .game-lobby-saves,
+        .game-lobby[data-state="color-pick"] .game-lobby-saves,
+        .game-lobby[data-state="host-role"] .game-lobby-saves {
+            display: none;
+        }
+
         /* Naming step -- shown only for a brand-new guest connection
            (see handleLobbyWelcome() in the script); a returning guest
            with an existing Guest Save skips it entirely. Same card look
@@ -2348,8 +2360,14 @@
         /* Host's own room code/QR is meaningless on a guest's screen --
            a guest's peer id isn't a room anyone else would ever join --
            so it's hidden outright rather than shown empty. */
-        .game-lobby[data-role="guest"] .game-lobby-room-info {
+        .game-lobby[data-role="guest"] .game-lobby-room-info,
+        .game-lobby[data-role="solo"] .game-lobby-room-info {
             display: none;
+        }
+
+        /* Solo card takes its own full row under Host/Join. */
+        .game-lobby-card-solo {
+            flex: 1 1 100%;
         }
 
         /* Same reasoning as .game-lobby-room-info above -- only the
@@ -3040,6 +3058,64 @@
             width: 100%;
             box-sizing: border-box;
             text-align: center;
+        }
+
+        /* Tools list on the main screen: strict 2-up grid (same approach
+           as .music-playlist-buttons), buttons styled like
+           .music-playlist-btn -- icon on the left, text left-aligned.
+           Separate modifier so the Rulebooks picker, which reuses
+           .game-menu-tiles, keeps its stacked centered buttons. */
+        .game-menu-tiles.game-menu-tiles-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            /* Overrides .game-menu-tiles' own left-shifted margin (built
+               for the old stacked buttons). Each button carries a 5px
+               margin, so -5px on both sides lets the buttons' visible
+               edges sit flush with the headers above and below. */
+            margin: 0 -5px;
+        }
+
+        .game-menu-tiles-grid .filter-btn {
+            width: auto;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 8px;
+            text-align: left;
+            overflow: hidden;
+            padding: 4px 10px;
+        }
+
+        .game-menu-tile-icon-slot {
+            height: 60px;
+            width: 60px;
+            flex: 0 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .game-menu-tile-icon {
+            height: 72px;
+            width: 90px;
+		left: -12px;
+		position: relative;
+            pointer-events: none;
+        }
+
+        /* Until a real icon URL is set in TOOL_MENU_ICONS the slot shows
+           a faint placeholder square, so every label still lines up. */
+        .game-menu-tile-icon-slot.is-placeholder {
+            border: 2px dashed currentColor;
+            border-radius: 8px;
+            box-sizing: border-box;
+            opacity: 0.3;
+        }
+
+        .game-menu-tile-label {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow-wrap: break-word;
         }
 
         /* ---- Active Card zone (see the chat this was designed in,
@@ -5391,6 +5467,26 @@
            own comment for the ratio's source), so a team member's token
            reads as the exact same "thing" as its own gallery card and
            its own related-row thumbnail, just at this grid's own scale. */
+        /* Gym Leader card in a Battle Arena slot: a standard playing card
+           (5:7), no token frame, art fills it. The HP/Status corners are the
+           same .game-team-slot-hp/-status elements tokens use. */
+        .game-team-slot.game-gym-leader-card {
+            aspect-ratio: 5 / 7;
+            background-image: none;
+        }
+
+        .game-gym-leader-card-img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            border-radius: 4%;
+            display: block;
+        }
+
+        .game-gym-leader-card-img.fainted {
+            filter: brightness(0.35);
+        }
+
         .game-team-slot-img {
             width: 89.286%;
             aspect-ratio: 1 / 1;
@@ -6356,6 +6452,55 @@
 
         #game-battle-defender-picker-overlay.visible {
             display: flex;
+        }
+
+        #game-battle-gym-leader-picker-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        #game-battle-gym-leader-picker-overlay.visible {
+            display: flex;
+        }
+
+        .game-gym-leader-picker-filters {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .game-gym-leader-picker-filters select,
+        .game-gym-leader-picker-filters input {
+            font-family: inherit;
+            font-size: 14px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            border: 1px solid rgba(0, 0, 0, 0.25);
+            box-sizing: border-box;
+            min-width: 0;
+        }
+
+        .game-gym-leader-picker-filters input {
+            flex: 1;
+        }
+
+        .game-gym-leader-picker-img {
+            width: 64px;
+            height: 90px;
+            object-fit: contain;
+        }
+
+        .game-gym-leader-picker-sub {
+            font-size: 11px;
+            opacity: 0.75;
+            text-align: center;
         }
 
         /* Slot chooser opened by a Team Tracker send-to-battle tap (see
@@ -13610,317 +13755,15 @@
         <div class="game-panel-bg"></div>
         <div id="game-scroll">
 
-            <!-- The one root screen now -- saves and tools are both
-                 always visible together, so using a tool never requires
-                 picking a save first (see the unsaved-session system in
-                 the script for how Badge/Team Tracker cope with that). -->
+            <!-- The one root screen now -- the active save's name, Poké Coins
+                 and the tools are visible together, so using a tool never
+                 requires picking a save first (see the unsaved-session
+                 system in the script for how Badge/Team Tracker cope with
+                 that). Saves themselves moved to Play a Game. -->
             <div class="game-screen active" id="game-screen-main">
                 <div class="game-save-progress-banner" id="game-save-progress-banner-main">
                     <span>You have unsaved progress.</span>
                     <button class="filter-btn game-save-progress-btn">Save This Progress</button>
-                </div>
-
-                <div class="game-section-header game-collapsible-header" id="game-saves-header">Your Hosted Games</div>
-
-                <div id="game-saves-section">
-                <div class="game-save-slot" data-slot="0" data-state="empty">
-                    <div class="game-save-slot-loaded">
-                        <p class="game-save-slot-name"></p>
-                        <p class="game-save-slot-meta"></p>
-                        <div class="game-save-slot-actions">
-                            <button class="filter-btn game-load-btn" data-slot="0">Load</button>
-                            <button class="filter-btn game-delete-btn" data-slot="0">Delete</button>
-                        </div>
-                    </div>
-                    <div class="game-save-slot-empty">
-                        <button class="filter-btn game-new-btn" data-slot="0">+ New Save</button>
-                    </div>
-                    <div class="game-save-new-form" data-slot="0">
-                        <label for="game-new-name-0">Save Name</label>
-                        <input type="text" id="game-new-name-0" class="game-new-name-input" placeholder="My Game" maxlength="24">
-
-                        <label for="game-new-region-0">Region</label>
-                        <select id="game-new-region-0" class="game-new-region-select">
-                            <option value="" disabled selected>Loading Regions&hellip;</option>
-                        </select>
-
-                        <label for="game-new-length-0">Game Length</label>
-                        <select id="game-new-length-0" class="game-new-length-select">
-                            <option value="short">Short</option>
-                            <option value="medium" selected>Medium</option>
-                            <option value="long">Long</option>
-                        </select>
-
-                        <label for="game-new-type-rule-0">Type Effectiveness Rule</label>
-                        <select id="game-new-type-rule-0" class="game-new-type-rule-select">
-                            <option value="main">Main Type Only</option>
-                            <option value="main-immunities">Main Type + Immunities</option>
-                            <option value="all">All Types</option>
-                            <option value="all-immunities">All Types + Immunities</option>
-                        </select>
-
-                        <label for="game-new-hp-rule-0">Hit Points Rule</label>
-                        <select id="game-new-hp-rule-0" class="game-new-hp-rule-select">
-                            <option value="standard">Standard Hit Points</option>
-                            <option value="alt1">Alternate Hit Points 1</option>
-                            <option value="alt2">Alternate Hit Points 2</option>
-                        </select>
-
-                        <label for="game-new-pokecoins-enabled-0">Use Pok&eacute; Coins?</label>
-                        <select id="game-new-pokecoins-enabled-0" class="game-new-pokecoins-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-new-natures-enabled-0">Use Nature Cards?</label>
-                        <select id="game-new-natures-enabled-0" class="game-new-natures-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-new-virtual-decks-enabled-0">Use Virtual Decks?</label>
-                        <select id="game-new-virtual-decks-enabled-0" class="game-new-virtual-decks-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-new-tiered-tm-decks-enabled-0">Use Tiered TM Decks?</label>
-                        <select id="game-new-tiered-tm-decks-enabled-0" class="game-new-tiered-tm-decks-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <div class="game-save-slot-actions">
-                            <button class="filter-btn game-create-confirm-btn" data-slot="0">Create</button>
-                            <button class="filter-btn game-create-cancel-btn" data-slot="0">Cancel</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="game-save-slot" data-slot="1" data-state="empty">
-                    <div class="game-save-slot-loaded">
-                        <p class="game-save-slot-name"></p>
-                        <p class="game-save-slot-meta"></p>
-                        <div class="game-save-slot-actions">
-                            <button class="filter-btn game-load-btn" data-slot="1">Load</button>
-                            <button class="filter-btn game-delete-btn" data-slot="1">Delete</button>
-                        </div>
-                    </div>
-                    <div class="game-save-slot-empty">
-                        <button class="filter-btn game-new-btn" data-slot="1">+ New Save</button>
-                    </div>
-                    <div class="game-save-new-form" data-slot="1">
-                        <label for="game-new-name-1">Save Name</label>
-                        <input type="text" id="game-new-name-1" class="game-new-name-input" placeholder="My Game" maxlength="24">
-
-                        <label for="game-new-region-1">Region</label>
-                        <select id="game-new-region-1" class="game-new-region-select">
-                            <option value="" disabled selected>Loading Regions&hellip;</option>
-                        </select>
-
-                        <label for="game-new-length-1">Game Length</label>
-                        <select id="game-new-length-1" class="game-new-length-select">
-                            <option value="short">Short</option>
-                            <option value="medium" selected>Medium</option>
-                            <option value="long">Long</option>
-                        </select>
-
-                        <label for="game-new-type-rule-1">Type Effectiveness Rule</label>
-                        <select id="game-new-type-rule-1" class="game-new-type-rule-select">
-                            <option value="main">Main Type Only</option>
-                            <option value="main-immunities">Main Type + Immunities</option>
-                            <option value="all">All Types</option>
-                            <option value="all-immunities">All Types + Immunities</option>
-                        </select>
-
-                        <label for="game-new-hp-rule-1">Hit Points Rule</label>
-                        <select id="game-new-hp-rule-1" class="game-new-hp-rule-select">
-                            <option value="standard">Standard Hit Points</option>
-                            <option value="alt1">Alternate Hit Points 1</option>
-                            <option value="alt2">Alternate Hit Points 2</option>
-                        </select>
-
-                        <label for="game-new-pokecoins-enabled-1">Use Pok&eacute; Coins?</label>
-                        <select id="game-new-pokecoins-enabled-1" class="game-new-pokecoins-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-new-natures-enabled-1">Use Nature Cards?</label>
-                        <select id="game-new-natures-enabled-1" class="game-new-natures-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-new-virtual-decks-enabled-1">Use Virtual Decks?</label>
-                        <select id="game-new-virtual-decks-enabled-1" class="game-new-virtual-decks-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-new-tiered-tm-decks-enabled-1">Use Tiered TM Decks?</label>
-                        <select id="game-new-tiered-tm-decks-enabled-1" class="game-new-tiered-tm-decks-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <div class="game-save-slot-actions">
-                            <button class="filter-btn game-create-confirm-btn" data-slot="1">Create</button>
-                            <button class="filter-btn game-create-cancel-btn" data-slot="1">Cancel</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="game-save-slot" data-slot="2" data-state="empty">
-                    <div class="game-save-slot-loaded">
-                        <p class="game-save-slot-name"></p>
-                        <p class="game-save-slot-meta"></p>
-                        <div class="game-save-slot-actions">
-                            <button class="filter-btn game-load-btn" data-slot="2">Load</button>
-                            <button class="filter-btn game-delete-btn" data-slot="2">Delete</button>
-                        </div>
-                    </div>
-                    <div class="game-save-slot-empty">
-                        <button class="filter-btn game-new-btn" data-slot="2">+ New Save</button>
-                    </div>
-                    <div class="game-save-new-form" data-slot="2">
-                        <label for="game-new-name-2">Save Name</label>
-                        <input type="text" id="game-new-name-2" class="game-new-name-input" placeholder="My Game" maxlength="24">
-
-                        <label for="game-new-region-2">Region</label>
-                        <select id="game-new-region-2" class="game-new-region-select">
-                            <option value="" disabled selected>Loading Regions&hellip;</option>
-                        </select>
-
-                        <label for="game-new-length-2">Game Length</label>
-                        <select id="game-new-length-2" class="game-new-length-select">
-                            <option value="short">Short</option>
-                            <option value="medium" selected>Medium</option>
-                            <option value="long">Long</option>
-                        </select>
-
-                        <label for="game-new-type-rule-2">Type Effectiveness Rule</label>
-                        <select id="game-new-type-rule-2" class="game-new-type-rule-select">
-                            <option value="main">Main Type Only</option>
-                            <option value="main-immunities">Main Type + Immunities</option>
-                            <option value="all">All Types</option>
-                            <option value="all-immunities">All Types + Immunities</option>
-                        </select>
-
-                        <label for="game-new-hp-rule-2">Hit Points Rule</label>
-                        <select id="game-new-hp-rule-2" class="game-new-hp-rule-select">
-                            <option value="standard">Standard Hit Points</option>
-                            <option value="alt1">Alternate Hit Points 1</option>
-                            <option value="alt2">Alternate Hit Points 2</option>
-                        </select>
-
-                        <label for="game-new-pokecoins-enabled-2">Use Pok&eacute; Coins?</label>
-                        <select id="game-new-pokecoins-enabled-2" class="game-new-pokecoins-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-new-natures-enabled-2">Use Nature Cards?</label>
-                        <select id="game-new-natures-enabled-2" class="game-new-natures-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-new-virtual-decks-enabled-2">Use Virtual Decks?</label>
-                        <select id="game-new-virtual-decks-enabled-2" class="game-new-virtual-decks-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-new-tiered-tm-decks-enabled-2">Use Tiered TM Decks?</label>
-                        <select id="game-new-tiered-tm-decks-enabled-2" class="game-new-tiered-tm-decks-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <div class="game-save-slot-actions">
-                            <button class="filter-btn game-create-confirm-btn" data-slot="2">Create</button>
-                            <button class="filter-btn game-create-cancel-btn" data-slot="2">Cancel</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Not a save itself -- a standing preference for what
-                     the "+ New Save" form above starts on. See
-                     applyGameSaveDefaultsToForm()/renderGameSaveDefaultsForm()
-                     in the script. Region is deliberately not covered
-                     here; see gameSaveDefaults' own comment for why.
-                     Collapsible via the same header/body pattern as
-                     #game-saves-header/#game-guest-saves-header (see
-                     setGameSaveDefaultsCollapsed() in the script) --
-                     starts closed, same as those two now do. -->
-                <div class="game-save-defaults-card">
-                    <div class="game-section-header game-collapsible-header" id="game-save-defaults-header">Default Save Settings</div>
-                    <div id="game-save-defaults-body">
-                        <p class="game-save-slot-meta">Applied automatically to new saves below &mdash; still changeable per-save at creation time.</p>
-
-                        <label for="game-save-default-length">Game Length</label>
-                        <select id="game-save-default-length" class="game-save-default-length-select">
-                            <option value="short">Short</option>
-                            <option value="medium" selected>Medium</option>
-                            <option value="long">Long</option>
-                        </select>
-
-                        <label for="game-save-default-type-rule">Type Effectiveness Rule</label>
-                        <select id="game-save-default-type-rule" class="game-save-default-type-rule-select">
-                            <option value="main">Main Type Only</option>
-                            <option value="main-immunities">Main Type + Immunities</option>
-                            <option value="all">All Types</option>
-                            <option value="all-immunities">All Types + Immunities</option>
-                        </select>
-
-                        <label for="game-save-default-hp-rule">Hit Points Rule</label>
-                        <select id="game-save-default-hp-rule" class="game-save-default-hp-rule-select">
-                            <option value="standard">Standard Hit Points</option>
-                            <option value="alt1">Alternate Hit Points 1</option>
-                            <option value="alt2">Alternate Hit Points 2</option>
-                        </select>
-
-                        <label for="game-save-default-pokecoins-enabled">Use Pok&eacute; Coins?</label>
-                        <select id="game-save-default-pokecoins-enabled" class="game-save-default-pokecoins-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-save-default-natures-enabled">Use Nature Cards?</label>
-                        <select id="game-save-default-natures-enabled" class="game-save-default-natures-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-save-default-virtual-decks-enabled">Use Virtual Decks?</label>
-                        <select id="game-save-default-virtual-decks-enabled" class="game-save-default-virtual-decks-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-
-                        <label for="game-save-default-tiered-tm-decks-enabled">Use Tiered TM Decks?</label>
-                        <select id="game-save-default-tiered-tm-decks-enabled" class="game-save-default-tiered-tm-decks-enabled-select">
-                            <option value="no" selected>No</option>
-                            <option value="yes">Yes</option>
-                        </select>
-                    </div>
-                </div>
-                </div>
-
-                <!-- Unbounded, unlike the 3 fixed slots above -- see
-                     renderGuestSavePicker()/loadGuestSave()/
-                     deleteGuestSave() in the script. One entry per
-                     hosted game this device has ever joined (keyed by
-                     the host's own hostSaveId, not room code -- see
-                     GAME_PANEL_NOTES.md's Guest Saves notes), read-only
-                     unless it's the one a live Lobby connection
-                     currently has authority over. -->
-                <div class="game-section-header game-collapsible-header" id="game-guest-saves-header">Your Joined Games</div>
-
-                <div id="game-guest-saves-section">
-                    <div class="game-guest-save-list" id="game-guest-save-list"></div>
-                    <p class="game-guest-save-empty-text" id="game-guest-save-empty-text">Games you have joined from the Multiplayer Lobby will show up here.</p>
                 </div>
 
                 <p class="game-active-save-label" id="game-menu-active-save-name"></p>
@@ -13959,15 +13802,22 @@
 
                 <div class="game-section-header">Tools</div>
 
-                <div class="game-menu-tiles">
-                    <button class="filter-btn" data-target="team">Team Tracker</button>
-                    <button class="filter-btn" data-target="decks">Hand &amp; Decks</button>
-                    <button class="filter-btn" data-target="badges">Badge Tracker</button>
-                    <button class="filter-btn" data-target="matchup">Type Matchup</button>
-                    <button class="filter-btn" data-target="calc">Attack Calculator</button>
-                    <button class="filter-btn" id="game-menu-battle-tile" data-target="battle">Battle Arena</button>
-                    <button class="filter-btn" data-target="lobby">Multiplayer Lobby</button>
-                    <button class="filter-btn" data-target="rulebook-picker">Rulebooks</button>
+                <!-- 2-up grid, icon left / label left-aligned, same look as
+                     the Sounds panel's .music-playlist-btn. Team Tracker,
+                     Hand & Decks, Badge Tracker and Battle Arena carry
+                     data-requires-session: dimmed until a solo session or
+                     lobby is active (see isPlaySessionActive() and
+                     renderBattleArenaGate() in the script). Icon URLs go
+                     in TOOL_MENU_ICONS in the script. -->
+                <div class="game-menu-tiles game-menu-tiles-grid">
+                    <button class="filter-btn game-menu-tile" data-requires-session data-target="team"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Team Tracker</span></button>
+                    <button class="filter-btn game-menu-tile" data-requires-session data-target="decks"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Hand &amp; Decks</span></button>
+                    <button class="filter-btn game-menu-tile" data-requires-session data-target="badges"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Badge Tracker</span></button>
+                    <button class="filter-btn game-menu-tile" id="game-menu-battle-tile" data-requires-session data-target="battle"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Battle Arena</span></button>
+                    <button class="filter-btn game-menu-tile" data-target="matchup"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Type and Attack Calculator</span></button>
+                    <button class="filter-btn game-menu-tile" data-target="trainer-card"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Trainer Card</span></button>
+                    <button class="filter-btn game-menu-tile" data-target="lobby"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Play a Game</span></button>
+                    <button class="filter-btn game-menu-tile" data-target="rulebook-picker"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Rulebooks</span></button>
                 </div>
             </div>
 
@@ -13996,14 +13846,17 @@
                 <div class="game-badge-extras" id="game-badge-extras"></div>
             </div>
 
-            <div class="game-screen" id="game-screen-calc">
+            <!-- Placeholder for now -- the Trainer Card tool itself isn't
+                 built yet. Replaces the old Attack Calculator stub; the
+                 calculator lives under Type and Attack Calculator. -->
+            <div class="game-screen" id="game-screen-trainer-card">
                 <div class="game-screen-header">
                     <span class="game-screen-back-wrap">
                         <span class="game-screen-back-decor"></span>
                         <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
                     </span>
                 </div>
-                <p class="game-screen-title">Attack Calculator</p>
+                <p class="game-screen-title">Trainer Card</p>
                 <p class="game-placeholder-text">Under Construction</p>
             </div>
 
@@ -14045,7 +13898,7 @@
                      Pokémon case is). -->
                 <div class="game-battle-arena">
                     <div class="game-battle-half game-battle-defender">
-                        <p class="game-battle-half-label">Defender</p>
+                        <p class="game-battle-half-label" id="game-battle-defender-label">Defender</p>
                         <!-- Recall (see recallBattleDefender() in the
                              script) starts hidden -- renderBattleDefenderSlot()
                              is the only thing that ever shows it, and
@@ -14163,7 +14016,7 @@
                         <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
                     </span>
                 </div>
-                <p class="game-screen-title">Type Matchup</p>
+                <p class="game-screen-title">Type and Attack Calculator</p>
 
                 <div class="game-matchup-toggles">
                     <button class="filter-btn game-matchup-toggle-btn" id="game-matchup-dual-toggle" data-toggle="dual" aria-pressed="false">Dual Defending Types</button>
@@ -14395,7 +14248,11 @@
                         <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
                     </span>
                 </div>
-                <p class="game-screen-title">Multiplayer Lobby</p>
+                <p class="game-screen-title">Play a Game</p>
+                <div class="game-save-progress-banner" id="game-save-progress-banner-lobby">
+                    <span>You have unsaved progress.</span>
+                    <button class="filter-btn game-save-progress-btn">Save This Progress</button>
+                </div>
 
                 <!-- data-state cycles through "choice" (host/join) ->
                      "naming" (brand-new guest connection only -- see
@@ -14405,6 +14262,320 @@
                      data-state. See GAME_PANEL_NOTES.md §3 for the full
                      Multiplayer Lobby plan. -->
                 <div class="game-lobby" id="game-lobby" data-state="choice">
+
+                    <!-- Hosted/Joined games and Default Save Settings live
+                         here now (moved from the main screen) -- a save
+                         has to exist before hosting or Play Solo, so they
+                         sit first. Hidden during the guest naming,
+                         color-pick and host-role steps (see the
+                         .game-lobby-saves CSS), visible otherwise so a
+                         save can still be switched while a lobby is up.
+                         Every handler is delegated from #game-scroll, so
+                         nothing in here depends on which screen it's on. -->
+                    <div class="game-lobby-saves">
+                <div class="game-section-header game-collapsible-header" id="game-saves-header">Your Hosted Games</div>
+    
+                    <div id="game-saves-section">
+                    <div class="game-save-slot" data-slot="0" data-state="empty">
+                        <div class="game-save-slot-loaded">
+                            <p class="game-save-slot-name"></p>
+                            <p class="game-save-slot-meta"></p>
+                            <div class="game-save-slot-actions">
+                                <button class="filter-btn game-load-btn" data-slot="0">Load</button>
+                                <button class="filter-btn game-delete-btn" data-slot="0">Delete</button>
+                            </div>
+                        </div>
+                        <div class="game-save-slot-empty">
+                            <button class="filter-btn game-new-btn" data-slot="0">+ New Save</button>
+                        </div>
+                        <div class="game-save-new-form" data-slot="0">
+                            <label for="game-new-name-0">Save Name</label>
+                            <input type="text" id="game-new-name-0" class="game-new-name-input" placeholder="My Game" maxlength="24">
+    
+                            <label for="game-new-region-0">Region</label>
+                            <select id="game-new-region-0" class="game-new-region-select">
+                                <option value="" disabled selected>Loading Regions&hellip;</option>
+                            </select>
+    
+                            <label for="game-new-length-0">Game Length</label>
+                            <select id="game-new-length-0" class="game-new-length-select">
+                                <option value="short">Short</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="long">Long</option>
+                            </select>
+    
+                            <label for="game-new-type-rule-0">Type Effectiveness Rule</label>
+                            <select id="game-new-type-rule-0" class="game-new-type-rule-select">
+                                <option value="main">Main Type Only</option>
+                                <option value="main-immunities">Main Type + Immunities</option>
+                                <option value="all">All Types</option>
+                                <option value="all-immunities">All Types + Immunities</option>
+                            </select>
+    
+                            <label for="game-new-hp-rule-0">Hit Points Rule</label>
+                            <select id="game-new-hp-rule-0" class="game-new-hp-rule-select">
+                                <option value="standard">Standard Hit Points</option>
+                                <option value="alt1">Alternate Hit Points 1</option>
+                                <option value="alt2">Alternate Hit Points 2</option>
+                            </select>
+    
+                            <label for="game-new-pokecoins-enabled-0">Use Pok&eacute; Coins?</label>
+                            <select id="game-new-pokecoins-enabled-0" class="game-new-pokecoins-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-new-natures-enabled-0">Use Nature Cards?</label>
+                            <select id="game-new-natures-enabled-0" class="game-new-natures-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-new-virtual-decks-enabled-0">Use Virtual Decks?</label>
+                            <select id="game-new-virtual-decks-enabled-0" class="game-new-virtual-decks-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-new-tiered-tm-decks-enabled-0">Use Tiered TM Decks?</label>
+                            <select id="game-new-tiered-tm-decks-enabled-0" class="game-new-tiered-tm-decks-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <div class="game-save-slot-actions">
+                                <button class="filter-btn game-create-confirm-btn" data-slot="0">Create</button>
+                                <button class="filter-btn game-create-cancel-btn" data-slot="0">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+    
+                    <div class="game-save-slot" data-slot="1" data-state="empty">
+                        <div class="game-save-slot-loaded">
+                            <p class="game-save-slot-name"></p>
+                            <p class="game-save-slot-meta"></p>
+                            <div class="game-save-slot-actions">
+                                <button class="filter-btn game-load-btn" data-slot="1">Load</button>
+                                <button class="filter-btn game-delete-btn" data-slot="1">Delete</button>
+                            </div>
+                        </div>
+                        <div class="game-save-slot-empty">
+                            <button class="filter-btn game-new-btn" data-slot="1">+ New Save</button>
+                        </div>
+                        <div class="game-save-new-form" data-slot="1">
+                            <label for="game-new-name-1">Save Name</label>
+                            <input type="text" id="game-new-name-1" class="game-new-name-input" placeholder="My Game" maxlength="24">
+    
+                            <label for="game-new-region-1">Region</label>
+                            <select id="game-new-region-1" class="game-new-region-select">
+                                <option value="" disabled selected>Loading Regions&hellip;</option>
+                            </select>
+    
+                            <label for="game-new-length-1">Game Length</label>
+                            <select id="game-new-length-1" class="game-new-length-select">
+                                <option value="short">Short</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="long">Long</option>
+                            </select>
+    
+                            <label for="game-new-type-rule-1">Type Effectiveness Rule</label>
+                            <select id="game-new-type-rule-1" class="game-new-type-rule-select">
+                                <option value="main">Main Type Only</option>
+                                <option value="main-immunities">Main Type + Immunities</option>
+                                <option value="all">All Types</option>
+                                <option value="all-immunities">All Types + Immunities</option>
+                            </select>
+    
+                            <label for="game-new-hp-rule-1">Hit Points Rule</label>
+                            <select id="game-new-hp-rule-1" class="game-new-hp-rule-select">
+                                <option value="standard">Standard Hit Points</option>
+                                <option value="alt1">Alternate Hit Points 1</option>
+                                <option value="alt2">Alternate Hit Points 2</option>
+                            </select>
+    
+                            <label for="game-new-pokecoins-enabled-1">Use Pok&eacute; Coins?</label>
+                            <select id="game-new-pokecoins-enabled-1" class="game-new-pokecoins-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-new-natures-enabled-1">Use Nature Cards?</label>
+                            <select id="game-new-natures-enabled-1" class="game-new-natures-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-new-virtual-decks-enabled-1">Use Virtual Decks?</label>
+                            <select id="game-new-virtual-decks-enabled-1" class="game-new-virtual-decks-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-new-tiered-tm-decks-enabled-1">Use Tiered TM Decks?</label>
+                            <select id="game-new-tiered-tm-decks-enabled-1" class="game-new-tiered-tm-decks-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <div class="game-save-slot-actions">
+                                <button class="filter-btn game-create-confirm-btn" data-slot="1">Create</button>
+                                <button class="filter-btn game-create-cancel-btn" data-slot="1">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+    
+                    <div class="game-save-slot" data-slot="2" data-state="empty">
+                        <div class="game-save-slot-loaded">
+                            <p class="game-save-slot-name"></p>
+                            <p class="game-save-slot-meta"></p>
+                            <div class="game-save-slot-actions">
+                                <button class="filter-btn game-load-btn" data-slot="2">Load</button>
+                                <button class="filter-btn game-delete-btn" data-slot="2">Delete</button>
+                            </div>
+                        </div>
+                        <div class="game-save-slot-empty">
+                            <button class="filter-btn game-new-btn" data-slot="2">+ New Save</button>
+                        </div>
+                        <div class="game-save-new-form" data-slot="2">
+                            <label for="game-new-name-2">Save Name</label>
+                            <input type="text" id="game-new-name-2" class="game-new-name-input" placeholder="My Game" maxlength="24">
+    
+                            <label for="game-new-region-2">Region</label>
+                            <select id="game-new-region-2" class="game-new-region-select">
+                                <option value="" disabled selected>Loading Regions&hellip;</option>
+                            </select>
+    
+                            <label for="game-new-length-2">Game Length</label>
+                            <select id="game-new-length-2" class="game-new-length-select">
+                                <option value="short">Short</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="long">Long</option>
+                            </select>
+    
+                            <label for="game-new-type-rule-2">Type Effectiveness Rule</label>
+                            <select id="game-new-type-rule-2" class="game-new-type-rule-select">
+                                <option value="main">Main Type Only</option>
+                                <option value="main-immunities">Main Type + Immunities</option>
+                                <option value="all">All Types</option>
+                                <option value="all-immunities">All Types + Immunities</option>
+                            </select>
+    
+                            <label for="game-new-hp-rule-2">Hit Points Rule</label>
+                            <select id="game-new-hp-rule-2" class="game-new-hp-rule-select">
+                                <option value="standard">Standard Hit Points</option>
+                                <option value="alt1">Alternate Hit Points 1</option>
+                                <option value="alt2">Alternate Hit Points 2</option>
+                            </select>
+    
+                            <label for="game-new-pokecoins-enabled-2">Use Pok&eacute; Coins?</label>
+                            <select id="game-new-pokecoins-enabled-2" class="game-new-pokecoins-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-new-natures-enabled-2">Use Nature Cards?</label>
+                            <select id="game-new-natures-enabled-2" class="game-new-natures-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-new-virtual-decks-enabled-2">Use Virtual Decks?</label>
+                            <select id="game-new-virtual-decks-enabled-2" class="game-new-virtual-decks-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-new-tiered-tm-decks-enabled-2">Use Tiered TM Decks?</label>
+                            <select id="game-new-tiered-tm-decks-enabled-2" class="game-new-tiered-tm-decks-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <div class="game-save-slot-actions">
+                                <button class="filter-btn game-create-confirm-btn" data-slot="2">Create</button>
+                                <button class="filter-btn game-create-cancel-btn" data-slot="2">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+    
+                    <!-- Not a save itself -- a standing preference for what
+                         the "+ New Save" form above starts on. See
+                         applyGameSaveDefaultsToForm()/renderGameSaveDefaultsForm()
+                         in the script. Region is deliberately not covered
+                         here; see gameSaveDefaults' own comment for why.
+                         Collapsible via the same header/body pattern as
+                         #game-saves-header/#game-guest-saves-header (see
+                         setGameSaveDefaultsCollapsed() in the script) --
+                         starts closed, same as those two now do. -->
+                    <div class="game-save-defaults-card">
+                        <div class="game-section-header game-collapsible-header" id="game-save-defaults-header">Default Save Settings</div>
+                        <div id="game-save-defaults-body">
+                            <p class="game-save-slot-meta">Applied automatically to new saves below &mdash; still changeable per-save at creation time.</p>
+    
+                            <label for="game-save-default-length">Game Length</label>
+                            <select id="game-save-default-length" class="game-save-default-length-select">
+                                <option value="short">Short</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="long">Long</option>
+                            </select>
+    
+                            <label for="game-save-default-type-rule">Type Effectiveness Rule</label>
+                            <select id="game-save-default-type-rule" class="game-save-default-type-rule-select">
+                                <option value="main">Main Type Only</option>
+                                <option value="main-immunities">Main Type + Immunities</option>
+                                <option value="all">All Types</option>
+                                <option value="all-immunities">All Types + Immunities</option>
+                            </select>
+    
+                            <label for="game-save-default-hp-rule">Hit Points Rule</label>
+                            <select id="game-save-default-hp-rule" class="game-save-default-hp-rule-select">
+                                <option value="standard">Standard Hit Points</option>
+                                <option value="alt1">Alternate Hit Points 1</option>
+                                <option value="alt2">Alternate Hit Points 2</option>
+                            </select>
+    
+                            <label for="game-save-default-pokecoins-enabled">Use Pok&eacute; Coins?</label>
+                            <select id="game-save-default-pokecoins-enabled" class="game-save-default-pokecoins-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-save-default-natures-enabled">Use Nature Cards?</label>
+                            <select id="game-save-default-natures-enabled" class="game-save-default-natures-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-save-default-virtual-decks-enabled">Use Virtual Decks?</label>
+                            <select id="game-save-default-virtual-decks-enabled" class="game-save-default-virtual-decks-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+    
+                            <label for="game-save-default-tiered-tm-decks-enabled">Use Tiered TM Decks?</label>
+                            <select id="game-save-default-tiered-tm-decks-enabled" class="game-save-default-tiered-tm-decks-enabled-select">
+                                <option value="no" selected>No</option>
+                                <option value="yes">Yes</option>
+                            </select>
+                        </div>
+                    </div>
+                    </div>
+    
+                    <!-- Unbounded, unlike the 3 fixed slots above -- see
+                         renderGuestSavePicker()/loadGuestSave()/
+                         deleteGuestSave() in the script. One entry per
+                         hosted game this device has ever joined (keyed by
+                         the host's own hostSaveId, not room code -- see
+                         GAME_PANEL_NOTES.md's Guest Saves notes), read-only
+                         unless it's the one a live Lobby connection
+                         currently has authority over. -->
+                    <div class="game-section-header game-collapsible-header" id="game-guest-saves-header">Your Joined Games</div>
+    
+                    <div id="game-guest-saves-section">
+                        <div class="game-guest-save-list" id="game-guest-save-list"></div>
+                        <p class="game-guest-save-empty-text" id="game-guest-save-empty-text">Games you have joined from Play a Game will show up here.</p>
+                    </div>
+                        </div>
 
                     <!-- Host still asks for a display name up front --
                          Join no longer does (see the naming step below):
@@ -14438,6 +14609,16 @@
                                  app itself is the one path that's fully
                                  within our control. -->
                             <button class="filter-btn exclude game-lobby-scan-btn" type="button">Scan QR Code</button>
+                        </div>
+                        <!-- Solo mode: same Begin Game Setup / Start Game
+                             flow and playlist autoplay as a hosting-and-
+                             playing host, with nobody else connected. See
+                             beginSoloFlow() in the script. Own full-width
+                             row below the two cards above. -->
+                        <div class="game-lobby-card game-lobby-card-solo">
+                            <p class="game-lobby-card-title">Play Solo</p>
+                            <p class="game-lobby-card-blurb">Play on your own. Pick your color, then use Begin Game Setup and Start Game for the same Intro and Route music the host gets, with no one else connected.</p>
+                            <button class="filter-btn game-solo-start-btn">Play Solo</button>
                         </div>
                     </div>
 
@@ -14720,6 +14901,25 @@
             </div>
         </div>
 
+        <!-- Gym Leader picker: opened from the Defender Options' Choose Gym
+             Leader (every category but Rival) or the Attacker Options'
+             Choose Rival. Lists gym-leaders.json; picking one calls
+             sendGymLeaderCardToArena(). See openGymLeaderPicker(). -->
+        <div id="game-battle-gym-leader-picker-overlay">
+            <div class="game-confirm-card game-battle-picker-card">
+                <p class="game-confirm-title" id="game-battle-gym-leader-picker-title">Choose Gym Leader</p>
+                <div class="game-gym-leader-picker-filters">
+                    <select id="game-battle-gym-leader-picker-region" aria-label="Region"></select>
+                    <input type="search" id="game-battle-gym-leader-picker-search" placeholder="Search by name" aria-label="Search by name" autocomplete="off">
+                </div>
+                <div class="game-battle-picker-list" id="game-battle-gym-leader-picker-list"></div>
+                <p class="game-battle-picker-empty-text" id="game-battle-gym-leader-picker-empty-text">No matching cards.</p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-battle-picker-cancel-btn" id="game-battle-gym-leader-picker-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Opened by a Team Tracker send-to-battle tap (see
              beginTeamSendToBattleMode()'s own banner) instead of going
              straight to the Attacker slot -- lets the player choose
@@ -14776,6 +14976,9 @@
                 <div class="game-save-slot-actions game-battle-options-actions">
                     <button class="filter-btn" id="game-battle-choose-defender-btn">Choose Pok&eacute;mon</button>
                     <button class="filter-btn" id="game-battle-choose-wild-btn">Choose Wild Pok&eacute;mon</button>
+                    <!-- Gym Leader cards (everything in gym-leaders.json except Rivals,
+                         who take the Attacker half -- see openGymLeaderPicker()). -->
+                    <button class="filter-btn" id="game-battle-choose-gym-leader-btn">Choose Gym Leader</button>
                     <button class="filter-btn exclude" id="game-battle-recall-defender-btn" style="display: none;">Recall Pok&eacute;mon</button>
                     <button class="filter-btn exclude" id="game-battle-defender-options-close-btn">Close</button>
                 </div>
@@ -14792,6 +14995,7 @@
                          ownerless and flagged as a Trainer's, which is what switches the
                          Host's battle music to Trainer Battle. -->
                     <button class="filter-btn" id="game-battle-choose-trainer-btn">Choose Trainer Pok&eacute;mon</button>
+                    <button class="filter-btn" id="game-battle-choose-rival-btn">Choose Rival</button>
                     <button class="filter-btn exclude" id="game-battle-recall-attacker-btn" style="display: none;">Recall Pok&eacute;mon</button>
                     <button class="filter-btn exclude" id="game-battle-attacker-options-close-btn">Close</button>
                 </div>
@@ -18643,7 +18847,7 @@
                 const region = gameGuestSaves[hostSaveId].region;
                 if (region) setActiveMusicRegion(region);
             }
-            setGameScreen('main');
+            setGameScreen('lobby'); // saves live in Play a Game now
             refreshGameUI();
         }
 
@@ -20306,7 +20510,8 @@
             if (battleAttackerMemberIndex === 'trainer' && battleTrainerPokemon
                 && battleTrainerPokemon.fainted && !(battleTrainerQueue && battleTrainerQueue.length)) return true;
             // A Fainted Wild Pok\u00e9mon has nothing to replace it either.
-            if (battleDefenderMemberIndex === 'wild' && battleWildPokemon && battleWildPokemon.fainted) return true;
+            if (battleDefenderMemberIndex === 'wild' && battleWildPokemon && battleWildPokemon.fainted
+                && !(battleWildPokemon.gymLeaderQueue && battleWildPokemon.gymLeaderQueue.length)) return true;
             if (isActiveSaveReadOnly()) return false;
             const members = (getActiveSaveData().team && getActiveSaveData().team.members) || [];
             return ['attacker', 'defender'].some(slot => {
@@ -20645,6 +20850,253 @@
             .catch(err => {
                 console.warn('Could not load card data:', err);
             });
+
+        // Gym Leader cards (Gym Leaders, Rivals, Villains, Titans...), fetched
+        // from gym-leaders.json -- same pattern and repo root as CARDS_URL
+        // above. Keyed by trainer id; each record's `pokemon` array holds
+        // its side(s) (see validate_gym_leaders.py for the schema).
+        const GYM_LEADERS_URL = "https://raw.githubusercontent.com/pmtupokedex/PMTU-Searchable-Pokedex/main/gym-leaders.json";
+        let GYM_LEADERS_BY_ID = {};
+
+        fetch(GYM_LEADERS_URL)
+            .then(res => res.json())
+            .then(data => {
+                (Array.isArray(data) ? data : []).forEach(t => { if (t && t.id) GYM_LEADERS_BY_ID[t.id] = t; });
+            })
+            .catch(err => {
+                console.warn('Could not load trainer data:', err);
+            });
+
+        // A gym leader card's Pok\u00e9mon for one side (1 or 2), or null.
+        function getGymLeaderCardSide(leaderId, side) {
+            const trainer = GYM_LEADERS_BY_ID[leaderId];
+            const mon = trainer && (trainer.pokemon || []).find(p => p.side === side);
+            return mon ? { trainer, mon } : null;
+        }
+
+        // Builds an Arena member from a gym leader card side -- the same shape
+        // buildWildPokemonMember() makes, so everything downstream (HP,
+        // Status, fainting, lobby sharing) keeps working, except:
+        //   - src is the CARD art (no gallery token, no shiny).
+        //   - level is the PRINTED total, not a bonus on a species base --
+        //     see getTeamMemberBaseLevel(), which returns 0 for these so
+        //     alt2's max HP is just this level.
+        //   - gymLeaderId/gymLeaderSide mark it as a gym leader card:
+        //     static data (types, moves) is read back from GYM_LEADERS_BY_ID
+        //     rather than copied here, and it never carries attach/nature/
+        //     overlay cards (those fields stay null).
+        function buildGymLeaderCardMember(leaderId, side) {
+            const found = getGymLeaderCardSide(leaderId, side);
+            if (!found) return null;
+            const member = {
+                gymLeaderId: leaderId,
+                gymLeaderSide: side,
+                dex: '',
+                name: found.mon.name || '',
+                src: found.mon.imageUrl || '',
+                shinysrc: '',
+                shiny: false,
+                status: null,
+                level: found.mon.level || 1,
+                fainted: false,
+                attachCardId: null,
+                natureCardId: null,
+                attachCounter: 0,
+                overlayCardId: null,
+                overlayCounter: 0,
+            };
+            const hpMax = getTeamMemberHpMax(member, getHpRule(getActiveSaveData()));
+            if (hpMax !== null) member.hp = hpMax;
+            return member;
+        }
+
+        // A gym leader card's members in side order (side 1 first). One
+        // entry for a Titan, two for everything else.
+        function buildGymLeaderLineup(leaderId) {
+            const leader = GYM_LEADERS_BY_ID[leaderId];
+            if (!leader) return [];
+            const lineup = (leader.pokemon || []).slice().sort((x, y) => x.side - y.side)
+                .map(p => buildGymLeaderCardMember(leaderId, p.side)).filter(Boolean);
+            lineup.forEach(m => { m.gymLeaderTotal = lineup.length; });
+            return lineup;
+        }
+
+        // The data record for a gym leader card member's own side (types,
+        // moves, ...) -- these always come from gym-leaders.json, never
+        // pokemon-data.json. Null for anything that isn't one.
+        function getGymLeaderMemberData(member) {
+            if (!member || !member.gymLeaderId) return null;
+            const found = getGymLeaderCardSide(member.gymLeaderId, member.gymLeaderSide);
+            return found ? found.mon : null;
+        }
+
+        // "X of Y" for a gym leader card in the Defender half (the Attacker
+        // half's Rivals use the NPC Trainer's own battleTrainerTotal).
+        // Null for a single-side card (a Titan) -- nothing to count.
+        function getGymLeaderProgress(member) {
+            if (!member || !member.gymLeaderId) return null;
+            const total = member.gymLeaderTotal || 1;
+            if (total < 2) return null;
+            return { current: total - ((member.gymLeaderQueue || []).length), total };
+        }
+
+        // Rivals fight from the Attacker half; every other gym leader card
+        // goes in the Defender half.
+        function isGymLeaderAttackerCard(leaderId) {
+            const leader = GYM_LEADERS_BY_ID[leaderId];
+            return !!leader && leader.category === 'rival';
+        }
+
+        // Whether a half currently holds a gym leader card (solo or lobby).
+        function isGymLeaderInSlot(slot) {
+            // Called from renderBattleZoneBadge(), which first runs at startup
+            // -- before lobbyState and the battle* lets below this point have
+            // been initialized (touching them would throw), and there's
+            // nothing in either half yet anyway.
+            try {
+                const entry = getArenaSlotEntry(slot);
+                if (entry) return !!(entry.member && entry.member.gymLeaderId);
+                if (slot === 'attacker') return !!(battleAttackerMemberIndex === 'trainer' && battleTrainerPokemon && battleTrainerPokemon.gymLeaderId);
+                return !!(battleDefenderMemberIndex === 'wild' && battleWildPokemon && battleWildPokemon.gymLeaderId);
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // Puts a gym leader card in the Arena with side 1 out first and
+        // side 2 queued behind it (Next Round sends it out once side 1 has
+        // fainted). Rivals take the Attacker half through the existing NPC
+        // Trainer line-up; everyone else takes the Defender half, with the
+        // line-up carried on the member as gymLeaderQueue. Interim entry
+        // point (callable from the console while the picker is built):
+        //   sendGymLeaderCardToArena('kanto-brock')
+        function sendGymLeaderCardToArena(leaderId) {
+            if (isActiveSaveReadOnly()) return false;
+            const lineup = buildGymLeaderLineup(leaderId);
+            if (!lineup.length) {
+                console.warn('No gym leader card found for', leaderId);
+                return false;
+            }
+            const first = lineup[0];
+            const rest = lineup.slice(1);
+            if (isGymLeaderAttackerCard(leaderId)) {
+                setBattleAttackerTrainer(first, rest);
+            } else {
+                rest.forEach(m => { ensureMemberUid(m); });
+                first.gymLeaderQueue = rest;
+                setBattleDefenderWild(first);
+            }
+            renderBattleAttackerSlot();
+            renderBattleDefenderSlot();
+            return true;
+        }
+
+        // ---- Gym Leader picker -------------------------------------------
+        // Defender Options > Choose Gym Leader lists every card except
+        // Rivals; Attacker Options > Choose Rival lists only Rivals (they
+        // fight from the Attacker half -- see isGymLeaderAttackerCard()).
+        // Picking one runs sendGymLeaderCardToArena().
+        let gymLeaderPickerSlot = null;
+
+        const GYM_LEADER_CATEGORY_ORDER = ['gym-leader', 'elite-four', 'champion', 'rival', 'villain', 'titan', 'trainer'];
+        const GYM_LEADER_CATEGORY_LABELS = {
+            'gym-leader': 'Gym Leader', 'elite-four': 'Elite Four', 'champion': 'Champion',
+            'rival': 'Rival', 'villain': 'Villain', 'titan': 'Titan', 'trainer': 'Trainer',
+        };
+
+        function formatGymLeaderRegion(slug) {
+            return String(slug || '').split('-').map(w => w ? w.charAt(0).toUpperCase() + w.slice(1) : w).join(' ');
+        }
+
+        // The cards this half's picker offers, sorted region, then
+        // category, then tier, then name.
+        function getGymLeaderPickerEntries(slot) {
+            const wantRival = slot === 'attacker';
+            const asArray = v => (Array.isArray(v) ? v : (v == null ? [] : [v]));
+            return Object.values(GYM_LEADERS_BY_ID)
+                .filter(t => (t.category === 'rival') === wantRival)
+                .sort((a, b) => {
+                    const ra = asArray(a.region)[0] || '', rb = asArray(b.region)[0] || '';
+                    if (ra !== rb) return ra.localeCompare(rb);
+                    const ca = GYM_LEADER_CATEGORY_ORDER.indexOf(a.category), cb = GYM_LEADER_CATEGORY_ORDER.indexOf(b.category);
+                    if (ca !== cb) return ca - cb;
+                    const ta = asArray(a.tier)[0] || 99, tb = asArray(b.tier)[0] || 99;
+                    if (ta !== tb) return ta - tb;
+                    return String(a.name).localeCompare(String(b.name));
+                });
+        }
+
+        function renderGymLeaderPicker() {
+            const list = document.getElementById('game-battle-gym-leader-picker-list');
+            const emptyText = document.getElementById('game-battle-gym-leader-picker-empty-text');
+            const regionSel = document.getElementById('game-battle-gym-leader-picker-region');
+            const search = document.getElementById('game-battle-gym-leader-picker-search');
+            if (!list || !gymLeaderPickerSlot) return;
+            const asArray = v => (Array.isArray(v) ? v : (v == null ? [] : [v]));
+            const region = regionSel ? regionSel.value : '';
+            const query = ((search && search.value) || '').trim().toLowerCase();
+            const entries = getGymLeaderPickerEntries(gymLeaderPickerSlot).filter(t =>
+                (!region || asArray(t.region).includes(region))
+                && (!query || String(t.name).toLowerCase().includes(query)));
+            list.style.display = entries.length ? '' : 'none';
+            emptyText.style.display = entries.length ? 'none' : '';
+            emptyText.textContent = Object.keys(GYM_LEADERS_BY_ID).length
+                ? 'No matching cards.'
+                : 'No gym leader cards loaded (gym-leaders.json).';
+            list.innerHTML = entries.map(t => {
+                const first = (t.pokemon || []).slice().sort((x, y) => x.side - y.side)[0];
+                const tiers = asArray(t.tier);
+                const sub = [formatGymLeaderRegion(asArray(t.region)[0]), GYM_LEADER_CATEGORY_LABELS[t.category] || t.category,
+                    tiers.length ? `Tier ${tiers.join('\u2013')}` : ''].filter(Boolean).join(' \u00b7 ');
+                return `<button type="button" class="game-battle-picker-item" data-gym-leader-id="${escapeHtml(t.id)}">
+                    <img class="game-gym-leader-picker-img" src="${escapeHtml((first && first.imageUrl) || '')}" alt="" onerror="this.style.visibility='hidden'">
+                    <span class="game-battle-picker-item-name">${escapeHtml(t.name)}</span>
+                    <span class="game-gym-leader-picker-sub">${escapeHtml(sub)}</span>
+                </button>`;
+            }).join('');
+        }
+
+        function openGymLeaderPicker(slot) {
+            if (isActiveSaveReadOnly()) return;
+            if (!canUseBattleArena()) { showBattleArenaGateToast(); return; }
+            gymLeaderPickerSlot = slot;
+            const asArray = v => (Array.isArray(v) ? v : (v == null ? [] : [v]));
+            const title = document.getElementById('game-battle-gym-leader-picker-title');
+            if (title) title.textContent = slot === 'attacker' ? 'Choose Rival' : 'Choose Gym Leader';
+            const regions = [...new Set(getGymLeaderPickerEntries(slot).flatMap(t => asArray(t.region)))].sort();
+            const regionSel = document.getElementById('game-battle-gym-leader-picker-region');
+            if (regionSel) {
+                regionSel.innerHTML = '<option value="">All regions</option>'
+                    + regions.map(r => `<option value="${escapeHtml(r)}">${escapeHtml(formatGymLeaderRegion(r))}</option>`).join('');
+            }
+            const search = document.getElementById('game-battle-gym-leader-picker-search');
+            if (search) search.value = '';
+            renderGymLeaderPicker();
+            const overlay = document.getElementById('game-battle-gym-leader-picker-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        function closeGymLeaderPicker() {
+            gymLeaderPickerSlot = null;
+            const overlay = document.getElementById('game-battle-gym-leader-picker-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        // Solo twin of hostAdvanceGymLeaderIfFainted(): a fainted Defender
+        // gym leader card with a side still queued sends it out. (A Rival
+        // in the Attacker half uses the NPC Trainer queue instead.)
+        function advanceSoloGymLeaderIfFainted() {
+            const cur = battleWildPokemon;
+            if (!cur || !cur.gymLeaderId || !cur.fainted || !(cur.gymLeaderQueue && cur.gymLeaderQueue.length)) return false;
+            const next = cur.gymLeaderQueue[0];
+            next.gymLeaderQueue = cur.gymLeaderQueue.slice(1);
+            ensureMemberUid(next);
+            resetParalyzedSide(next);
+            battleWildPokemon = next;
+            battleRerollsUsed.defender = 0;
+            showBattleArenaNotice(`${getBattleMemberDisplay(next).name || 'The next Pok\u00e9mon'} was sent out!`);
+            return true;
+        }
 
         // Full move database, fetched from moves.json -- same pattern as
         // CARDS_URL above and the same repo/root-level location. An
@@ -22728,6 +23180,26 @@
         // Next Round with the Trainer's Pok\u00e9mon Fainted: the next one in
         // line takes its place (Host side -- see advanceSoloTrainerIfFainted()
         // for solo). A no-op with nothing queued.
+        // Host twin of advanceSoloGymLeaderIfFainted(): the ownerless Defender
+        // entry holds a gym leader card whose side 1 fainted and whose
+        // line-up (member.gymLeaderQueue) still has side 2.
+        function hostAdvanceGymLeaderIfFainted(st) {
+            const entry = st.defender;
+            if (!entry || entry.ownerId || entry.trainer || !entry.member) return;
+            const cur = entry.member;
+            if (!cur.gymLeaderId || !cur.fainted || !(cur.gymLeaderQueue && cur.gymLeaderQueue.length)) return;
+            const next = cur.gymLeaderQueue[0];
+            next.gymLeaderQueue = cur.gymLeaderQueue.slice(1);
+            ensureMemberUid(next);
+            resetParalyzedSide(next);
+            st.defender = { member: next, ownerId: null };
+            if (!st.rerolls) st.rerolls = { attacker: 0, defender: 0 };
+            st.rerolls.defender = 0;
+            const message = `${getBattleMemberDisplay(next).name || 'The next Pok\u00e9mon'} was sent out!`;
+            showBattleArenaNotice(message);
+            if (lobbyState.connections) lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send({ type: 'battle-notice', reason: message }); });
+        }
+
         function hostAdvanceTrainerIfFainted(st) {
             const entry = st.attacker;
             if (!entry || entry.ownerId || !entry.trainer || !entry.member || !entry.member.fainted) return;
@@ -22763,7 +23235,7 @@
             } else if (action === 'next') {
                 const spent = (e, hasQueue) => !!(e && !e.ownerId && e.member && e.member.fainted && !hasQueue);
                 const ownerlessSpent = spent(st.attacker && st.attacker.trainer ? st.attacker : null, Array.isArray(st.trainerQueue) && st.trainerQueue.length > 0)
-                    || spent(st.defender, false);
+                    || spent(st.defender, !!(st.defender && st.defender.member && st.defender.member.gymLeaderQueue && st.defender.member.gymLeaderQueue.length));
                 if (st.inProgress && !ownerlessSpent) {
                     // Once-per-battle bonuses in effect this round are spent.
                     const record = getBattleRecordStore();
@@ -22778,6 +23250,7 @@
                     st.moves = { attacker: null, defender: null };
                     st.dice = makeEmptyBattleDice();
                     hostAdvanceTrainerIfFainted(st);
+                    hostAdvanceGymLeaderIfFainted(st);
                     st.entered = { attacker: false, defender: false }; // nobody is new next round
                     hostClearBattleCards();
                 }
@@ -22932,6 +23405,7 @@
         // The mirror image: only the Attacker slot's owner -- the
         // player who encountered it -- may catch it.
         function canCatchWildDefender() {
+            if (isGymLeaderInSlot('defender')) return false;
             if (lobbyState.role === null) return true;
             const attackerEntry = getArenaSlotEntry('attacker');
             return !!(attackerEntry && attackerEntry.ownerId && attackerEntry.ownerId === getMyLobbyPlayerId());
@@ -23129,6 +23603,10 @@
         function renderReadOnlyBattleSlot(container, member, slotName, opts) {
             clearBattleReadonlyEvolutionTimer(slotName);
             const isWild = !!(opts && opts.wild);
+            if (member.gymLeaderId) {
+                renderGymLeaderCardSlot(container, member, 'readonly');
+                return;
+            }
             const hpRule = getHpRule(getActiveSaveData());
             const naturesEnabled = isNaturesEnabledForActiveSave();
 
@@ -23875,16 +24353,13 @@
             if (teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive()) return;
             const card = CARDS_BY_ID[cardId];
             if (!card || card.canAttach !== 'yes') return;
-            // A Nature card is added when a Pok\u00e9mon is encountered in
-            // the wild OR when one joins a team through a game effect,
-            // so it can go to either -- ask which first. Every other
-            // attachable card is team-only and goes straight to Team
-            // Tracker.
-            if (getAttachSlotForCard(cardId) === 'nature') {
-                openNatureAttachChoice(cardId, source);
-                return;
-            }
-            beginTeamAttachPick(cardId, source);
+            // Every attachable card (Nature, Item, or Event) can go to a
+            // team member OR the Wild Pok\u00e9mon -- a Nature card is
+            // added when a Pok\u00e9mon is encountered in the wild or
+            // joins a team, and an Item/Event effect can likewise need
+            // to land on a wild Pok\u00e9mon. Most of the time it's a
+            // team member, but ask which first either way.
+            openNatureAttachChoice(cardId, source);
         }
 
         // The \"stash it and switch to Team Tracker so the player taps a
@@ -23933,10 +24408,12 @@
             const arenaOk = canUseBattleArena();
             if (titleEl) titleEl.textContent = card ? `Attach ${card.name} to\u2026` : 'Attach to Which Pok\u00e9mon?';
             if (teamBtn) teamBtn.disabled = !hasTeam;
-            if (wildBtn) wildBtn.disabled = !arenaOk;
+            const gymLeaderDefender = isGymLeaderInSlot('defender');
+            if (wildBtn) wildBtn.disabled = !arenaOk || gymLeaderDefender;
             const reasons = [];
             if (!hasTeam) reasons.push('You don\u2019t have any team members yet.');
             if (!arenaOk) reasons.push(BATTLE_ARENA_GATE_MESSAGE);
+            else if (gymLeaderDefender) reasons.push('A Gym Leader card is in the Wild Pok\u00e9mon slot, and can\u2019t have cards attached.');
             if (note) {
                 note.textContent = reasons.join(' ');
                 note.classList.toggle('visible', reasons.length > 0);
@@ -24011,6 +24488,12 @@
         function beginWildAttach(cardId, source) {
             if (!canUseBattleArena()) {
                 showBattleArenaGateToast();
+                return;
+            }
+            // A gym leader card can't carry attached cards (and picking a
+            // Wild Pok\u00e9mon from the gallery would replace it).
+            if (isGymLeaderInSlot('defender')) {
+                showGameToast('Gym Leader cards can\u2019t have cards attached.');
                 return;
             }
             if (!canResolveWildAttachContext({ source, cardId })) {
@@ -26003,6 +26486,8 @@
         // rather than each re-deriving the same lookup independently --
         // "the Pokémon's base level" means the same thing to both.
         function getTeamMemberBaseLevel(member) {
+            // Gym Leader cards print their own total level -- no species base.
+            if (member && member.gymLeaderId) return 0;
             const activeEntry = (member.formOverride && POKEMON_BY_NAME[member.formOverride])
                 || POKEMON_BY_NAME[member.name];
             return (activeEntry && typeof activeEntry.token_level === 'number') ? activeEntry.token_level : 0;
@@ -26770,7 +27255,7 @@
 
         function openTeamCardsOverlay(index) {
             const member = getTeamSlotMember(index);
-            if (!member) return;
+            if (!member || member.gymLeaderId) return; // gym leader cards never carry cards
             teamCardsOverlayIndex = index;
             teamCardsOverlayAddingSlot = null;
             teamCardsOverlayExpandedDecks = new Set();
@@ -27312,7 +27797,7 @@
         // shares its exact formula with.
         function adjustTeamMemberLevel(index, delta) {
             const member = getTeamSlotMember(index);
-            if (!member) return;
+            if (!member || member.gymLeaderId) return; // level is printed on the card
             const next = Math.max(0, Math.min(6, (member.level || 0) + delta));
             if (next === (member.level || 0)) return;
 
@@ -27635,7 +28120,7 @@
         // .game-team-slot-evolution branch further down).
         function openTeamEvolutionOverlay(index) {
             const member = getTeamSlotMember(index);
-            if (!member) return;
+            if (!member || member.gymLeaderId) return; // gym leader cards never evolve
             let options = getTeamEvolutionOptions(member);
             // Wild Pokémon are scoped to Mega Evolution/Gigantamax only
             // -- see shouldShowWildEvolutionBadge()'s own comment for
@@ -30712,10 +31197,23 @@
         // Lobby connection (host or guest). An unsaved session, or a
         // Joined Game loaded while disconnected, doesn't qualify.
         function canUseBattleArena() {
-            return activeSaveSlot !== null || lobbyState.role !== null;
+            return isPlaySessionActive();
         }
 
-        const BATTLE_ARENA_GATE_MESSAGE = 'Load a hosted save or join a Multiplayer Lobby to use the Battle Arena.';
+        // Team Tracker, Hand & Decks, Badge Tracker and the Battle Arena
+        // only work inside a game: a Play Solo session or a lobby (host
+        // or guest). Everything else on the menu stays open.
+        const SESSION_GATED_SCREENS = ['team', 'decks', 'badges', 'battle'];
+
+        function isPlaySessionActive() {
+            return isSoloSessionActive() || lobbyState.role !== null;
+        }
+
+        function isScreenLockedByGate(screenId) {
+            return SESSION_GATED_SCREENS.includes(screenId) && !isPlaySessionActive();
+        }
+
+        const BATTLE_ARENA_GATE_MESSAGE = 'Start a solo game or join a lobby in Play a Game to use this tool.';
 
         // Shows any short message in the shared #coming-soon-toast pill,
         // letting a longer one wrap, then puts the toast back the way
@@ -30779,14 +31277,15 @@
         // active save was unloaded/deleted, or the lobby was left or
         // dropped). Called from refreshGameUI() and whenever the main
         // menu is shown.
+        // (Name kept from when only the Arena was gated -- it now covers
+        // every tile marked data-requires-session.)
         function renderBattleArenaGate() {
-            const allowed = canUseBattleArena();
-            const tile = document.getElementById('game-menu-battle-tile');
-            if (tile) {
+            const allowed = isPlaySessionActive();
+            document.querySelectorAll('.game-menu-tiles [data-requires-session]').forEach(tile => {
                 tile.classList.toggle('game-menu-tile-locked', !allowed);
                 tile.setAttribute('aria-disabled', allowed ? 'false' : 'true');
-            }
-            if (!allowed && currentGameScreen === 'battle') {
+            });
+            if (!allowed && SESSION_GATED_SCREENS.includes(currentGameScreen)) {
                 setGameScreen('main');
                 showBattleArenaGateToast();
             }
@@ -30864,6 +31363,11 @@
             const el = document.querySelector(`.game-battle-zone-badge[data-battle-slot="${slotName}"][data-battle-zone="${zoneName}"]`);
             const zone = BATTLE_ZONES[zoneName];
             if (!el || !zone) return;
+            // Gym leader cards never take a Battle Card -- hide its badge but keep
+            // its space (visibility, not display) so the card stays centered.
+            const hideZone = zoneName === 'battleCard' && isGymLeaderInSlot(slotName);
+            el.style.visibility = hideZone ? 'hidden' : '';
+            el.style.pointerEvents = hideZone ? 'none' : '';
             const state = battleZones[slotName][zoneName];
             const owner = slotName === 'attacker' ? 'Attacker' : 'Defender';
             const faceDown = zoneName === 'battleCard' && !!state && !state.faceUp;
@@ -30929,6 +31433,7 @@
                 return;
             }
             if (zoneName === 'battleCard') {
+                if (isGymLeaderInSlot(slotName)) return;
                 openBattleCardZone(slotName);
                 return;
             }
@@ -31488,6 +31993,7 @@
         // after them, never before).
         function renderBattleAttackerSlot() {
             renderBattleAttackerSlotCard();
+            renderBattleZoneBadge('attacker', 'battleCard');
             renderBattleMoves('attacker');
             renderBattleCalcReadout('attacker');
             // A "target" half-level move in the other half reads THIS
@@ -31501,6 +32007,7 @@
 
         function renderBattleDefenderSlot() {
             renderBattleDefenderSlotCard();
+            renderBattleZoneBadge('defender', 'battleCard');
             renderBattleMoves('defender');
             renderBattleCalcReadout('defender');
             // Same reasoning as renderBattleAttackerSlot() just above.
@@ -31754,6 +32261,7 @@
             if (!getBattleSlotMember('attacker') || !getBattleSlotMember('defender')) return;
             if (lobbyState.role !== null) { requestBattlePhase('begin'); return; } // shared: comes back via applyIncomingArenaState()
             battleInProgress = true;
+            syncBattleMusicToArena(); // solo Play a Game session: battle music on start
             battleEnteredThisRound = { attacker: false, defender: false };
             battleRerollsUsed = { attacker: 0, defender: 0 };
             battleRecord = makeEmptyBattleRecord();
@@ -31791,6 +32299,7 @@
             collectOnceBonusKeys().forEach(key => { battleRecord.spent[key] = true; });
             battleRecord.round += 1;
             const trainerSwitched = advanceSoloTrainerIfFainted();
+            const gymLeaderSwitched = advanceSoloGymLeaderIfFainted();
             resetParalyzedSideForRound(); // Paralyzed flips back to side 1
             battleEnteredThisRound = { attacker: false, defender: false };
             hostClearBattleCards();
@@ -31806,6 +32315,7 @@
             renderBattleDice('attacker');
             renderBattleDice('defender');
             if (trainerSwitched) renderBattleAttackerSlot();
+            if (gymLeaderSwitched) renderBattleDefenderSlot();
             promptFaintedBattleReplacement(); // my own Fainted Pok\u00e9mon -> pick a new one
         }
 
@@ -31817,6 +32327,7 @@
             // In a lobby the Host clears both shared halves for everyone.
             if (lobbyState.role !== null) { requestBattlePhase('end'); return; }
             battleInProgress = false;
+            syncBattleMusicToArena(); // solo Play a Game session: back to Route
             hostClearBattleCards();
             syncSoloBattleCards();
             recallBattleAttacker();
@@ -31847,6 +32358,7 @@
         //     left over from before they joined goes too.
         function clearBattleArenaForSaveChange(newTeamId, saveGone = false) {
             if (newTeamId === getActiveTeamId()) return;
+            endSoloSession(); // a solo session belongs to the save it started on
             const discard = !saveGone;
             if (lobbyState.role === 'host') {
                 // Same \"lands on the save it came from\" reasoning as the
@@ -32056,6 +32568,13 @@
         // falls back to `tags`, which mix in name words.
         function getBattleMemberTypes(member) {
             if (!member) return [];
+            // Gym leader cards: the types printed on the card (a Tera
+            // Pok\u00e9mon lists its Tera Type), straight from gym-leaders.json.
+            const gymMon = getGymLeaderMemberData(member);
+            if (gymMon) {
+                return (Array.isArray(gymMon.types) ? gymMon.types : [])
+                    .map(t => String(t).toLowerCase().trim()).filter(t => BATTLE_MOVE_TYPE_NAMES.includes(t));
+            }
             // A Tera Type card on the Pok\u00e9mon replaces its types outright
             // (STAB, what it's weak to, and field-effect type conditions
             // all follow) -- see the card-bonus notes below.
@@ -33210,6 +33729,10 @@
         // getMaxMoveForKnownMove() already treat any move in this list
         // that way (by type, or Max Guard for 0 power).
         function getBattleMemberMoves(member) {
+            // Gym leader cards know exactly the moves printed in
+            // gym-leaders.json (usually 3, not a species' standard 2).
+            const gymMon = getGymLeaderMemberData(member);
+            if (gymMon) return Array.isArray(gymMon.moves) ? gymMon.moves.slice() : [];
             const entry = POKEMON_BY_NAME[member.formOverride || member.name];
             const moves = (entry && Array.isArray(entry.known_moves)) ? entry.known_moves.slice() : [];
             getBattleMemberAttachCardMoves(member).forEach(name => {
@@ -33646,6 +34169,22 @@
             const slot = document.getElementById('game-battle-defender-slot');
             if (!slot) return;
             clearBattleReadonlyEvolutionTimer('defender');
+            // Gym leader card in this half: "X of Y Pok\u00e9mon" under the
+            // heading, same as the Attacker's NPC Trainer.
+            const defenderLabel = document.getElementById('game-battle-defender-label');
+            if (defenderLabel) {
+                const labelEntry = getArenaSlotEntry('defender');
+                const labelMember = labelEntry ? labelEntry.member
+                    : (battleDefenderMemberIndex === 'wild' ? battleWildPokemon : null);
+                const progress = getGymLeaderProgress(labelMember);
+                if (progress) {
+                    // Above the heading (the Attacker's sits below it) so the two
+                    // halves mirror each other.
+                    defenderLabel.innerHTML = `<span style="font-size: 16px;">${progress.current} of ${progress.total} Pok&eacute;mon</span><br>Defender`;
+                } else {
+                    defenderLabel.textContent = 'Defender';
+                }
+            }
             const recallBtn = document.getElementById('game-battle-recall-defender-btn');
             // Catch This Pokémon -- see catchWildPokemon()'s own comment.
             // Narrower than recallBtn above: only ever shown for the
@@ -33668,6 +34207,8 @@
             const setDefenderChooseButtons = (show) => {
                 if (chooseDefenderBtn) chooseDefenderBtn.style.display = show ? '' : 'none';
                 if (chooseWildBtn) chooseWildBtn.style.display = show ? '' : 'none';
+                const chooseGymLeaderBtn = document.getElementById('game-battle-choose-gym-leader-btn');
+                if (chooseGymLeaderBtn) chooseGymLeaderBtn.style.display = show ? '' : 'none';
             };
             const defenderEntry = getArenaSlotEntry('defender');
             const stopWildEvolutionTimer = () => {
@@ -33717,7 +34258,7 @@
             if (battleDefenderMemberIndex === 'wild') {
                 renderBattleWildDefenderSlotBody(slot);
                 if (recallBtn) recallBtn.style.display = '';
-                if (catchBtn) catchBtn.style.display = '';
+                if (catchBtn) catchBtn.style.display = canCatchWildDefender() ? '' : 'none';
                 return;
             }
             if (battleDefenderTeamId !== getActiveTeamId()) {
@@ -33796,6 +34337,35 @@
         // reminder line entirely for it (see both of their own comments)
         // since a Wild Pokémon plays by different rules than one on a
         // player's own team.
+        // Gym Leader cards in the Arena: a playing-card-sized image (no token
+        // frame) with only two corners -- HP/Fainted (top-left) and Status
+        // (bottom-left). No Cards, Level, or Evolution corners: these
+        // never carry attach/nature/overlay cards, never evolve, and their
+        // level is printed on the card. index is the same sentinel the
+        // token slot uses ('trainer', or 'readonly' for the read-only view),
+        // so the HP/Status corners' existing click handling just works.
+        function renderGymLeaderCardSlot(container, member, index) {
+            const hpRule = getHpRule(getActiveSaveData());
+            const slot = document.createElement('div');
+            slot.className = 'game-team-slot game-gym-leader-card' + (index === 'readonly' ? ' game-battle-readonly-slot' : '');
+            slot.dataset.filled = 'true';
+            slot.dataset.index = index;
+
+            const img = document.createElement('img');
+            img.className = 'game-gym-leader-card-img';
+            img.src = member.src;
+            img.alt = member.name || '';
+            img.classList.toggle('fainted', !!member.fainted);
+            img.onerror = () => { img.style.display = 'none'; };
+            slot.appendChild(img);
+
+            slot.appendChild(buildHpBadge(member, index, hpRule));
+            slot.appendChild(buildStatusBadge(member, index));
+
+            container.innerHTML = '';
+            container.appendChild(slot);
+        }
+
         function renderBattleNpcSlotBody(container, kind) {
             // kind 'wild' (Defender) or 'trainer' (Attacker): same card, same
             // badges, same delegated listeners -- only which member it reads
@@ -33810,6 +34380,10 @@
             const member = isTrainer ? battleTrainerPokemon : battleWildPokemon;
             if (!member) {
                 container.innerHTML = '<p class="game-battle-slot-empty-text">No Pok\u00e9mon selected.</p>';
+                return;
+            }
+            if (member.gymLeaderId) {
+                renderGymLeaderCardSlot(container, member, sentinel);
                 return;
             }
             const hpRule = getHpRule(getActiveSaveData());
@@ -34490,7 +35064,7 @@
                 const save = gameGuestSaves[activeGuestSaveId];
                 el.textContent = `Playing: ${save.playerName} \u2014 ${save.hostNameCache || 'Host'}'s Game${isActiveSaveReadOnly() ? ' (Read-Only)' : ''}`;
             } else {
-                el.textContent = '';
+                el.textContent = 'No game loaded \u2014 load or create one in Play a Game.';
             }
         }
 
@@ -35771,7 +36345,7 @@
                 return;
             }
             pendingUnsavedCommit = true;
-            setGameScreen('main');
+            setGameScreen('lobby'); // saves live in Play a Game now
             setSavesSectionCollapsed(false);
             beginCreatingSave(emptyIndex);
         }
@@ -36498,7 +37072,7 @@
             // Backstop for anything that navigates here directly: the
             // Arena never opens without a hosted save or a lobby (the
             // menu tile and Team Tracker's send button check first).
-            if (screenId === 'battle' && !canUseBattleArena()) {
+            if (isScreenLockedByGate(screenId)) {
                 showBattleArenaGateToast();
                 screenId = 'main';
             }
@@ -36872,7 +37446,103 @@
         // color-pick step) -- and is what tells
         // applyGamePanelPlayerTheme() below to fall back to the Game
         // panel's own default, untheme look.
+        // ---- Solo mode (Play a Game > Play Solo) ----
+        //
+        // Deliberately NOT part of lobbyState: lobbyState.role === null
+        // already means "solo" everywhere else in the script, and
+        // resetLobbyState() wipes lobbyState wholesale. This small bag
+        // only drives the Play a Game screen's solo view, the player
+        // theme color, and the same Begin Game Setup / Start Game
+        // buttons a hosting-and-playing host gets. Session-only, like a
+        // lobby: a page reload drops back to the choice view.
+        let soloSession = { active: false, color: null, starterChosen: false, gameOfficiallyStarted: false };
+
+        function isSoloSessionActive() {
+            return soloSession.active && lobbyState.role === null;
+        }
+
+        function beginSoloFlow() {
+            if (lobbyState.role !== null) return;
+            if (activeSaveSlot === null) {
+                setLobbyStatus('Create or load a save first, then tap Play Solo again.', 'error');
+                setSavesSectionCollapsed(false);
+                const emptyIndex = gameSaves.findIndex(save => !save);
+                if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
+                return;
+            }
+            const save = gameSaves[activeSaveSlot];
+            const savedColor = save && save.hostPlayerColor;
+            if (savedColor && PLAYER_COLORS.includes(savedColor)) {
+                startSoloSession(savedColor); // same remembered color a hosting-and-playing host reuses
+                return;
+            }
+            openLobbyColorPick({
+                title: 'Choose Your Color',
+                blurb: 'Pick the color that will theme the game panel while you play.',
+                takenColors: [],
+                onChoose: (color) => startSoloSession(color),
+                onCancel: () => { document.getElementById('game-lobby').dataset.state = 'choice'; },
+            });
+        }
+
+        function startSoloSession(color) {
+            if (lobbyState.role !== null || activeSaveSlot === null) return;
+            const save = gameSaves[activeSaveSlot];
+            if (save) { save.hostPlayerColor = color; persistGameSaves(); }
+            const data = getActiveSaveData();
+            soloSession = {
+                active: true,
+                color,
+                // Per-save like a lobby's: a roster that already has a
+                // Pok\u00e9mon means the starter was picked back then.
+                starterChosen: ((data.team && data.team.members) || []).length > 0,
+                gameOfficiallyStarted: false,
+            };
+            const lobbyEl = document.getElementById('game-lobby');
+            lobbyEl.dataset.state = 'active';
+            lobbyEl.dataset.role = 'solo';
+            renderLobbyRole();
+            renderSoloPlayerRow();
+            const leaveBtn = document.getElementById('game-lobby-leave-btn');
+            if (leaveBtn) leaveBtn.textContent = 'End Solo Game';
+            applyGamePanelPlayerTheme();
+            updateLobbyStartGameButtonUI();
+            renderBattleArenaGate();
+        }
+
+        function renderSoloPlayerRow() {
+            const listEl = document.getElementById('game-lobby-players');
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            const name = (save && save.hostDisplayName) || 'You';
+            listEl.innerHTML = `
+                <div class="game-lobby-player-row">
+                    <span class="game-lobby-player-name">${soloSession.color ? `<span class="game-player-color-dot game-player-color-dot--${soloSession.color}"></span>` : ''}${escapeHtml(name)}</span>
+                </div>`;
+        }
+
+        // Ends the solo view/session. Safe to call any time (no-op when
+        // none is active) -- called by the End Solo Game button, by every
+        // save change (clearBattleArenaForSaveChange()), and before
+        // hosting/joining a lobby.
+        function endSoloSession() {
+            if (!soloSession.active) return;
+            soloSession = { active: false, color: null, starterChosen: false, gameOfficiallyStarted: false };
+            const lobbyEl = document.getElementById('game-lobby');
+            if (lobbyEl && lobbyEl.dataset.role === 'solo') {
+                lobbyEl.dataset.state = 'choice';
+                delete lobbyEl.dataset.role;
+            }
+            const leaveBtn = document.getElementById('game-lobby-leave-btn');
+            if (leaveBtn) leaveBtn.textContent = 'Leave Lobby';
+            battleMusicWasInProgress = false;
+            battleMusicCueApplied = false;
+            applyGamePanelPlayerTheme();
+            updateLobbyStartGameButtonUI();
+            renderBattleArenaGate();
+        }
+
         function getMyLobbyThemeColor() {
+            if (isSoloSessionActive()) return soloSession.color || null;
             if (lobbyState.role === 'host') {
                 return (lobbyState.hostIsPlayer && lobbyState.hostColor) ? lobbyState.hostColor : null;
             }
@@ -36967,6 +37637,7 @@
             // separate "no save at all" case.
             syncMusicUIForLobbyRole();
             restoreSoloGameStage();
+            renderBattleArenaGate();
             // Multiplayer Battle Arena -- the shared store/cache only
             // ever mean anything alongside a live lobbyState.role, which
             // is already null again by this point. Leaves the local
@@ -37052,6 +37723,7 @@
             // screen goes active, rather than leaving it on whatever
             // static text the HTML happened to ship with.
             updateLobbyStartGameButtonUI();
+            renderBattleArenaGate();
         }
 
         // ---- Connection keepalive (see the user's report of a stale
@@ -37485,7 +38157,10 @@
         function renderLobbyRole() {
             const banner = document.getElementById('game-lobby-role-banner');
             banner.classList.remove('role-host', 'role-guest');
-            if (lobbyState.role === 'host') {
+            if (isSoloSessionActive()) {
+                banner.classList.add('role-host');
+                banner.textContent = 'Solo game \u2014 music plays on this device';
+            } else if (lobbyState.role === 'host') {
                 banner.classList.add('role-host');
                 banner.textContent = 'Hosting \u2014 music plays on this device';
             } else if (lobbyState.role === 'guest') {
@@ -37618,6 +38293,7 @@
                 if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
                 return;
             }
+            endSoloSession();
             resetLobbyState();
             lobbyState.role = 'host';
             lobbyState.hostName = (name || '').trim() || 'Trainer';
@@ -38206,6 +38882,11 @@
         // which is what makes the flag survive a Lobby restart rather
         // than resetting every session the way it used to.
         function reportLobbyStarterChosen() {
+            if (isSoloSessionActive()) {
+                soloSession.starterChosen = true;
+                updateLobbyStartGameButtonUI();
+                return;
+            }
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
                     lobbyState.hostConn.send({ type: 'starter-chosen' });
@@ -38225,6 +38906,7 @@
         // there's no one to have readied up yet (e.g. hosting alone with
         // hostIsPlayer false), so the button has nothing to advance to.
         function allLobbyStartersChosen() {
+            if (isSoloSessionActive()) return !!soloSession.starterChosen;
             const expected = lobbyState.players.filter(p => p.id !== 'host' || lobbyState.hostIsPlayer);
             return expected.length > 0 && expected.every(p => !!lobbyState.starterChosen[p.id]);
         }
@@ -38241,7 +38923,7 @@
         function updateLobbyStartGameButtonUI() {
             const btn = document.getElementById('game-lobby-start-game-btn');
             if (!btn) return;
-            if (lobbyState.gameOfficiallyStarted) {
+            if (isSoloSessionActive() ? soloSession.gameOfficiallyStarted : lobbyState.gameOfficiallyStarted) {
                 btn.textContent = 'Game is in progress';
                 btn.disabled = true;
                 return;
@@ -38718,6 +39400,7 @@
 
         function joinLobbyByCode(code, attempt) {
             if (!requireLobbyLibs()) return;
+            endSoloSession();
             const cleanCode = (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
             if (cleanCode.length !== LOBBY_CODE_LENGTH) {
                 setLobbyStatus('Enter the full room code.', 'error');
@@ -39291,6 +39974,7 @@
         // nothing to lose by leaving -- straight through to leaveLobby()
         // for both.
         function attemptLeaveLobby() {
+            if (isSoloSessionActive()) { endSoloSession(); return; }
             if (lobbyState.role === 'host' && lobbyState.connections.size > 0) {
                 const count = lobbyState.connections.size;
                 document.getElementById('game-lobby-close-confirm-subtext').textContent =
@@ -39337,7 +40021,8 @@
         // actually decides whether the button's even reachable here
         // again versus having already moved on to Start Game).
         function beginGameSetup() {
-            if (lobbyState.role !== 'host') return;
+            const solo = isSoloSessionActive();
+            if (lobbyState.role !== 'host' && !solo) return;
             setActiveMusicCategory('intro');
             // setActiveMusicCategory() only resumes playback if music
             // happened to already be playing before the switch (see
@@ -39351,6 +40036,15 @@
             if (isCategoryAudible('music')) {
                 musicAudio.volume = getCategoryVolume('music');
                 musicAudio.play().catch(() => { /* autoplay blocked or file missing -- silently skip */ });
+            }
+            if (solo) {
+                // Nobody to tell -- just the local starter prompt.
+                if (!soloSession.starterChosen) {
+                    openGamePanel();
+                    setGameScreen('team');
+                    openTeamAddPromptOverlay();
+                }
+                return;
             }
             lobbyState.connections.forEach(({ conn }, peerId) => {
                 if (conn.open && !lobbyState.starterChosen[peerId]) conn.send({ type: 'start-game' });
@@ -39373,13 +40067,15 @@
         // locks the button in place for the rest of the session so a
         // stray extra tap can't re-trigger anything.
         function finalizeLobbyGameStart() {
-            if (lobbyState.role !== 'host') return;
+            const solo = isSoloSessionActive();
+            if (lobbyState.role !== 'host' && !solo) return;
             setActiveMusicCategory('route');
             if (isCategoryAudible('music')) {
                 musicAudio.volume = getCategoryVolume('music');
                 musicAudio.play().catch(() => { /* autoplay blocked or file missing -- silently skip */ });
             }
-            lobbyState.gameOfficiallyStarted = true;
+            if (solo) soloSession.gameOfficiallyStarted = true;
+            else lobbyState.gameOfficiallyStarted = true;
             updateLobbyStartGameButtonUI();
         }
 
@@ -39402,7 +40098,7 @@
 
             const navTarget = e.target.closest('[data-target]');
             if (navTarget) {
-                if (navTarget.dataset.target === 'battle' && !canUseBattleArena()) {
+                if (isScreenLockedByGate(navTarget.dataset.target)) {
                     showBattleArenaGateToast();
                     return;
                 }
@@ -40298,6 +40994,11 @@
                 return;
             }
 
+            if (e.target.closest('.game-solo-start-btn')) {
+                beginSoloFlow();
+                return;
+            }
+
             const lobbyScanBtn = e.target.closest('.game-lobby-scan-btn');
             if (lobbyScanBtn) {
                 openLobbyScanOverlay();
@@ -40544,6 +41245,12 @@
                     beginBattleTrainerPickMode();
                     return;
                 }
+                if ((slot === 'defender' && e.target.closest('#game-battle-choose-gym-leader-btn'))
+                    || (slot === 'attacker' && e.target.closest('#game-battle-choose-rival-btn'))) {
+                    closeBattleOptionsOverlays();
+                    openGymLeaderPicker(slot);
+                    return;
+                }
                 if (slot === 'defender' && e.target.closest('#game-battle-choose-wild-btn')) {
                     closeBattleOptionsOverlays();
                     if (isActiveSaveReadOnly()) return;
@@ -40553,6 +41260,31 @@
                 }
             });
         });
+
+        // Gym Leader picker -- a sibling of #game-scroll like the other
+        // overlays, so it gets its own listeners.
+        (function wireGymLeaderPicker() {
+            const overlay = document.getElementById('game-battle-gym-leader-picker-overlay');
+            if (!overlay) return;
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay || e.target.closest('#game-battle-gym-leader-picker-cancel-btn')) {
+                    closeGymLeaderPicker();
+                    return;
+                }
+                const item = e.target.closest('[data-gym-leader-id]');
+                if (item) {
+                    const id = item.dataset.gymLeaderId;
+                    closeGymLeaderPicker();
+                    sendGymLeaderCardToArena(id);
+                }
+            });
+            overlay.addEventListener('input', (e) => {
+                if (e.target.id === 'game-battle-gym-leader-picker-search') renderGymLeaderPicker();
+            });
+            overlay.addEventListener('change', (e) => {
+                if (e.target.id === 'game-battle-gym-leader-picker-region') renderGymLeaderPicker();
+            });
+        })();
 
         // Same reasoning again -- this overlay's also a sibling of
         // #game-scroll, not a descendant. No on either stage backs out
@@ -41913,6 +42645,38 @@
             'victory': 'https://dl.dropboxusercontent.com/scl/fi/fsf7od8nemefi736i9zh4/Playlist_Victory.png?rlkey=7rfom0c8dy0gfm8sblusmh57l&st=6n9fiuf6&dl=1',
         };
         const MUSIC_ICON_PLACEHOLDER_FALLBACK = 'PLACEHOLDER_ICON_URL_default';
+
+        // Icon on each main-menu Tools button, keyed by the button's
+        // data-target. Empty string = show the faint placeholder square
+        // (see .game-menu-tile-icon-slot.is-placeholder) -- paste image
+        // URLs in here, same as MUSIC_CATEGORY_ICONS above.
+        const TOOL_MENU_ICONS = {
+            'team': 'https://dl.dropboxusercontent.com/scl/fi/ubgcrcq7zmdurvu46nc5b/tool_pokemon.png?rlkey=ns19gvf1oz5kj6lnht2edun1q&st=7rtmhjau&dl=1',
+            'decks': 'https://dl.dropboxusercontent.com/scl/fi/5h2iarg98gfki60drva8i/tool_handanddecks.png?rlkey=8sr1rvduyag7gmli6gmkvvzkt&st=5t86q4ks&dl=1',
+            'badges': 'https://dl.dropboxusercontent.com/scl/fi/ta0qi6cq4fdrfwtmi2wgz/tool_badges.png?rlkey=0q6uksykj8dxmf02rw2k2vogu&st=cu1iyme2&dl=1',
+            'battle': 'https://dl.dropboxusercontent.com/scl/fi/jjoqwemwv7qov1wzw9tyd/tool_arena.png?rlkey=kjhio5803z34ft2wnci0zt1bx&st=iwqegfoq&dl=1',
+            'matchup': 'https://dl.dropboxusercontent.com/scl/fi/rxxc2q7iwfzc6b39dkzx0/tool_calc.png?rlkey=vwtttd0txkyivbuf65w4xodst&st=4yti5sk7&dl=1',
+            'trainer-card': 'https://dl.dropboxusercontent.com/scl/fi/ubgcrcq7zmdurvu46nc5b/tool_pokemon.png?rlkey=ns19gvf1oz5kj6lnht2edun1q&st=7rtmhjau&dl=1',
+            'lobby': 'https://dl.dropboxusercontent.com/scl/fi/6emggeg1utvdn2iqcn6ig/tool_play.png?rlkey=0gesydi08q89ue908d7x0z47k&st=0zrv7700&dl=1',
+            'rulebook-picker': 'https://dl.dropboxusercontent.com/scl/fi/sgv7p7b3jguvvlbg4oozp/tool_rulebook.png?rlkey=v2ykv9joiwvxde4uh5ob8fnzf&st=i6yw2eyl&dl=1',
+        };
+        function applyToolMenuIcons() {
+            document.querySelectorAll('.game-menu-tiles-grid .game-menu-tile').forEach(tile => {
+                const slot = tile.querySelector('.game-menu-tile-icon-slot');
+                const img = tile.querySelector('.game-menu-tile-icon');
+                const url = TOOL_MENU_ICONS[tile.dataset.target] || '';
+                if (url) {
+                    img.src = url;
+                    img.hidden = false;
+                    slot.classList.remove('is-placeholder');
+                    img.onerror = () => { img.hidden = true; slot.classList.add('is-placeholder'); };
+                } else {
+                    img.hidden = true;
+                    slot.classList.add('is-placeholder');
+                }
+            });
+        }
+        applyToolMenuIcons();
         // Fixed vocabulary (not derived from the data like categories/
         // regions are) since this is standing in for the future Badge
         // Tracker's own stage concept, not an open-ended tag. Order here
@@ -42204,7 +42968,27 @@
         // instead. No generic track in the region at all? The next
         // playlist in the rule's list is tried.
         const BATTLE_MUSIC_LEGENDARY_TAGS = ['legendary'];
+        // The playlist (a music-tracks.json "category") each gym-leaders.json
+        // category plays when no track of its own is reserved for it.
+        // Titan -> gym-battle matches where the Titan track is filed today.
+        const GYM_LEADER_MUSIC_PLAYLISTS = {
+            'gym-leader': 'gym-battle', 'elite-four': 'elite-four-battle', 'champion': 'champion-battle',
+            'rival': 'rival-battle', 'villain': 'villain-battle', 'titan': 'gym-battle', 'trainer': 'trainer-battle',
+        };
         const BATTLE_MUSIC_RULES = [
+            // A gym leader card (Defender; Rivals in the Attacker half). A
+            // record with a "battleType" (e.g. Alola's "totem"/"kahuna")
+            // plays the tracks carrying that same battleType in its own
+            // region; with none (or none yet), its category's playlist
+            // (generic tracks only), then trainer-battle. First, so these
+            // never fall through to the Wild or plain Trainer rules.
+            { id: 'gym-leader',
+              match: ctx => ctx.opponentIsGymLeader,
+              resolve: ctx => ({
+                  playlists: [GYM_LEADER_MUSIC_PLAYLISTS[ctx.gymLeaderCategory] || 'trainer-battle', 'trainer-battle'],
+                  tracks: findGymLeaderBattleTracks(ctx),
+                  genericOnly: true,
+              }) },
             // An NPC Trainer's Pok\u00e9mon (Attacker > Choose Trainer Pok\u00e9mon).
             // First, so a Trainer battle is always a Trainer battle.
             { id: 'npc-trainer',
@@ -42232,8 +43016,11 @@
         function buildBattleMusicContext(st) {
             // Ownerless entries are either a Wild Pok\u00e9mon or an NPC Trainer's
             // (entry.trainer) -- told apart so a Trainer's never plays Wild music.
-            const wildEntry = [st.defender, st.attacker].find(e => e && !e.ownerId && !e.trainer && e.member) || null;
-            const trainerEntry = [st.defender, st.attacker].find(e => e && !e.ownerId && e.trainer && e.member) || null;
+            const isGymLeaderEntry = e => !!(e && e.member && e.member.gymLeaderId);
+            const gymLeaderEntry = [st.defender, st.attacker].find(e => e && !e.ownerId && isGymLeaderEntry(e)) || null;
+            const gymLeader = gymLeaderEntry ? (GYM_LEADERS_BY_ID[gymLeaderEntry.member.gymLeaderId] || null) : null;
+            const wildEntry = [st.defender, st.attacker].find(e => e && !e.ownerId && !e.trainer && e.member && !isGymLeaderEntry(e)) || null;
+            const trainerEntry = [st.defender, st.attacker].find(e => e && !e.ownerId && e.trainer && e.member && !isGymLeaderEntry(e)) || null;
             const member = wildEntry ? wildEntry.member : null;
             const names = member ? [member.formOverride, member.name].filter(Boolean) : [];
             const dataEntry = member ? (POKEMON_BY_NAME[member.formOverride] || POKEMON_BY_NAME[member.name] || null) : null;
@@ -42241,6 +43028,10 @@
                 bothPlayerOwned: !!(st.attacker && st.attacker.ownerId && st.defender && st.defender.ownerId),
                 opponentIsWild: !!member,
                 opponentIsTrainer: !!trainerEntry,
+                opponentIsGymLeader: !!gymLeaderEntry,
+                gymLeaderCategory: gymLeader ? gymLeader.category : null,
+                gymLeaderBattleType: gymLeader ? (gymLeader.battleType || null) : null,
+                gymLeaderRegions: gymLeader ? [].concat(gymLeader.region || []) : [],
                 opponentNames: names.map(n => String(n).toLowerCase()),
                 opponentTags: ((dataEntry && dataEntry.tags) || []).map(t => String(t).toLowerCase()),
             };
@@ -42255,19 +43046,49 @@
                 && (musicState.activeRegion === 'all' || (t.regions || []).includes(musicState.activeRegion)));
         }
 
+        // Tracks reserved (via "battleType") for this gym leader card's kind of
+        // battle. Matched on the card's OWN region(s), not the active Region
+        // setting -- a Kahuna's theme is the Kahuna's wherever the table is
+        // set. Empty when the card has no battleType or nothing carries it
+        // yet, which makes the cue fall back to its playlists.
+        function findGymLeaderBattleTracks(ctx) {
+            if (!ctx.gymLeaderBattleType) return [];
+            return musicTracks.filter(t => [].concat(t.battleType || []).includes(ctx.gymLeaderBattleType)
+                && (t.regions || []).some(r => ctx.gymLeaderRegions.includes(r)));
+        }
+
         function resolveBattleMusicCue(ctx) {
             const rule = BATTLE_MUSIC_RULES.find(r => r.match(ctx));
             if (!rule) return null;
+            if (rule.resolve) return rule.resolve(ctx);
             return { playlists: rule.playlists, tracks: rule.pinByPokemon ? findPinnedBattleTracks(ctx) : [], genericOnly: !!rule.genericOnly };
         }
 
+        // Solo battles keep their halves in plain variables rather than
+        // hostBattleArenaState, so this rebuilds the same shape
+        // buildBattleMusicContext() reads: ownerless entries for the Wild
+        // Pok\u00e9mon / NPC Trainer's, an owned entry for a player's own.
+        function buildSoloBattleArenaShape() {
+            const entryFor = (index, member, ownerless, trainer) => {
+                if (index === 'wild') return battleWildPokemon ? { ownerId: null, member: battleWildPokemon } : null;
+                if (index === 'trainer') return battleTrainerPokemon ? { ownerId: null, trainer: true, member: battleTrainerPokemon } : null;
+                return typeof index === 'number' && member ? { ownerId: 'solo', member } : null;
+            };
+            return {
+                attacker: entryFor(battleAttackerMemberIndex, getBattleSlotMember('attacker')),
+                defender: entryFor(battleDefenderMemberIndex, getBattleSlotMember('defender')),
+            };
+        }
+
         function syncBattleMusicToArena() {
-            if (lobbyState.role !== 'host') { battleMusicWasInProgress = false; battleMusicCueApplied = false; return; }
-            const inProgress = !!hostBattleArenaState.inProgress;
+            const solo = isSoloSessionActive();
+            if (lobbyState.role !== 'host' && !solo) { battleMusicWasInProgress = false; battleMusicCueApplied = false; return; }
+            const inProgress = solo ? !!battleInProgress : !!hostBattleArenaState.inProgress;
             if (inProgress === battleMusicWasInProgress) return;
             battleMusicWasInProgress = inProgress;
             if (inProgress) {
-                battleMusicCueApplied = applyMusicCue(resolveBattleMusicCue(buildBattleMusicContext(hostBattleArenaState)));
+                const ctxSource = solo ? buildSoloBattleArenaShape() : hostBattleArenaState;
+                battleMusicCueApplied = applyMusicCue(resolveBattleMusicCue(buildBattleMusicContext(ctxSource)));
             } else if (battleMusicCueApplied) {
                 battleMusicCueApplied = false;
                 applyMusicCue(BATTLE_MUSIC_END_CUE);
