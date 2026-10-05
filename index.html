@@ -1748,21 +1748,50 @@
             flex: 1;
         }
 
-        /* One half's card row: Battle Card zone | slot card | Field Move
-           Effect zone. The slot-wrap in the middle keeps everything it
-           always had (the readout is still centered on the card alone);
-           the two zone badges are siblings of it, not part of it. */
+        /* One half's card row. The slot-wrap takes the full row width
+           so the card is always centered on the row itself; the two
+           zone badges (Battle Card on the left, Field Move Effect on the
+           right) are siblings of it, pinned to the row's left/right
+           edges and vertically centered, so on a narrow screen they
+           simply overlap the card's edges rather than squeezing it
+           (they used to be flex items, which made them a hard edge the
+           card had to shrink against). Still outside the slot card on
+           purpose, same as before -- they belong to the half. */
         .game-battle-slot-row {
+            position: relative;
             display: flex;
             align-items: stretch;
-            gap: 10px;
             flex: 1;
             width: 100%;
         }
 
         .game-battle-slot-row > .game-battle-slot-wrap {
-            width: auto;
+            width: 100%;
             min-width: 0;
+        }
+
+        /* Same size as the slot card's own corner badges: those are 25%
+           of the card's width, and the token card is 250px wide, so
+           62.5px. min(..., 25%) keeps them in step if the row ever gets
+           narrower than the card (the card shrinks to fit then, and so
+           do its corner badges). Gym Leader mode moves the Field Move
+           badge out of the row onto its own line (see
+           syncGymLeaderRowMode()), where it's a normal flex item again
+           -- these absolute rules only apply to badges still in the row. */
+        .game-battle-slot-row > .game-battle-zone-badge {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: min(62.5px, 25%);
+            z-index: 2;
+        }
+
+        .game-battle-slot-row > .game-battle-zone-badge[data-battle-zone="battleCard"] {
+            left: 0;
+        }
+
+        .game-battle-slot-row > .game-battle-zone-badge[data-battle-zone="fieldEffect"] {
+            right: 0;
         }
 
         /* Battle Card / Field Move Effect zone badge -- same look as the
@@ -1807,12 +1836,12 @@
             object-fit: contain;
         }
 
+        /* On the Gym Leader badge line the Field Move badge sits beside
+           HP/Status, which shrink to 46px on mobile (see
+           .game-battle-gym-badge-line below), so it still matches them
+           there. The badges in the slot row no longer shrink at all. */
         @media (max-width: 520px) {
-            .game-battle-slot-row {
-                gap: 6px;
-            }
-
-            .game-battle-zone-badge {
+            .game-battle-gym-badge-line .game-battle-zone-badge {
                 width: 46px;
             }
         }
@@ -35589,7 +35618,7 @@
             }
 
             const region = getActiveRegionForBadges();
-            if (!category) prepareBadgeJingle();
+            prepareBadgeJingle();
             const slots = buildBadgeSlots(region, category);
             const slot = slots.find(s => s.slotKey === slotKey);
             if (!slot) return;
@@ -35668,6 +35697,7 @@
             const region = getActiveRegionForBadges();
             const pool = getExtraPool(region, category);
             if (pool.length === 0) return;
+            prepareBadgeJingle();
 
             const data = getActiveSaveData();
             const collectedIds = (data.badges.collectedExtras || {})[category] || [];
@@ -35827,13 +35857,14 @@
             } else {
                 if (!data.badges.collected) data.badges.collected = {};
                 data.badges.collected[slotKey] = optionId;
-                // Main Gym Badges only -- Villain/Elite Four/etc. extras
-                // (the branches above) don't get a jingle. Before
-                // afterBadgeChange() since that re-renders the grid and
-                // can switch the Host's music, and the jingle shouldn't
-                // wait on either.
-                playBadgeJingle();
             }
+            // Any badge collected -- tiered Gym Badges and every extra
+            // category alike (all branches above land here). Collecting
+            // only: removeBadge() never plays it. Before
+            // afterBadgeChange() since that re-renders the grid and can
+            // switch the Host's music, and the jingle shouldn't wait on
+            // either.
+            playBadgeJingle();
             afterBadgeChange();
         }
 
@@ -43709,7 +43740,7 @@
         const MUSIC_ICON_PLACEHOLDER_FALLBACK = 'PLACEHOLDER_ICON_URL_default';
 
         // One short (< 10s) jingle per region, played once on the device
-        // of whoever collects a Gym Badge -- see playBadgeJingle(). Keyed
+        // of whoever collects any badge (Gym or extra category) -- see playBadgeJingle(). Keyed
         // by the same region ids music-tracks.json uses. Anything that
         // isn't a real http(s) URL (the PLACEHOLDER_ strings below, or a
         // region left out entirely) is silently skipped, so this can be
