@@ -1615,9 +1615,22 @@
             gap: 8px;
             flex: 1;
             border-radius: 10px;
-            padding: 10px;
+            /* 3px transparent border + 7px padding = the same 10px of
+               inset the half always had, so turning the white "mine"
+               border on (below) never shifts anything. */
+            border: 3px solid transparent;
+            padding: 7px;
             box-sizing: border-box;
             background: rgba(0, 0, 0, 0.15);
+        }
+
+        /* The half holding THIS device's own Pokémon -- a reminder of
+           which side is yours. Set per device by
+           syncBattleMineHalfBorders(), so in a lobby each player sees
+           it on their own side only (opposite sides for the two
+           players facing each other). */
+        .game-battle-half.game-battle-half-mine {
+            border-color: white;
         }
 
         /* White fill with the standard black outline -- the 8-shadow
@@ -1842,6 +1855,27 @@
 
         .game-battle-moves:empty {
             display: none;
+        }
+
+        /* Random move button -- only for a Pokemon / Gym Leader card no
+           player owns (Wild, NPC Trainer) that has more than one move
+           showing (see renderBattleMoves()). Sits above the moves on the
+           Defender half and below them on the Attacker half. hidden is
+           toggled from the script; the [hidden] rule is needed because
+           display: flex here would otherwise override it. */
+        .game-battle-random-row {
+            display: flex;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .game-battle-random-row[hidden] {
+            display: none;
+        }
+
+        .game-battle-random-btn.game-battle-move-locked {
+            opacity: 0.6;
+            cursor: default;
         }
 
         /* The move currently feeding the Attack calculation (see
@@ -5499,6 +5533,15 @@
             aspect-ratio: 5 / 7;
             background-image: none;
             width: min(100%, calc(clamp(360px, 70vh, 700px) * 5 / 7));
+            /* Same frame as a Hand & Decks card (.game-hand-card-face):
+               2px translucent white border, 20px corners, dark backing
+               and drop shadow, so the card stands out from the panel.
+               border-box keeps the border inside the card's width. */
+            box-sizing: border-box;
+            background-color: #1b1f33;
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            border-radius: 22px;
+            box-shadow: 5px 5px 8px rgba(0, 0, 0, 0.65);
         }
 
         /* The line of badges for a half holding a Gym Leader card: above
@@ -5536,12 +5579,26 @@
             }
         }
 
+        /* 20px = the slot's 22px corner minus its 2px border, so the art
+           sits flush inside the frame. Tappable: opens the same
+           full-size viewer a revealed Battle Card gets (see the
+           .game-gym-leader-card-img branch in #game-scroll's click
+           listener). */
         .game-gym-leader-card-img {
             width: 100%;
             height: 100%;
-            object-fit: contain;
-            border-radius: 4%;
+            object-fit: cover;
+            border-radius: 20px;
             display: block;
+            cursor: pointer;
+        }
+
+        /* A read-only Gym Leader card's slot is pointer-events: none (see
+           .game-battle-readonly-slot) to keep its corner badges inert, but
+           looking at the card is never a mutation, so the art itself
+           stays tappable. */
+        .game-battle-readonly-slot .game-gym-leader-card-img {
+            pointer-events: auto;
         }
 
         .game-gym-leader-card-img.fainted {
@@ -13990,6 +14047,12 @@
                              Moves on this half; the Attacker half has the
                              mirror-image spot between its Moves and Options. -->
                         <div class="game-battle-dice" id="game-battle-defender-dice" data-battle-slot="defender" style="display: none;"></div>
+                        <!-- Random move picker -- above the moves on this half; shown by
+                             renderBattleMoves() only for an ownerless Pokémon / Gym Leader
+                             card with more than one move. -->
+                        <div class="game-battle-random-row" id="game-battle-defender-random-row" hidden>
+                            <button class="filter-btn game-battle-random-btn" type="button" data-battle-slot="defender">Random</button>
+                        </div>
                         <div class="game-battle-moves" id="game-battle-defender-moves"></div>
                         <!-- Wrapper exists so #game-battle-calc-readout-defender can sit
                              on top of the card without being wiped out --
@@ -14057,6 +14120,11 @@
                             <div class="game-battle-zone-badge" role="button" tabindex="0" data-battle-slot="attacker" data-battle-zone="fieldEffect" title="Attacker Field Move Effect" aria-label="Attacker Field Move Effect"></div>
                         </div>
                         <div class="game-battle-moves" id="game-battle-attacker-moves"></div>
+                        <!-- Random move picker -- below the moves on this half (mirror of the
+                             Defender's, which sits above them). -->
+                        <div class="game-battle-random-row" id="game-battle-attacker-random-row" hidden>
+                            <button class="filter-btn game-battle-random-btn" type="button" data-battle-slot="attacker">Random</button>
+                        </div>
                         <div class="game-battle-dice" id="game-battle-attacker-dice" data-battle-slot="attacker" style="display: none;"></div>
                         <!-- Recall (see recallBattleAttacker() in the
                              script) starts hidden -- renderBattleAttackerSlot()
@@ -23364,6 +23432,9 @@
                 if (st.attacker && !st.attacker.ownerId) discardMemberEquippedCards(st.attacker.member);
                 st.attacker = null;
                 st.defender = null;
+                // Field Move Effects belong to the battle that just ended;
+                // the broadcast below empties them on every device.
+                st.fields = { attacker: null, defender: null };
                 hostClearBattleCards();
             } else {
                 return;
@@ -31666,7 +31737,10 @@
             // Field Move Effect badge moves to the half's badge line at the
             // same time -- see syncGymLeaderRowMode() -- so the card stays
             // centered with nothing on either side.)
-            const hideZone = zoneName === 'battleCard' && isGymLeaderInSlot(slotName);
+            // Both zone badges (Battle Card, Field Move Effect) are only
+            // shown while a battle is ongoing -- see isBattleOngoingForZones().
+            const hideZone = !isBattleOngoingForZones()
+                || (zoneName === 'battleCard' && isGymLeaderInSlot(slotName));
             el.style.display = hideZone ? 'none' : '';
             if (!el.getAttribute('style')) el.removeAttribute('style'); // leave no empty style="" behind
             const state = battleZones[slotName][zoneName];
@@ -31693,6 +31767,18 @@
             el.classList.toggle('filled', !!state);
             el.title = title;
             el.setAttribute('aria-label', title);
+        }
+
+        // Whether a battle is running, safe to call at startup:
+        // renderAllBattleZones() first runs before battleInProgress's
+        // `let` has been initialized (touching it then would throw), and
+        // there's no battle yet at that point anyway.
+        function isBattleOngoingForZones() {
+            try {
+                return !!battleInProgress;
+            } catch (e) {
+                return false;
+            }
         }
 
         function renderAllBattleZones() {
@@ -31758,7 +31844,8 @@
         //
         // Any player at the table may place or remove one -- the
         // effects belong to the field, not to a Pokémon's owner.
-        // Next Round / End Battle leave them alone, same as before.
+        // Next Round leaves them alone; End Battle clears them (see
+        // endBattle() and the 'end' branch of hostApplyBattlePhase()).
         let soloBattleFields = { attacker: null, defender: null };
 
         function getBattleFieldStore() {
@@ -32555,6 +32642,37 @@
             endBtn.style.display = battleInProgress ? '' : 'none';
             const revealBtn = document.getElementById('game-battle-reveal-cards-btn');
             if (revealBtn) revealBtn.style.display = (battleInProgress && hasFacedownBattleCard()) ? '' : 'none';
+            // The Battle Card / Field Move Effect badges only show while a
+            // battle is ongoing, so they follow the same phase changes.
+            renderAllBattleZones();
+            syncBattleMineHalfBorders();
+        }
+
+        // Whether the Pokémon in a half is this device's own (one from
+        // the active save's team). In a lobby the shared arena entry's
+        // owner decides; solo (or before the first arena broadcast
+        // lands) it's a numeric team index on the active team -- the
+        // 'wild'/'trainer' sentinels and another player's Pokémon never
+        // count.
+        function isBattleSlotMine(slotName) {
+            const entry = getArenaSlotEntry(slotName);
+            if (lobbyState.role !== null && entry) {
+                return !!entry.ownerId && entry.ownerId === getMyLobbyPlayerId();
+            }
+            const index = slotName === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+            const teamId = slotName === 'attacker' ? battleAttackerTeamId : battleDefenderTeamId;
+            return typeof index === 'number' && teamId === getActiveTeamId();
+        }
+
+        // White border on whichever half holds this device's own
+        // Pokémon (neither, if it has none in the Arena). Called from
+        // renderBattleControls(), which both slot renderers and every
+        // phase change already run.
+        function syncBattleMineHalfBorders() {
+            ['attacker', 'defender'].forEach(slotName => {
+                const half = document.querySelector(`.game-battle-half.game-battle-${slotName}`);
+                if (half) half.classList.toggle('game-battle-half-mine', isBattleSlotMine(slotName));
+            });
         }
 
         // Begin Battle -- only possible with a Pokémon in both halves;
@@ -32633,6 +32751,9 @@
             syncBattleMusicToArena(); // solo Play a Game session: back to Route
             hostClearBattleCards();
             syncSoloBattleCards();
+            // Field Move Effects belong to the battle that just ended.
+            soloBattleFields = { attacker: null, defender: null };
+            renderBattleFieldZones(soloBattleFields);
             recallBattleAttacker();
             recallBattleDefender();
             renderBattleControls();
@@ -34123,6 +34244,81 @@
                 return `<button class="filter-btn game-battle-move-btn${typeClasses}${lockedClass}" data-battle-slot="${slotName}" data-move-name="${escapeHtml(b.name)}"${baseAttr}>${escapeHtml(b.name)}${fromLabel}</button>`;
             }).join('');
             syncBattleMoveSelection(slotName);
+            // Random button: only when no player owns this half's Pokemon
+            // (Wild / NPC Trainer / Gym Leader card) and there's an actual
+            // choice to make (more than one move showing).
+            const randomRow = document.getElementById(`game-battle-${slotName}-random-row`);
+            if (randomRow) {
+                randomRow.hidden = !(buttons.length > 1 && isBattleSlotOwnerless(slotName));
+                const randomBtn = randomRow.querySelector('.game-battle-random-btn');
+                if (randomBtn) randomBtn.classList.toggle('game-battle-move-locked', !canIChooseBattleMoves(slotName));
+            }
+        }
+
+        // True when the Pokemon (or Gym Leader card) in a half belongs to
+        // no player -- the Wild Pokemon on the Defender side, the NPC
+        // Trainer's on the Attacker side. In a lobby that's an arena
+        // entry with no ownerId; solo it's the 'wild' / 'trainer'
+        // sentinel index (see getArenaWildDefender() /
+        // getArenaTrainerAttacker()).
+        function isBattleSlotOwnerless(slotName) {
+            if (lobbyState.role !== null) {
+                const entry = getArenaSlotEntry(slotName);
+                return !!(entry && !entry.ownerId);
+            }
+            return slotName === 'attacker'
+                ? battleAttackerMemberIndex === 'trainer'
+                : battleDefenderMemberIndex === 'wild';
+        }
+
+        // The body of a move-button tap, shared with the Random button so
+        // a randomly picked move behaves exactly as if it had been tapped:
+        // lock check, manual-number prompt, unsupported-move notice, then
+        // select + readout + share with the lobby.
+        function selectBattleMove(slot, moveName, baseMove) {
+            if (!canIChooseBattleMoves(slot)) {
+                showBattleArenaNotice(getMyBattleMoveLockReason(slot));
+                return;
+            }
+            const manualName = getBattleManualSourceName(slot, moveName, baseMove);
+            if (manualName) {
+                openBattleManualOverlay(slot, moveName, baseMove, manualName);
+                return;
+            }
+            if (computeBattleMoveValue(slot, moveName, baseMove) === null) {
+                showBattleArenaNotice(isBattleMoveWaitingOnTarget(slot, moveName, baseMove)
+                    ? "This move uses the target's level -- put a Pok\u00e9mon in the other half first."
+                    : "This move's calculation isn't supported yet.");
+                return;
+            }
+            battleCalcMoveName[slot] = moveName;
+            battleCalcBaseMove[slot] = baseMove;
+            renderBattleCalcReadout(slot);
+            shareBattleMoveSelection(slot);
+        }
+
+        // Random button: picks one of the moves currently showing for this
+        // half at random and selects it like a tap. Moves that couldn't be
+        // selected anyway (unsupported, or waiting on a target) are left
+        // out of the draw so one press always lands on a usable move.
+        function pickRandomBattleMove(slotName) {
+            if (!canIChooseBattleMoves(slotName)) {
+                showBattleArenaNotice(getMyBattleMoveLockReason(slotName));
+                return;
+            }
+            const member = getBattleSlotMember(slotName);
+            if (!member || !battleInProgress) return;
+            const usable = getBattleMemberMoveButtons(member).filter(b => {
+                const base = b.base || null;
+                return !!getBattleManualSourceName(slotName, b.name, base)
+                    || computeBattleMoveValue(slotName, b.name, base) !== null;
+            });
+            if (!usable.length) {
+                showBattleArenaNotice("None of these moves can be calculated yet -- put a Pok\u00e9mon in the other half first.");
+                return;
+            }
+            const pick = usable[Math.floor(Math.random() * usable.length)];
+            selectBattleMove(slotName, pick.name, pick.base || null);
         }
 
 
@@ -40937,33 +41133,18 @@
                 return;
             }
 
+            const battleRandomBtn = e.target.closest('.game-battle-random-btn');
+            if (battleRandomBtn) {
+                pickRandomBattleMove(battleRandomBtn.dataset.battleSlot);
+                return;
+            }
+
             const battleMoveBtn = e.target.closest('.game-battle-move-btn');
             if (battleMoveBtn) {
-                const slot = battleMoveBtn.dataset.battleSlot;
-                const moveName = battleMoveBtn.dataset.moveName;
                 // Set on a Dynamaxed Pokémon's Max Move buttons -- the
                 // known move each one replaced (see
                 // getBattleMemberMoveButtons()).
-                const baseMove = battleMoveBtn.dataset.baseMove || null;
-                if (!canIChooseBattleMoves(slot)) {
-                    showBattleArenaNotice(getMyBattleMoveLockReason(slot));
-                    return;
-                }
-                const manualName = getBattleManualSourceName(slot, moveName, baseMove);
-                if (manualName) {
-                    openBattleManualOverlay(slot, moveName, baseMove, manualName);
-                    return;
-                }
-                if (computeBattleMoveValue(slot, moveName, baseMove) === null) {
-                    showBattleArenaNotice(isBattleMoveWaitingOnTarget(slot, moveName, baseMove)
-                        ? "This move uses the target's level -- put a Pok\u00e9mon in the other half first."
-                        : "This move's calculation isn't supported yet.");
-                    return;
-                }
-                battleCalcMoveName[slot] = moveName;
-                battleCalcBaseMove[slot] = baseMove;
-                renderBattleCalcReadout(slot);
-                shareBattleMoveSelection(slot);
+                selectBattleMove(battleMoveBtn.dataset.battleSlot, battleMoveBtn.dataset.moveName, battleMoveBtn.dataset.baseMove || null);
                 return;
             }
 
@@ -41210,6 +41391,16 @@
                     return;
                 }
                 openTeamEvolutionOverlay(index);
+                return;
+            }
+
+            // Gym Leader card art in the Battle Arena: tap to magnify, the
+            // same full-size viewer a revealed Battle Card opens (see
+            // viewRevealedBattleCard()). Viewing only -- no mutation, so
+            // no read-only/trade/replace guards needed.
+            const gymLeaderImg = e.target.closest('.game-gym-leader-card-img');
+            if (gymLeaderImg && gymLeaderImg.src) {
+                openTeamCardImageViewer(gymLeaderImg.src, gymLeaderImg.alt);
                 return;
             }
 
