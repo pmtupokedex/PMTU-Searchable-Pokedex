@@ -12352,7 +12352,10 @@
 
         .poke-info-label {
             display: inline-block;
-            min-width: 70px;
+            /* Wide enough for the longest label ("Secondary Type") so
+               every row's value starts at the same left edge. */
+            min-width: 100px;
+            white-space: nowrap;
             font-weight: bold;
             color: rgba(0,0,0,0.55);
             font-size: 12px;
@@ -45801,6 +45804,34 @@
         // this variant's ability list doesn't match the main series games.
         const ABILITY_TAGS = ['dig', 'fly', 'surf', 'teleport'];
 
+        // Primary/Secondary Type rows for the info panel, read straight
+        // from pokemon-data.json's `types` field in file order (first
+        // entry = Primary, second = Secondary) rather than from PokeAPI,
+        // so the panel matches the types the Battle Arena actually uses.
+        // Badges reuse the same .poke-type-badge look as everywhere else.
+        // Unknown type strings still render (as the default gray badge)
+        // so a bad value is visible rather than silently dropped, and a
+        // missing entry / not-yet-loaded data says so in place.
+        function buildJsonTypeRowsHtml(name) {
+            const row = (label, inner) =>
+                `<div class="poke-info-row"><span class="poke-info-label">${label}</span>${inner}</div>`;
+            const muted = text => `<span style="color: rgba(0,0,0,0.45); font-style: italic;">${text}</span>`;
+            if (Object.keys(POKEMON_BY_NAME).length === 0) {
+                return row('Primary Type', muted('pokemon-data.json not loaded yet')) + row('Secondary Type', muted('pokemon-data.json not loaded yet'));
+            }
+            const entry = POKEMON_BY_NAME[name];
+            if (!entry) {
+                return row('Primary Type', muted('no pokemon-data.json entry')) + row('Secondary Type', muted('no pokemon-data.json entry'));
+            }
+            const types = Array.isArray(entry.types) ? entry.types : [];
+            const badge = t => {
+                const raw = String(t).trim();
+                return `<span class="poke-type-badge poke-type-${escapeHtml(raw.toLowerCase())}">${escapeHtml(capitalize(raw))}</span>`;
+            };
+            return row('Primary Type', types.length > 0 ? badge(types[0]) : muted('none listed'))
+                 + row('Secondary Type', types.length > 1 ? badge(types[1]) : muted('none'));
+        }
+
         async function buildPokemonInfoHTML(name, dexRaw, tagsRaw) {
             const dex = /^\d+$/.test(dexRaw) ? parseInt(dexRaw, 10) : null;
 
@@ -45821,9 +45852,6 @@
             if (dex === null) {
                 const custom = CUSTOM_POKEMON_DATA[name];
                 if (custom) {
-                    const typesHtml = (custom.types || [])
-                        .map(t => `<span class="poke-type-badge poke-type-${escapeHtml(t)}">${capitalize(t)}</span>`)
-                        .join(' ');
                     const heightStr = (typeof custom.height === 'number') ? custom.height.toFixed(1) + ' m' : '';
                     const weightStr = (typeof custom.weight === 'number') ? custom.weight.toFixed(1) + ' kg' : '';
                     const cryUrl = custom.cry || '';
@@ -45838,7 +45866,7 @@
                             <span class="poke-info-dex">${escapeHtml(dexRaw)}</span>
                         </div>
                         ${custom.genus ? `<div class="poke-info-genus">${escapeHtml(custom.genus)}</div>` : ''}
-                        ${typesHtml ? `<div class="poke-info-row"><span class="poke-info-label">Type</span>${typesHtml}</div>` : ''}
+                        ${buildJsonTypeRowsHtml(name)}
                         ${heightStr ? `<div class="poke-info-row"><span class="poke-info-label">Height</span>${heightStr}</div>` : ''}
                         ${weightStr ? `<div class="poke-info-row"><span class="poke-info-label">Weight</span>${weightStr}</div>` : ''}
                         ${abilitiesStr ? `<div class="poke-info-row"><span class="poke-info-label">Abilities</span>${abilitiesStr}</div>` : ''}
@@ -45930,11 +45958,8 @@
                 }
             }
 
-            let typesHtml = '', heightStr = '', weightStr = '', cryUrl = '';
+            let heightStr = '', weightStr = '', cryUrl = '';
             if (pokemonData) {
-                typesHtml = pokemonData.types
-                    .map(t => `<span class="poke-type-badge poke-type-${t.type.name}">${capitalize(t.type.name)}</span>`)
-                    .join(' ');
                 heightStr = (pokemonData.height / 10).toFixed(1) + ' m';
                 weightStr = (pokemonData.weight / 10).toFixed(1) + ' kg';
                 // "latest" is the modern re-recorded cry; "legacy" is the
@@ -45952,7 +45977,7 @@
                     <span class="poke-info-dex">#${String(dex).padStart(3, '0')}</span>
                 </div>
                 ${genus ? `<div class="poke-info-genus">${escapeHtml(genus)}</div>` : ''}
-                ${typesHtml ? `<div class="poke-info-row"><span class="poke-info-label">Type</span>${typesHtml}</div>` : ''}
+                ${buildJsonTypeRowsHtml(name)}
                 ${heightStr ? `<div class="poke-info-row"><span class="poke-info-label">Height</span>${heightStr}</div>` : ''}
                 ${weightStr ? `<div class="poke-info-row"><span class="poke-info-label">Weight</span>${weightStr}</div>` : ''}
                 ${abilitiesStr ? `<div class="poke-info-row"><span class="poke-info-label">Abilities</span>${abilitiesStr}</div>` : ''}
