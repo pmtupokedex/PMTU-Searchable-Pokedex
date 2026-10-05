@@ -1836,16 +1836,6 @@
             object-fit: contain;
         }
 
-        /* On the Gym Leader badge line the Field Move badge sits beside
-           HP/Status, which shrink to 46px on mobile (see
-           .game-battle-gym-badge-line below), so it still matches them
-           there. The badges in the slot row no longer shrink at all. */
-        @media (max-width: 520px) {
-            .game-battle-gym-badge-line .game-battle-zone-badge {
-                width: 46px;
-            }
-        }
-
         /* Move power + Pokémon's total level, for now (see
            computeBattleMoveValue()) -- centered over the slot card
            rather than laid out alongside it, and pointer-events: none so
@@ -1949,6 +1939,16 @@
         #game-battle-attacker-slot {
             padding-top: 12px;
             padding-bottom: 25px;
+        }
+
+        /* Gym Leader cards sit closer to their neighbours: the same
+           tighter padding on both halves, applied whenever the slot
+           currently holds one (the slot's contents are replaced on
+           every render, so this follows whichever card is in it). */
+        #game-battle-defender-slot:has(.game-gym-leader-card),
+        #game-battle-attacker-slot:has(.game-gym-leader-card) {
+            padding-top: 5px;
+            padding-bottom: 10px;
         }
 
         /* One button per move the Pokémon in a half knows -- see
@@ -5665,8 +5665,22 @@
             gap: 14px;
         }
 
+        /* Before a battle starts, nothing on the line is shown: HP and
+           Status join the Field Move Effect badge in only appearing
+           while a battle is ongoing (see renderAllBattleZones(), which
+           toggles .battle-ongoing on the arena). The whole line is
+           hidden rather than just its badges so an empty line doesn't
+           leave a stray gap behind in the half. */
+        .game-battle-arena:not(.battle-ongoing) .game-battle-gym-badge-line {
+            display: none;
+        }
+
+        /* All three badges on the line (HP, Status, Field Move Effect)
+           match the slot card's own corner badges: 25% of the token
+           card's 250px width = 62.5px, at every screen width. */
         .game-battle-gym-badge-line .game-team-slot-hp,
-        .game-battle-gym-badge-line .game-team-slot-status {
+        .game-battle-gym-badge-line .game-team-slot-status,
+        .game-battle-gym-badge-line .game-battle-zone-badge {
             position: relative;
             top: auto;
             left: auto;
@@ -5674,17 +5688,12 @@
             transform: none;
             flex: 0 0 auto;
             box-sizing: border-box;
-            width: 62px;
+            width: 62.5px;
         }
 
         @media (max-width: 520px) {
             .game-battle-gym-badge-line {
                 gap: 8px;
-            }
-
-            .game-battle-gym-badge-line .game-team-slot-hp,
-            .game-battle-gym-badge-line .game-team-slot-status {
-                width: 46px;
             }
         }
 
@@ -18751,6 +18760,7 @@
             // "Save This Progress" is the same session moving into a
             // real save, not a different save: the arena is kept (its
             // picks are re-stamped just below). Anything else is a switch.
+            const committedUnsavedProgress = pendingUnsavedCommit;
             if (!pendingUnsavedCommit) clearBattleArenaForSaveChange('save:' + slotIndex);
             activeGuestSaveId = null;
             persistActiveGuestSaveId();
@@ -18767,11 +18777,16 @@
                 pendingUnsavedCommit = false;
             }
             setSavesSectionCollapsed(true);
+            clearSaveRequiredLobbyStatus();
             // The one call the Sounds panel needs for this -- see its own
             // comment on setActiveMusicRegion() -- everything downstream
             // (queue, dropdown, keeping playback going if it still
             // qualifies) happens from there automatically.
             setActiveMusicRegion(options.region);
+            // A brand-new save starts at Early -- but not for "Save This
+            // Progress", which is the session already in play moving into
+            // a real save, so its stage (even a manual one) stays put.
+            if (!committedUnsavedProgress) syncSoloGameStageToActiveSave();
             // If this device is actively hosting right now, switching to
             // a brand-new save mid-session needs the same re-handshake
             // treatment loadSaveSlot() below gives an existing save --
@@ -18790,7 +18805,9 @@
             activeSaveSlot = slotIndex;
             persistActiveSaveSlot();
             setSavesSectionCollapsed(true);
+            clearSaveRequiredLobbyStatus();
             setActiveMusicRegion(gameSaves[slotIndex].region);
+            syncSoloGameStageToActiveSave();
             resyncLobbyForNewHostSave();
             refreshGameUI();
         }
@@ -18807,6 +18824,7 @@
                 // something to pick/create rather than leaving it
                 // collapsed with nothing obviously loaded.
                 setSavesSectionCollapsed(false);
+                syncSoloGameStageToActiveSave(); // the unsaved session's own progress now
             }
             // A live Lobby depends on its host save's hostSaveId staying
             // valid -- every connected guest is linked to it (see Guest
@@ -19114,6 +19132,7 @@
                 const region = gameGuestSaves[hostSaveId].region;
                 if (region) setActiveMusicRegion(region);
             }
+            syncSoloGameStageToActiveSave(); // no-op if connected to a Lobby
             setGameScreen('lobby'); // saves live in Play a Game now
             refreshGameUI();
         }
@@ -19127,6 +19146,7 @@
                 activeGuestSaveId = null;
                 persistActiveGuestSaveId();
                 setGuestSavesSectionCollapsed(false);
+                syncSoloGameStageToActiveSave(); // the unsaved session's own progress now
             }
             // Nothing left for a live connection's progress to write
             // into -- end it rather than leaving it connected to a save
@@ -21299,12 +21319,28 @@
             return stage === 'any' || stage === 'end';
         }
 
+        // Orders regions the way the save's own Region picker lists them
+        // (cachedRealRegionList -- first-seen order in music-tracks.json,
+        // see populateGameRegionOptions()). A region that isn't in that
+        // list, or any region at all if music-tracks.json hasn't loaded
+        // yet, sorts after the known ones, alphabetically.
+        function compareGymLeaderRegions(a, b) {
+            const ia = cachedRealRegionList.indexOf(a), ib = cachedRealRegionList.indexOf(b);
+            if (ia !== ib) {
+                if (ia === -1) return 1;
+                if (ib === -1) return -1;
+                return ia - ib;
+            }
+            return String(a).localeCompare(String(b));
+        }
+
         function formatGymLeaderRegion(slug) {
             return String(slug || '').split('-').map(w => w ? w.charAt(0).toUpperCase() + w.slice(1) : w).join(' ');
         }
 
-        // The cards this half's picker offers, sorted region, then
-        // category, then tier, then name.
+        // The cards this half's picker offers, sorted region (in the
+        // save Region picker's order, see compareGymLeaderRegions()),
+        // then category, then tier, then name.
         function getGymLeaderPickerEntries(slot) {
             const wantRival = slot === 'attacker';
             const asArray = v => (Array.isArray(v) ? v : (v == null ? [] : [v]));
@@ -21312,7 +21348,7 @@
                 .filter(t => (t.category === 'rival') === wantRival)
                 .sort((a, b) => {
                     const ra = asArray(a.region)[0] || '', rb = asArray(b.region)[0] || '';
-                    if (ra !== rb) return ra.localeCompare(rb);
+                    if (ra !== rb) return compareGymLeaderRegions(ra, rb);
                     const ca = GYM_LEADER_CATEGORY_ORDER.indexOf(a.category), cb = GYM_LEADER_CATEGORY_ORDER.indexOf(b.category);
                     if (ca !== cb) return ca - cb;
                     const ta = asArray(a.tier)[0] || 99, tb = asArray(b.tier)[0] || 99;
@@ -21441,7 +21477,7 @@
             const asArray = v => (Array.isArray(v) ? v : (v == null ? [] : [v]));
             const title = document.getElementById('game-battle-gym-leader-picker-title');
             if (title) title.textContent = slot === 'attacker' ? 'Choose Rival' : 'Choose Gym Leader';
-            const regions = [...new Set(getGymLeaderPickerEntries(slot).flatMap(t => asArray(t.region)))].sort();
+            const regions = [...new Set(getGymLeaderPickerEntries(slot).flatMap(t => asArray(t.region)))].sort(compareGymLeaderRegions);
             const regionSel = document.getElementById('game-battle-gym-leader-picker-region');
             if (regionSel) {
                 regionSel.innerHTML = '<option value="">All regions</option>'
@@ -21477,6 +21513,7 @@
             resetParalyzedSide(next);
             battleWildPokemon = next;
             battleRerollsUsed.defender = 0;
+            playMemberCry(next);
             showBattleArenaNotice(`${getBattleMemberDisplay(next).name || 'The next Pok\u00e9mon'} was sent out!`);
             return true;
         }
@@ -23633,6 +23670,7 @@
             st.defender = { member: next, ownerId: null };
             if (!st.rerolls) st.rerolls = { attacker: 0, defender: 0 };
             st.rerolls.defender = 0;
+            playMemberCry(next); // Host's device -- see the solo twin above
             const message = `${getBattleMemberDisplay(next).name || 'The next Pok\u00e9mon'} was sent out!`;
             showBattleArenaNotice(message);
             if (lobbyState.connections) lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send({ type: 'battle-notice', reason: message }); });
@@ -23649,6 +23687,7 @@
             st.attacker = { member: next, ownerId: null, trainer: true };
             if (!st.rerolls) st.rerolls = { attacker: 0, defender: 0 };
             st.rerolls.attacker = 0;
+            playMemberCry(next); // Host's device -- see the solo twin above
             const message = `The Trainer sent out ${getBattleMemberDisplay(next).name || 'its next Pok\u00e9mon'}!`;
             showBattleArenaNotice(message);
             if (lobbyState.connections) lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send({ type: 'battle-notice', reason: message }); });
@@ -28597,6 +28636,12 @@
                 member.formOverride = choice.name;
                 reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax);
             }
+            // Evolved (stage evolution, legendary form, Mega or Gigantamax):
+            // the member now IS its new form, so this plays that form's
+            // cry. (Dynamax returned above -- no form change, no cry. Both
+            // callers -- the grid's picker and the Details view's strip --
+            // come through here, as does a Wild Pok\u00e9mon's Mega badge.)
+            playMemberCry(member);
         }
 
         // Builds pendingTeamEvolutionOptions (see getTeamEvolutionOptions()
@@ -31698,6 +31743,9 @@
                 if (index === null || isNewOccupant) battleRerollsUsed.attacker = 0;
             }
             if (isNewOccupant && lobbyState.role === null) noteSoloBattleParticipants();
+            // A new Pok\u00e9mon entering the Arena cries (re-picking whoever's
+            // already there, or clearing the half, doesn't).
+            if (isNewOccupant) playMemberCry((getActiveSaveData().team.members || [])[index]);
             if (index !== null && battleDefenderMemberIndex === index) {
                 battleDefenderMemberIndex = null;
                 battleDefenderTeamId = null;
@@ -31741,6 +31789,8 @@
             battleWildPokemon = null;
             resetBattleCalcResult('defender');
             clearBattleDiceResults('defender');
+            // Defender half's twin of the cry in setBattleAttackerIndex().
+            if (isNewOccupant) playMemberCry((getActiveSaveData().team.members || [])[index]);
             if (index !== null && battleAttackerMemberIndex === index) {
                 battleAttackerMemberIndex = null;
                 battleAttackerTeamId = null;
@@ -31777,6 +31827,7 @@
             battleWildPokemon = member;
             battleDefenderMemberIndex = 'wild';
             battleDefenderTeamId = 'wild';
+            playMemberCry(member); // entering the Arena
             resetBattleCalcResult('defender');
             clearBattleDiceResults('defender');
             if (lobbyState.role === null) { battleEnteredThisRound.defender = battleInProgress; battleRerollsUsed.defender = 0; }
@@ -31800,6 +31851,7 @@
             battleTrainerPokemon = member;
             battleAttackerMemberIndex = 'trainer';
             battleAttackerTeamId = 'trainer';
+            playMemberCry(member); // entering the Arena
             resetBattleCalcResult('attacker');
             clearBattleDiceResults('attacker');
             if (lobbyState.role === null) { battleEnteredThisRound.attacker = battleInProgress; battleRerollsUsed.attacker = 0; }
@@ -32097,6 +32149,10 @@
         }
 
         function renderAllBattleZones() {
+            // Also drives the Gym Leader badge line (HP/Status/Field),
+            // which is hidden in CSS unless this class is on the arena.
+            const arena = document.querySelector('.game-battle-arena');
+            if (arena) arena.classList.toggle('battle-ongoing', isBattleOngoingForZones());
             ['attacker', 'defender'].forEach(slotName => {
                 Object.keys(BATTLE_ZONES).forEach(zoneName => renderBattleZoneBadge(slotName, zoneName));
             });
@@ -32957,8 +33013,9 @@
             endBtn.style.display = battleInProgress ? '' : 'none';
             const revealBtn = document.getElementById('game-battle-reveal-cards-btn');
             if (revealBtn) revealBtn.style.display = (battleInProgress && hasFacedownBattleCard()) ? '' : 'none';
-            // The Battle Card / Field Move Effect badges only show while a
-            // battle is ongoing, so they follow the same phase changes.
+            // The Battle Card / Field Move Effect badges (and the Gym
+            // Leader HP/Status badges) only show while a battle is
+            // ongoing, so they follow the same phase changes.
             renderAllBattleZones();
             syncBattleHalfThemes();
             // Tell the Host whether MY fainted Pok\u00e9mon lacks a replacement
@@ -33036,6 +33093,7 @@
             resetParalyzedSide(next);
             battleTrainerPokemon = next;
             battleRerollsUsed.attacker = 0;
+            playMemberCry(next);
             showBattleArenaNotice(`The Trainer sent out ${getBattleMemberDisplay(next).name || 'its next Pok\u00e9mon'}!`);
             return true;
         }
@@ -38382,6 +38440,21 @@
             el.classList.toggle('pending', kind === 'pending');
         }
 
+        // The "Create or load a save first, then tap Play Solo / Host a
+        // Lobby again." error is only true until a save exists, but nothing
+        // else owns that status line to clear it, so it used to ride along
+        // into the color picker and the solo/lobby screens. Called as soon
+        // as a save becomes active (createSave()/loadSaveSlot()) and again
+        // when Play Solo goes ahead. Only clears that specific message --
+        // any other status (a connection error, "Creating room...") is
+        // left alone.
+        function clearSaveRequiredLobbyStatus() {
+            const el = document.getElementById('game-lobby-status');
+            if (el && el.classList.contains('error') && el.textContent.startsWith('Create or load a save first')) {
+                setLobbyStatus('', '');
+            }
+        }
+
         function generateLobbyRoomCode() {
             let code = '';
             for (let i = 0; i < LOBBY_CODE_LENGTH; i++) {
@@ -38433,6 +38506,7 @@
                 if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
                 return;
             }
+            clearSaveRequiredLobbyStatus();
             const save = gameSaves[activeSaveSlot];
             const savedColor = save && save.hostPlayerColor;
             if (savedColor && PLAYER_COLORS.includes(savedColor)) {
@@ -40332,6 +40406,19 @@
             ));
         }
 
+        // Called whenever a different save becomes the active one (created,
+        // loaded, or the active one deleted) while playing solo: the Game
+        // Stage slider is re-derived from that save's own progress, so it
+        // can't be left on whatever the previous save (or a manual
+        // Any Stage / stage pick) had it on. Does nothing in a Lobby --
+        // a Host's resyncLobbyForNewHostSave() already recomputes it from
+        // the whole lobby's progress, and a Guest's stage isn't theirs to
+        // set (see afterBadgeChange()).
+        function syncSoloGameStageToActiveSave() {
+            if (lobbyState.role !== null) return;
+            restoreSoloGameStage();
+        }
+
         // ---- Guest side ----
 
         // Set right before joinLobbyByCode() actually connects, whenever
@@ -41927,7 +42014,11 @@
                 }
                 if (isTradeNegotiationActive()) return;
                 if (teamSlot.dataset.filled === 'true') {
-                    openTeamDetailOverlay(Number(teamSlot.dataset.index));
+                    const detailIndex = Number(teamSlot.dataset.index);
+                    openTeamDetailOverlay(detailIndex);
+                    // Only from this tap -- openTeamDetailOverlay() is also
+                    // reused to return to Details after an attach pick.
+                    playMemberCry(getTeamSlotMember(detailIndex));
                     return;
                 }
                 if (isActiveSaveReadOnly()) return;
@@ -46216,6 +46307,76 @@
             cryAudio.currentTime = 0;
             cryAudio.volume = getCategoryVolume('cries');
             cryAudio.play().catch(() => { /* autoplay blocked or file missing — silently skip */ });
+        }
+
+        // ---- Cries outside the Pokédex viewer -----------------------------
+        //
+        // The viewer reads its cry URL straight off the info panel it just
+        // rendered (see playCurrentCry() above). Everywhere else (the
+        // Battle Arena, the Team Details view, an evolution) there's no
+        // info panel, so this looks the URL up by name instead, the same
+        // way buildPokemonInfoHTML() does: custom entries
+        // (flavor-overrides.json's __custom_entries__) carry their own,
+        // everything else comes from PokeAPI's /pokemon/<slug>, trying
+        // the same form-aware slug guesses, then the plain Dex number.
+        // "latest" is preferred over "legacy", like the panel.
+        //
+        // A form with no cry of its own on PokeAPI (some Megas) falls
+        // back to its species' default cry rather than staying silent.
+        // Results are cached by name for the session (as promises, so
+        // two quick requests share one fetch); a failed lookup isn't
+        // cached, so going back online fixes it.
+        const pokemonCryUrlCache = new Map(); // name -> Promise<string>
+
+        function getPokemonCryUrl(name, dexRaw) {
+            if (pokemonCryUrlCache.has(name)) return pokemonCryUrlCache.get(name);
+            const promise = (async () => {
+                const dex = /^\d+$/.test(String(dexRaw || '')) ? parseInt(dexRaw, 10) : null;
+                if (dex === null) {
+                    const custom = CUSTOM_POKEMON_DATA[name];
+                    if (custom && custom.cry) return custom.cry;
+                }
+                const cryOf = data => (data && data.cries && (data.cries.latest || data.cries.legacy)) || '';
+                for (const slug of buildSlugCandidates(name)) {
+                    const url = cryOf(await tryFetchJson(`https://pokeapi.co/api/v2/pokemon/${slug}`));
+                    if (url) return url;
+                }
+                if (dex !== null) return cryOf(await tryFetchJson(`https://pokeapi.co/api/v2/pokemon/${dex}`));
+                return '';
+            })();
+            pokemonCryUrlCache.set(name, promise);
+            promise.then(url => { if (!url) pokemonCryUrlCache.delete(name); });
+            return promise;
+        }
+
+        // Plays through the same shared cryAudio element (so cries never
+        // overlap, and the Cries mute/volume apply). Only the most recent
+        // request is allowed to start playing: if a slower lookup comes
+        // back after a newer one was asked for, it's dropped rather than
+        // playing the wrong Pokémon over the top.
+        let pokemonCryRequestToken = 0;
+        async function playPokemonCry(name, dexRaw) {
+            if (!name || !isCategoryAudible('cries')) return;
+            const token = ++pokemonCryRequestToken;
+            const url = await getPokemonCryUrl(name, dexRaw);
+            if (!url || token !== pokemonCryRequestToken || !isCategoryAudible('cries')) return;
+            cryAudio.src = url;
+            cryAudio.currentTime = 0;
+            cryAudio.volume = getCategoryVolume('cries');
+            cryAudio.play().catch(() => { /* autoplay blocked or file missing -- silently skip */ });
+        }
+
+        // The cry of whatever a team/Arena member is currently showing as
+        // -- its Mega/Gigantamax form if one's active (same override
+        // getBattleMemberDisplay() resolves), otherwise its own species.
+        // The Dex number comes from that form's pokemon-data.json entry
+        // when there is one (a gym leader card's member carries none).
+        function playMemberCry(member) {
+            if (!member) return;
+            const name = getBattleMemberDisplay(member).name;
+            const entry = POKEMON_BY_NAME[name];
+            const dex = (entry && entry.tags && entry.tags[0]) || member.dex || '';
+            playPokemonCry(name, dex);
         }
 
         async function loadPokemonInfo(galleryImg) {
