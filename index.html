@@ -35589,6 +35589,7 @@
             }
 
             const region = getActiveRegionForBadges();
+            if (!category) prepareBadgeJingle();
             const slots = buildBadgeSlots(region, category);
             const slot = slots.find(s => s.slotKey === slotKey);
             if (!slot) return;
@@ -35741,6 +35742,73 @@
             pendingBadgeSlotKey = null;
         }
 
+        // ---- Gym Badge jingle ---------------------------------------
+        //
+        // Plays the region's BADGE_JINGLES entry once, on THIS device --
+        // the one whose player just collected the badge -- through its
+        // own Audio element, never musicAudio (that one's the Host's
+        // background music, which a guest never plays at all, and which
+        // a jingle would otherwise replace on the Host).
+        //
+        // Volume follows the Music setting, so muting Music mutes
+        // jingles too (nothing plays, and nothing ducks).
+        //
+        // The Host's music ducks under it: directly if this device IS
+        // the Host (or a solo player), or via a 'badge-jingle' message
+        // if it's a guest -- 'start' when the jingle actually begins
+        // playing (not at tap time, so a slow first load doesn't dip the
+        // music early), 'end' when it finishes or fails. Only ever sends
+        // an 'end' that follows a 'start' it sent, exactly once.
+        const badgeJingleAudio = new Audio();
+        badgeJingleAudio.preload = 'auto';
+        let badgeJingleLoadedUrl = null;
+        let badgeJingleDuckActive = false;
+
+        function getBadgeJingleUrl(region) {
+            const url = BADGE_JINGLES[region];
+            return (typeof url === 'string' && /^https?:/i.test(url)) ? url : null;
+        }
+
+        // Called when the badge overlay opens, so the file's already
+        // loading by the time the player taps Collect.
+        function prepareBadgeJingle() {
+            const url = getBadgeJingleUrl(getActiveRegionForBadges());
+            if (!url || url === badgeJingleLoadedUrl) return;
+            badgeJingleLoadedUrl = url;
+            badgeJingleAudio.src = url;
+            badgeJingleAudio.load();
+        }
+
+        function setBadgeJingleDuck(active) {
+            if (badgeJingleDuckActive === active) return;
+            badgeJingleDuckActive = active;
+            if (lobbyState.role === 'guest') {
+                reportBadgeJingle(active ? 'start' : 'end');
+            } else if (active) {
+                holdMusicDuck('local');
+            } else {
+                releaseMusicDuck('local');
+            }
+        }
+
+        badgeJingleAudio.addEventListener('playing', () => setBadgeJingleDuck(true));
+        badgeJingleAudio.addEventListener('ended', () => setBadgeJingleDuck(false));
+        badgeJingleAudio.addEventListener('pause', () => setBadgeJingleDuck(false));
+        badgeJingleAudio.addEventListener('error', () => setBadgeJingleDuck(false));
+
+        function playBadgeJingle() {
+            if (!isCategoryAudible('music')) return;
+            const url = getBadgeJingleUrl(getActiveRegionForBadges());
+            if (!url) return;
+            if (url !== badgeJingleLoadedUrl) {
+                badgeJingleLoadedUrl = url;
+                badgeJingleAudio.src = url;
+            }
+            badgeJingleAudio.volume = audioSettings.categories.music.volume;
+            badgeJingleAudio.currentTime = 0;
+            badgeJingleAudio.play().catch(() => { /* autoplay blocked or file missing -- silently skip */ });
+        }
+
         function collectBadge(category, slotKey, optionId) {
             if (isActiveSaveReadOnly()) return;
             const data = getActiveSaveData();
@@ -35759,6 +35827,12 @@
             } else {
                 if (!data.badges.collected) data.badges.collected = {};
                 data.badges.collected[slotKey] = optionId;
+                // Main Gym Badges only -- Villain/Elite Four/etc. extras
+                // (the branches above) don't get a jingle. Before
+                // afterBadgeChange() since that re-renders the grid and
+                // can switch the Host's music, and the jingle shouldn't
+                // wait on either.
+                playBadgeJingle();
             }
             afterBadgeChange();
         }
@@ -39387,6 +39461,13 @@
                         updateLobbyStartGameButtonUI();
                     }
                     recomputeLobbyLeadingStage();
+                } else if (data.type === 'badge-jingle' && (data.phase === 'start' || data.phase === 'end')) {
+                    // A guest's Gym Badge jingle started/finished on
+                    // their own device -- duck this (the Host's) music
+                    // under it. See "Music ducking" next to
+                    // getCategoryVolume() for the hold/expiry rules.
+                    if (data.phase === 'start') holdMusicDuck(conn.peer);
+                    else releaseMusicDuck(conn.peer);
                 } else if (data.type === 'starter-chosen') {
                     lobbyState.starterChosen[conn.peer] = true;
                     updateLobbyStartGameButtonUI();
@@ -39617,6 +39698,7 @@
             lobbyState.connections.delete(peerId);
             delete lobbyState.playerProgress[peerId];
             delete lobbyState.starterChosen[peerId];
+            releaseMusicDuck(peerId); // a guest who drops mid-jingle shouldn't leave the music ducked
             clearBattleArenaPlacementFor(peerId);
             // Trade a Pok\u00e9mon -- if this peer was mid-trade with anyone
             // (see tradePairs' own comment for why the Host tracks this
@@ -39721,6 +39803,15 @@
         function reportLobbyProgress(badgePoints, hasStarter) {
             if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
                 lobbyState.hostConn.send({ type: 'progress', badgePoints, hasStarter: !!hasStarter });
+            }
+        }
+
+        // Guest -> Host: this device's Gym Badge jingle just started
+        // ('start') or finished ('end'), so the Host's music can duck
+        // under it -- see playBadgeJingle()/holdMusicDuck().
+        function reportBadgeJingle(phase) {
+            if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
+                lobbyState.hostConn.send({ type: 'badge-jingle', phase });
             }
         }
 
@@ -43319,7 +43410,82 @@
         // value is preserved for whenever it's unmuted again rather than
         // being overwritten by the mute itself.
         function getCategoryVolume(category) {
-            return isCategoryAudible(category) ? audioSettings.categories[category].volume : 0;
+            if (!isCategoryAudible(category)) return 0;
+            const volume = audioSettings.categories[category].volume;
+            // Music is multiplied by the duck factor (see "Music ducking"
+            // just below) so every place that sets musicAudio.volume --
+            // a new track loading, Play, the settings sliders -- respects
+            // an in-progress duck without each needing to know about it.
+            return category === 'music' ? volume * musicDuckFactor : volume;
+        }
+
+        // ---- Music ducking -------------------------------------------
+        //
+        // While a Gym Badge jingle plays (see playBadgeJingle()), the
+        // Host's music dips under it and ramps back up afterwards.
+        // Only the Host's (or a solo player's) device actually plays
+        // music, so that's the only device this ever does anything on.
+        //
+        // The jingle plays on the device of whoever collected the badge.
+        // A guest tells the Host when theirs starts/ends ('badge-jingle'
+        // message, see the Host's data handler), and each device that
+        // currently has a jingle going is a separate "hold" here, so two
+        // players collecting at once don't un-duck each other early.
+        // Every hold also expires on its own after
+        // MUSIC_DUCK_MAX_HOLD_MS, so a guest who disconnects (or whose
+        // 'end' message never lands) can never leave the music stuck
+        // quiet.
+        //
+        // musicDuckFactor is what getCategoryVolume('music') multiplies
+        // by: 1 = normal, MUSIC_DUCK_LEVEL = fully ducked. The ramp is
+        // time-based on a short interval timer rather than
+        // requestAnimationFrame, since rAF stops entirely in a hidden
+        // tab and would strand the factor partway through a ramp --
+        // a throttled interval just takes bigger steps and still lands
+        // on the target.
+        const MUSIC_DUCK_LEVEL = 0.25;
+        const MUSIC_DUCK_RAMP_MS = 250;
+        const MUSIC_DUCK_MAX_HOLD_MS = 12000;
+        let musicDuckFactor = 1;
+        let musicDuckRampTimer = null;
+        const musicDuckHolds = new Map(); // holder id -> expiry timeout id
+
+        function rampMusicDuckTo(target) {
+            if (musicDuckRampTimer !== null) {
+                clearInterval(musicDuckRampTimer);
+                musicDuckRampTimer = null;
+            }
+            const from = musicDuckFactor;
+            if (from === target) return;
+            const startedAt = Date.now();
+            musicDuckRampTimer = setInterval(() => {
+                const t = Math.min(1, (Date.now() - startedAt) / MUSIC_DUCK_RAMP_MS);
+                musicDuckFactor = from + (target - from) * t;
+                // Same guard syncLiveMusicAudio() uses, minus its
+                // pause-when-muted branch -- a duck ramp has no business
+                // pausing anything, only nudging a volume that's already
+                // audible.
+                if (isCategoryAudible('music')) musicAudio.volume = getCategoryVolume('music');
+                if (t >= 1) {
+                    clearInterval(musicDuckRampTimer);
+                    musicDuckRampTimer = null;
+                }
+            }, 30);
+        }
+
+        function holdMusicDuck(holderId) {
+            const existing = musicDuckHolds.get(holderId);
+            if (existing !== undefined) clearTimeout(existing);
+            musicDuckHolds.set(holderId, setTimeout(() => releaseMusicDuck(holderId), MUSIC_DUCK_MAX_HOLD_MS));
+            rampMusicDuckTo(MUSIC_DUCK_LEVEL);
+        }
+
+        function releaseMusicDuck(holderId) {
+            const existing = musicDuckHolds.get(holderId);
+            if (existing === undefined) return;
+            clearTimeout(existing);
+            musicDuckHolds.delete(holderId);
+            if (musicDuckHolds.size === 0) rampMusicDuckTo(1);
         }
 
         function setGlobalMuted(muted) {
@@ -43541,6 +43707,28 @@
             'victory': 'https://dl.dropboxusercontent.com/scl/fi/fsf7od8nemefi736i9zh4/Playlist_Victory.png?rlkey=7rfom0c8dy0gfm8sblusmh57l&st=6n9fiuf6&dl=1',
         };
         const MUSIC_ICON_PLACEHOLDER_FALLBACK = 'PLACEHOLDER_ICON_URL_default';
+
+        // One short (< 10s) jingle per region, played once on the device
+        // of whoever collects a Gym Badge -- see playBadgeJingle(). Keyed
+        // by the same region ids music-tracks.json uses. Anything that
+        // isn't a real http(s) URL (the PLACEHOLDER_ strings below, or a
+        // region left out entirely) is silently skipped, so this can be
+        // filled in one region at a time.
+        const BADGE_JINGLES = {
+            'kanto': 'https://www.dropbox.com/scl/fi/ajraodgdil65kpv05vm1w/1-26.-Obtained-a-Gym-Badge.mp3?rlkey=4iq8o16nfnldu5q6llnotk89x&st=vdd1b8bz&dl=1',
+            'johto': 'https://www.dropbox.com/scl/fi/fqa1hpi1gtgbv0dmd174o/45-Received-a-Gym-Badge.mp3?rlkey=5i7xdeeq86lnjbfvktms0t28b&st=pljs4gqf&dl=1',
+            'hoenn': 'https://www.dropbox.com/scl/fi/m6ut9al05qw0ei4wo6x6k/08-Obtained-a-Badge.mp3?rlkey=a3trz5xt171rxpextxhk0donj&st=c2h5m7jn&dl=1',
+            'sinnoh': 'https://www.dropbox.com/scl/fi/qg6w1uxyt5fg3e0mu0564/041.-Get-Gym-Badge.mp3?rlkey=ukzvidus6vdi9igftm81rpc0j&st=ni0wpeq4&dl=1',
+            'unova': 'https://www.dropbox.com/scl/fi/d7kamvyugoe5m6kydpr7o/49-Obtained-a-Badge.mp3?rlkey=7u962d8equg0j5nmcvm5rlrw6&st=5ij9rw4h&dl=1',
+            'kalos': 'https://www.dropbox.com/scl/fi/p519kyznaz2vjgsjh8a9q/31-Obtained-a-Badge.mp3?rlkey=9viyd1yvecml00yr9dqlcnzl0&st=oymo0rb8&dl=1',
+            'alola': 'PLACEHOLDER_JINGLE_URL_alola',
+            'galar': 'https://www.dropbox.com/scl/fi/lwfc103ycqdim4aosio7j/2-21.-Obtained-a-Gym-Badge.mp3?rlkey=metf22pl5ujt4qctxn7mins3w&st=00o2hqt2&dl=1',
+            'paldea': 'https://www.dropbox.com/scl/fi/h8m3p3ikp9hf5vfhzmdw0/056-Obtained-a-Badge.mp3?rlkey=y7pmioqacozb37d7690uzsv0a&st=xlpt3o5w&dl=1',
+            'hisui': 'PLACEHOLDER_JINGLE_URL_hisui',
+            'lumiose-city': 'https://www.dropbox.com/scl/fi/k4qgz2b9a1m89c66ty9x8/1-36.-Rank-Up.mp3?rlkey=d7nc1wvf134oh6bdwani9j88r&st=deoivytt&dl=1',
+            'orange-islands': 'https://www.dropbox.com/scl/fi/abo3nor4a2qqthnee2azd/Get-Badge.mp3?rlkey=8inidcny955chdysa64s4y0zi&st=54kn6wy5&dl=1',
+            'ransei': 'PLACEHOLDER_JINGLE_URL_ransei',
+        };
 
         // Icon on each main-menu Tools button, keyed by the button's
         // data-target. Empty string = show the faint placeholder square
