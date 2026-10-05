@@ -1977,10 +1977,10 @@
                 0 4px 10px rgba(0, 0, 0, 0.25);
         }
 
-        /* The main menu's Battle Arena tile while it can't be opened (no
-           hosted save loaded and not in a lobby -- see
-           canUseBattleArena()). Dimmed, not disabled, so tapping it can
-           still explain why. */
+        /* A main-menu tile while it can't be opened: no play session (see
+           canUseBattleArena()), or Hand & Decks on a save without
+           virtual decks. Dimmed, not disabled, so tapping it can still
+           explain why. */
         .game-menu-tiles .filter-btn.game-menu-tile-locked {
             opacity: 0.5;
         }
@@ -31836,6 +31836,39 @@
             return SESSION_GATED_SCREENS.includes(screenId) && !isPlaySessionActive();
         }
 
+        // Hand & Decks also needs the active save's "Use Virtual Decks?"
+        // setting. Its menu tile stays visible either way; this is what
+        // keeps it (and every route into the screen) closed while the
+        // setting is off.
+        const DECKS_DISABLED_MESSAGE = 'Hand & Decks is only available on saves with \u201cUse Virtual Decks?\u201d turned on.';
+
+        function isDecksLockedBySetting(screenId) {
+            return screenId === 'decks' && !isVirtualDecksEnabledForActiveSave();
+        }
+
+        // The session gate's message wins when both apply.
+        function showScreenLockToast(screenId) {
+            if (isScreenLockedByGate(screenId)) showBattleArenaGateToast();
+            else showGameToast(DECKS_DISABLED_MESSAGE);
+        }
+
+        // Whether a main-menu tile should look/act locked right now.
+        function isMenuTileLocked(tile) {
+            if (tile.hasAttribute('data-requires-session') && !isPlaySessionActive()) return true;
+            return isDecksLockedBySetting(tile.dataset.target);
+        }
+
+        // Dims the menu tiles that can't be opened and marks them
+        // aria-disabled. Taps on them still explain why (see the
+        // data-target click handler).
+        function syncMenuTileLocks() {
+            document.querySelectorAll('.game-menu-tiles .game-menu-tile').forEach(tile => {
+                const locked = isMenuTileLocked(tile);
+                tile.classList.toggle('game-menu-tile-locked', locked);
+                if (tile.hasAttribute('data-requires-session')) tile.setAttribute('aria-disabled', locked ? 'true' : 'false');
+            });
+        }
+
         const BATTLE_ARENA_GATE_MESSAGE = 'Start a solo game or join a lobby in Play a Game to use this tool.';
 
         // Shows any short message in the shared #coming-soon-toast pill,
@@ -31904,10 +31937,7 @@
         // every tile marked data-requires-session.)
         function renderBattleArenaGate() {
             const allowed = isPlaySessionActive();
-            document.querySelectorAll('.game-menu-tiles [data-requires-session]').forEach(tile => {
-                tile.classList.toggle('game-menu-tile-locked', !allowed);
-                tile.setAttribute('aria-disabled', allowed ? 'false' : 'true');
-            });
+            syncMenuTileLocks();
             if (!allowed && SESSION_GATED_SCREENS.includes(currentGameScreen)) {
                 setGameScreen('main');
                 showBattleArenaGateToast();
@@ -36912,8 +36942,9 @@
             return gameSaveDefaults.tieredTMDecksEnabled === 'yes';
         }
 
-        // Shows/hides the "Hand & Decks" tile on the Tools menu per
-        // isVirtualDecksEnabledForActiveSave() -- this is an opt-in
+        // Locks/unlocks the "Hand & Decks" tile on the Tools menu per
+        // isVirtualDecksEnabledForActiveSave() (the tile stays visible,
+        // dimmed while locked) -- this is an opt-in
         // feature for players without the physical board game's paper
         // cards, so a save that never turned it on shouldn't offer a
         // tool that assumes there's no paper deck to draw from. If the
@@ -36925,12 +36956,12 @@
         // screen rather than leaving a now-hidden tool's own screen
         // open with no way back to it via the tile.
         function renderVirtualDecksAvailability() {
-            const tileEl = document.querySelector('[data-target="decks"]');
             const enabled = isVirtualDecksEnabledForActiveSave();
             // Turning virtual decks ON with a member already Dynamaxed
             // and no Band in Permanent should end it too.
             reconcileDynamaxWithPermanent();
-            if (tileEl) tileEl.style.display = enabled ? '' : 'none';
+            // The tile always shows; it is dimmed/locked while the setting is off.
+            syncMenuTileLocks();
             if (!enabled && currentGameScreen === 'decks') {
                 setGameScreen('main');
             }
@@ -37894,6 +37925,10 @@
             // menu tile and Team Tracker's send button check first).
             if (isScreenLockedByGate(screenId)) {
                 showBattleArenaGateToast();
+                screenId = 'main';
+            } else if (isDecksLockedBySetting(screenId)) {
+                // Same backstop for Hand & Decks on a save without virtual decks.
+                showGameToast(DECKS_DISABLED_MESSAGE);
                 screenId = 'main';
             }
             // A pending replacement (see teamReplacePendingMember/
@@ -40921,8 +40956,8 @@
 
             const navTarget = e.target.closest('[data-target]');
             if (navTarget) {
-                if (isScreenLockedByGate(navTarget.dataset.target)) {
-                    showBattleArenaGateToast();
+                if (isScreenLockedByGate(navTarget.dataset.target) || isDecksLockedBySetting(navTarget.dataset.target)) {
+                    showScreenLockToast(navTarget.dataset.target);
                     return;
                 }
                 setGameScreen(navTarget.dataset.target);
