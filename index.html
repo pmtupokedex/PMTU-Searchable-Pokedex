@@ -6677,11 +6677,34 @@
         }
 
         /* Manual collect: Confirm fades the Confirm/Cancel box out
-           before the celebration comes in (see
+           (only the box -- the backdrop stays and picks up the blur) and
+           the celebration then comes in on the same dark, blurred layer,
+           which also hides the Badge landing in its slot (see
            beginManualBadgeCelebration()). */
-        #game-badge-confirm-overlay.gym-fade-out {
+        #game-badge-confirm-overlay.gym-fade-out:not(.gym-earned) {
+            -webkit-backdrop-filter: blur(6px);
+            backdrop-filter: blur(6px);
+            transition: backdrop-filter 0.25s ease, -webkit-backdrop-filter 0.25s ease;
+        }
+
+        #game-badge-confirm-overlay.gym-fade-out:not(.gym-earned) .game-confirm-card {
             opacity: 0;
             transition: opacity 0.25s ease;
+        }
+
+        /* Celebration fade-out (Continue / tap outside). */
+        #game-badge-confirm-overlay.gym-earned.gym-fade-out {
+            opacity: 0;
+        }
+
+        /* Coming straight from the Confirm/Cancel box: the layer is
+           already showing, so skip its fade-in. */
+        #game-badge-confirm-overlay.gym-earned.gym-no-intro {
+            animation: none;
+        }
+
+        #game-badge-confirm-overlay.gym-earned .game-confirm-card {
+            animation: gym-overlay-in 0.3s ease-out backwards;
         }
 
         @keyframes gym-overlay-in {
@@ -6783,8 +6806,13 @@
             }
 
             #game-badge-confirm-overlay.gym-fade-out,
+            #game-badge-confirm-overlay.gym-fade-out .game-confirm-card,
             #game-badge-confirm-overlay.gym-earned.gym-fade-out {
                 transition: none;
+            }
+
+            #game-badge-confirm-overlay.gym-earned .game-confirm-card {
+                animation: none;
             }
         }
 
@@ -36368,7 +36396,7 @@
             if (gymBadgeFadeTimer !== null) { clearTimeout(gymBadgeFadeTimer); gymBadgeFadeTimer = null; }
             stopGymBadgeConfetti();
             const overlayEl = document.getElementById('game-badge-confirm-overlay');
-            overlayEl.classList.remove('gym-earned', 'gym-coin-mode', 'gym-fade-out');
+            overlayEl.classList.remove('gym-earned', 'gym-coin-mode', 'gym-fade-out', 'gym-no-intro');
         }
 
         // ---- Earned-Badge celebration helpers --------------------------
@@ -36506,8 +36534,13 @@
             document.getElementById('game-badge-confirm-overlay').classList.add('gym-fade-out');
             gymBadgeFadeTimer = setTimeout(() => {
                 gymBadgeFadeTimer = null;
-                closeBadgeOverlay();
+                gymBadgeFading = false;
+                // Not closed first: the dark, blurred layer stays up and
+                // the celebration is built on top of it.
+                const overlayEl = document.getElementById('game-badge-confirm-overlay');
+                overlayEl.classList.remove('gym-fade-out');
                 presentNextGymBadgeAward();
+                if (!gymBadgeAwardShowing) closeBadgeOverlay(); // nothing left to show
             }, 250);
         }
 
@@ -36544,6 +36577,44 @@
             if (!category) return 'You Earned a Gym Badge!';
             const label = EXTRA_CATEGORY_LABELS[category] || category;
             return `You Earned ${/^[aeiou]/i.test(label) ? 'an' : 'a'} ${label} Badge!`;
+        }
+
+        // Team name as shown in a title: drops a trailing "(A)" / "II"
+        // variant marker, and joins a card's two teams with "and".
+        function cleanVillainTeamName(name) {
+            return String(name || '')
+                .replace(/\s*\([^)]*\)\s*$/, '')
+                .replace(/\s+(II|III)$/, '')
+                .replace(/\s*&\s*|\s+\/\s+/g, ' and ')
+                .trim();
+        }
+
+        // The celebration's title. It's worded from a \"source card\": the
+        // card beaten in battle (award.leaderId), or, for a manually
+        // collected Badge, the card whose `badge` is that Badge -- so
+        // Segin always goes with the Dark Badge, and so on. Cards with
+        // no special wording (and a choice between Badges, which has no
+        // single card) use the generic \"You Earned ... Badge!\".
+        function getEarnedBadgeTitle(award, option) {
+            let card = award.leaderId ? GYM_LEADERS_BY_ID[award.leaderId] : null;
+            if (!card && option) card = Object.values(GYM_LEADERS_BY_ID).find(l => l.badge === option.id) || null;
+            let kind = card ? card.category : 'gym-leader';
+            if (!card) {
+                if (award.category === 'elite-four') kind = 'elite-four';
+                else if (award.category === 'path-of-legends') kind = 'titan';
+                else if (award.category === 'villain' || award.category === 'starfall-street') kind = 'villain';
+            }
+            const regions = card ? normalizeToArray(card.region) : [];
+            if (kind === 'gym-leader' && card) {
+                if (regions.includes('alola')) return /totem/.test(card.id) ? 'You defeated a Totem Pok\u00e9mon!' : 'You defeated the Island\u2019s Kahuna!';
+                if (regions.includes('hisui') && option && /^hisui-/.test(option.id)) return `You defeated Warden ${card.name} and ${option.name}!`;
+                if (regions.includes('ransei')) return 'You claimed a Kingdom\u2019s Banner!';
+                if (regions.includes('lumiose-city')) return 'Rank Up!';
+            }
+            if (kind === 'elite-four') return 'You defeated a member of the Elite Four!';
+            if (kind === 'titan') return 'You defeated a Titan Pok\u00e9mon!';
+            if (kind === 'villain' && card) return `You defeated ${cleanVillainTeamName(card.name)}!`;
+            return getGymAwardTitle(award.category);
         }
 
         // Of award.optionIds, the ones still collectable right now.
@@ -36588,7 +36659,7 @@
             }
             if (!options.length) return null;
             const ids = options.map(o => o.id);
-            const award = { category, slotKey, optionIds: ids.includes(own) ? [own] : ids };
+            const award = { category, slotKey, optionIds: ids.includes(own) ? [own] : ids, leaderId };
             award.optionIds = getOpenGymAwardOptionIds(award);
             if (!award.optionIds.length) return null;
             return award;
@@ -36616,7 +36687,7 @@
                 pendingBadgeCategory = award.category;
                 pendingBadgeSlotKey = award.slotKey;
                 gymBadgeAwardShowing = true;
-                document.getElementById('game-confirm-title').textContent = getGymAwardTitle(award.category);
+                document.getElementById('game-confirm-title').textContent = getEarnedBadgeTitle(award, options.length === 1 ? options[0] : null);
                 document.getElementById('game-badge-confirm-options').innerHTML = options.length === 1 ? `
                     ${buildGymCoinMarkup(options[0])}
                     <p class=\"game-confirm-subtext\">${options[0].name}</p>
@@ -36635,6 +36706,7 @@
                     </div>
                 `;
                 const overlayEl = document.getElementById('game-badge-confirm-overlay');
+                overlayEl.classList.toggle('gym-no-intro', overlayEl.classList.contains('visible'));
                 overlayEl.classList.add('visible', 'gym-earned');
                 overlayEl.classList.toggle('gym-coin-mode', options.length === 1);
                 startGymBadgeConfetti();
