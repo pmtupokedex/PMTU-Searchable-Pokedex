@@ -6638,6 +6638,57 @@
             z-index: 1;
         }
 
+        /* The celebration screen floats over the Badge Tracker: a dim
+           layer behind the confetti, no card, just the coin, the outlined
+           white text and the Continue button. */
+        #game-badge-confirm-overlay.gym-earned {
+            background: rgba(0, 0, 0, 0.55); /* darkens the screen behind the confetti */
+            -webkit-backdrop-filter: blur(6px);
+            backdrop-filter: blur(6px); /* ...and blurs the panel contents behind it */
+            animation: gym-overlay-in 0.3s ease-out backwards; /* backwards, not both: a held final opacity would block the fade-out */
+        }
+
+        #game-badge-confirm-overlay.gym-earned.gym-fade-out {
+            transition: opacity 0.4s ease;
+        }
+
+        #game-badge-confirm-overlay.gym-earned .game-confirm-card {
+            background: none;
+            box-shadow: none;
+        }
+
+        #game-badge-confirm-overlay.gym-earned .game-confirm-title,
+        #game-badge-confirm-overlay.gym-earned .game-confirm-subtext {
+            color: #fff;
+            text-transform: uppercase;
+            font-weight: bold;
+            text-shadow:
+                -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black,
+                -1px  0   0 black,                 1px  0   0 black,
+                -1px  1px 0 black, 0  1px 0 black, 1px  1px 0 black;
+        }
+
+        #game-badge-confirm-overlay.gym-earned .game-confirm-title {
+            font-size: 22px;
+        }
+
+        #game-badge-confirm-overlay.gym-earned .game-confirm-subtext {
+            font-size: 18px;
+        }
+
+        /* Manual collect: Confirm fades the Confirm/Cancel box out
+           before the celebration comes in (see
+           beginManualBadgeCelebration()). */
+        #game-badge-confirm-overlay.gym-fade-out {
+            opacity: 0;
+            transition: opacity 0.25s ease;
+        }
+
+        @keyframes gym-overlay-in {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+
         #game-badge-confirm-overlay.gym-coin-mode .game-confirm-card {
             overflow: visible;
         }
@@ -6726,8 +6777,14 @@
 
         @media (prefers-reduced-motion: reduce) {
             .gym-badge-coin-drop,
-            .gym-badge-coin {
+            .gym-badge-coin,
+            #game-badge-confirm-overlay.gym-earned {
                 animation: none;
+            }
+
+            #game-badge-confirm-overlay.gym-fade-out,
+            #game-badge-confirm-overlay.gym-earned.gym-fade-out {
+                transition: none;
             }
         }
 
@@ -13621,6 +13678,8 @@
             .game-matchup-result-label,
             .game-matchup-result-bonus,
             .game-badge-icon-empty,
+            #game-badge-confirm-overlay.gym-earned .game-confirm-title,
+            #game-badge-confirm-overlay.gym-earned .game-confirm-subtext,
             #rotate-lock-overlay,
             .game-lobby-card-title,
             .game-lobby-card-blurb,
@@ -36305,9 +36364,11 @@
             pendingBadgeCategory = null;
             pendingBadgeSlotKey = null;
             gymBadgeAwardShowing = false;
+            gymBadgeFading = false;
+            if (gymBadgeFadeTimer !== null) { clearTimeout(gymBadgeFadeTimer); gymBadgeFadeTimer = null; }
             stopGymBadgeConfetti();
             const overlayEl = document.getElementById('game-badge-confirm-overlay');
-            overlayEl.classList.remove('gym-earned', 'gym-coin-mode');
+            overlayEl.classList.remove('gym-earned', 'gym-coin-mode', 'gym-fade-out');
         }
 
         // ---- Earned-Badge celebration helpers --------------------------
@@ -36430,6 +36491,25 @@
         // run before this point of the script has executed.
         var pendingGymBadgeAwards = [];   // [{ category, slotKey, optionIds }]
         var gymBadgeAwardShowing = false;
+        var gymBadgeFading = false;       // manual Confirm: box fading out, celebration next
+        var gymBadgeFadeTimer = null;
+
+        // Confirm (or a pick) on the normal Collect-this-Badge box: fade
+        // the box out, then show the same celebration an earned Badge
+        // gets. The award is queued right away, so leaving the Badge
+        // Tracker mid-fade still places it (see flushGymBadgeAwards()).
+        function beginManualBadgeCelebration(category, slotKey, optionId) {
+            const award = { category, slotKey, optionIds: [optionId] };
+            if (isActiveSaveReadOnly() || !getOpenGymAwardOptionIds(award).length) { closeBadgeOverlay(); return; }
+            pendingGymBadgeAwards.push(award);
+            gymBadgeFading = true;
+            document.getElementById('game-badge-confirm-overlay').classList.add('gym-fade-out');
+            gymBadgeFadeTimer = setTimeout(() => {
+                gymBadgeFadeTimer = null;
+                closeBadgeOverlay();
+                presentNextGymBadgeAward();
+            }, 250);
+        }
 
         // The card in Defender if it ended up fully knocked out
         // (Fainted, nobody queued behind it), else null.
@@ -36526,7 +36606,7 @@
         }
 
         function presentNextGymBadgeAward() {
-            if (gymBadgeAwardShowing) return;
+            if (gymBadgeAwardShowing || gymBadgeFading) return;
             while (pendingGymBadgeAwards.length) {
                 const award = pendingGymBadgeAwards[0];
                 award.optionIds = getOpenGymAwardOptionIds(award);
@@ -36541,7 +36621,7 @@
                     ${buildGymCoinMarkup(options[0])}
                     <p class=\"game-confirm-subtext\">${options[0].name}</p>
                     <div class=\"game-save-slot-actions\">
-                        <button class=\"filter-btn game-badge-confirm-single-btn\" data-option=\"${options[0].id}\">Confirm</button>
+                        <button class=\"filter-btn game-badge-confirm-single-btn\" data-option=\"${options[0].id}\">Continue</button>
                     </div>
                 ` : `
                     <p class=\"game-confirm-subtext\">Choose which Badge you earned.</p>
@@ -36560,20 +36640,40 @@
                 startGymBadgeConfetti();
                 // The jingle plays now, over the coin/confetti, rather than
                 // on Confirm (see collectBadge()'s silent flag).
-                if (!award.jinglePlayed) { award.jinglePlayed = true; playBadgeJingle(); }
+                // A single Badge goes into its slot right here, as the jingle
+                // starts (collectBadge() plays it), so any Game Stage change
+                // it causes happens while the music is still ducked and the
+                // original music doesn't come back up on the old stage. A
+                // choice between Badges can only be placed once picked.
+                if (options.length === 1) {
+                    award.jinglePlayed = true;
+                    award.collected = true;
+                    collectBadge(award.category, award.slotKey, options[0].id);
+                } else if (!award.jinglePlayed) {
+                    award.jinglePlayed = true;
+                    playBadgeJingle();
+                }
                 return;
             }
         }
 
         // Confirm / a Badge picked / a tap outside the card (single Badge only).
         function confirmGymBadgeAward(optionId) {
+            if (gymBadgeFading) return;
             const award = pendingGymBadgeAwards[0];
             if (!award) { closeBadgeOverlay(); return; }
             const id = award.optionIds.includes(optionId) ? optionId : award.optionIds[0];
             pendingGymBadgeAwards.shift();
-            closeBadgeOverlay();
-            collectBadge(award.category, award.slotKey, id, !!award.jinglePlayed);
-            presentNextGymBadgeAward();
+            // A single Badge was already placed when the celebration opened;
+            // a picked one lands now, as the celebration fades out.
+            if (!award.collected) collectBadge(award.category, award.slotKey, id, !!award.jinglePlayed);
+            gymBadgeFading = true;
+            document.getElementById('game-badge-confirm-overlay').classList.add('gym-fade-out');
+            gymBadgeFadeTimer = setTimeout(() => {
+                gymBadgeFadeTimer = null;
+                closeBadgeOverlay();
+                presentNextGymBadgeAward();
+            }, 400);
         }
 
         // Places every pending Badge right now, no overlay -- for any
@@ -36582,7 +36682,7 @@
             if (!pendingGymBadgeAwards.length && !gymBadgeAwardShowing) return;
             const awards = pendingGymBadgeAwards;
             pendingGymBadgeAwards = [];
-            if (gymBadgeAwardShowing) closeBadgeOverlay();
+            if (gymBadgeAwardShowing || gymBadgeFading) closeBadgeOverlay();
             awards.forEach(a => {
                 let ids = [];
                 try { ids = getOpenGymAwardOptionIds(a); } catch (e) { /* not ready */ }
@@ -36764,7 +36864,8 @@
         // since it needs to sit above the whole panel rather than scroll
         // with the grid underneath it.
         document.getElementById('game-badge-confirm-overlay').addEventListener('click', (e) => {
-            // An earned Gym Badge can't be declined: Confirm, or a tap
+            if (gymBadgeFading) return; // mid-fade after Confirm: ignore taps
+            // An earned Gym Badge can't be declined: Continue, or a tap
             // outside the card, both collect it.
             if (gymBadgeAwardShowing) {
                 const pick = e.target.closest('.game-badge-choose-btn, .game-badge-confirm-single-btn');
@@ -36784,8 +36885,7 @@
             }
             const chooseBtn = e.target.closest('.game-badge-choose-btn, .game-badge-confirm-single-btn');
             if (chooseBtn) {
-                collectBadge(pendingBadgeCategory, pendingBadgeSlotKey, chooseBtn.dataset.option);
-                closeBadgeOverlay();
+                beginManualBadgeCelebration(pendingBadgeCategory, pendingBadgeSlotKey, chooseBtn.dataset.option);
                 return;
             }
             if (e.target.closest('.game-badge-remove-btn')) {
