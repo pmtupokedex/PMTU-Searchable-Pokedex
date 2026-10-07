@@ -6,7 +6,8 @@
             getPools(colors)     -- optional: {color:[pokemon names]} for the pools
             noSample, backHref
    controller: loadBoard(editorJson), setImage(url), handleMessage(msg),
-               resend(), fit(), setStatus(t), getStatus(), destroy()
+               resend(), fit(), setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
+   setView('tv') makes a host display read-only with face-down Pokémon hidden.
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
 (function(global){
@@ -17,7 +18,7 @@ opts=opts||{};
 if(!document.getElementById('bm-style')){const st=document.createElement('style');st.id='bm-style';st.textContent=CSS;document.head.appendChild(st)}
 const root=document.createElement('div');root.className='bm-root';root.innerHTML=HTML;container.appendChild(root);
 
-const mode=opts.mode||'mock',send=opts.send||(()=>{});
+const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null;
 const $=id=>root.querySelector('#'+id),svg=$('b');
 const COL={red:'#e03131',blue:'#2f4fd0',green:'#2f9e44',yellow:'#f5c211',orange:'#c9801f',pink:'#f08a96'};
 let PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:'p3',name:'Brock',c:'#8d6e63'}];
@@ -42,7 +43,7 @@ function importBoard(d){const m=['condensed','full'].map(k=>[k,d.spaces.filter(s
  const start=(S.find(s=>/pallet/i.test(s.label))||S.find(s=>s.type==='city')||S[0]).id;
  applyBoard({SP:S,LK:L,W:w,H:w/asp,R:w/170,names,start});$('jm').textContent=` Loaded ${S.length} spaces, ${L.length} links (${m} map).`}
 function applyBoard(o){SP=o.SP;LK=o.LK;W=o.W;H=o.H;R=o.R;K=R/14;NAMES=o.names;fitView();
- pos={};home={};PL.forEach(p=>{pos[p.id]=o.start;if(get(o.start)&&get(o.start).type==='city')home[p.id]=o.start});$('log').innerHTML='';if(mode==='guest'){draw()}else{setup();snapshot()}prompt('Move a token onto a space.')}
+ startId=o.start;pos={};home={};PL.forEach(p=>{pos[p.id]=o.start;if(get(o.start)&&get(o.start).type==='city')home[p.id]=o.start});$('log').innerHTML='';if(mode==='guest'){draw()}else{setup();snapshot()}prompt('Move a token onto a space.')}
 // ---------- mock HOST ----------
 function setup(){pools={};for(const c in NAMES)pools[c]=shuf(NAMES[c].slice());st={};
  for(const s of SP)if(s.type==='catch'){const o={empty:false,boss:!!s.spawn,cleared:false,home:s.color};
@@ -103,7 +104,7 @@ function tokenXY(id){const s=get(id),here=PL.filter(q=>M.pos[q.id]===id);return 
 function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:'';const fo=img?.72:1,sw=.36*R;
  for(const [a,b,g] of LK){const A=get(a),B=get(b);h+=`<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${g?'#ffb000':'#222'}" stroke-width="${g?sw*1.3:sw}" opacity="${img?.8:1}"${g?` stroke-dasharray="${R*.9} ${R*.5}"`:''}/>`;
   if(g){const mx=(A.x+B.x)/2,my=(A.y+B.y)/2;h+=`<circle cx="${mx}" cy="${my}" r="${R*.8}" fill="#ffb000" stroke="#000" stroke-width="${R*.1}"/><text x="${mx}" y="${my+R*.35}" text-anchor="middle" font-size="${R*.95}">🔒</text><text x="${mx}" y="${my+R*1.9}" text-anchor="middle" font-size="${R*.8}" fill="#000" stroke="#fff" stroke-width="${R*.2}" paint-order="stroke">${g.note.slice(2)}</text>`}}
- for(const s of SP){const o=M.spaces[s.id],e=dims(s);
+ for(const s of SP){const o=M.spaces[s.id]||(s.type==='catch'?{revealed:false,empty:false,token:null,boss:false}:undefined),e=dims(s);
   if(s.type==='city'||s.type==='special')h+=`<rect x="${s.x-e.w/2}" y="${s.y-e.h/2}" width="${e.w}" height="${e.h}" rx="${R*.3}" fill="${s.type==='city'?'#1b1b1b':'#8a8a92'}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" fill="#fff" font-size="${R*.9}">${s.label||s.id}</text>`;
   else if(s.type==='event')h+=`<rect x="${s.x-R*1.1}" y="${s.y-R*1.4}" width="${R*2.2}" height="${R*2.8}" rx="${R*.3}" fill="#f2f2f2" stroke="#444" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" font-size="${R}" font-weight="700">E</text>`;
   else if(s.type==='catch'){const em=o&&o.empty;h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5}" fill="${COL[s.color]||'#999'}" opacity="${em?.25:fo}" stroke="#000" stroke-width="${R*.1}"/>`+
@@ -178,6 +179,8 @@ return{
  handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw()}},
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
  fit:()=>fitView(),
+ setView:v=>setView(v),
+ setPlayers(list){PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});snapshot()}else draw();renderView()},
  destroy(){ro.disconnect();root.remove()}
 };
 
