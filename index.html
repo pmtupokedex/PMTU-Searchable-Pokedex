@@ -41046,7 +41046,8 @@
         function boardPlayers() {
             if (lobbyState.role === null) return [{ id: 'host', name: 'You', c: BOARD_COLOR_HEX.red }];
             return lobbyState.players
-                .filter(p => p.id !== 'host' || lobbyState.hostIsPlayer)
+                // hostIsPlayer is host-only state; on a guest the host's roster entry carries a color exactly when the host is playing
+                .filter(p => p.id !== 'host' || (lobbyState.role === 'host' ? lobbyState.hostIsPlayer : !!p.color))
                 .map((p, i) => ({ id: p.id, name: p.name || 'Trainer', c: BOARD_COLOR_HEX[p.color] || BOARD_COLOR_HEX[PLAYER_COLORS[i % PLAYER_COLORS.length]] }));
         }
         function boardSend(msg) {
@@ -41090,7 +41091,8 @@
         function boardEnsureBoard() {
             const guest = lobbyState.role === 'guest';
             const myId = getMyLobbyPlayerId() || 'host';
-            const sig = (guest ? 'guest:' : 'host:') + myId;
+            const hostPlays = !guest && (lobbyState.role === null || !!lobbyState.hostIsPlayer);
+            const sig = (guest ? 'guest:' : 'host:') + myId + (hostPlays ? ':plays' : ':display');
             if (boardCtrl && boardSig === sig) return Promise.resolve(boardCtrl);
             if (boardBuildPromise) return boardBuildPromise;
             boardBuildPromise = (async () => {
@@ -41100,7 +41102,7 @@
                 const body = document.getElementById('board-layer-body');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : undefined, players, noSample: true, send: boardSend });
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend });
                 boardSig = sig;
                 boardPlayersSig = JSON.stringify(players);
                 boardCtrl.loadBoard(d);
