@@ -93,7 +93,7 @@ function renderPl(){$('pl').innerHTML=PL.map(q=>`<button class="${q.id===active?
 const dims=s=>({w:s.w||80*K,h:s.h||40*K});
 function tokenXY(id){const s=get(id),here=PL.filter(q=>pos[q.id]===id);return q=>{const i=here.indexOf(q),n=here.length;if(n<2)return[s.x,s.y];
  if(s.type==='city'||s.type==='special'){const d=dims(s);return[s.x-d.w*.3+i*(d.w*.6/(n-1)),s.y]}
- const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.1,s.y+Math.sin(a)*R*1.1]}}
+ const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.3,s.y+Math.sin(a)*R*1.3]}}
 function draw(){let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:'';const fo=img?.72:1,sw=.36*R;
  for(const [a,b,g] of LK){const A=get(a),B=get(b);h+=`<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${g?'#ffb000':'#222'}" stroke-width="${g?sw*1.3:sw}" opacity="${img?.8:1}"${g?` stroke-dasharray="${R*.9} ${R*.5}"`:''}/>`;
   if(g){const mx=(A.x+B.x)/2,my=(A.y+B.y)/2;h+=`<circle cx="${mx}" cy="${my}" r="${R*.8}" fill="#ffb000" stroke="#000" stroke-width="${R*.1}"/><text x="${mx}" y="${my+R*.35}" text-anchor="middle" font-size="${R*.95}">🔒</text><text x="${mx}" y="${my+R*1.9}" text-anchor="middle" font-size="${R*.8}" fill="#000" stroke="#fff" stroke-width="${R*.2}" paint-order="stroke">${g.note.slice(2)}</text>`}}
@@ -105,7 +105,8 @@ function draw(){let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:''
    (o.boss?`<text x="${s.x+R*1.3}" y="${s.y-R}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
  PL.forEach((q,i)=>{const c=get(home[q.id]);if(!c)return;const d=dims(c),cx=c.x-d.w/2+R*(.7+1.2*i),cy=c.y-d.h/2-R*.1;h+=`<polygon points="${cx},${cy-R*.55} ${cx+R*.55},${cy} ${cx+R*.55},${cy+R*.55} ${cx-R*.55},${cy+R*.55} ${cx-R*.55},${cy}" fill="${q.c}" stroke="#fff" stroke-width="${R*.12}" pointer-events="none"/>`});
  for(const q of PL){const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(pos[q.id])(q);
-  h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.8}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" style="cursor:grab"/>`}
+  const nh=PL.filter(o=>pos[o.id]===pos[q.id]).length;
+  h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" pointer-events="none"/>`}
  svg.innerHTML=h;renderPl()}
 const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
 let Z=1,VX=0,VY=0;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
@@ -121,24 +122,31 @@ function doPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect(),
 let lastTs=0;
 function edgeTick(ts){if(!drag||!lastPtr){edgeOn=false;lastTs=0;return}
  const dt=lastTs?Math.min(.05,(ts-lastTs)/1000):.016;lastTs=ts;
- const r=svg.getBoundingClientRect(),m=64,MAX=240,f=d=>{const k=Math.max(0,Math.min(1,(m-d)/m));return MAX*k*k};
+ const r=svg.getBoundingClientRect(),m=64,MAX=340,f=d=>{const k=Math.max(0,Math.min(1,(m-d)/m));return MAX*k*k};
  if(Z>zmin()*1.001){const dx=-f(lastPtr.x-r.left)+f(r.right-lastPtr.x),dy=-f(lastPtr.y-r.top)+f(r.bottom-lastPtr.y);
-  if(dx||dy){VX+=dx*dt*VW()/r.width;VY+=dy*dt*VH()/r.height;clampView();applyView();const q=pt(lastPtr);drag.x=q.x;drag.y=q.y;draw()}}
+  if(dx||dy){VX+=dx*dt*VW()/r.width;VY+=dy*dt*VH()/r.height;clampView();applyView();const q=pt({clientX:lastPtr.x,clientY:lastPtr.y-drag.off});drag.x=q.x;drag.y=q.y;moveDrag()}}
  requestAnimationFrame(edgeTick)}
-function dropToken(e){const q=pt(e),p=drag.p;drag=null;let best=null,d=1e9;for(const s of SP){const rc=s.type==='city'||s.type==='special';let k;
+function nearest(q){let best=null,d=1e9;for(const s of SP){const rc=s.type==='city'||s.type==='special';let k;
   if(rc){const e2=dims(s);k=Math.hypot(Math.max(Math.abs(q.x-s.x)-e2.w/2,0),Math.max(Math.abs(q.y-s.y)-e2.h/2,0))}
   else k=Math.max(Math.hypot(q.x-s.x,q.y-s.y)-(s.type==='event'?R*1.4:R*1.5),0);
   if(k<d||(k===d&&k===0&&rc)){d=k;best=s}}
- if(best&&d<R*2&&best.id!==pos[p])hostMove(p,best.id);else draw()}
+ return{best,d}}
+function moveDrag(){if(!drag)return;svg.querySelectorAll(`[data-p="${drag.p}"]`).forEach(c=>{c.setAttribute('cx',drag.x);c.setAttribute('cy',drag.y)});
+ const ring=$('snapR');if(!ring)return;const n=nearest({x:drag.x,y:drag.y});
+ if(!(n.best&&n.d<R*2&&n.best.id!==pos[drag.p])){ring.setAttribute('display','none');return}
+ const s=n.best,rc=s.type==='city'||s.type==='special',pad=R*.5,e=dims(s),w=rc?e.w+2*pad:R*3.4,h=rc?e.h+2*pad:R*3.4;
+ ring.setAttribute('display','');ring.setAttribute('x',s.x-w/2);ring.setAttribute('y',s.y-h/2);ring.setAttribute('width',w);ring.setAttribute('height',h);ring.setAttribute('rx',rc?R*.5:R*1.7)}
+function dropToken(){if(!drag.moved){drag=null;draw();return}const q={x:drag.x,y:drag.y},p=drag.p;drag=null;const n=nearest(q);
+ if(n.best&&n.d<R*2&&n.best.id!==pos[p])hostMove(p,n.best.id);else draw()}
 svg.onpointerdown=e=>{svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
  if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;startPinch();return}
  if(ptrs.size>2)return;
  const g=e.target.closest('[data-p]');
- if(g){drag={p:g.dataset.p,id:e.pointerId,...pt(e)};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};draw()}
+ if(g){const off=e.pointerType==='touch'?56:0;drag={p:g.dataset.p,id:e.pointerId,off,...pt({clientX:e.clientX,clientY:e.clientY-off})};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/>`)}
  else pan={id:e.pointerId,x:e.clientX,y:e.clientY}};
 svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
  if(pinch&&ptrs.size>=2){doPinch();return}
- if(drag&&drag.id===e.pointerId){const q=pt(e);drag.x=q.x;drag.y=q.y;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};if(!edgeOn){edgeOn=true;requestAnimationFrame(edgeTick)}draw();return}
+ if(drag&&drag.id===e.pointerId){const q=pt({clientX:e.clientX,clientY:e.clientY-drag.off});drag.x=q.x;drag.y=q.y;drag.moved=true;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};if(!edgeOn){edgeOn=true;requestAnimationFrame(edgeTick)}moveDrag();return}
  if(pan&&pan.id===e.pointerId){const r=svg.getBoundingClientRect();VX-=(e.clientX-pan.x)*VW()/r.width;VY-=(e.clientY-pan.y)*VH()/r.height;pan.x=e.clientX;pan.y=e.clientY;clampView();applyView()}};
 svg.onpointerup=e=>{if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);
  if(pinch){if(ptrs.size<2)pinch=null;return}
