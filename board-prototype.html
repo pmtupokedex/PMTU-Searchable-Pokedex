@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Board Prototype</title>
+<style>
+:root{--bg:#eef0f4;--panel:#fff;--ink:#1c1c22;--mut:#6b6b78;--line:#d6d6de;--map:#cfe8c4;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15151a;--panel:#202028;--ink:#ececf1;--mut:#9a9aa8;--line:#34343f;--map:#27402b}}
+:root[data-theme="dark"]{--bg:#15151a;--panel:#202028;--ink:#ececf1;--mut:#9a9aa8;--line:#34343f;--map:#27402b}
+html,body{height:100%;margin:0}body{background:var(--bg);color:var(--ink);font:13px system-ui,sans-serif;display:flex;gap:8px;padding:8px;box-sizing:border-box}
+#b{flex:1;min-width:0;align-self:flex-start;max-height:100%;background:var(--map);border:1px solid var(--line);border-radius:10px;touch-action:none}
+aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}
+h4{margin:0 0 4px;font-size:12px}button,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}button{cursor:pointer;margin:2px 2px 0 0}
+button.on{outline:2px solid #d03a2f}#log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--mut)}small{color:var(--mut)}
+@media(max-width:760px){body{flex-direction:column}aside{width:auto;max-height:50%}}
+</style></head><body>
+<svg id="b" viewBox="0 0 1000 620"></svg>
+<aside>
+ <div class="box"><a href="index.html" style="color:inherit">← Back to the app</a></div>
+ <div class="box"><h4>View</h4><button id="zi">+</button><button id="zo">−</button><button id="zf">Fit</button> <small id="zl"></small><br><small>Drag empty map to pan, pinch or scroll to zoom. Dragging a token near the edge scrolls the map.</small></div>
+ <div class="box"><h4>Load board</h4><button id="imgBtn">Map image…</button><input id="imgF" type="file" accept="image/*" hidden> <button id="sb">Sample board</button>
+  <textarea id="jt" rows="3" style="width:100%;box-sizing:border-box;margin-top:4px" placeholder="Paste editor export JSON"></textarea><button id="jb">Load JSON</button><small id="jm"></small></div>
+ <div class="box"><h4>Players (drag a token on the map)</h4><div id="pl"></div><small>Mock host runs in this page; the log shows the messages that would travel over PeerJS.</small></div>
+ <div class="box"><h4>Prompt</h4><div id="pr"><small>Move a token onto a space.</small></div><div style="margin-top:6px"><button id="ev">Draw Event Card (active player)</button><button id="lose">Active player lost a battle</button></div><div id="hm" style="margin-top:4px"></div></div>
+ <div class="box"><h4>Host only: pools &amp; hidden tokens</h4><div id="host"></div></div>
+ <div class="box"><h4>Message log</h4><div id="log"></div></div>
+</aside>
+<script>
+const $=id=>document.getElementById(id),svg=$('b');
+const COL={red:'#e03131',blue:'#2f4fd0',green:'#2f9e44',yellow:'#f5c211',orange:'#c9801f',pink:'#f08a96'};
+const PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:'p3',name:'Brock',c:'#8d6e63'}];
+const SAMPLE_NAMES={red:['Charmander','Vulpix','Growlithe','Ponyta','Magmar'],blue:['Squirtle','Psyduck','Slowpoke','Staryu','Lapras'],green:['Bulbasaur','Oddish','Bellsprout','Tangela','Scyther'],yellow:['Pikachu','Sandshrew','Geodude','Onix','Diglett'],orange:['Articuno','Zapdos','Moltres','Mewtwo']};
+let SP=[],LK=[],W=1000,H=620,R=14,K=1,NAMES={},img=null,active='p1',pos={},home={},pools={},st={},drag=null,sync=0;
+const get=id=>SP.find(s=>s.id===id),shuf=a=>{for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
+const log=t=>$('log').insertAdjacentHTML('afterbegin',`<div>${t}</div>`);
+// ---------- boards ----------
+function sampleBoard(){const S=[['A','city',0,90,540,'Pallet'],['B','catch','red',200,480],['C','event',0,300,430],['D','catch','red',410,450],['E','city',0,530,400,'Viridian'],['F','catch','green',610,300],['G','event',0,710,255],['H','catch','green',800,205],['I','city',0,900,110,'Cerulean'],['J','catch','blue',650,480,'','Snorlax'],['K','catch','yellow',770,530],['L','event',0,870,470],['M','catch','yellow',920,380],['N','catch','orange',950,250]]
+ .map(([id,type,color,x,y,label,spawn])=>({id,type,color,x,y,label,spawn,actions:type==='city'?['Poké Mart','Pokémon Center','Gym Battle']:[]}));
+ const L=[['A','B'],['B','C'],['C','D'],['D','E'],['E','F'],['F','G'],['G','H'],['H','I'],['E','J'],['J','K'],['K','L'],['L','M'],['M','N',{note:'🔒 Tier 3+'}],['N','I']];
+ applyBoard({SP:S,LK:L,W:1000,H:620,R:14,names:SAMPLE_NAMES,start:'A'})}
+function importBoard(d){const m=['condensed','full'].map(k=>[k,d.spaces.filter(s=>s.pos&&s.pos[k]).length]).sort((a,b)=>b[1]-a[1])[0][0],asp=(d.maps&&d.maps[m]&&d.maps[m].aspect)||1.5,w=1000;
+ const S=d.spaces.filter(s=>s.pos&&s.pos[m]).map(s=>({id:s.id,type:s.type,color:s.region||'red',x:s.pos[m].x*w,y:s.pos[m].y*w/asp,w:s.pos[m].w&&s.pos[m].w*w,h:s.pos[m].h&&s.pos[m].h*w/asp,label:s.label||'',spawn:s.spawn,actions:s.actions||[]}));
+ const ids=new Set(S.map(s=>s.id)),L=d.links.filter(l=>ids.has(l[0])&&ids.has(l[1])).map(l=>[l[0],l[1],l[2]?{note:'🔒 '+(l[2].label||(l[2].type+' '+l[2].value))}:undefined]);
+ const cols=[...new Set(S.filter(s=>s.type==='catch').map(s=>s.color))],names={};if(!cols.includes('orange'))cols.push('orange');
+ cols.forEach(c=>{const n=S.filter(s=>s.type==='catch'&&s.color===c&&!s.spawn).length+(c==='orange'?3:4);names[c]=Array.from({length:n},(_,i)=>c[0].toUpperCase()+c.slice(1)+' '+(i+1))});
+ const seen=new Set();S.filter(s=>s.spawn&&!seen.has(s.spawn)&&seen.add(s.spawn)).forEach(s=>names[s.color].push(s.spawn));
+ const start=(S.find(s=>/pallet/i.test(s.label))||S.find(s=>s.type==='city')||S[0]).id;
+ applyBoard({SP:S,LK:L,W:w,H:w/asp,R:w/170,names,start});$('jm').textContent=` Loaded ${S.length} spaces, ${L.length} links (${m} map).`}
+function applyBoard(o){SP=o.SP;LK=o.LK;W=o.W;H=o.H;R=o.R;K=R/14;NAMES=o.names;Z=1;VX=0;VY=0;applyView();
+ pos={};home={};PL.forEach(p=>{pos[p.id]=o.start;if(get(o.start)&&get(o.start).type==='city')home[p.id]=o.start});$('log').innerHTML='';setup();snapshot();prompt('Move a token onto a space.')}
+// ---------- mock HOST ----------
+function setup(){pools={};for(const c in NAMES)pools[c]=shuf(NAMES[c].slice());st={};
+ for(const s of SP)if(s.type==='catch'){const o={empty:false,boss:!!s.spawn,cleared:false,home:s.color};
+  if(s.spawn){o.token=s.spawn;o.revealed=true;let f=false;for(const c in pools){const i=pools[c].indexOf(s.spawn);if(i>=0){pools[c].splice(i,1);o.home=c;f=true;break}}if(!f){o.dup=true;log(`host: no ${s.spawn} left in the pools — created a duplicate for ${s.id}`)}}
+  else{o.token=(pools[s.color]||[]).pop();if(!o.token){o.empty=true;o.revealed=true}else o.revealed=false}st[s.id]=o}
+ log('host: setup — dealt face-down tokens (bosses face-up)')}
+function snapshot(){sync++;log(`host → all: board-state #${sync}`);draw();renderHost()}
+function routeCities(a,b){const adj={};for(const [x,y] of LK){(adj[x]=adj[x]||[]).push(y);(adj[y]=adj[y]||[]).push(x)}
+ const prev={[a]:null},q=[a];while(q.length){const c=q.shift();if(c===b)break;for(const n of adj[c]||[])if(!(n in prev)){prev[n]=c;q.push(n)}}
+ const out=[];if(!(b in prev))return out;for(let c=prev[b];c&&c!==a;c=prev[c])out.unshift(c);return out.filter(id=>get(id).type==='city')}
+function setHome(p,c){const n=PL.find(x=>x.id===p).name;home[p]=c;log(`host: ${n}'s Current Home → ${get(c).label||c}`);snapshot()}
+function hostMove(p,to){const prev=pos[p];log(`${PL.find(x=>x.id===p).name} → host: board-move ${to}`);pos[p]=to;snapshot();land(p,to,routeCities(prev,to))}
+function land(p,id,passed=[]){const s=get(id),here=PL.filter(q=>q.id!==p&&pos[q.id]===id).map(q=>q.name),name=PL.find(q=>q.id===p).name;
+ let h=`<b>${name}</b> landed on <b>${s.label||s.type+' '+s.id}</b>.`;
+ const hm=$('hm');hm.innerHTML='';[...passed.map(c=>[c,' (passed through)']),...(s.type==='city'?[[id,'']]:[])].filter(([c])=>home[p]!==c).forEach(([c,w])=>{const b=document.createElement('button');b.textContent=`Set Current Home: ${get(c).label||c}${w}`;b.onclick=()=>{setHome(p,c);hm.innerHTML=''};hm.appendChild(b)});
+ if(here.length)h+=`<br>Also here: ${here.join(', ')} — <i>player-vs-player actions available</i>`;
+ if(s.type==='city'||s.type==='special'){prompt(h+`<br>${s.actions.map(a=>`<button>${a}</button>`).join('')||'<small>No actions entered yet.</small>'}`);return}
+ if(s.type==='event'){prompt(h+'<br>Draw an Event card?',[['Draw',()=>drawEvent(p)]]);return}
+ const o=st[id];if(!o){prompt(h);return}
+ if(o.empty){prompt(h+'<br><small>Empty — nothing here.</small>');return}
+ if(!o.revealed){o.revealed=true;log(`host: reveal ${id} (${o.token}) to everyone`);snapshot()}
+ prompt(h+`<br>Wild <b>${o.token}</b> appears${o.boss?' (boss)':''}! Battle starts at full HP.`,[['Caught',()=>resolve(id,'caught')],['Defeated',()=>resolve(id,'defeated')],['Abandon',()=>resolve(id,'abandon')]])}
+function resolve(id,out){const s=get(id),o=st[id];log(`battle result on ${id}: ${out} ${o.token}`);
+ if(out==='abandon'){log('host: token stays face-up on its space');prompt('Left on the map. The next visitor fights it fresh.');return}
+ if(out==='defeated'){if(o.dup)log(`host: duplicate ${o.token} disappears (not returned to a pool)`);else{const hc=o.home||s.color;pools[hc].push(o.token);shuf(pools[hc]);log(`host: ${o.token} shuffled into ${hc} pool`)}}
+ else log(`host: ${o.token} leaves the game`);
+ if(o.boss){o.boss=false;o.cleared=true}o.dup=false;o.home=s.color;
+ if(s.color==='orange'||!pools[s.color].length){o.empty=true;o.token=null;log(s.color==='orange'?'host: legendary space stays empty':'host: pool exhausted — space empty')}
+ else{o.token=pools[s.color].pop();o.revealed=false;log(`host: dealt new face-down token on ${id}`)}
+ snapshot();prompt('Resolved.')}
+const EV=['Free Potion: gain an Item card.','Team Rocket ambush: lose a turn.','LEGENDARY','Rare Candy found.'];
+function drawEvent(){const c=EV[Math.random()*EV.length|0];log(`host: Event Deck draw → ${c==='LEGENDARY'?'legendary encounter':c}`);
+ if(c!=='LEGENDARY'){prompt(`Event: <b>${c}</b>`);return}
+ const t=(pools.orange||[]).pop();if(!t){prompt('Event: a Legendary stirs… but none remain.');return}
+ renderHost();prompt(`Event: wild <b>${t}</b> (Legendary pool, no map space).`,[['Caught',()=>{log(`${t} leaves the game`);prompt('Caught!');renderHost()}],['Defeated',()=>back(t)],['Abandon',()=>back(t)]])}
+function back(t){pools.orange.push(t);shuf(pools.orange);log(`host: ${t} returned to orange pool`);prompt('Returned to the pool.');renderHost()}
+// ---------- UI ----------
+function prompt(html,btns){const p=$('pr');p.innerHTML=html;(btns||[]).forEach(([t,f])=>{const b=document.createElement('button');b.textContent=t;b.onclick=f;p.appendChild(b)})}
+function renderHost(){$('host').innerHTML=Object.keys(NAMES).map(c=>`<div><span style="color:${COL[c]}">●</span> ${c}: ${pools[c].length} in pool</div>`).join('')+
+ '<small>Face-down on map: '+SP.filter(s=>st[s.id]&&st[s.id].token&&!st[s.id].revealed).map(s=>s.id+'='+st[s.id].token).join(', ')+'</small>'}
+function renderPl(){$('pl').innerHTML=PL.map(q=>`<button class="${q.id===active?'on':''}" data-a="${q.id}"><span style="color:${q.c}">●</span> ${q.name} @ ${pos[q.id]} · 🏠 ${home[q.id]&&get(home[q.id])?(get(home[q.id]).label||home[q.id]):'—'}</button>`).join('');
+ $('pl').querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{active=b.dataset.a;renderPl()})}
+const dims=s=>({w:s.w||80*K,h:s.h||40*K});
+function tokenXY(id){const s=get(id),here=PL.filter(q=>pos[q.id]===id);return q=>{const i=here.indexOf(q),n=here.length;if(n<2)return[s.x,s.y];
+ if(s.type==='city'||s.type==='special'){const d=dims(s);return[s.x-d.w*.3+i*(d.w*.6/(n-1)),s.y]}
+ const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.1,s.y+Math.sin(a)*R*1.1]}}
+function draw(){let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:'';const fo=img?.72:1,sw=.36*R;
+ for(const [a,b,g] of LK){const A=get(a),B=get(b);h+=`<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${g?'#ffb000':'#222'}" stroke-width="${g?sw*1.3:sw}" opacity="${img?.8:1}"${g?` stroke-dasharray="${R*.9} ${R*.5}"`:''}/>`;
+  if(g){const mx=(A.x+B.x)/2,my=(A.y+B.y)/2;h+=`<circle cx="${mx}" cy="${my}" r="${R*.8}" fill="#ffb000" stroke="#000" stroke-width="${R*.1}"/><text x="${mx}" y="${my+R*.35}" text-anchor="middle" font-size="${R*.95}">🔒</text><text x="${mx}" y="${my+R*1.9}" text-anchor="middle" font-size="${R*.8}" fill="#000" stroke="#fff" stroke-width="${R*.2}" paint-order="stroke">${g.note.slice(2)}</text>`}}
+ for(const s of SP){const o=st[s.id],e=dims(s);
+  if(s.type==='city'||s.type==='special')h+=`<rect x="${s.x-e.w/2}" y="${s.y-e.h/2}" width="${e.w}" height="${e.h}" rx="${R*.3}" fill="${s.type==='city'?'#1b1b1b':'#8a8a92'}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" fill="#fff" font-size="${R*.9}">${s.label||s.id}</text>`;
+  else if(s.type==='event')h+=`<rect x="${s.x-R*1.1}" y="${s.y-R*1.4}" width="${R*2.2}" height="${R*2.8}" rx="${R*.3}" fill="#f2f2f2" stroke="#444" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" font-size="${R}" font-weight="700">E</text>`;
+  else if(s.type==='catch'){const em=o&&o.empty;h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5}" fill="${COL[s.color]||'#999'}" opacity="${em?.25:fo}" stroke="#000" stroke-width="${R*.1}"/>`+
+   (em?`<text x="${s.x}" y="${s.y+R*.4}" text-anchor="middle" font-size="${R*1.1}">✕</text>`:o.revealed?`<text x="${s.x}" y="${s.y+R*.3}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">${o.token.slice(0,7)}</text>`:`<text x="${s.x}" y="${s.y+R*.5}" text-anchor="middle" font-size="${R*1.4}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">?</text>`)+
+   (o.boss?`<text x="${s.x+R*1.3}" y="${s.y-R}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
+ PL.forEach((q,i)=>{const c=get(home[q.id]);if(!c)return;const d=dims(c),cx=c.x-d.w/2+R*(.7+1.2*i),cy=c.y-d.h/2-R*.1;h+=`<polygon points="${cx},${cy-R*.55} ${cx+R*.55},${cy} ${cx+R*.55},${cy+R*.55} ${cx-R*.55},${cy+R*.55} ${cx-R*.55},${cy}" fill="${q.c}" stroke="#fff" stroke-width="${R*.12}" pointer-events="none"/>`});
+ for(const q of PL){const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(pos[q.id])(q);
+  h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.8}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" style="cursor:grab"/>`}
+ svg.innerHTML=h;renderPl()}
+const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+let Z=1,VX=0,VY=0;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
+const clampZ=z=>Math.min(10,Math.max(1,z));
+function clampView(){VX=Math.max(0,Math.min(W-W/Z,VX));VY=Math.max(0,Math.min(H-H/Z,VY))}
+function applyView(){svg.setAttribute('viewBox',`${VX} ${VY} ${W/Z} ${H/Z}`);$('zl').textContent=Z.toFixed(1)+'×'}
+function zoomAt(fx,fy,nz){const ax=VX+fx*W/Z,ay=VY+fy*H/Z;Z=clampZ(nz);VX=ax-fx*W/Z;VY=ay-fy*H/Z;clampView();applyView()}
+function startPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect();pinch={d0:Math.hypot(a.x-b.x,a.y-b.y)||1,Z0:Z,ax:VX+((a.x+b.x)/2-r.left)/r.width*W/Z,ay:VY+((a.y+b.y)/2-r.top)/r.height*H/Z}}
+function doPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect(),mx=((a.x+b.x)/2-r.left)/r.width,my=((a.y+b.y)/2-r.top)/r.height;
+ Z=clampZ(pinch.Z0*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d0);VX=pinch.ax-mx*W/Z;VY=pinch.ay-my*H/Z;clampView();applyView()}
+function edgeTick(){if(!drag||!lastPtr){edgeOn=false;return}
+ const r=svg.getBoundingClientRect(),m=48,sp=10;let dx=0,dy=0;
+ if(Z>1.001){if(lastPtr.x<r.left+m)dx=-sp;else if(lastPtr.x>r.right-m)dx=sp;if(lastPtr.y<r.top+m)dy=-sp;else if(lastPtr.y>r.bottom-m)dy=sp}
+ if(dx||dy){VX+=dx*(W/Z)/r.width;VY+=dy*(H/Z)/r.height;clampView();applyView();const q=pt(lastPtr);drag.x=q.x;drag.y=q.y;draw()}
+ requestAnimationFrame(edgeTick)}
+function dropToken(e){const q=pt(e),p=drag.p;drag=null;let best=null,d=1e9;for(const s of SP){const rc=s.type==='city'||s.type==='special';let k;
+  if(rc){const e2=dims(s);k=Math.hypot(Math.max(Math.abs(q.x-s.x)-e2.w/2,0),Math.max(Math.abs(q.y-s.y)-e2.h/2,0))}
+  else k=Math.max(Math.hypot(q.x-s.x,q.y-s.y)-(s.type==='event'?R*1.4:R*1.5),0);
+  if(k<d||(k===d&&k===0&&rc)){d=k;best=s}}
+ if(best&&d<R*2&&best.id!==pos[p])hostMove(p,best.id);else draw()}
+svg.onpointerdown=e=>{svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+ if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;startPinch();return}
+ if(ptrs.size>2)return;
+ const g=e.target.closest('[data-p]');
+ if(g){drag={p:g.dataset.p,id:e.pointerId,...pt(e)};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};draw()}
+ else pan={id:e.pointerId,x:e.clientX,y:e.clientY}};
+svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+ if(pinch&&ptrs.size>=2){doPinch();return}
+ if(drag&&drag.id===e.pointerId){const q=pt(e);drag.x=q.x;drag.y=q.y;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};if(!edgeOn){edgeOn=true;requestAnimationFrame(edgeTick)}draw();return}
+ if(pan&&pan.id===e.pointerId){const r=svg.getBoundingClientRect();VX-=(e.clientX-pan.x)*(W/Z)/r.width;VY-=(e.clientY-pan.y)*(H/Z)/r.height;pan.x=e.clientX;pan.y=e.clientY;clampView();applyView()}};
+svg.onpointerup=e=>{if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);
+ if(pinch){if(ptrs.size<2)pinch=null;return}
+ if(pan&&pan.id===e.pointerId)pan=null;
+ if(drag&&drag.id===e.pointerId)dropToken(e)};
+svg.onpointercancel=e=>{ptrs.delete(e.pointerId);pinch=null;pan=null;if(drag){drag=null;draw()}};
+svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();zoomAt((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height,Z*Math.exp(-e.deltaY*.0015))},{passive:false});
+$('zi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('zo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('zf').onclick=()=>{Z=1;VX=0;VY=0;applyView()};
+$('ev').onclick=()=>drawEvent();$('lose').onclick=()=>{const p=active,n=PL.find(x=>x.id===p).name,h=home[p];if(!h){prompt('No Current Home set.');return}log(`battle lost: ${n} respawns at ${h}`);pos[p]=h;snapshot();prompt(`<b>${n}</b> lost the battle and returns to <b>${get(h).label||h}</b>.`)};$('sb').onclick=()=>{img=null;sampleBoard()};
+$('imgBtn').onclick=()=>$('imgF').click();$('imgF').onchange=e=>{const f=e.target.files[0];if(f){img=URL.createObjectURL(f);draw()}};
+$('jb').onclick=()=>{try{importBoard(JSON.parse($('jt').value))}catch(err){$('jm').textContent=' Could not read that JSON.'}};
+sampleBoard();
+// When hosted next to board.json (an editor export) and its map image, load them automatically.
+async function autoload(){try{const r=await fetch('board.json');if(!r.ok)return;const d=await r.json();importBoard(d);
+ const n=d.maps&&d.maps.condensed&&d.maps.condensed.imageName;if(n)for(const u of [n,n.replace(/ /g,'_')]){const ok=await new Promise(res=>{const i=new Image();i.onload=()=>res(true);i.onerror=()=>res(false);i.src=encodeURI(u)});if(ok){img=encodeURI(u);draw();break}}}catch(e){}}
+autoload();
+</script></body></html>
