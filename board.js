@@ -5,6 +5,7 @@
             players              -- [{id,name,c}]   playerId (guest mode)
             getPools(colors)     -- optional: {color:[pokemon names]} for the pools
             noSample, backHref
+            (host/guest) playerId = the one token this device may move; omit it for a display-only host
    controller: loadBoard(editorJson), setImage(url), handleMessage(msg),
                resend(), fit(), setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
@@ -18,7 +19,7 @@ opts=opts||{};
 if(!document.getElementById('bm-style')){const st=document.createElement('style');st.id='bm-style';st.textContent=CSS;document.head.appendChild(st)}
 const root=document.createElement('div');root.className='bm-root';root.innerHTML=HTML;container.appendChild(root);
 
-const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null;
+const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
 const $=id=>root.querySelector('#'+id),svg=$('b');
 const COL={red:'#e03131',blue:'#2f4fd0',green:'#2f9e44',yellow:'#f5c211',orange:'#c9801f',pink:'#f08a96'};
 let PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:'p3',name:'Brock',c:'#8d6e63'}];
@@ -56,7 +57,7 @@ function leakCheck(){const rev=new Set(),hid=new Set();for(const id in st){const
  const bad=[...hid].filter(n=>lastSnapStr.includes(JSON.stringify(n)));
  $('leak').innerHTML=bad.length?`<b style="color:#d03a2f">✗ LEAK: ${bad.join(', ')}</b>`:`<span style="color:#2f9e44">✓ Leak check passed</span> <small>(${hid.size} hidden names, none in the snapshot)</small>`;
  $('snapj').textContent=JSON.stringify(JSON.parse(lastSnapStr),null,1)}
-function buildModel(){if(view==='host'){const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:o.token,boss:o.boss}}M={peek:true,pos,home,spaces:sp}}
+function buildModel(){if(omni()){const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:o.token,boss:o.boss}}M={peek:true,pos,home,spaces:sp}}
  else M=lastSnapStr?JSON.parse(lastSnapStr):{pos:{},home:{},spaces:{}}}
 function renderView(){$('vw').innerHTML=[['host','Host'],...PL.map(q=>[q.id,q.name])].map(([v,n])=>`<button class="${v===view?'on':''}" data-v="${v}">${n}</button>`).join('');
  $('vw').querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>setView(b.dataset.v));
@@ -149,7 +150,7 @@ svg.onpointerdown=e=>{svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x
  if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;startPinch();return}
  if(ptrs.size>2)return;
  const g=e.target.closest('[data-p]');
- if(g&&(view==='host'||g.dataset.p===view)){const off=e.pointerType==='touch'?30:0;drag={p:g.dataset.p,id:e.pointerId,off,...pt({clientX:e.clientX,clientY:e.clientY-off})};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/>`)}
+ if(g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId)){const off=e.pointerType==='touch'?30:0;drag={p:g.dataset.p,id:e.pointerId,off,...pt({clientX:e.clientX,clientY:e.clientY-off})};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/>`)}
  else pan={id:e.pointerId,x:e.clientX,y:e.clientY}};
 svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
  if(pinch&&ptrs.size>=2){doPinch();return}
@@ -169,7 +170,7 @@ $('jb').onclick=()=>{try{importBoard(JSON.parse($('jt').value))}catch(err){$('jm
 
 if(opts.backHref){$('bk').href=opts.backHref;$('bkbox').hidden=false}
 if(mode==='guest'){view=opts.playerId||PL[0].id;active=view}
-if(mode!=='mock'){$('vw').parentNode.style.display='none';$('imgBtn').parentNode.style.display='none'}
+if(mode!=='mock'){$('vw').parentNode.style.display='none';$('imgBtn').parentNode.style.display='none';$('hostbox').style.display='none';active=myId||(PL[0]&&PL[0].id)||active}
 if(mode==='guest')setView(view);else renderView();
 if(!opts.noSample&&mode!=='guest')sampleBoard();
 return{
