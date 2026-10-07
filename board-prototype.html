@@ -7,12 +7,12 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15151a;--panel:#202028;--ink:#ececf1;--mut:#9a9aa8;--line:#34343f;--map:#27402b}}
 :root[data-theme="dark"]{--bg:#15151a;--panel:#202028;--ink:#ececf1;--mut:#9a9aa8;--line:#34343f;--map:#27402b}
 html,body{height:100%;margin:0}body{background:var(--bg);color:var(--ink);font:13px system-ui,sans-serif;display:flex;gap:8px;padding:8px;box-sizing:border-box}
-#b{flex:1;min-width:0;max-width:100%;align-self:flex-start;max-height:100%;background:var(--map);border:1px solid var(--line);border-radius:10px;touch-action:none}
+#b{flex:1;min-width:0;max-width:100%;align-self:flex-start;height:calc(100vh - 16px);height:calc(100dvh - 16px);background:var(--map);border:1px solid var(--line);border-radius:10px;touch-action:none}
 aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}
 .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}
 h4{margin:0 0 4px;font-size:12px}button,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}button{cursor:pointer;margin:2px 2px 0 0}
 button.on{outline:2px solid #d03a2f}#log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--mut)}small{color:var(--mut)}
-@media(max-width:760px){html,body{height:auto;min-height:100%}body{flex-direction:column;overflow-x:hidden}#b{align-self:stretch;width:100%;max-width:100%;height:auto}aside{width:auto;max-height:none;overflow:visible}}
+@media(max-width:760px){html,body{height:auto;min-height:100%}body{flex-direction:column;overflow-x:hidden}#b{align-self:stretch;width:100%;max-width:100%;height:78vh;height:78dvh}aside{width:auto;max-height:none;overflow:visible}}
 </style></head><body>
 <svg id="b" viewBox="0 0 1000 620"></svg>
 <aside>
@@ -46,7 +46,7 @@ function importBoard(d){const m=['condensed','full'].map(k=>[k,d.spaces.filter(s
  const seen=new Set();S.filter(s=>s.spawn&&!seen.has(s.spawn)&&seen.add(s.spawn)).forEach(s=>names[s.color].push(s.spawn));
  const start=(S.find(s=>/pallet/i.test(s.label))||S.find(s=>s.type==='city')||S[0]).id;
  applyBoard({SP:S,LK:L,W:w,H:w/asp,R:w/170,names,start});$('jm').textContent=` Loaded ${S.length} spaces, ${L.length} links (${m} map).`}
-function applyBoard(o){SP=o.SP;LK=o.LK;W=o.W;H=o.H;R=o.R;K=R/14;NAMES=o.names;Z=1;VX=0;VY=0;applyView();
+function applyBoard(o){SP=o.SP;LK=o.LK;W=o.W;H=o.H;R=o.R;K=R/14;NAMES=o.names;fitView();
  pos={};home={};PL.forEach(p=>{pos[p.id]=o.start;if(get(o.start)&&get(o.start).type==='city')home[p.id]=o.start});$('log').innerHTML='';setup();snapshot();prompt('Move a token onto a space.')}
 // ---------- mock HOST ----------
 function setup(){pools={};for(const c in NAMES)pools[c]=shuf(NAMES[c].slice());st={};
@@ -109,19 +109,21 @@ function draw(){let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:''
  svg.innerHTML=h;renderPl()}
 const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
 let Z=1,VX=0,VY=0;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
-const clampZ=z=>Math.min(10,Math.max(1,z));
-function clampView(){VX=Math.max(0,Math.min(W-W/Z,VX));VY=Math.max(0,Math.min(H-H/Z,VY))}
-function applyView(){svg.setAttribute('viewBox',`${VX} ${VY} ${W/Z} ${H/Z}`);$('zl').textContent=Z.toFixed(1)+'×'}
-function zoomAt(fx,fy,nz){const ax=VX+fx*W/Z,ay=VY+fy*H/Z;Z=clampZ(nz);VX=ax-fx*W/Z;VY=ay-fy*H/Z;clampView();applyView()}
-function startPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect();pinch={d0:Math.hypot(a.x-b.x,a.y-b.y)||1,Z0:Z,ax:VX+((a.x+b.x)/2-r.left)/r.width*W/Z,ay:VY+((a.y+b.y)/2-r.top)/r.height*H/Z}}
+let EA=1.5;const updEA=()=>{const r=svg.getBoundingClientRect();if(r.width&&r.height)EA=r.width/r.height};
+const zmin=()=>Math.min(1,W/(H*EA)),VW=()=>W/Z,VH=()=>W/Z/EA,clampZ=z=>Math.min(10,Math.max(zmin(),z));
+function clampView(){const w=VW(),h=VH();VX=w>=W-1e-6?(W-w)/2:Math.max(0,Math.min(W-w,VX));VY=h>=H-1e-6?(H-h)/2:Math.max(0,Math.min(H-h,VY))}
+function applyView(){svg.setAttribute('viewBox',`${VX} ${VY} ${VW()} ${VH()}`);$('zl').textContent=(Z/zmin()).toFixed(1)+'×'}
+function fitView(){updEA();Z=zmin();VX=0;VY=0;clampView();applyView()}
+function zoomAt(fx,fy,nz){const ax=VX+fx*VW(),ay=VY+fy*VH();Z=clampZ(nz);VX=ax-fx*VW();VY=ay-fy*VH();clampView();applyView()}
+function startPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect();pinch={d0:Math.hypot(a.x-b.x,a.y-b.y)||1,Z0:Z,ax:VX+((a.x+b.x)/2-r.left)/r.width*VW(),ay:VY+((a.y+b.y)/2-r.top)/r.height*VH()}}
 function doPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect(),mx=((a.x+b.x)/2-r.left)/r.width,my=((a.y+b.y)/2-r.top)/r.height;
- Z=clampZ(pinch.Z0*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d0);VX=pinch.ax-mx*W/Z;VY=pinch.ay-my*H/Z;clampView();applyView()}
+ Z=clampZ(pinch.Z0*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d0);VX=pinch.ax-mx*VW();VY=pinch.ay-my*VH();clampView();applyView()}
 let lastTs=0;
 function edgeTick(ts){if(!drag||!lastPtr){edgeOn=false;lastTs=0;return}
  const dt=lastTs?Math.min(.05,(ts-lastTs)/1000):.016;lastTs=ts;
  const r=svg.getBoundingClientRect(),m=64,MAX=240,f=d=>{const k=Math.max(0,Math.min(1,(m-d)/m));return MAX*k*k};
- if(Z>1.001){const dx=-f(lastPtr.x-r.left)+f(r.right-lastPtr.x),dy=-f(lastPtr.y-r.top)+f(r.bottom-lastPtr.y);
-  if(dx||dy){VX+=dx*dt*(W/Z)/r.width;VY+=dy*dt*(H/Z)/r.height;clampView();applyView();const q=pt(lastPtr);drag.x=q.x;drag.y=q.y;draw()}}
+ if(Z>zmin()*1.001){const dx=-f(lastPtr.x-r.left)+f(r.right-lastPtr.x),dy=-f(lastPtr.y-r.top)+f(r.bottom-lastPtr.y);
+  if(dx||dy){VX+=dx*dt*VW()/r.width;VY+=dy*dt*VH()/r.height;clampView();applyView();const q=pt(lastPtr);drag.x=q.x;drag.y=q.y;draw()}}
  requestAnimationFrame(edgeTick)}
 function dropToken(e){const q=pt(e),p=drag.p;drag=null;let best=null,d=1e9;for(const s of SP){const rc=s.type==='city'||s.type==='special';let k;
   if(rc){const e2=dims(s);k=Math.hypot(Math.max(Math.abs(q.x-s.x)-e2.w/2,0),Math.max(Math.abs(q.y-s.y)-e2.h/2,0))}
@@ -137,14 +139,14 @@ svg.onpointerdown=e=>{svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x
 svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
  if(pinch&&ptrs.size>=2){doPinch();return}
  if(drag&&drag.id===e.pointerId){const q=pt(e);drag.x=q.x;drag.y=q.y;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};if(!edgeOn){edgeOn=true;requestAnimationFrame(edgeTick)}draw();return}
- if(pan&&pan.id===e.pointerId){const r=svg.getBoundingClientRect();VX-=(e.clientX-pan.x)*(W/Z)/r.width;VY-=(e.clientY-pan.y)*(H/Z)/r.height;pan.x=e.clientX;pan.y=e.clientY;clampView();applyView()}};
+ if(pan&&pan.id===e.pointerId){const r=svg.getBoundingClientRect();VX-=(e.clientX-pan.x)*VW()/r.width;VY-=(e.clientY-pan.y)*VH()/r.height;pan.x=e.clientX;pan.y=e.clientY;clampView();applyView()}};
 svg.onpointerup=e=>{if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);
  if(pinch){if(ptrs.size<2)pinch=null;return}
  if(pan&&pan.id===e.pointerId)pan=null;
  if(drag&&drag.id===e.pointerId)dropToken(e)};
 svg.onpointercancel=e=>{ptrs.delete(e.pointerId);pinch=null;pan=null;if(drag){drag=null;draw()}};
 svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();zoomAt((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height,Z*Math.exp(-e.deltaY*.0015))},{passive:false});
-$('zi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('zo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('zf').onclick=()=>{Z=1;VX=0;VY=0;applyView()};
+$('zi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('zo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('zf').onclick=fitView;addEventListener('resize',()=>{updEA();clampView();applyView()});
 $('ev').onclick=()=>drawEvent();$('lose').onclick=()=>{const p=active,n=PL.find(x=>x.id===p).name,h=home[p];if(!h){prompt('No Current Home set.');return}log(`battle lost: ${n} respawns at ${h}`);pos[p]=h;snapshot();prompt(`<b>${n}</b> lost the battle and returns to <b>${get(h).label||h}</b>.`)};$('sb').onclick=()=>{img=null;sampleBoard()};
 $('imgBtn').onclick=()=>$('imgF').click();$('imgF').onchange=e=>{const f=e.target.files[0];if(f){img=URL.createObjectURL(f);draw()}};
 $('jb').onclick=()=>{try{importBoard(JSON.parse($('jt').value))}catch(err){$('jm').textContent=' Could not read that JSON.'}};
