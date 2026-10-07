@@ -7,12 +7,12 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15151a;--panel:#202028;--ink:#ececf1;--mut:#9a9aa8;--line:#34343f;--map:#27402b}}
 :root[data-theme="dark"]{--bg:#15151a;--panel:#202028;--ink:#ececf1;--mut:#9a9aa8;--line:#34343f;--map:#27402b}
 html,body{height:100%;margin:0}body{background:var(--bg);color:var(--ink);font:13px system-ui,sans-serif;display:flex;gap:8px;padding:8px;box-sizing:border-box}
-#b{flex:1;min-width:0;align-self:flex-start;max-height:100%;background:var(--map);border:1px solid var(--line);border-radius:10px;touch-action:none}
+#b{flex:1;min-width:0;max-width:100%;align-self:flex-start;max-height:100%;background:var(--map);border:1px solid var(--line);border-radius:10px;touch-action:none}
 aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}
 .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px}
 h4{margin:0 0 4px;font-size:12px}button,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}button{cursor:pointer;margin:2px 2px 0 0}
 button.on{outline:2px solid #d03a2f}#log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--mut)}small{color:var(--mut)}
-@media(max-width:760px){body{flex-direction:column}aside{width:auto;max-height:50%}}
+@media(max-width:760px){html,body{height:auto;min-height:100%}body{flex-direction:column;overflow-x:hidden}#b{align-self:stretch;width:100%;max-width:100%;height:auto}aside{width:auto;max-height:none;overflow:visible}}
 </style></head><body>
 <svg id="b" viewBox="0 0 1000 620"></svg>
 <aside>
@@ -116,10 +116,12 @@ function zoomAt(fx,fy,nz){const ax=VX+fx*W/Z,ay=VY+fy*H/Z;Z=clampZ(nz);VX=ax-fx*
 function startPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect();pinch={d0:Math.hypot(a.x-b.x,a.y-b.y)||1,Z0:Z,ax:VX+((a.x+b.x)/2-r.left)/r.width*W/Z,ay:VY+((a.y+b.y)/2-r.top)/r.height*H/Z}}
 function doPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect(),mx=((a.x+b.x)/2-r.left)/r.width,my=((a.y+b.y)/2-r.top)/r.height;
  Z=clampZ(pinch.Z0*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d0);VX=pinch.ax-mx*W/Z;VY=pinch.ay-my*H/Z;clampView();applyView()}
-function edgeTick(){if(!drag||!lastPtr){edgeOn=false;return}
- const r=svg.getBoundingClientRect(),m=48,sp=10;let dx=0,dy=0;
- if(Z>1.001){if(lastPtr.x<r.left+m)dx=-sp;else if(lastPtr.x>r.right-m)dx=sp;if(lastPtr.y<r.top+m)dy=-sp;else if(lastPtr.y>r.bottom-m)dy=sp}
- if(dx||dy){VX+=dx*(W/Z)/r.width;VY+=dy*(H/Z)/r.height;clampView();applyView();const q=pt(lastPtr);drag.x=q.x;drag.y=q.y;draw()}
+let lastTs=0;
+function edgeTick(ts){if(!drag||!lastPtr){edgeOn=false;lastTs=0;return}
+ const dt=lastTs?Math.min(.05,(ts-lastTs)/1000):.016;lastTs=ts;
+ const r=svg.getBoundingClientRect(),m=64,MAX=240,f=d=>{const k=Math.max(0,Math.min(1,(m-d)/m));return MAX*k*k};
+ if(Z>1.001){const dx=-f(lastPtr.x-r.left)+f(r.right-lastPtr.x),dy=-f(lastPtr.y-r.top)+f(r.bottom-lastPtr.y);
+  if(dx||dy){VX+=dx*dt*(W/Z)/r.width;VY+=dy*dt*(H/Z)/r.height;clampView();applyView();const q=pt(lastPtr);drag.x=q.x;drag.y=q.y;draw()}}
  requestAnimationFrame(edgeTick)}
 function dropToken(e){const q=pt(e),p=drag.p;drag=null;let best=null,d=1e9;for(const s of SP){const rc=s.type==='city'||s.type==='special';let k;
   if(rc){const e2=dims(s);k=Math.hypot(Math.max(Math.abs(q.x-s.x)-e2.w/2,0),Math.max(Math.abs(q.y-s.y)-e2.h/2,0))}
@@ -148,7 +150,14 @@ $('imgBtn').onclick=()=>$('imgF').click();$('imgF').onchange=e=>{const f=e.targe
 $('jb').onclick=()=>{try{importBoard(JSON.parse($('jt').value))}catch(err){$('jm').textContent=' Could not read that JSON.'}};
 sampleBoard();
 // When hosted next to board.json (an editor export) and its map image, load them automatically.
-async function autoload(){try{const r=await fetch('board.json');if(!r.ok)return;const d=await r.json();importBoard(d);
- const n=d.maps&&d.maps.condensed&&d.maps.condensed.imageName;if(n)for(const u of [n,n.replace(/ /g,'_')]){const ok=await new Promise(res=>{const i=new Image();i.onload=()=>res(true);i.onerror=()=>res(false);i.src=encodeURI(u)});if(ok){img=encodeURI(u);draw();break}}}catch(e){}}
+async function autoload(){const say=x=>{$('jm').textContent=x};let d=null;const tried=[];
+ for(const f of ['board.json','Board.json']){try{const r=await fetch(f,{cache:'no-store'});tried.push(f+' → '+r.status);if(r.ok){d=await r.json();break}}catch(e){tried.push(f+' → '+e.message)}}
+ if(!d){say(' Autoload: no board file found ('+tried.join('; ')+'). Showing the sample board.');return}
+ try{importBoard(d)}catch(e){say(' Autoload: found the board file but could not use it ('+e.message+').');return}
+ const n=(d.maps&&d.maps.condensed&&d.maps.condensed.imageName)||'';
+ const c=[...new Set([n,n.replace(/ /g,'_'),n.replace(/ /g,'.'),n.replace(/ /g,'-'),n.replace(/ /g,'')].flatMap(x=>[x,x.toLowerCase()]))].filter(Boolean);
+ for(const u of c){const ok=await new Promise(res=>{const i=new Image();i.onload=()=>res(true);i.onerror=()=>res(false);i.src=encodeURI(u)});
+  if(ok){img=encodeURI(u);draw();say($('jm').textContent+' Map image: '+u+'.');return}}
+ say($('jm').textContent+' No map image found. Tried: '+(c.join(', ')||'(the export names no image)')+'.')}
 autoload();
 </script></body></html>
