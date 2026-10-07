@@ -13804,6 +13804,21 @@
         }
         }
 
+
+        /* ---- Virtual Game Board layer (see the "Virtual Game Board" block in the script, and board.js) ---- */
+        #board-layer { position: fixed; top: 0; bottom: 0; left: 0; right: 0; z-index: 1000; display: none; flex-direction: column; background: #101418; }
+        #board-layer.open { display: flex; }
+        /* Desktop: starts at the Rulebook panel's size, docked right; the size button steps up to the whole window. */
+        @media (min-width: 664px) {
+            #board-layer.board-panel-size { left: auto; width: 720px; max-width: 90vw; box-shadow: -4px 0 10px rgba(0,0,0,0.5); }
+        }
+        #board-layer:fullscreen { left: 0; width: 100%; max-width: none; }
+        .board-layer-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #202028; color: #fff; flex: 0 0 auto; }
+        .board-layer-title { flex: 1; font-weight: 700; }
+        .board-bar-btn { font: inherit; color: #fff; background: #34343f; border: 1px solid #4a4a58; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+        .board-bar-btn[hidden] { display: none; }
+        @media (max-width: 663px) { #board-size-btn { display: none; } }
+        #board-layer-body { flex: 1; min-height: 0; }
     </style>
 </head>
 <body>
@@ -14251,6 +14266,17 @@
         </div>
     </div>
 
+    <!-- Virtual Game Board: a layer over the page rather than a game-panel screen, so the map can use the whole window. The map code itself is board.js. -->
+    <div id="board-layer" aria-hidden="true">
+        <div class="board-layer-bar">
+            <span class="board-layer-title">Game Board</span>
+            <button id="board-size-btn" class="board-bar-btn" type="button">Full window</button>
+            <button id="board-fs-btn" class="board-bar-btn" type="button" hidden>Fullscreen</button>
+            <button id="board-close-btn" class="board-bar-btn" type="button">Close</button>
+        </div>
+        <div id="board-layer-body"></div>
+    </div>
+
     <div id="game-panel">
         <div class="game-panel-bg"></div>
         <div id="game-scroll">
@@ -14324,9 +14350,10 @@
                      (board-prototype.html, same folder as this file).
                      Plain link rather than a game-menu-tile, since it
                      leaves this page instead of switching game screens. -->
-                <div class="game-section-header">Experimental</div>
+                <div class="game-section-header">Game Board</div>
                 <div style="margin: 0 -5px;">
-                    <a id="game-board-prototype-btn" class="filter-btn" href="board-prototype.html" style="display: block; text-align: center; text-decoration: none;">Virtual Game Board (Prototype)</a>
+                    <button id="game-board-open-btn" class="filter-btn" type="button" style="display: block; width: calc(100% - 10px); text-align: center;">Open Virtual Game Board</button>
+                    <a id="game-board-prototype-btn" class="filter-btn" href="board-prototype.html" style="display: block; text-align: center; text-decoration: none;">Standalone Board Prototype Page</a>
                 </div>
             </div>
 
@@ -40197,6 +40224,7 @@
         }
 
         function renderLobbyPlayers() {
+            boardSyncPlayers();
             const listEl = document.getElementById('game-lobby-players');
             listEl.innerHTML = lobbyState.players.map(p => `
                 <div class="game-lobby-player-row${p.isHost ? ' is-host' : ''}">
@@ -40638,7 +40666,12 @@
                         const claims = (claimsStore[data.guestClientId] && typeof claimsStore[data.guestClientId] === 'object') ? claimsStore[data.guestClientId] : {};
                         if (conn.open) conn.send({ type: 'one-time-claims-sync', claims: JSON.parse(JSON.stringify(claims)) });
                         broadcastDeckState();
+                        boardOnGuestIdentified();
                     }
+                } else if (data.type === 'board-move' && typeof data.to === 'string') {
+                    boardHandleFromGuest(conn.peer, data);
+                } else if (data.type === 'board-hello') {
+                    boardHandleHello();
                 } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
                     hostApplyDraw(data.deck, conn.peer);
                 } else if (data.type === 'deck-gain-reward' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -40997,6 +41030,177 @@
         // `to`/`from` fields on trade messages). Returns null before a
         // Peer exists yet, which shouldn't be reachable in practice since
         // nothing trade-related is even shown until a Lobby is active.
+        // ===== Virtual Game Board =====
+        // The map itself lives in board.js (BoardMap.mount) and knows nothing about
+        // this app. This block is only the adapter: it loads board.js + board.json
+        // on first use, hands the map a send() function and the lobby roster, routes
+        // the board-* messages (see the host and guest dispatchers), and runs the
+        // full-screen layer (#board-layer). Moves arrive tagged with conn.peer, never
+        // with an id the guest supplied. Everything is `var` so renderLobbyPlayers()
+        // can safely call boardSyncPlayers() even before this block has executed.
+        var BOARD_COLOR_HEX = { red: '#e63233', blue: '#2c3eaa', green: '#378e2f', yellow: '#fdca01', orange: '#f28c1e', purple: '#8e44ad' };
+        var BOARD_SIZE_STORAGE_KEY = 'pmtuBoardLayerSize';
+        var boardCtrl = null, boardSig = null, boardBuildPromise = null, boardScriptPromise = null;
+        var boardDataCache = null, boardImageCache, boardLastState = null, boardPlayersSig = '';
+
+        function boardPlayers() {
+            if (lobbyState.role === null) return [{ id: 'host', name: 'You', c: BOARD_COLOR_HEX.red }];
+            return lobbyState.players
+                .filter(p => p.id !== 'host' || lobbyState.hostIsPlayer)
+                .map((p, i) => ({ id: p.id, name: p.name || 'Trainer', c: BOARD_COLOR_HEX[p.color] || BOARD_COLOR_HEX[PLAYER_COLORS[i % PLAYER_COLORS.length]] }));
+        }
+        function boardSend(msg) {
+            if (lobbyState.role === 'host') {
+                lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send(msg); });
+            } else if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
+                lobbyState.hostConn.send(msg);
+            }
+        }
+        function boardEnsureScript() {
+            if (window.BoardMap) return Promise.resolve();
+            if (boardScriptPromise) return boardScriptPromise;
+            boardScriptPromise = new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = 'board.js';
+                s.onload = () => resolve();
+                s.onerror = () => { boardScriptPromise = null; reject(new Error('board.js was not found next to this page')); };
+                document.head.appendChild(s);
+            });
+            return boardScriptPromise;
+        }
+        async function boardFetchData() {
+            if (boardDataCache) return boardDataCache;
+            const r = await fetch('board.json', { cache: 'no-store' });
+            if (!r.ok) throw new Error('board.json returned ' + r.status);
+            boardDataCache = await r.json();
+            return boardDataCache;
+        }
+        async function boardFindImage(d) {
+            if (boardImageCache !== undefined) return boardImageCache;
+            const n = (d.maps && d.maps.condensed && d.maps.condensed.imageName) || '';
+            boardImageCache = null;
+            if (!n) return null;
+            const names = [...new Set([n, n.replace(/ /g, '_'), n.replace(/ /g, '.'), n.replace(/ /g, '-'), n.replace(/ /g, '')].flatMap(x => [x, x.toLowerCase()]))];
+            for (const u of names) {
+                const ok = await new Promise(res => { const i = new Image(); i.onload = () => res(true); i.onerror = () => res(false); i.src = encodeURI(u); });
+                if (ok) { boardImageCache = encodeURI(u); break; }
+            }
+            return boardImageCache;
+        }
+        function boardEnsureBoard() {
+            const guest = lobbyState.role === 'guest';
+            const myId = getMyLobbyPlayerId() || 'host';
+            const sig = (guest ? 'guest:' : 'host:') + myId;
+            if (boardCtrl && boardSig === sig) return Promise.resolve(boardCtrl);
+            if (boardBuildPromise) return boardBuildPromise;
+            boardBuildPromise = (async () => {
+                await boardEnsureScript();
+                const d = await boardFetchData();
+                if (boardCtrl) { boardCtrl.destroy(); boardCtrl = null; }
+                const body = document.getElementById('board-layer-body');
+                body.innerHTML = '';
+                const players = boardPlayers();
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : undefined, players, noSample: true, send: boardSend });
+                boardSig = sig;
+                boardPlayersSig = JSON.stringify(players);
+                boardCtrl.loadBoard(d);
+                const img = await boardFindImage(d);
+                if (img) boardCtrl.setImage(img);
+                // A host that isn't playing is the table's display: read-only, face-down Pokémon stay hidden.
+                if (lobbyState.role === 'host' && !lobbyState.hostIsPlayer) boardCtrl.setView('tv');
+                if (guest && boardLastState) boardCtrl.handleMessage(boardLastState);
+                return boardCtrl;
+            })();
+            const clear = () => { boardBuildPromise = null; };
+            boardBuildPromise.then(clear, clear);
+            return boardBuildPromise;
+        }
+        function boardSyncPlayers() {
+            if (!boardCtrl) return;
+            const list = boardPlayers(), sig = JSON.stringify(list);
+            if (sig === boardPlayersSig) return;
+            boardPlayersSig = sig;
+            boardCtrl.setPlayers(list);
+        }
+        // --- message routing (called from the host and guest dispatchers) ---
+        function boardHandleFromGuest(peerId, data) {
+            boardEnsureBoard().then(c => c.handleMessage({ type: 'board-move', player: peerId, to: data.to })).catch(() => {});
+        }
+        function boardHandleHello() {
+            boardEnsureBoard().then(c => { boardSyncPlayers(); c.resend(); }).catch(() => {});
+        }
+        function boardReceiveState(data) {
+            boardLastState = data;
+            if (boardCtrl) boardCtrl.handleMessage(data);
+        }
+        function boardOnGuestIdentified() {
+            if (boardCtrl) { boardSyncPlayers(); boardCtrl.resend(); }
+        }
+        // --- the layer: desktop panel size / full window (remembered for the session), browser fullscreen where supported ---
+        function boardGetSize() {
+            try { return sessionStorage.getItem(BOARD_SIZE_STORAGE_KEY) === 'full' ? 'full' : 'panel'; } catch (e) { return 'panel'; }
+        }
+        function boardApplySize() {
+            const layer = document.getElementById('board-layer');
+            if (!layer) return;
+            const full = boardGetSize() === 'full';
+            layer.classList.toggle('board-panel-size', !full);
+            const b = document.getElementById('board-size-btn');
+            if (b) b.textContent = full ? 'Panel size' : 'Full window';
+            if (boardCtrl) requestAnimationFrame(() => boardCtrl.fit());
+        }
+        function boardSetSize(v) {
+            try { sessionStorage.setItem(BOARD_SIZE_STORAGE_KEY, v); } catch (e) { /* private mode: just doesn't persist */ }
+            boardApplySize();
+        }
+        function boardUpdateFsBtn() {
+            const layer = document.getElementById('board-layer'), b = document.getElementById('board-fs-btn');
+            if (!layer || !b) return;
+            b.hidden = !(document.fullscreenEnabled && layer.requestFullscreen); // iPhone Safari has no element fullscreen
+            b.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+        }
+        async function openBoardLayer() {
+            if (!isPlaySessionActive()) { showGameToast('Start a solo game or join a lobby in Play a Game to use the board.'); return; }
+            const layer = document.getElementById('board-layer');
+            layer.classList.add('open');
+            layer.setAttribute('aria-hidden', 'false');
+            boardApplySize();
+            boardUpdateFsBtn();
+            try {
+                const c = await boardEnsureBoard();
+                boardSyncPlayers();
+                requestAnimationFrame(() => c.fit());
+                if (lobbyState.role === 'guest') boardSend({ type: 'board-hello' });
+            } catch (err) {
+                showGameToast('Could not load the game board: ' + err.message);
+                closeBoardLayer();
+            }
+        }
+        function closeBoardLayer() {
+            const layer = document.getElementById('board-layer');
+            if (!layer) return;
+            if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) { /* ignore */ } }
+            layer.classList.remove('open');
+            layer.setAttribute('aria-hidden', 'true');
+        }
+        document.addEventListener('click', (e) => {
+            const t = e.target;
+            if (!t || !t.closest) return;
+            if (t.closest('#game-board-open-btn')) openBoardLayer();
+            else if (t.closest('#board-size-btn')) boardSetSize(boardGetSize() === 'full' ? 'panel' : 'full');
+            else if (t.closest('#board-fs-btn')) {
+                const layer = document.getElementById('board-layer');
+                if (document.fullscreenElement) document.exitFullscreen(); else layer.requestFullscreen().catch(() => {});
+            }
+            else if (t.closest('#board-close-btn')) closeBoardLayer();
+        });
+        document.addEventListener('fullscreenchange', () => { boardUpdateFsBtn(); if (boardCtrl) requestAnimationFrame(() => boardCtrl.fit()); });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape' || document.fullscreenElement) return;
+            const l = document.getElementById('board-layer');
+            if (l && l.classList.contains('open')) closeBoardLayer();
+        });
+
         function getMyLobbyPlayerId() {
             if (lobbyState.role === 'host') return 'host';
             if (lobbyState.role === 'guest' && lobbyState.peer) return lobbyState.peer.id;
@@ -41757,6 +41961,8 @@
                     persistLocalOneTimeClaims();
                     renderDecksScreen();
                     renderRewardMenu(); // no-op unless this exact menu is open
+                } else if (data.type === 'board-state' && typeof data.snap === 'string') {
+                    boardReceiveState(data);
                 } else if (data.type === 'battle-arena-state') {
                     guestBattleArenaCache = data;
                     applyIncomingArenaState(data);
