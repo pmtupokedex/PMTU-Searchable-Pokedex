@@ -188,3 +188,4 @@ return{
 }
 global.BoardMap={mount};
 })(window);
+ 
