@@ -5,21 +5,24 @@
             players              -- [{id,name,c}]   playerId (guest mode)
             getPools(colors)     -- optional: {color:[pokemon names]} for the pools
             noSample, backHref
+            onLanding(info)      -- host/solo: a player's move ended; info = {player,space,kind,token,boss,alsoHere,homeOptions}
+            onAction(id, action) -- the player pressed a button shown with ctrl.showAction({text,buttons:[{id,label}]})
             (host/guest) playerId = the one token this device may move; omit it for a display-only host
-   controller: loadBoard(editorJson), setImage(url), handleMessage(msg),
+   controller: resolveEncounter(spaceId,'caught'|'defeated'|'abandon'), showAction(a), hideAction(),
+               loadBoard(editorJson), setImage(url), handleMessage(msg),
                resend(), fit(), setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
 (function(global){
-const CSS=".bm-root{--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}";
-const HTML="<svg id=\"b\" viewBox=\"0 0 1000 620\"></svg>\n<aside>\n <div class=\"box\" id=\"bkbox\" hidden><a id=\"bk\" href=\"#\" style=\"color:inherit\">\u2190 Back to the app</a></div>\n <div class=\"box\"><h4>View</h4><button id=\"zi\">+</button><button id=\"zo\">\u2212</button><button id=\"zf\">Fit</button> <small id=\"zl\"></small><br><small>Drag empty map to pan, pinch or scroll to zoom. Dragging a token near the edge scrolls the map.</small></div>\n <div class=\"box\"><h4>Load board</h4><button id=\"imgBtn\">Map image\u2026</button><input id=\"imgF\" type=\"file\" accept=\"image/*\" hidden> <button id=\"sb\">Sample board</button>\n  <textarea id=\"jt\" rows=\"3\" style=\"width:100%;box-sizing:border-box;margin-top:4px\" placeholder=\"Paste editor export JSON\"></textarea><button id=\"jb\">Load JSON</button><small id=\"jm\"></small></div>\n <div class=\"box\"><h4>View as</h4><div id=\"vw\"></div><small id=\"vwn\"></small></div>\n <div class=\"box\"><h4>Players (drag a token on the map)</h4><div id=\"pl\"></div><small>Mock host runs in this page; the log shows the messages that would travel over PeerJS.</small></div>\n <div class=\"box\"><h4>Prompt</h4><div id=\"pr\"><small>Move a token onto a space.</small></div><div style=\"margin-top:6px\"><button id=\"ev\">Draw Event Card (active player)</button><button id=\"lose\">Active player lost a battle</button></div><div id=\"hm\" style=\"margin-top:4px\"></div></div>\n <div class=\"box\" id=\"hostbox\"><h4>Host only: pools &amp; hidden tokens</h4><div id=\"host\"></div></div>\n <div class=\"box\" id=\"netbox\"><h4>What guests receive</h4><div id=\"leak\"></div><details><summary>Last board-state snapshot (JSON)</summary><pre id=\"snapj\" style=\"white-space:pre-wrap;word-break:break-all;font-size:10px;max-height:160px;overflow:auto\"></pre></details></div>\n <div class=\"box\" id=\"logbox\"><h4>Host log</h4><div id=\"log\"></div></div>\n</aside>";
+const CSS=".bm-root{position:relative;--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n.bm-root #actbar{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.4)}\n.bm-root #actbar[hidden]{display:none}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}";
+const HTML="<svg id=\"b\" viewBox=\"0 0 1000 620\"></svg>\n<aside>\n <div class=\"box\" id=\"bkbox\" hidden><a id=\"bk\" href=\"#\" style=\"color:inherit\">\u2190 Back to the app</a></div>\n <div class=\"box\"><h4>View</h4><button id=\"zi\">+</button><button id=\"zo\">\u2212</button><button id=\"zf\">Fit</button> <small id=\"zl\"></small><br><small>Drag empty map to pan, pinch or scroll to zoom. Dragging a token near the edge scrolls the map.</small></div>\n <div class=\"box\"><h4>Load board</h4><button id=\"imgBtn\">Map image\u2026</button><input id=\"imgF\" type=\"file\" accept=\"image/*\" hidden> <button id=\"sb\">Sample board</button>\n  <textarea id=\"jt\" rows=\"3\" style=\"width:100%;box-sizing:border-box;margin-top:4px\" placeholder=\"Paste editor export JSON\"></textarea><button id=\"jb\">Load JSON</button><small id=\"jm\"></small></div>\n <div class=\"box\"><h4>View as</h4><div id=\"vw\"></div><small id=\"vwn\"></small></div>\n <div class=\"box\"><h4>Players (drag a token on the map)</h4><div id=\"pl\"></div><small>Mock host runs in this page; the log shows the messages that would travel over PeerJS.</small></div>\n <div class=\"box\"><h4>Prompt</h4><div id=\"pr\"><small>Move a token onto a space.</small></div><div style=\"margin-top:6px\"><button id=\"ev\">Draw Event Card (active player)</button><button id=\"lose\">Active player lost a battle</button></div><div id=\"hm\" style=\"margin-top:4px\"></div></div>\n <div class=\"box\" id=\"hostbox\"><h4>Host only: pools &amp; hidden tokens</h4><div id=\"host\"></div></div>\n <div class=\"box\" id=\"netbox\"><h4>What guests receive</h4><div id=\"leak\"></div><details><summary>Last board-state snapshot (JSON)</summary><pre id=\"snapj\" style=\"white-space:pre-wrap;word-break:break-all;font-size:10px;max-height:160px;overflow:auto\"></pre></details></div>\n <div class=\"box\" id=\"logbox\"><h4>Host log</h4><div id=\"log\"></div></div>\n</aside><div id=\"actbar\" hidden></div>";
 function mount(container,opts){
 opts=opts||{};
 if(!document.getElementById('bm-style')){const st=document.createElement('style');st.id='bm-style';st.textContent=CSS;document.head.appendChild(st)}
 const root=document.createElement('div');root.className='bm-root';root.innerHTML=HTML;container.appendChild(root);
 
-const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
+const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={};const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
 const $=id=>root.querySelector('#'+id),svg=$('b');
 const COL={red:'#e03131',blue:'#2f4fd0',green:'#2f9e44',yellow:'#f5c211',orange:'#c9801f',pink:'#f08a96'};
 let PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:'p3',name:'Brock',c:'#8d6e63'}];
@@ -68,7 +71,12 @@ function routeCities(a,b){const adj={};for(const [x,y] of LK){(adj[x]=adj[x]||[]
  const out=[];if(!(b in prev))return out;for(let c=prev[b];c&&c!==a;c=prev[c])out.unshift(c);return out.filter(id=>get(id).type==='city')}
 function setHome(p,c){const n=PL.find(x=>x.id===p).name;home[p]=c;log(`host: ${n}'s Current Home → ${get(c).label||c}`);snapshot()}
 function hostMove(p,to){const prev=pos[p];log(`${PL.find(x=>x.id===p).name} → host: board-move ${to}`);pos[p]=to;snapshot();land(p,to,routeCities(prev,to))}
+function landEvent(p,id,passed,here){const s=get(id),homeOpts=[...passed.map(c=>({id:c,label:get(c).label||c,how:'passed through'})),...(s.type==='city'?[{id,label:s.label||id,how:''}]:[])].filter(o=>home[p]!==o.id);
+ pendingHome[p]=homeOpts.map(o=>o.id);let kind=(s.type==='city'||s.type==='special')?s.type:s.type==='event'?'event':'none';const o=st[id];
+ if(s.type==='catch'&&o){if(o.empty)kind='empty';else{if(!o.revealed){o.revealed=true;log(`host: reveal ${id} (${o.token}) to everyone`);snapshot()}kind='encounter'}}
+ opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,actions:s.actions||[]},kind,token:kind==='encounter'?o.token:null,boss:kind==='encounter'&&!!o.boss,alsoHere:here,homeOptions:homeOpts})}
 function land(p,id,passed=[]){const s=get(id),here=PL.filter(q=>q.id!==p&&pos[q.id]===id).map(q=>q.name),name=PL.find(q=>q.id===p).name;
+ if(mode==='host'&&opts.onLanding){landEvent(p,id,passed,here);return}
  let h=`<b>${name}</b> landed on <b>${s.label||s.type+' '+s.id}</b>.`;
  const hm=$('hm');hm.innerHTML='';[...passed.map(c=>[c,' (passed through)']),...(s.type==='city'?[[id,'']]:[])].filter(([c])=>home[p]!==c).forEach(([c,w])=>{const b=document.createElement('button');b.textContent=`Set Current Home: ${get(c).label||c}${w}`;b.onclick=()=>{setHome(p,c);hm.innerHTML=''};hm.appendChild(b)});
  if(here.length)h+=`<br>Also here: ${here.join(', ')} — <i>player-vs-player actions available</i>`;
@@ -168,6 +176,9 @@ $('imgBtn').onclick=()=>$('imgF').click();$('imgF').onchange=e=>{const f=e.targe
 $('jb').onclick=()=>{try{importBoard(JSON.parse($('jt').value))}catch(err){$('jm').textContent=' Could not read that JSON.'}};
 
 
+function showAction(a){const b=$('actbar');b.innerHTML='';const tx=document.createElement('div');tx.textContent=a.text;tx.style.marginBottom='6px';b.appendChild(tx);
+ (a.buttons||[]).forEach(x=>{const bt=document.createElement('button');bt.textContent=x.label;bt.onclick=()=>{hideAction();if(opts.onAction)opts.onAction(x.id,a)};b.appendChild(bt)});b.hidden=false}
+function hideAction(){$('actbar').hidden=true}
 if(opts.backHref){$('bk').href=opts.backHref;$('bkbox').hidden=false}
 if(mode==='guest'){view=opts.playerId||PL[0].id;active=view}
 if(mode!=='mock'){$('vw').parentNode.style.display='none';$('imgBtn').parentNode.style.display='none';$('hostbox').style.display='none';active=myId||(PL[0]&&PL[0].id)||active}
@@ -177,7 +188,9 @@ return{
  loadBoard:importBoard,
  setImage:u=>{img=u;draw()},
  setStatus:t=>{$('jm').textContent=t},getStatus:()=>$('jm').textContent,
- handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw()}},
+ handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw()}},
+ showAction,hideAction,
+ resolveEncounter(id,out){if(mode==='host'&&st[id]&&st[id].token)resolve(id,out)},
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
  fit:()=>fitView(),
  setView:v=>setView(v),
@@ -188,4 +201,3 @@ return{
 }
 global.BoardMap={mount};
 })(window);
- 
