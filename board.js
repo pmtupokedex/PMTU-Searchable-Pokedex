@@ -8,6 +8,8 @@
             onLanding(info)      -- host/solo: a player's move ended; info = {player,space,kind,token,boss,alsoHere,homeOptions}
             onAction(id, action) -- the player pressed a button shown with ctrl.showAction({text,buttons:[{id,label}]})
             (host/guest) playerId = the one token this device may move; omit it for a display-only host
+   loadBoard(editorJson, {style:'condensed'|'full'}) picks which map of the export to use; the export's
+   circleScale / eventScale size the round and event-card spaces, and a space flagged start is where everyone begins.
    controller: resolveEncounter(spaceId,'caught'|'defeated'|'abandon'), showAction(a), hideAction(),
                loadBoard(editorJson), setImage(url), handleMessage(msg),
                resend(), fit(), restoreView() [keeps the zoom, centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
@@ -22,7 +24,7 @@ opts=opts||{};
 if(!document.getElementById('bm-style')){const st=document.createElement('style');st.id='bm-style';st.textContent=CSS;document.head.appendChild(st)}
 const root=document.createElement('div');root.className='bm-root';root.innerHTML=HTML;container.appendChild(root);
 
-const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={};const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
+const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={},CS=1,ES=1;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
 const $=id=>root.querySelector('#'+id),svg=$('b');
 const COL={red:'#e03131',blue:'#2f4fd0',green:'#2f9e44',yellow:'#f5c211',orange:'#c9801f',pink:'#f08a96'};
 let PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:'p3',name:'Brock',c:'#8d6e63'}];
@@ -37,16 +39,16 @@ function sampleBoard(){const S=[['A','city',0,90,540,'Pallet'],['B','catch','red
  .map(([id,type,color,x,y,label,spawn])=>({id,type,color,x,y,label,spawn,actions:type==='city'?['Poké Mart','Pokémon Center','Gym Battle']:[]}));
  const L=[['A','B'],['B','C'],['C','D'],['D','E'],['E','F'],['F','G'],['G','H'],['H','I'],['E','J'],['J','K'],['K','L'],['L','M'],['M','N',{note:'🔒 Tier 3+'}],['N','I']];
  applyBoard({SP:S,LK:L,W:1000,H:620,R:14,names:SAMPLE_NAMES,start:'A'})}
-function importBoard(d){const m=['condensed','full'].map(k=>[k,d.spaces.filter(s=>s.pos&&s.pos[k]).length]).sort((a,b)=>b[1]-a[1])[0][0],asp=(d.maps&&d.maps[m]&&d.maps[m].aspect)||1.5,w=1000;
- const S=d.spaces.filter(s=>s.pos&&s.pos[m]).map(s=>({id:s.id,type:s.type,color:s.region||'red',x:s.pos[m].x*w,y:s.pos[m].y*w/asp,w:s.pos[m].w&&s.pos[m].w*w,h:s.pos[m].h&&s.pos[m].h*w/asp,label:s.label||'',spawn:s.spawn,actions:s.actions||[]}));
+function importBoard(d,o){const cnt=k=>d.spaces.filter(s=>s.pos&&s.pos[k]).length;let m0;if(o&&o.style){if(!cnt(o.style))throw new Error('this board has no '+o.style+' map yet');m0=o.style}else m0=['condensed','full'].map(k=>[k,cnt(k)]).sort((a,b)=>b[1]-a[1])[0][0];const m=m0,asp=(d.maps&&d.maps[m]&&d.maps[m].aspect)||1.5,w=1000;
+ const S=d.spaces.filter(s=>s.pos&&s.pos[m]).map(s=>({id:s.id,type:s.type,color:s.region||'red',x:s.pos[m].x*w,y:s.pos[m].y*w/asp,w:s.pos[m].w&&s.pos[m].w*w,h:s.pos[m].h&&s.pos[m].h*w/asp,label:s.label||'',spawn:s.spawn,start:!!s.start,actions:s.actions||[]}));
  const ids=new Set(S.map(s=>s.id)),L=d.links.filter(l=>ids.has(l[0])&&ids.has(l[1])).map(l=>[l[0],l[1],l[2]?{note:'🔒 '+(l[2].label||(l[2].type+' '+l[2].value))}:undefined]);
  const cols=[...new Set(S.filter(s=>s.type==='catch').map(s=>s.color))],names={};if(!cols.includes('orange'))cols.push('orange');
  cols.forEach(c=>{const n=S.filter(s=>s.type==='catch'&&s.color===c&&!s.spawn).length+(c==='orange'?3:4);names[c]=Array.from({length:n},(_,i)=>c[0].toUpperCase()+c.slice(1)+' '+(i+1))});
  if(opts.getPools){const ext=opts.getPools(cols);if(ext)Object.assign(names,ext)}
  const seen=new Set();if(!opts.getPools)S.filter(s=>s.spawn&&!seen.has(s.spawn)&&seen.add(s.spawn)).forEach(s=>names[s.color].push(s.spawn));
- const start=(S.find(s=>/pallet/i.test(s.label))||S.find(s=>s.type==='city')||S[0]).id;
- applyBoard({SP:S,LK:L,W:w,H:w/asp,R:w/170,names,start});$('jm').textContent=` Loaded ${S.length} spaces, ${L.length} links (${m} map).`}
-function applyBoard(o){SP=o.SP;LK=o.LK;W=o.W;H=o.H;R=o.R;K=R/14;NAMES=o.names;fitView();
+ const start=(S.find(s=>s.start)||S.find(s=>/pallet/i.test(s.label))||S.find(s=>s.type==='city')||S[0]).id;
+ applyBoard({SP:S,LK:L,W:w,H:w/asp,R:w/170,names,start,cs:(d.maps&&d.maps[m]&&d.maps[m].circleScale)||1,es:(d.maps&&d.maps[m]&&d.maps[m].eventScale)||1});$('jm').textContent=` Loaded ${S.length} spaces, ${L.length} links (${m} map).`}
+function applyBoard(o){SP=o.SP;CS=o.cs||1;ES=o.es||1;LK=o.LK;W=o.W;H=o.H;R=o.R;K=R/14;NAMES=o.names;fitView();
  startId=o.start;pos={};home={};PL.forEach(p=>{pos[p.id]=o.start;if(get(o.start)&&get(o.start).type==='city')home[p.id]=o.start});$('log').innerHTML='';if(mode==='guest'){draw()}else{setup();snapshot()}prompt('Move a token onto a space.')}
 // ---------- mock HOST ----------
 function setup(){pools={};for(const c in NAMES)pools[c]=shuf(NAMES[c].slice());st={};
@@ -61,7 +63,7 @@ function leakCheck(){const rev=new Set(),hid=new Set();for(const id in st){const
  $('leak').innerHTML=bad.length?`<b style="color:#d03a2f">✗ LEAK: ${bad.join(', ')}</b>`:`<span style="color:#2f9e44">✓ Leak check passed</span> <small>(${hid.size} hidden names, none in the snapshot)</small>`;
  $('snapj').textContent=JSON.stringify(JSON.parse(lastSnapStr),null,1)}
 function buildModel(){if(omni()){const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:o.token,boss:o.boss}}M={peek:true,pos,home,spaces:sp}}
- else M=lastSnapStr?JSON.parse(lastSnapStr):{pos:{},home:{},spaces:{}}}
+ else M=Object.assign({pos:{},home:{},spaces:{}},lastSnapStr?JSON.parse(lastSnapStr):{})}
 function renderView(){$('vw').innerHTML=[['host','Host'],...PL.map(q=>[q.id,q.name])].map(([v,n])=>`<button class="${v===view?'on':''}" data-v="${v}">${n}</button>`).join('');
  $('vw').querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>setView(b.dataset.v));
  $('vwn').textContent=view==='host'?'Sees everything, including face-down identities (italic names).':'Sees only what the host broadcasts. Can move only their own token.'}
@@ -109,16 +111,16 @@ function renderPl(){$('pl').innerHTML=PL.map(q=>`<button class="${q.id===active?
 const dims=s=>({w:s.w||80*K,h:s.h||40*K});
 function tokenXY(id){const s=get(id),here=PL.filter(q=>M.pos[q.id]===id);return q=>{const i=here.indexOf(q),n=here.length;if(n<2)return[s.x,s.y];
  if(s.type==='city'||s.type==='special'){const d=dims(s);return[s.x-d.w*.3+i*(d.w*.6/(n-1)),s.y]}
- const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.3,s.y+Math.sin(a)*R*1.3]}}
+ const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.3*CS,s.y+Math.sin(a)*R*1.3*CS]}}
 function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:'';const fo=img?.72:1,sw=.36*R;
  for(const [a,b,g] of LK){const A=get(a),B=get(b);h+=`<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${g?'#ffb000':'#222'}" stroke-width="${g?sw*1.3:sw}" opacity="${img?.8:1}"${g?` stroke-dasharray="${R*.9} ${R*.5}"`:''}/>`;
   if(g){const mx=(A.x+B.x)/2,my=(A.y+B.y)/2;h+=`<circle cx="${mx}" cy="${my}" r="${R*.8}" fill="#ffb000" stroke="#000" stroke-width="${R*.1}"/><text x="${mx}" y="${my+R*.35}" text-anchor="middle" font-size="${R*.95}">🔒</text><text x="${mx}" y="${my+R*1.9}" text-anchor="middle" font-size="${R*.8}" fill="#000" stroke="#fff" stroke-width="${R*.2}" paint-order="stroke">${g.note.slice(2)}</text>`}}
  for(const s of SP){const o=M.spaces[s.id]||(s.type==='catch'?{revealed:false,empty:false,token:null,boss:false}:undefined),e=dims(s);
   if(s.type==='city'||s.type==='special')h+=`<rect x="${s.x-e.w/2}" y="${s.y-e.h/2}" width="${e.w}" height="${e.h}" rx="${R*.3}" fill="${s.type==='city'?'#1b1b1b':'#8a8a92'}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" fill="#fff" font-size="${R*.9}">${s.label||s.id}</text>`;
-  else if(s.type==='event')h+=`<rect x="${s.x-R*1.1}" y="${s.y-R*1.4}" width="${R*2.2}" height="${R*2.8}" rx="${R*.3}" fill="#f2f2f2" stroke="#444" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" font-size="${R}" font-weight="700">E</text>`;
-  else if(s.type==='catch'){const em=o&&o.empty;h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5}" fill="${COL[s.color]||'#999'}" opacity="${em?.25:fo}" stroke="#000" stroke-width="${R*.1}"/>`+
+  else if(s.type==='event')h+=`<rect x="${s.x-R*1.1*ES}" y="${s.y-R*1.4*ES}" width="${R*2.2*ES}" height="${R*2.8*ES}" rx="${R*.3}" fill="#f2f2f2" stroke="#444" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" font-size="${R}" font-weight="700">E</text>`;
+  else if(s.type==='catch'){const em=o&&o.empty;h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="${COL[s.color]||'#999'}" opacity="${em?.25:fo}" stroke="#000" stroke-width="${R*.1}"/>`+
    (em?`<text x="${s.x}" y="${s.y+R*.4}" text-anchor="middle" font-size="${R*1.1}">✕</text>`:o.revealed?`<text x="${s.x}" y="${s.y+R*.3}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">${o.token.slice(0,7)}</text>`:`<text x="${s.x}" y="${s.y+R*.5}" text-anchor="middle" font-size="${R*1.4}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">?</text>`+(M.peek&&o.token?`<text x="${s.x}" y="${s.y+R*2.5}" text-anchor="middle" font-size="${R*.7}" font-style="italic" fill="#fff" stroke="#000" stroke-width="${R*.15}" paint-order="stroke">${o.token}</text>`:''))+
-   (o.boss?`<text x="${s.x+R*1.3}" y="${s.y-R}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
+   (o.boss?`<text x="${s.x+R*1.3*CS}" y="${s.y-R*CS}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
  PL.forEach((q,i)=>{const c=get(M.home[q.id]);if(!c)return;const d=dims(c),cx=c.x-d.w/2+R*(.7+1.2*i),cy=c.y-d.h/2-R*.1;h+=`<polygon points="${cx},${cy-R*.55} ${cx+R*.55},${cy} ${cx+R*.55},${cy+R*.55} ${cx-R*.55},${cy+R*.55} ${cx-R*.55},${cy}" fill="${q.c}" stroke="#fff" stroke-width="${R*.12}" pointer-events="none"/>`});
  for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
@@ -146,14 +148,14 @@ function edgeTick(ts){if(!drag||!lastPtr){edgeOn=false;lastTs=0;return}
  requestAnimationFrame(edgeTick)}
 function nearest(q){let best=null,d=1e9;for(const s of SP){const rc=s.type==='city'||s.type==='special';let k;
   if(rc){const e2=dims(s);k=Math.hypot(Math.max(Math.abs(q.x-s.x)-e2.w/2,0),Math.max(Math.abs(q.y-s.y)-e2.h/2,0))}
-  else k=Math.max(Math.hypot(q.x-s.x,q.y-s.y)-(s.type==='event'?R*1.4:R*1.5),0);
+  else k=Math.max(Math.hypot(q.x-s.x,q.y-s.y)-(s.type==='event'?R*1.4*ES:R*1.5*CS),0);
   if(k<d||(k===d&&k===0&&rc)){d=k;best=s}}
  return{best,d}}
 function moveDrag(){if(!drag)return;svg.querySelectorAll(`[data-p="${drag.p}"]`).forEach(c=>{c.setAttribute('cx',drag.x);c.setAttribute('cy',drag.y)});
  const ring=$('snapR');if(!ring)return;const n=nearest({x:drag.x,y:drag.y});
  if(!(n.best&&n.d<R*2&&n.best.id!==curPos()[drag.p])){ring.setAttribute('display','none');return}
- const s=n.best,rc=s.type==='city'||s.type==='special',pad=R*.5,e=dims(s),w=rc?e.w+2*pad:R*3.4,h=rc?e.h+2*pad:R*3.4;
- ring.setAttribute('display','');ring.setAttribute('x',s.x-w/2);ring.setAttribute('y',s.y-h/2);ring.setAttribute('width',w);ring.setAttribute('height',h);ring.setAttribute('rx',rc?R*.5:R*1.7)}
+ const s=n.best,rc=s.type==='city'||s.type==='special',pad=R*.5,e=dims(s),sc2=s.type==='event'?ES:CS,w=rc?e.w+2*pad:R*3.4*sc2,h=rc?e.h+2*pad:R*3.4*sc2;
+ ring.setAttribute('display','');ring.setAttribute('x',s.x-w/2);ring.setAttribute('y',s.y-h/2);ring.setAttribute('width',w);ring.setAttribute('height',h);ring.setAttribute('rx',rc?R*.5:R*1.7*sc2)}
 function dropToken(){if(!drag.moved){drag=null;draw();return}const q={x:drag.x,y:drag.y},p=drag.p;drag=null;const n=nearest(q);
  if(n.best&&n.d<R*2&&n.best.id!==curPos()[p]){if(mode==='guest'){send({type:'board-move',player:p,to:n.best.id});draw()}else hostMove(p,n.best.id)}else draw()}
 svg.onpointerdown=e=>{svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
