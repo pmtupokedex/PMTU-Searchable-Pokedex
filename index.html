@@ -23754,6 +23754,7 @@
                 return;
             }
             ensureMemberUid(member); // (no-op for an empty half)
+            if (wild && slot === 'defender') boardBindEncounter(peerKey, member); // Virtual Game Board: this is the encounter's Pok\u00e9mon
             const previous = hostBattleArenaState[slot];
             const newOwnerId = wild ? null : peerKey;
             // trainer:true (only ever with wild:true) marks the ownerless
@@ -23793,7 +23794,7 @@
             // discards it itself.
             if (previous && !previous.ownerId && previous.member) {
                 const sameIndividual = !!member && ((previous.member.uid && member.uid) ? previous.member.uid === member.uid : sameOccupant);
-                if (!sameIndividual) discardMemberEquippedCards(previous.member);
+                if (!sameIndividual) { discardMemberEquippedCards(previous.member); boardNoteWildLeft(previous.member); } // Virtual Game Board: defeated or walked away from
             }
             if (!sameOccupant && hostBattleArenaState.moves) hostBattleArenaState.moves[slot] = null;
             if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, status: null, rerolled: false };
@@ -23877,6 +23878,7 @@
                 sendBattleCatchFailure(peerKey, 'Only the player battling this Pok\u00e9mon can catch it.');
                 return;
             }
+            boardNoteWildLeft(entry.member, 'caught'); // Virtual Game Board
             // A catch ends the battle for everyone: both halves are
             // recalled and the moves go away.
             hostBattleArenaState.attacker = null;
@@ -32363,7 +32365,7 @@
             // Solo only -- a Lobby's Host handles this (see
             // hostApplyBattleSetSlot()). Whatever was attached to the
             // Wild Pok\u00e9mon being replaced goes to the discard pile.
-            if (lobbyState.role === null) discardMemberEquippedCards(battleWildPokemon);
+            if (lobbyState.role === null) { discardMemberEquippedCards(battleWildPokemon); boardNoteWildLeft(battleWildPokemon); } // Virtual Game Board (solo)
             battleWildPokemon = null;
             resetBattleCalcResult('defender');
             clearBattleDiceResults('defender');
@@ -32399,8 +32401,9 @@
             // Solo only (a Lobby's Host handles it) -- a different Wild
             // Pok\u00e9mon already there is being replaced, so its cards
             // go to the discard pile.
-            if (lobbyState.role === null && battleWildPokemon && battleWildPokemon !== member) discardMemberEquippedCards(battleWildPokemon);
+            if (lobbyState.role === null && battleWildPokemon && battleWildPokemon !== member) { discardMemberEquippedCards(battleWildPokemon); boardNoteWildLeft(battleWildPokemon); }
             ensureMemberUid(member); // so a defeat of it can be told apart
+            if (lobbyState.role === null) boardBindEncounter('host', member); // Virtual Game Board (solo)
             resetParalyzedSide(member); // entering the Arena
             battleWildPokemon = member;
             battleDefenderMemberIndex = 'wild';
@@ -36098,6 +36101,7 @@
             // telling this the Pok\u00e9mon (and whatever's attached to it)
             // is going onto the roster, not away.
             if (lobbyState.role === null && !(opts && opts.keepCards)) discardMemberEquippedCards(battleWildPokemon);
+            if (lobbyState.role === null) boardNoteWildLeft(battleWildPokemon, opts && opts.keepCards ? 'caught' : null); // Virtual Game Board (solo)
             battleWildPokemon = null;
             battleEnteredThisRound.defender = false;
             battleRerollsUsed.defender = 0;
@@ -40693,6 +40697,8 @@
                     boardHandleFromGuest(conn.peer, data);
                 } else if (data.type === 'board-hello') {
                     boardHandleHello();
+                } else if (data.type === 'board-sethome' && typeof data.city === 'string') {
+                    boardHandleSetHome(conn.peer, data);
                 } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
                     hostApplyDraw(data.deck, conn.peer);
                 } else if (data.type === 'deck-gain-reward' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -41063,6 +41069,8 @@
         var BOARD_SIZE_STORAGE_KEY = 'pmtuBoardLayerSize';
         var boardCtrl = null, boardSig = null, boardBuildPromise = null, boardScriptPromise = null;
         var boardDataCache = null, boardImageCache, boardLastState = null, boardPlayersSig = '';
+        var boardEncounter = null;   // host/solo only: the wild encounter a landing started (spaceId, playerId, name, uid once it's in the Arena)
+        var boardPoolAudit = [];
 
         function boardPlayers() {
             if (lobbyState.role === null) return [{ id: 'host', name: 'You', c: BOARD_COLOR_HEX.red }];
@@ -41117,13 +41125,14 @@
             if (boardCtrl && boardSig === sig) return Promise.resolve(boardCtrl);
             if (boardBuildPromise) return boardBuildPromise;
             boardBuildPromise = (async () => {
+                if (!Object.keys(POKEMON_BY_NAME).length) throw new Error('the Pokémon data is still loading, try again in a moment');
                 await boardEnsureScript();
                 const d = await boardFetchData();
                 if (boardCtrl) { boardCtrl.destroy(); boardCtrl = null; }
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend });
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : boardPoolsFor, onLanding: boardOnLanding, onAction: boardOnAction });
                 boardSig = sig;
                 boardPlayersSig = JSON.stringify(players);
                 boardCtrl.loadBoard(d);
@@ -41159,6 +41168,102 @@
         function boardOnGuestIdentified() {
             if (boardCtrl) { boardSyncPlayers(); boardCtrl.resend(); }
         }
+        // --- pools: TEMPORARY stand-in for the Pokédex selector = the original 151 (the "kanto" tag) ---
+        // A token's color comes from the color word in its search tags (pink/green/blue/yellow/red); the
+        // 'legendary' tag puts it in the orange pool. Anything with none or several color tags is left
+        // out and listed in boardPoolAudit / the console.
+        function boardPoolsFor(cols) {
+            const colorTag = { pink: 'pink', green: 'green', blue: 'blue', yellow: 'yellow', red: 'red' };
+            const pools = {};
+            cols.forEach(c => { pools[c] = []; });
+            boardPoolAudit = [];
+            Object.values(POKEMON_BY_NAME).forEach(p => {
+                const tags = p.tags || [];
+                if (!tags.includes('kanto')) return;
+                if (TEAM_ADD_FORCED_EXCLUDE_TAGS.some(f => tags.includes(f))) return;
+                const hits = Object.keys(colorTag).filter(c => tags.includes(colorTag[c]));
+                let color = null;
+                if (tags.includes('legendary')) color = 'orange';
+                else if (hits.length === 1) color = hits[0];
+                if (!color) { boardPoolAudit.push(p.name + (hits.length ? ' (several color tags)' : ' (no color tag)')); return; }
+                if (pools[color]) pools[color].push(p.name);
+            });
+            if (boardPoolAudit.length) console.warn('[board] Pokémon left out of the pools:', boardPoolAudit);
+            return pools;
+        }
+        // --- landings: the board (on the host / solo device) reports where a move ended; the player's own device gets the choices ---
+        function boardOnLanding(info) {
+            if (info.kind === 'encounter') boardEncounter = { spaceId: info.space.id, playerId: info.player, name: info.token, uid: null };
+            if (info.player === (getMyLobbyPlayerId() || 'host')) { boardDeliverLanding(info); return; }
+            const entry = lobbyState.connections.get(info.player);
+            if (entry && entry.conn && entry.conn.open) entry.conn.send({ type: 'board-landing', info });
+        }
+        function boardDeliverLanding(info) {
+            if (!boardCtrl || !info || !info.space) return;
+            const buttons = [];
+            let text;
+            if (info.kind === 'event') {
+                text = 'Event space \u2014 draw an Event card?';
+                buttons.push({ id: 'draw', label: 'Draw Event Card' }, { id: 'skip', label: 'Not now' });
+            } else if (info.kind === 'encounter') {
+                text = 'A wild ' + info.token + (info.boss ? ' (boss)' : '') + ' appeared!';
+                buttons.push({ id: 'battle', label: 'Battle!' }, { id: 'skip', label: 'Walk away' });
+            } else if (info.kind === 'empty') {
+                text = 'Nothing left to catch here.';
+            } else if (info.kind === 'city' || info.kind === 'special') {
+                const acts = info.space.actions || [];
+                text = (info.space.label || 'This location') + (acts.length ? ' \u2014 ' + acts.join(' \u00b7 ') : '');
+            } else {
+                return;
+            }
+            if (info.alsoHere && info.alsoHere.length) text += ' Also here: ' + info.alsoHere.join(', ') + '.';
+            (info.homeOptions || []).forEach(o => buttons.push({ id: 'home:' + o.id, label: 'Set Current Home: ' + o.label + (o.how ? ' (' + o.how + ')' : '') }));
+            if (!buttons.length) buttons.push({ id: 'skip', label: 'OK' });
+            boardCtrl.showAction({ text, buttons, info });
+        }
+        function boardOnAction(id, action) {
+            const info = action && action.info;
+            if (id === 'draw') {
+                if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Virtual decks are off for this save \u2014 draw from your physical Event deck.'); return; }
+                requestDrawCard('Event Deck');
+                setGameScreen('decks'); // the drawn card appears there as the Active Card
+            } else if (id === 'battle' && info) {
+                boardStartWildBattle(info);
+            } else if (id.startsWith('home:')) {
+                const city = id.slice(5);
+                if (lobbyState.role === 'guest') boardSend({ type: 'board-sethome', city });
+                else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-sethome', player: 'host', city });
+                if (info) { info.homeOptions = (info.homeOptions || []).filter(o => o.id !== city); boardDeliverLanding(info); } // keep the other choices
+            }
+        }
+        // Same steps as picking a wild Pok\u00e9mon from the gallery (confirmBattleWildSelection), minus the pick itself.
+        function boardStartWildBattle(info) {
+            const entry = POKEMON_BY_NAME[info.token];
+            if (!entry) { showGameToast('Could not find ' + info.token + ' in the Pok\u00e9mon data.'); return; }
+            if (isActiveSaveReadOnly()) return;
+            const source = { dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false };
+            setGameScreen('battle');
+            confirmBattleSlotReplace('defender', () => {
+                setBattleDefenderWild(buildWildPokemonMember(source));
+                renderBattleDefenderSlot();
+                renderBattleAttackerSlot();
+            });
+        }
+        // --- encounter bookkeeping (host / solo device): which Arena Pok\u00e9mon is this landing's token, and how did it leave? ---
+        function boardBindEncounter(peerKey, member) {
+            if (boardEncounter && !boardEncounter.uid && member && boardEncounter.playerId === peerKey && member.name === boardEncounter.name) boardEncounter.uid = member.uid;
+        }
+        function boardNoteWildLeft(member, forced) {
+            if (!boardEncounter || !boardEncounter.uid || !member || member.uid !== boardEncounter.uid) return;
+            const enc = boardEncounter;
+            boardEncounter = null;
+            const outcome = forced || (member.fainted ? 'defeated' : 'abandon');
+            if (boardCtrl) boardCtrl.resolveEncounter(enc.spaceId, outcome);
+        }
+        function boardHandleSetHome(peerId, data) {
+            boardEnsureBoard().then(c => c.handleMessage({ type: 'board-sethome', player: peerId, city: data.city })).catch(() => {});
+        }
+
         // --- the board screen (#game-screen-board) ---
         // Desktop: panel size (720px, like the Rulebook) or full window, remembered for the browser
         // session. Browser fullscreen applies to just the map frame (#game-board-frame), so no panel
@@ -41970,6 +42075,8 @@
                     renderRewardMenu(); // no-op unless this exact menu is open
                 } else if (data.type === 'board-state' && typeof data.snap === 'string') {
                     boardReceiveState(data);
+                } else if (data.type === 'board-landing' && data.info) {
+                    boardDeliverLanding(data.info);
                 } else if (data.type === 'battle-arena-state') {
                     guestBattleArenaCache = data;
                     applyIncomingArenaState(data);
