@@ -9,7 +9,7 @@
             onAction(id, action) -- the player pressed a button shown with ctrl.showAction({text,buttons:[{id,label}]})
             (host/guest) playerId = the one token this device may move; omit it for a display-only host
    loadBoard(editorJson, {style:'condensed'|'full'}) picks which map of the export to use; the export's
-   circleScale / eventScale size the round and event-card spaces, and a space flagged start is where everyone begins.
+   circleScale sizes every round space (Catch 'Em and Event alike), and a space flagged start is where everyone begins.
    controller: resolveEncounter(spaceId,'caught'|'defeated'|'abandon'), showAction(a), hideAction(),
                loadBoard(editorJson), setImage(url), handleMessage(msg),
                resend(), fit(), restoreView() [keeps the zoom, centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
@@ -47,7 +47,7 @@ function importBoard(d,o){const cnt=k=>d.spaces.filter(s=>s.pos&&s.pos[k]).lengt
  if(opts.getPools){const ext=opts.getPools(cols);if(ext)Object.assign(names,ext)}
  const seen=new Set();if(!opts.getPools)S.filter(s=>s.spawn&&!seen.has(s.spawn)&&seen.add(s.spawn)).forEach(s=>names[s.color].push(s.spawn));
  const start=(S.find(s=>s.start)||S.find(s=>/pallet/i.test(s.label))||S.find(s=>s.type==='city')||S[0]).id;
- applyBoard({SP:S,LK:L,W:w,H:w/asp,R:w/170,names,start,cs:(d.maps&&d.maps[m]&&d.maps[m].circleScale)||1,es:(d.maps&&d.maps[m]&&d.maps[m].eventScale)||1});$('jm').textContent=` Loaded ${S.length} spaces, ${L.length} links (${m} map).`}
+ applyBoard({SP:S,LK:L,W:w,H:w/asp,R:w/170,names,start,cs:(d.maps&&d.maps[m]&&d.maps[m].circleScale)||1,es:1});$('jm').textContent=` Loaded ${S.length} spaces, ${L.length} links (${m} map).`}
 function applyBoard(o){SP=o.SP;CS=o.cs||1;ES=o.es||1;LK=o.LK;W=o.W;H=o.H;R=o.R;K=R/14;NAMES=o.names;fitView();
  startId=o.start;pos={};home={};PL.forEach(p=>{pos[p.id]=o.start;if(get(o.start)&&get(o.start).type==='city')home[p.id]=o.start});$('log').innerHTML='';if(mode==='guest'){draw()}else{setup();snapshot()}prompt('Move a token onto a space.')}
 // ---------- mock HOST ----------
@@ -117,7 +117,7 @@ function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height
   if(g){const mx=(A.x+B.x)/2,my=(A.y+B.y)/2;h+=`<circle cx="${mx}" cy="${my}" r="${R*.8}" fill="#ffb000" stroke="#000" stroke-width="${R*.1}"/><text x="${mx}" y="${my+R*.35}" text-anchor="middle" font-size="${R*.95}">🔒</text><text x="${mx}" y="${my+R*1.9}" text-anchor="middle" font-size="${R*.8}" fill="#000" stroke="#fff" stroke-width="${R*.2}" paint-order="stroke">${g.note.slice(2)}</text>`}}
  for(const s of SP){const o=M.spaces[s.id]||(s.type==='catch'?{revealed:false,empty:false,token:null,boss:false}:undefined),e=dims(s);
   if(s.type==='city'||s.type==='special')h+=`<rect x="${s.x-e.w/2}" y="${s.y-e.h/2}" width="${e.w}" height="${e.h}" rx="${R*.3}" fill="${s.type==='city'?'#1b1b1b':'#8a8a92'}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" fill="#fff" font-size="${R*.9}">${s.label||s.id}</text>`;
-  else if(s.type==='event')h+=`<rect x="${s.x-R*1.1*ES}" y="${s.y-R*1.4*ES}" width="${R*2.2*ES}" height="${R*2.8*ES}" rx="${R*.3}" fill="#f2f2f2" stroke="#444" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" font-size="${R}" font-weight="700">E</text>`;
+  else if(s.type==='event')h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="#f2f2f2" stroke="#000" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.45}" text-anchor="middle" font-size="${R*1.3}" font-weight="700">E</text>`;
   else if(s.type==='catch'){const em=o&&o.empty;h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="${COL[s.color]||'#999'}" opacity="${em?.25:fo}" stroke="#000" stroke-width="${R*.1}"/>`+
    (em?`<text x="${s.x}" y="${s.y+R*.4}" text-anchor="middle" font-size="${R*1.1}">✕</text>`:o.revealed?`<text x="${s.x}" y="${s.y+R*.3}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">${o.token.slice(0,7)}</text>`:`<text x="${s.x}" y="${s.y+R*.5}" text-anchor="middle" font-size="${R*1.4}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">?</text>`+(M.peek&&o.token?`<text x="${s.x}" y="${s.y+R*2.5}" text-anchor="middle" font-size="${R*.7}" font-style="italic" fill="#fff" stroke="#000" stroke-width="${R*.15}" paint-order="stroke">${o.token}</text>`:''))+
    (o.boss?`<text x="${s.x+R*1.3*CS}" y="${s.y-R*CS}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
@@ -148,13 +148,13 @@ function edgeTick(ts){if(!drag||!lastPtr){edgeOn=false;lastTs=0;return}
  requestAnimationFrame(edgeTick)}
 function nearest(q){let best=null,d=1e9;for(const s of SP){const rc=s.type==='city'||s.type==='special';let k;
   if(rc){const e2=dims(s);k=Math.hypot(Math.max(Math.abs(q.x-s.x)-e2.w/2,0),Math.max(Math.abs(q.y-s.y)-e2.h/2,0))}
-  else k=Math.max(Math.hypot(q.x-s.x,q.y-s.y)-(s.type==='event'?R*1.4*ES:R*1.5*CS),0);
+  else k=Math.max(Math.hypot(q.x-s.x,q.y-s.y)-R*1.5*CS,0);
   if(k<d||(k===d&&k===0&&rc)){d=k;best=s}}
  return{best,d}}
 function moveDrag(){if(!drag)return;svg.querySelectorAll(`[data-p="${drag.p}"]`).forEach(c=>{c.setAttribute('cx',drag.x);c.setAttribute('cy',drag.y)});
  const ring=$('snapR');if(!ring)return;const n=nearest({x:drag.x,y:drag.y});
  if(!(n.best&&n.d<R*2&&n.best.id!==curPos()[drag.p])){ring.setAttribute('display','none');return}
- const s=n.best,rc=s.type==='city'||s.type==='special',pad=R*.5,e=dims(s),sc2=s.type==='event'?ES:CS,w=rc?e.w+2*pad:R*3.4*sc2,h=rc?e.h+2*pad:R*3.4*sc2;
+ const s=n.best,rc=s.type==='city'||s.type==='special',pad=R*.5,e=dims(s),sc2=CS,w=rc?e.w+2*pad:R*3.4*sc2,h=rc?e.h+2*pad:R*3.4*sc2;
  ring.setAttribute('display','');ring.setAttribute('x',s.x-w/2);ring.setAttribute('y',s.y-h/2);ring.setAttribute('width',w);ring.setAttribute('height',h);ring.setAttribute('rx',rc?R*.5:R*1.7*sc2)}
 function dropToken(){if(!drag.moved){drag=null;draw();return}const q={x:drag.x,y:drag.y},p=drag.p;drag=null;const n=nearest(q);
  if(n.best&&n.d<R*2&&n.best.id!==curPos()[p]){if(mode==='guest'){send({type:'board-move',player:p,to:n.best.id});draw()}else hostMove(p,n.best.id)}else draw()}
