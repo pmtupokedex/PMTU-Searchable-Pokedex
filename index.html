@@ -14349,12 +14349,12 @@
                 </div>
 
                 <!-- Experimental: opens the virtual game board prototype
-                     (board-prototype.html, same folder as this file).
+                     (maps/board-prototype.html).
                      Plain link rather than a game-menu-tile, since it
                      leaves this page instead of switching game screens. -->
                 <div class="game-section-header">Experimental</div>
                 <div style="margin: 0 -5px;">
-                    <a id="game-board-prototype-btn" class="filter-btn" href="board-prototype.html" style="display: block; text-align: center; text-decoration: none;">Standalone Board Prototype Page</a>
+                    <a id="game-board-prototype-btn" class="filter-btn" href="maps/board-prototype.html" style="display: block; text-align: center; text-decoration: none;">Standalone Board Prototype Page</a>
                 </div>
             </div>
 
@@ -41143,7 +41143,7 @@
             if (e.target && e.target.classList && e.target.classList.contains('game-region-map-enabled-select')) syncRegionMapStyleRows();
         });
         // The map itself lives in board.js (BoardMap.mount) and knows nothing about
-        // this app. This block is only the adapter: it loads board.js + board.json
+        // this app. This block is only the adapter: it loads board.js + board-<region>.json
         // on first use, hands the map a send() function and the lobby roster, routes
         // the board-* messages (see the host and guest dispatchers), and runs the
         // board screen (#game-screen-board). Moves arrive tagged with conn.peer, never
@@ -41151,6 +41151,9 @@
         // can safely call boardSyncPlayers() even before this block has executed.
         var BOARD_COLOR_HEX = { red: '#e63233', blue: '#2c3eaa', green: '#378e2f', yellow: '#fdca01', orange: '#f28c1e', purple: '#8e44ad' };
         var BOARD_SIZE_STORAGE_KEY = 'pmtuBoardLayerSize';
+        // Everything board-related (board.js, the board-<region>.json files, the map images) lives in this folder
+        // next to index.html. Change it here if it ever moves.
+        var BOARD_DIR = 'maps/';
         var boardCtrl = null, boardSig = null, boardBuildPromise = null, boardScriptPromise = null;
         var boardDataCache = {}, boardImageCache = {}, boardLastState = null, boardPlayersSig = '';
         var boardConfig = { region: null, style: null }; // what the mounted board was built for
@@ -41183,16 +41186,16 @@
             if (boardScriptPromise) return boardScriptPromise;
             boardScriptPromise = new Promise((resolve, reject) => {
                 const s = document.createElement('script');
-                s.src = 'board.js';
+                s.src = BOARD_DIR + 'board.js';
                 s.onload = () => resolve();
-                s.onerror = () => { boardScriptPromise = null; reject(new Error('board.js was not found next to this page')); };
+                s.onerror = () => { boardScriptPromise = null; reject(new Error(BOARD_DIR + 'board.js was not found')); };
                 document.head.appendChild(s);
             });
             return boardScriptPromise;
         }
         async function boardFetchData(region) {
             if (boardDataCache[region]) return boardDataCache[region];
-            const file = 'board-' + region + '.json';
+            const file = BOARD_DIR + 'board-' + region + '.json';
             const r = await fetch(file, { cache: 'no-store' });
             if (!r.ok) throw new Error('there is no board for the "' + region + '" region yet (' + file + ' returned ' + r.status + ')');
             boardDataCache[region] = await r.json();
@@ -41204,7 +41207,7 @@
             const n = (d.maps && d.maps[style] && d.maps[style].imageName) || '';
             boardImageCache[key] = null;
             if (!n) return null;
-            const names = [...new Set([n, n.replace(/ /g, '_'), n.replace(/ /g, '.'), n.replace(/ /g, '-'), n.replace(/ /g, '')].flatMap(x => [x, x.toLowerCase()]))];
+            const names = [...new Set([n, n.replace(/ /g, '_'), n.replace(/ /g, '.'), n.replace(/ /g, '-'), n.replace(/ /g, '')].flatMap(x => [x, x.toLowerCase()]))].map(x => BOARD_DIR + x);
             for (const u of names) {
                 const ok = await new Promise(res => { const i = new Image(); i.onload = () => res(true); i.onerror = () => res(false); i.src = encodeURI(u); });
                 if (ok) { boardImageCache[key] = encodeURI(u); break; }
