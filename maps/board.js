@@ -5,6 +5,8 @@
             players              -- [{id,name,c}]   playerId (guest mode)
             getPools(colors)     -- optional: {color:[pokemon names]} for the pools
             noSample, backHref
+            showMarkers          -- default true; false draws no space shapes, labels, text, paths or lock icons (the map art
+                                    carries them) -- only player tokens, home markers and the yellow drop highlight
             onLanding(info)      -- host/solo: a player's move ended; info = {player,space,kind,token,boss,alsoHere,homeOptions}
             onAction(id, action) -- the player pressed a button shown with ctrl.showAction({text,buttons:[{id,label}]})
             (host/guest) playerId = the one token this device may move; omit it for a display-only host
@@ -112,10 +114,10 @@ const dims=s=>({w:s.w||80*K,h:s.h||40*K});
 function tokenXY(id){const s=get(id),here=PL.filter(q=>M.pos[q.id]===id);return q=>{const i=here.indexOf(q),n=here.length;if(n<2)return[s.x,s.y];
  if(s.type==='city'||s.type==='special'){const d=dims(s);return[s.x-d.w*.3+i*(d.w*.6/(n-1)),s.y]}
  const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.3*CS,s.y+Math.sin(a)*R*1.3*CS]}}
-function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:'';const fo=img?.72:1,sw=.36*R;
- for(const [a,b,g] of LK){const A=get(a),B=get(b);h+=`<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${g?'#ffb000':'#222'}" stroke-width="${g?sw*1.3:sw}" opacity="${img?.8:1}"${g?` stroke-dasharray="${R*.9} ${R*.5}"`:''}/>`;
+function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:'';const fo=img?.72:1,sw=.36*R,sm=opts.showMarkers!==false;
+ if(sm)for(const [a,b,g] of LK){const A=get(a),B=get(b);h+=`<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${g?'#ffb000':'#222'}" stroke-width="${g?sw*1.3:sw}" opacity="${img?.8:1}"${g?` stroke-dasharray="${R*.9} ${R*.5}"`:''}/>`;
   if(g){const mx=(A.x+B.x)/2,my=(A.y+B.y)/2;h+=`<circle cx="${mx}" cy="${my}" r="${R*.8}" fill="#ffb000" stroke="#000" stroke-width="${R*.1}"/><text x="${mx}" y="${my+R*.35}" text-anchor="middle" font-size="${R*.95}">🔒</text><text x="${mx}" y="${my+R*1.9}" text-anchor="middle" font-size="${R*.8}" fill="#000" stroke="#fff" stroke-width="${R*.2}" paint-order="stroke">${g.note.slice(2)}</text>`}}
- for(const s of SP){const o=M.spaces[s.id]||(s.type==='catch'?{revealed:false,empty:false,token:null,boss:false}:undefined),e=dims(s);
+ if(sm)for(const s of SP){const o=M.spaces[s.id]||(s.type==='catch'?{revealed:false,empty:false,token:null,boss:false}:undefined),e=dims(s);
   if(s.type==='city'||s.type==='special')h+=`<rect x="${s.x-e.w/2}" y="${s.y-e.h/2}" width="${e.w}" height="${e.h}" rx="${R*.3}" fill="${s.type==='city'?'#1b1b1b':'#8a8a92'}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" fill="#fff" font-size="${R*.9}">${s.label||s.id}</text>`;
   else if(s.type==='event')h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="#f2f2f2" stroke="#000" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.45}" text-anchor="middle" font-size="${R*1.3}" font-weight="700">E</text>`;
   else if(s.type==='catch'){const em=o&&o.empty;h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="${COL[s.color]||'#999'}" opacity="${em?.25:fo}" stroke="#000" stroke-width="${R*.1}"/>`+
