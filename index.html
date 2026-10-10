@@ -42407,6 +42407,8 @@
                     boardHandleFromGuest(conn.peer, data);
                 } else if (data.type === 'board-hello') {
                     boardHandleHello();
+                } else if (data.type === 'board-encounter') {
+                    boardHandleEncounter(conn.peer);
                 } else if (data.type === 'board-caught' && Array.isArray(data.names)) {
                     boardHandleCaught(conn.peer, data);
                 } else if (data.type === 'board-sethome' && typeof data.city === 'string') {
@@ -43641,6 +43643,11 @@
             if (!getRegionMapSettingsForActiveSave().enabled) return;
             boardEnsureBoard().then(c => { boardSyncPlayers(); c.resend(); }).catch(() => {});
         }
+        // The player (identified by their connection, never by anything in the message) chose to encounter the wild Pokémon here.
+        function boardHandleEncounter(peerId) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            boardEnsureBoard().then(c => c.handleMessage({ type: 'board-encounter', player: peerId })).catch(() => {});
+        }
         function boardReceiveState(data) {
             boardLastState = data;
             boardLastPlayers = boardPlayers().map(p => ({ id: p.id, c: p.c }));
@@ -43765,6 +43772,10 @@
             if (info.kind === 'event') {
                 text = 'Event space \u2014 draw an Event card?';
                 buttons.push({ id: 'draw', label: 'Draw Event Card' }, { id: 'skip', label: 'Not now' });
+            } else if (info.kind === 'catch') {
+                // Nothing is revealed yet: the player may instead battle someone here, or have moved without actions.
+                text = (info.token ? 'A wild ' + info.token + (info.boss ? ' (boss)' : '') + ' is here.' : 'There is a wild Pok\u00e9mon here.') + ' Encounter it?';
+                buttons.push({ id: 'encounter', label: 'Encounter it' }, { id: 'skip', label: 'Not now' });
             } else if (info.kind === 'encounter') {
                 text = 'A wild ' + info.token + (info.boss ? ' (boss)' : '') + ' appeared!';
                 buttons.push({ id: 'battle', label: 'Battle!' }, { id: 'skip', label: 'Walk away' });
@@ -43787,6 +43798,9 @@
                 if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Virtual decks are off for this save \u2014 draw from your physical Event deck.'); return; }
                 requestDrawCard('Event Deck');
                 setGameScreen('decks'); // the drawn card appears there as the Active Card
+            } else if (id === 'encounter') {
+                if (lobbyState.role === 'guest') boardSend({ type: 'board-encounter' });
+                else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-encounter', player: 'host' });
             } else if (id === 'battle' && info) {
                 boardStartWildBattle(info);
             } else if (id.startsWith('home:')) {
