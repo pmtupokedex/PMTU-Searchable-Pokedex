@@ -42179,6 +42179,7 @@
         function resyncLobbyForNewHostSave() {
             if (lobbyState.role !== 'host' || activeSaveSlot === null) return;
             const hostSave = gameSaves[activeSaveSlot];
+            const switchedGame = lobbyState.hostSaveId !== hostSave.hostSaveId; // false when the same save is simply reloaded
             lobbyState.hostSaveId = hostSave.hostSaveId;
             lobbyState.playerProgress = {};
             const hostData = getActiveSaveData();
@@ -42186,6 +42187,17 @@
                 badgePoints: computeBadgePoints(hostData),
             };
             recomputeLobbyLeadingStage();
+            // How far along the game is belongs to the previous game too. Left alone, a lobby that had already started its
+            // last game kept saying "Game is in progress" for a brand-new save (hiding Begin Game Setup), and the welcomes
+            // built below told every guest the same. A fresh hosting session starts all of this cleared, with the host's own
+            // starter read from the save (see startHostingLobby()); each guest's starter is reported again when they
+            // re-identify against this save. The Game Board is per game as well. None of it applies when the same save is
+            // just reloaded, since that's the same game.
+            if (switchedGame) {
+                lobbyState.gameOfficiallyStarted = false;
+                lobbyState.starterChosen = { host: lobbyState.hostIsPlayer && !!hostData.starterLocked };
+                boardResetForNewSave();
+            }
             // Colors belong to the PREVIOUS save's identities -- every
             // connected player is about to re-identify against this one
             // (silently, via an existing guest save, or via the naming/
@@ -42203,6 +42215,7 @@
             refreshLobbyRosterFromHostState();
             // The new save has its own Trainer Card claims.
             broadcastTrainerCardClaims();
+            updateLobbyStartGameButtonUI();
         }
 
         function wireHostConnection(conn) {
@@ -43146,6 +43159,7 @@
                 persistActiveSaveSlot();
                 closeOverflowPrompt();
             }
+            stopLocalMusicPlayback(); // this device is no longer the one playing for the table
             resetLobbyState();
             if (wasPlayer) {
                 hostTransferGraceUntil = Date.now() + HOST_TRANSFER_GRACE_MS;
@@ -43759,6 +43773,22 @@
             return pools;
         }
         // --- landings: the board (on the host / solo device) reports where a move ended; the player's own device gets the choices ---
+        // The board is per game. When the host moves to a different save with the lobby still up, the old positions, Pokémon,
+        // Homes and caught reports must not carry over: the host drops its board, guests are told to drop theirs, and if the
+        // map is open a fresh one comes up.
+        function boardResetLocal() {
+            if (boardCtrl) { try { boardCtrl.destroy(); } catch (err) { /* already gone */ } boardCtrl = null; }
+            boardSig = null; boardPendingRestore = null; boardEncounter = null;
+            boardCaughtReports = {}; boardLastReportSig = null; boardClientPeer = {};
+            boardLastState = null; boardLastPlayers = null;
+            const mount = document.getElementById('game-board-mount');
+            if (mount) mount.innerHTML = '';
+        }
+        function boardResetForNewSave() {
+            boardResetLocal();
+            lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) { try { entry.conn.send({ type: 'board-reset' }); } catch (err) { /* gone */ } } });
+            if (currentGameScreen === 'board') initBoardScreen();
+        }
         function boardOnLanding(info) {
             if (info.kind === 'encounter') boardEncounter = { spaceId: info.space.id, playerId: info.player, name: info.token, uid: null };
             if (info.player === (getMyLobbyPlayerId() || 'host')) { boardDeliverLanding(info); return; }
@@ -44763,6 +44793,9 @@
                     renderRewardMenu(); // no-op unless this exact menu is open
                 } else if (data.type === 'board-state' && typeof data.snap === 'string') {
                     boardReceiveState(data);
+                } else if (data.type === 'board-reset') {
+                    boardResetLocal();
+                    if (currentGameScreen === 'board') initBoardScreen();
                 } else if (data.type === 'board-caught-request') {
                     boardReportCaught(true);
                 } else if (data.type === 'board-landing' && data.info) {
@@ -48014,6 +48047,7 @@
         // (see .game-menu-tile-icon-slot.is-placeholder) -- paste image
         // URLs in here, same as MUSIC_CATEGORY_ICONS above.
         const TOOL_MENU_ICONS = {
+            'board': 'https://dl.dropboxusercontent.com/scl/fi/45anczqp9930aboupx8kr/tool_map.png?rlkey=qll0nn88rhpy0865crvl6bhcf&st=rpz3abgp&dl=1',
             'team': 'https://dl.dropboxusercontent.com/scl/fi/ubgcrcq7zmdurvu46nc5b/tool_pokemon.png?rlkey=ns19gvf1oz5kj6lnht2edun1q&st=7rtmhjau&dl=1',
             'decks': 'https://dl.dropboxusercontent.com/scl/fi/5h2iarg98gfki60drva8i/tool_handanddecks.png?rlkey=8sr1rvduyag7gmli6gmkvvzkt&st=5t86q4ks&dl=1',
             'badges': 'https://dl.dropboxusercontent.com/scl/fi/ta0qi6cq4fdrfwtmi2wgz/tool_badges.png?rlkey=0q6uksykj8dxmf02rw2k2vogu&st=cu1iyme2&dl=1',
@@ -48022,7 +48056,6 @@
             'trainer-card': 'https://dl.dropboxusercontent.com/scl/fi/z8glcjgziokhan33u6foo/tool_trainercard.png?rlkey=ggdhzpxyd1rtzkto4dragq4ir&st=xz7m6ydm&dl=1',
             'lobby': 'https://dl.dropboxusercontent.com/scl/fi/6emggeg1utvdn2iqcn6ig/tool_play.png?rlkey=0gesydi08q89ue908d7x0z47k&st=0zrv7700&dl=1',
             'rulebook-picker': 'https://dl.dropboxusercontent.com/scl/fi/sgv7p7b3jguvvlbg4oozp/tool_rulebook.png?rlkey=v2ykv9joiwvxde4uh5ob8fnzf&st=i6yw2eyl&dl=1',
-		'board': 'https://dl.dropboxusercontent.com/scl/fi/45anczqp9930aboupx8kr/tool_map.png?rlkey=qll0nn88rhpy0865crvl6bhcf&st=rpz3abgp&dl=1',
         };
         function applyToolMenuIcons() {
             document.querySelectorAll('.game-menu-tiles-grid .game-menu-tile').forEach(tile => {
@@ -48083,6 +48116,9 @@
         }
 
         let musicState = loadMusicPlayerState();
+        // What the host's last broadcast said (see applyGuestMusicMirror()). Only used if this device becomes the host mid-session
+        // (a handoff), so it can carry on playing what the table was listening to -- see resumeMusicAfterTakeover().
+        let musicMirror = { isPlaying: false, trackTitle: null, category: null };
 
         function saveMusicPlayerState() {
             try {
@@ -48564,6 +48600,7 @@
         // musicState directly -- renderMusicRegionUI's header text, for
         // instance -- stays correct too.
         function applyGuestMusicMirror(data) {
+            musicMirror = { isPlaying: !!data.isPlaying, trackTitle: data.trackTitle || null, category: data.category || null };
             const regionChanged = musicState.activeRegion !== data.region;
             musicState.activeCategory = data.category;
             musicState.activeRegion = data.region;
@@ -48615,10 +48652,40 @@
         // directly (see requestMusicTransportAction()/
         // requestMusicCategoryChange()), so there's nothing for a guest
         // to drift out of sync with by tapping them.
+        // Only the host's (or a solo player's) device ever plays music; a guest is a pure mirror. That only holds if a device
+        // that WAS playing -- a solo player who joins a game, or a host who hands the game off -- actually goes quiet when it
+        // becomes a guest: its own play/pause buttons now just send requests to the host, so nothing local could ever stop it,
+        // and it kept playing underneath the new host's music.
+        function stopLocalMusicPlayback() {
+            try { musicAudio.pause(); } catch (err) { /* nothing was playing */ }
+            battleMusicWasInProgress = false;
+            battleMusicCueApplied = false;
+        }
+        // A guest that is promoted to host (or takes over in a handoff) never played anything itself, so a battle cue or
+        // category change would load a track but leave it paused (those only keep playback going if it was already going).
+        // If the table was listening to music when the previous host handed off, carry on with it: same category, same track
+        // if it can be found. Silently stays paused if the browser blocks autoplay.
+        function resumeMusicAfterTakeover() {
+            const m = musicMirror;
+            musicMirror = { isPlaying: false, trackTitle: null, category: null };
+            if (!m.isPlaying || !m.category || musicQueueIndex >= 0 && !musicAudio.paused) return;
+            rebuildMusicQueue({ keepCurrentTrack: false });
+            if (m.trackTitle) {
+                const i = musicQueue.findIndex(track => track.title === m.trackTitle);
+                if (i >= 0) { musicQueueIndex = i; loadCurrentTrack({ autoplay: false }); }
+            }
+            if (musicQueueIndex >= 0 && isCategoryAudible('music')) {
+                musicAudio.volume = getCategoryVolume('music');
+                musicAudio.play().catch(() => { renderMusicPlayerUI(); /* autoplay blocked: show it as paused */ });
+                renderMusicPlayerUI(); // also tells the guests it's playing
+            }
+        }
         function syncMusicUIForLobbyRole() {
             const remote = lobbyState.role === 'guest';
+            if (lobbyState.role === null) musicMirror = { isPlaying: false, trackTitle: null, category: null }; // not in a lobby: nothing to carry over
             musicGameStageSelect.disabled = remote;
             if (remote) {
+                stopLocalMusicPlayback();
                 musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => { btn.disabled = true; });
                 // A leftover `disabled` from browsing solo before joining
                 // (e.g. no track loaded, or none matching this device's
@@ -48634,6 +48701,7 @@
                 musicRegionButtons.querySelectorAll('.music-region-btn').forEach(btn => { btn.disabled = false; });
                 refreshMusicPlaylistButtons();
                 renderMusicPlayerUI();
+                if (lobbyState.role === 'host') resumeMusicAfterTakeover();
             }
         }
 
