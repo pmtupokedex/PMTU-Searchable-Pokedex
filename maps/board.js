@@ -14,7 +14,7 @@
    circleScale sizes every round space (Catch 'Em and Event alike), and a space flagged start is where everyone begins.
    controller: resolveEncounter(spaceId,'caught'|'defeated'|'abandon'), showAction(a), hideAction(),
                loadBoard(editorJson), setImage(url), handleMessage(msg),
-               resend(), fit(), restoreView() [keeps the zoom, centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
+               resend(), restoreSnapshot(snapString, [{id,c}]) [host: resume a game from a previous host's last board-state; players matched by color c], fit(), restoreView() [keeps the zoom, centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
@@ -58,6 +58,25 @@ function setup(){pools={};for(const c in NAMES)pools[c]=shuf(NAMES[c].slice());s
   if(s.spawn){o.token=s.spawn;o.revealed=true;let f=false;for(const c in pools){const i=pools[c].indexOf(s.spawn);if(i>=0){pools[c].splice(i,1);o.home=c;f=true;break}}if(!f){o.dup=true;log(`host: no ${s.spawn} left in the pools — created a duplicate for ${s.id}`)}}
   else{o.token=(pools[s.color]||[]).pop();if(!o.token){o.empty=true;o.revealed=true}else o.revealed=false}st[s.id]=o}
  log('host: setup — dealt face-down tokens (bosses face-up)')}
+// ---------- restore: a new host picks up a game already in progress ----------
+// A snapshot's player ids are the OLD host's lobby ids, which change on a handoff, so players are matched by
+// color (c) instead. Hidden (face-down) tokens are never in a snapshot, so those are simply dealt again.
+let restoreQ=null;
+function restorePlayers(){if(!restoreQ)return;const left=[];
+ restoreQ.forEach(o=>{const p=PL.find(x=>x.c===o.c);if(!p){left.push(o);return}
+  if(o.pos&&get(o.pos))pos[p.id]=o.pos;if(o.home&&get(o.home))home[p.id]=o.home});
+ restoreQ=left.length?left:null}
+function restoreSnapshot(str,oldPlayers){if(mode!=='host'||!str)return false;let s;try{s=JSON.parse(str)}catch(e){return false}
+ if(!s||!s.spaces||!s.pos)return false;const used=new Set();
+ for(const id in s.spaces){const r=s.spaces[id],o=st[id];if(!o)continue;
+  o.revealed=!!r.revealed;o.empty=!!r.empty;o.boss=!!r.boss;if(!o.boss&&get(id).spawn)o.cleared=true;
+  if(o.empty)o.token=null;
+  else if(r.revealed&&r.token){o.token=r.token;used.add(r.token);let hc=null;for(const c in NAMES)if(NAMES[c].includes(r.token)){hc=c;break}o.home=hc||get(id).color;o.dup=!hc}}
+ for(const c in pools)pools[c]=pools[c].filter(n=>!used.has(n));
+ for(const id in st){const o=st[id];if(o.revealed||o.empty||!used.has(o.token))continue;const n=(pools[get(id).color]||[]).pop();if(n)o.token=n;else{o.token=null;o.empty=true;o.revealed=true}}
+ sync=Math.max(sync,s.seq|0);
+ restoreQ=(oldPlayers||[]).map(p=>({c:p.c,pos:s.pos[p.id],home:s.home&&s.home[p.id]}));
+ restorePlayers();log('host: restored the board from the previous host');snapshot();return true}
 function snapshot(){sync++;const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:(o.revealed&&!o.empty)?o.token:null,boss:o.boss}}
  lastSnapStr=JSON.stringify({seq:sync,pos,home,spaces:sp});if(mode==='host')send({type:'board-state',snap:lastSnapStr});log(`host → ${PL.length} guests: board-state #${sync} (${lastSnapStr.length} bytes)`);leakCheck();draw();renderHost()}
 function leakCheck(){const rev=new Set(),hid=new Set();for(const id in st){const o=st[id];if(o.token)(o.revealed?rev:hid).add(o.token)}for(const c in pools)pools[c].forEach(n=>hid.add(n));rev.forEach(n=>hid.delete(n));
@@ -198,10 +217,11 @@ return{
  showAction,hideAction,
  resolveEncounter(id,out){if(mode==='host'&&st[id]&&st[id].token)resolve(id,out)},
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
+ restoreSnapshot,
  fit:()=>fitView(),
  restoreView,
  setView:v=>setView(v),
- setPlayers(list){PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});snapshot()}else draw();renderView()},
+ setPlayers(list){PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
  destroy(){ro.disconnect();root.remove()}
 };
 
