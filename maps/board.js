@@ -8,6 +8,9 @@
             showMarkers          -- default true; false draws no space shapes, labels, text, paths or lock icons (the map art
                                     carries them) -- only player tokens, home markers and the yellow drop highlight
             onLanding(info)      -- host/solo: a player's move ended; info = {player,space,kind,token,boss,alsoHere,homeOptions}
+                                    kind 'catch' = a wild Pokémon is here and NOT yet revealed (token is null unless it was
+                                    already face-up); the player answers with message {type:'board-encounter'} to reveal it,
+                                    which comes back as kind 'encounter' (token revealed)
             onAction(id, action) -- the player pressed a button shown with ctrl.showAction({text,buttons:[{id,label}]})
             (host/guest) playerId = the one token this device may move; omit it for a display-only host
    loadBoard(editorJson, {style:'condensed'|'full'}) picks which map of the export to use; the export's
@@ -28,7 +31,7 @@ opts=opts||{};
 if(!document.getElementById('bm-style')){const st=document.createElement('style');st.id='bm-style';st.textContent=CSS;document.head.appendChild(st)}
 const root=document.createElement('div');root.className='bm-root';root.innerHTML=HTML;container.appendChild(root);
 
-const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={},CS=1,ES=1;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
+const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={},pendingEnc={},CS=1,ES=1;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
 const $=id=>root.querySelector('#'+id),svg=$('b');
 const COL={red:'#e03131',blue:'#2f4fd0',green:'#2f9e44',yellow:'#f5c211',orange:'#c9801f',pink:'#f08a96'};
 let PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:'p3',name:'Brock',c:'#8d6e63'}];
@@ -44,7 +47,7 @@ function sampleBoard(){const S=[['A','city',0,90,540,'Pallet'],['B','catch','red
  const L=[['A','B'],['B','C'],['C','D'],['D','E'],['E','F'],['F','G'],['G','H'],['H','I'],['E','J'],['J','K'],['K','L'],['L','M'],['M','N',{note:'🔒 Tier 3+'}],['N','I']];
  applyBoard({SP:S,LK:L,W:1000,H:620,R:14,names:SAMPLE_NAMES,start:'A'})}
 function importBoard(d,o){const cnt=k=>d.spaces.filter(s=>s.pos&&s.pos[k]).length;let m0;if(o&&o.style){if(!cnt(o.style))throw new Error('this board has no '+o.style+' map yet');m0=o.style}else m0=['condensed','full'].map(k=>[k,cnt(k)]).sort((a,b)=>b[1]-a[1])[0][0];const m=m0,asp=(d.maps&&d.maps[m]&&d.maps[m].aspect)||1.5,w=1000;
- const S=d.spaces.filter(s=>s.pos&&s.pos[m]).map(s=>({id:s.id,type:s.type,color:s.region||'red',x:s.pos[m].x*w,y:s.pos[m].y*w/asp,w:s.pos[m].w&&s.pos[m].w*w,h:s.pos[m].h&&s.pos[m].h*w/asp,label:s.label||'',spawn:s.spawn,start:!!s.start,actions:s.actions||[]}));
+ const S=d.spaces.filter(s=>s.pos&&s.pos[m]).map(s=>({id:s.id,type:s.type,color:s.region||(s.type==='catch'?'red':null),x:s.pos[m].x*w,y:s.pos[m].y*w/asp,w:s.pos[m].w&&s.pos[m].w*w,h:s.pos[m].h&&s.pos[m].h*w/asp,label:s.label||'',spawn:s.spawn,start:!!s.start,actions:s.actions||[]}));
  const ids=new Set(S.map(s=>s.id)),L=d.links.filter(l=>ids.has(l[0])&&ids.has(l[1])).map(l=>[l[0],l[1],l[2]?{note:'🔒 '+(l[2].label||(l[2].type+' '+l[2].value))}:undefined]);
  const cols=[...new Set(S.filter(s=>s.type==='catch').map(s=>s.color))],names={};if(!cols.includes('orange'))cols.push('orange');
  cols.forEach(c=>{const n=S.filter(s=>s.type==='catch'&&s.color===c&&!s.spawn).length+(c==='orange'?3:4);names[c]=Array.from({length:n},(_,i)=>c[0].toUpperCase()+c.slice(1)+' '+(i+1))});
@@ -106,7 +109,7 @@ function restoreState(s){if(mode!=='host'||!s||s.v!==1||!s.spaces||!s.pools)retu
  restorePlayers();log('host: restored the full board (face-down Pokémon included) from the previous host');snapshot();return true}
 // A guest who reconnects gets a new connection id; the app calls this with the old and new ids (matched by guestClientId).
 function adoptPlayer(o,n){if(mode!=='host'||!o||!n||o===n||pos[o]===undefined)return false;
- pos[n]=pos[o];if(home[o]!==undefined)home[n]=home[o];delete pos[o];delete home[o];delete pendingHome[o];snapshot();return true}
+ pos[n]=pos[o];if(home[o]!==undefined)home[n]=home[o];delete pos[o];delete home[o];delete pendingHome[o];if(pendingEnc[o]){pendingEnc[n]=pendingEnc[o];delete pendingEnc[o]}snapshot();return true}
 function snapshot(){sync++;const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:(o.revealed&&!o.empty)?o.token:null,boss:o.boss}}
  lastSnapStr=JSON.stringify({seq:sync,pos,home,spaces:sp});if(mode==='host')send({type:'board-state',snap:lastSnapStr});log(`host → ${PL.length} guests: board-state #${sync} (${lastSnapStr.length} bytes)`);leakCheck();draw();renderHost()}
 function leakCheck(){const rev=new Set(),hid=new Set();for(const id in st){const o=st[id];if(o.token)(o.revealed?rev:hid).add(o.token)}for(const c in pools)pools[c].forEach(n=>hid.add(n));rev.forEach(n=>hid.delete(n));
@@ -125,9 +128,13 @@ function routeCities(a,b){const adj={};for(const [x,y] of LK){(adj[x]=adj[x]||[]
 function setHome(p,c){const n=PL.find(x=>x.id===p).name;home[p]=c;log(`host: ${n}'s Current Home → ${get(c).label||c}`);snapshot()}
 function hostMove(p,to){const prev=pos[p];log(`${PL.find(x=>x.id===p).name} → host: board-move ${to}`);pos[p]=to;snapshot();land(p,to,routeCities(prev,to))}
 function landEvent(p,id,passed,here){const s=get(id),homeOpts=[...passed.map(c=>({id:c,label:get(c).label||c,how:'passed through'})),...(s.type==='city'?[{id,label:s.label||id,how:''}]:[])].filter(o=>home[p]!==o.id);
- pendingHome[p]=homeOpts.map(o=>o.id);let kind=(s.type==='city'||s.type==='special')?s.type:s.type==='event'?'event':'none';const o=st[id];
- if(s.type==='catch'&&o){if(o.empty)kind='empty';else{if(!o.revealed){o.revealed=true;log(`host: reveal ${id} (${o.token}) to everyone`);snapshot()}kind='encounter'}}
- opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,actions:s.actions||[]},kind,token:kind==='encounter'?o.token:null,boss:kind==='encounter'&&!!o.boss,alsoHere:here,homeOptions:homeOpts})}
+ pendingHome[p]=homeOpts.map(o=>o.id);pendingEnc[p]=null;let kind=(s.type==='city'||s.type==='special')?s.type:s.type==='event'?'event':'none';const o=st[id];
+ if(s.type==='catch'&&o){if(o.empty)kind='empty';else{kind='catch';pendingEnc[p]=id}} // nothing is revealed until the player chooses to encounter it
+ opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind,token:(kind==='catch'&&o.revealed)?o.token:null,boss:kind==='catch'&&o.revealed&&!!o.boss,alsoHere:here,homeOptions:homeOpts})}
+// The player chose to encounter the wild Pokémon on the space they are standing on: only now is it revealed.
+function acceptEncounter(p){const id=pendingEnc[p];if(!id||pos[p]!==id)return false;const o=st[id];if(!o||o.empty||!o.token)return false;pendingEnc[p]=null;
+ if(!o.revealed){o.revealed=true;log(`host: reveal ${id} (${o.token}) to everyone`);snapshot()}
+ const s=get(id);opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind:'encounter',token:o.token,boss:!!o.boss,alsoHere:[],homeOptions:[]});return true}
 function land(p,id,passed=[]){const s=get(id),here=PL.filter(q=>q.id!==p&&pos[q.id]===id).map(q=>q.name),name=PL.find(q=>q.id===p).name;
  if(mode==='host'&&opts.onLanding){landEvent(p,id,passed,here);return}
  let h=`<b>${name}</b> landed on <b>${s.label||s.type+' '+s.id}</b>.`;
@@ -168,7 +175,7 @@ function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height
   if(g){const mx=(A.x+B.x)/2,my=(A.y+B.y)/2;h+=`<circle cx="${mx}" cy="${my}" r="${R*.8}" fill="#ffb000" stroke="#000" stroke-width="${R*.1}"/><text x="${mx}" y="${my+R*.35}" text-anchor="middle" font-size="${R*.95}">🔒</text><text x="${mx}" y="${my+R*1.9}" text-anchor="middle" font-size="${R*.8}" fill="#000" stroke="#fff" stroke-width="${R*.2}" paint-order="stroke">${g.note.slice(2)}</text>`}}
  if(sm)for(const s of SP){const o=M.spaces[s.id]||(s.type==='catch'?{revealed:false,empty:false,token:null,boss:false}:undefined),e=dims(s);
   if(s.type==='city'||s.type==='special')h+=`<rect x="${s.x-e.w/2}" y="${s.y-e.h/2}" width="${e.w}" height="${e.h}" rx="${R*.3}" fill="${s.type==='city'?'#1b1b1b':'#8a8a92'}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" fill="#fff" font-size="${R*.9}">${s.label||s.id}</text>`;
-  else if(s.type==='event')h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="#f2f2f2" stroke="#000" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.45}" text-anchor="middle" font-size="${R*1.3}" font-weight="700">E</text>`;
+  else if(s.type==='event')h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="${COL[s.color]||'#f2f2f2'}" stroke="#000" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.45}" text-anchor="middle" font-size="${R*1.3}" font-weight="700" fill="#fff" stroke="#000" stroke-width="${R*.14}" paint-order="stroke">E</text>`;
   else if(s.type==='catch'){const em=o&&o.empty;h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="${COL[s.color]||'#999'}" opacity="${em?.25:fo}" stroke="#000" stroke-width="${R*.1}"/>`+
    (em?`<text x="${s.x}" y="${s.y+R*.4}" text-anchor="middle" font-size="${R*1.1}">✕</text>`:o.revealed?`<text x="${s.x}" y="${s.y+R*.3}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">${o.token.slice(0,7)}</text>`:`<text x="${s.x}" y="${s.y+R*.5}" text-anchor="middle" font-size="${R*1.4}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">?</text>`+(M.peek&&o.token?`<text x="${s.x}" y="${s.y+R*2.5}" text-anchor="middle" font-size="${R*.7}" font-style="italic" fill="#fff" stroke="#000" stroke-width="${R*.15}" paint-order="stroke">${o.token}</text>`:''))+
    (o.boss?`<text x="${s.x+R*1.3*CS}" y="${s.y-R*CS}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
@@ -243,7 +250,7 @@ return{
  loadBoard:importBoard,
  setImage:u=>{img=u;draw()},
  setStatus:t=>{$('jm').textContent=t},getStatus:()=>$('jm').textContent,
- handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw()}},
+ handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw()}},
  showAction,hideAction,
  resolveEncounter(id,out){if(mode==='host'&&st[id]&&st[id].token)resolve(id,out)},
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
