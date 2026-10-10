@@ -19240,6 +19240,7 @@
 
         function persistGameSaves() {
             try {
+                boardStampCaughtAs();
                 localStorage.setItem(GAME_SAVES_KEY, JSON.stringify(gameSaves));
             } catch (err) {
                 console.warn('Could not save game saves:', err);
@@ -19247,6 +19248,7 @@
             // Every host-save change doubles as a backup trigger (debounced;
             // no-op unless hosting) -- see scheduleHostBackup().
             scheduleHostBackup();
+            boardReportCaught(); // Virtual Game Board: a team change may change which Pokémon are out of the wild
         }
 
         function loadActiveSaveSlot(slots) {
@@ -19759,10 +19761,12 @@
 
         function persistGameGuestSaves() {
             try {
+                boardStampCaughtAs();
                 localStorage.setItem(GAME_GUEST_SAVES_KEY, JSON.stringify(gameGuestSaves));
             } catch (err) {
                 console.warn('Could not save guest saves:', err);
             }
+            boardReportCaught();
         }
 
         function loadActiveGuestSaveId(saves) {
@@ -42397,12 +42401,14 @@
                         // see hostSyncStarterNature().
                         hostSyncStarterNature(conn.peer, !!data.starterNatureOwed);
                         broadcastDeckState();
-                        boardOnGuestIdentified();
+                        boardOnGuestIdentified(conn.peer, data.guestClientId);
                     }
                 } else if (data.type === 'board-move' && typeof data.to === 'string') {
                     boardHandleFromGuest(conn.peer, data);
                 } else if (data.type === 'board-hello') {
                     boardHandleHello();
+                } else if (data.type === 'board-caught' && Array.isArray(data.names)) {
+                    boardHandleCaught(conn.peer, data);
                 } else if (data.type === 'board-sethome' && typeof data.city === 'string') {
                     boardHandleSetHome(conn.peer, data);
                 } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
@@ -42864,6 +42870,7 @@
                 oldHostClientId: getOrCreateGuestClientId(),
                 succession: hostSuccessionOrder.filter(id => connectedIds.has(id)),
                 save: cloneJSON(S),
+                board: boardBackupPayload(), // the board's complete state (face-down Pokémon included) for a successor
             };
         }
 
@@ -43254,9 +43261,9 @@
             openGamePanel();
             setGameScreen('lobby');
             const color = PLAYER_COLORS.includes(built.color) ? built.color : null;
-            const boardCarry = (boardLastState && typeof boardLastState.snap === 'string' && boardLastPlayers)
+            const boardCarry = boardCarryFromOffer(offer) || ((boardLastState && typeof boardLastState.snap === 'string' && boardLastPlayers)
                 ? { snap: boardLastState.snap, region: boardLastState.region, style: boardLastState.style === 'full' ? 'full' : 'condensed', players: boardLastPlayers }
-                : null;
+                : null);
             startHostingLobby(built.name, !!color, color);
             if (lobbyState.role === 'host') boardPendingRestore = boardCarry;
             // "Start Game" was already pressed on the old host: don't drop everyone back into the
@@ -43517,6 +43524,7 @@
         // Host handoff/failover: the last board-state this device saw as a guest, plus who was who then (by color),
         // so a new host can resume the same board instead of starting a fresh one. See boardEnsureBoard().
         var boardLastPlayers = null, boardPendingRestore = null;
+        var boardCaughtReports = {}, boardLastReportSig = null, boardClientPeer = {};
         var boardConfig = { region: null, style: null }; // what the mounted board was built for
         var boardEncounter = null;   // host/solo only: the wild encounter a landing started (spaceId, playerId, name, uid once it's in the Arena)
         var boardPoolAudit = [];
@@ -43535,7 +43543,7 @@
                 .map((p, i) => ({ id: p.id, name: p.name || 'Trainer', c: BOARD_COLOR_HEX[p.color] || BOARD_COLOR_HEX[PLAYER_COLORS[i % PLAYER_COLORS.length]] }));
         }
         function boardSend(msg) {
-            if (msg && msg.type === 'board-state' && lobbyState.role === 'host') { msg.region = boardConfig.region; msg.style = boardConfig.style; } // tells guests which board this is
+            if (msg && msg.type === 'board-state' && lobbyState.role === 'host') { msg.region = boardConfig.region; msg.style = boardConfig.style; scheduleHostBackup(); } // tells guests which board this is
             if (lobbyState.role === 'host') {
                 lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send(msg); });
             } else if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) {
@@ -43600,12 +43608,17 @@
                 if (img) boardCtrl.setImage(img);
                 // A host that took over mid-game: resume from the last board this device saw as a guest.
                 if (!guest && boardPendingRestore && boardPendingRestore.region === cfg.region && boardPendingRestore.style === cfg.style) {
-                    boardCtrl.restoreSnapshot(boardPendingRestore.snap, boardPendingRestore.players);
+                    const pr = boardPendingRestore;
                     boardPendingRestore = null;
+                    let restored = false;
+                    if (pr.full) restored = boardCtrl.restoreState(pr.full); // exact: face-down Pokémon kept
+                    if (!restored && pr.snap) boardCtrl.restoreSnapshot(pr.snap, pr.players); // older backup: revealed ones only
+                    if (pr.reports) boardCaughtReports = Object.assign({}, pr.reports);
                 }
                 // A host that isn't playing is the table's display: read-only, face-down Pokémon stay hidden.
                 if (lobbyState.role === 'host' && !lobbyState.hostIsPlayer) boardCtrl.setView('tv');
                 if (guest && boardLastState) boardCtrl.handleMessage(boardLastState);
+                if (!guest) { boardReportCaught(true); boardApplyCaught(); boardBroadcastCaughtRequest(); }
                 return boardCtrl;
             })();
             const clear = () => { boardBuildPromise = null; };
@@ -43638,8 +43651,81 @@
             }
             boardCtrl.handleMessage(data);
         }
-        function boardOnGuestIdentified() {
+        // A guest who reconnects gets a NEW connection id, so the board would see a stranger (token back on the Start
+        // space, Home gone). guestClientId is the durable identity (the same one hands and Trainer Card claims use), so
+        // when it shows up under a different id the board moves that player's state across before anything else runs.
+        function boardOnGuestIdentified(peerId, guestClientId) {
+            if (guestClientId) {
+                const old = boardClientPeer[guestClientId];
+                boardClientPeer[guestClientId] = peerId;
+                if (old && old !== peerId) {
+                    if (boardCtrl) boardCtrl.adoptPlayer(old, peerId);
+                    if (boardEncounter && boardEncounter.playerId === old) boardEncounter.playerId = peerId;
+                }
+            }
+            const entry = peerId && lobbyState.connections.get(peerId);
+            if (entry && entry.conn && entry.conn.open) { try { entry.conn.send({ type: 'board-caught-request' }); } catch (err) { /* gone */ } }
             if (boardCtrl) { boardSyncPlayers(); boardCtrl.resend(); }
+        }
+        // --- caught Pokémon: each team's caught forms -> the host's board, so they stay out of the wild pool ---
+        // The form a Pokémon was CAUGHT as is stamped on the member (member.caughtAs) the first time a save is written
+        // with it on a team, because evolving overwrites member.name. A member already evolved before this existed can
+        // only be stamped with its current form. Trades keep the stamp (it travels with the member).
+        function boardStampCaughtAs() {
+            try {
+                const stamp = (S) => { if (S && S.team && Array.isArray(S.team.members)) S.team.members.forEach(m => { if (m && !m.gymLeaderId && !m.caughtAs && m.name) m.caughtAs = m.name; }); };
+                if (Array.isArray(gameSaves)) gameSaves.forEach(stamp);
+                if (gameGuestSaves) Object.values(gameGuestSaves).forEach(stamp);
+            } catch (err) { /* not initialized yet */ }
+        }
+        function boardMyCaughtNames() {
+            let S = null;
+            if (lobbyState.role === 'guest' && activeGuestSaveId !== null) S = gameGuestSaves[activeGuestSaveId];
+            else if (activeSaveSlot !== null) S = gameSaves[activeSaveSlot];
+            const members = (S && S.team && S.team.members) || [];
+            return [...new Set(members.filter(m => m && !m.gymLeaderId).map(m => m.caughtAs || m.name).filter(Boolean))];
+        }
+        function boardReportCaught(force) {
+            try {
+                const names = boardMyCaughtNames();
+                const sig = JSON.stringify(names.slice().sort());
+                if (!force && sig === boardLastReportSig) return;
+                boardLastReportSig = sig;
+                if (lobbyState.role === 'guest') boardSend({ type: 'board-caught', names });
+                else { boardCaughtReports.host = names; boardApplyCaught(); }
+            } catch (err) { /* not initialized yet */ }
+        }
+        function boardHandleCaught(peerId, data) {
+            const entry = lobbyState.connections.get(peerId);
+            boardCaughtReports[(entry && entry.guestClientId) || peerId] = data.names.filter(n => typeof n === 'string').slice(0, 300);
+            boardApplyCaught();
+        }
+        function boardApplyCaught() {
+            if (!boardCtrl || lobbyState.role === 'guest') return;
+            const all = new Set();
+            Object.values(boardCaughtReports).forEach(list => list.forEach(n => all.add(n)));
+            boardCtrl.setCaught([...all]);
+        }
+        function boardBroadcastCaughtRequest() {
+            lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) { try { entry.conn.send({ type: 'board-caught-request' }); } catch (err) { /* gone */ } } });
+        }
+        // What a taking-over host resumes from: the board's full state out of the backup. In the old host's caught-form
+        // reports, 'host' meant THEIR team, so it is re-keyed to their durable id (they are an ordinary player now and will
+        // re-report); this device's own entry from its time as a guest is dropped, since its team is now the 'host' report.
+        function boardCarryFromOffer(offer) {
+            if (!(offer && offer.board && offer.board.state && offer.board.region)) return null;
+            const reports = Object.assign({}, offer.board.reports || {});
+            if (reports.host && offer.oldHostClientId) reports[offer.oldHostClientId] = reports.host;
+            delete reports.host;
+            delete reports[getOrCreateGuestClientId()];
+            return { full: offer.board.state, reports, region: offer.board.region, style: offer.board.style === 'full' ? 'full' : 'condensed' };
+        }
+        function boardBackupPayload() {
+            try {
+                if (!boardCtrl || lobbyState.role !== 'host') return null;
+                const state = boardCtrl.exportState();
+                return state ? { region: boardConfig.region, style: boardConfig.style, state, reports: boardCaughtReports } : null;
+            } catch (err) { return null; }
         }
         // --- pools: TEMPORARY stand-in for the Pokédex selector = every Pokémon carrying the save's region tag (kanto = the original 151) ---
         // A token's color comes from the color word in its search tags (pink/green/blue/yellow/red); the
@@ -44663,6 +44749,8 @@
                     renderRewardMenu(); // no-op unless this exact menu is open
                 } else if (data.type === 'board-state' && typeof data.snap === 'string') {
                     boardReceiveState(data);
+                } else if (data.type === 'board-caught-request') {
+                    boardReportCaught(true);
                 } else if (data.type === 'board-landing' && data.info) {
                     boardDeliverLanding(data.info);
                 } else if (data.type === 'battle-arena-state') {
