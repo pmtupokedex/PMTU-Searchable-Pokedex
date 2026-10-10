@@ -16,6 +16,8 @@
                loadBoard(editorJson), setImage(url), handleMessage(msg),
                resend(), restoreSnapshot(snapString, [{id,c}]) [host: resume a game from a previous host's last board-state; players matched by color c], fit(), restoreView() [keeps the zoom, centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
+   Host only: setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
+   for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
 (function(global){
@@ -61,7 +63,7 @@ function setup(){pools={};for(const c in NAMES)pools[c]=shuf(NAMES[c].slice());s
 // ---------- restore: a new host picks up a game already in progress ----------
 // A snapshot's player ids are the OLD host's lobby ids, which change on a handoff, so players are matched by
 // color (c) instead. Hidden (face-down) tokens are never in a snapshot, so those are simply dealt again.
-let restoreQ=null;
+let restoreQ=null,owned=new Set(),boardCaught=new Set();
 function restorePlayers(){if(!restoreQ)return;const left=[];
  restoreQ.forEach(o=>{const p=PL.find(x=>x.c===o.c);if(!p){left.push(o);return}
   if(o.pos&&get(o.pos))pos[p.id]=o.pos;if(o.home&&get(o.home))home[p.id]=o.home});
@@ -77,6 +79,34 @@ function restoreSnapshot(str,oldPlayers){if(mode!=='host'||!str)return false;let
  sync=Math.max(sync,s.seq|0);
  restoreQ=(oldPlayers||[]).map(p=>({c:p.c,pos:s.pos[p.id],home:s.home&&s.home[p.id]}));
  restorePlayers();log('host: restored the board from the previous host');snapshot();return true}
+// ---------- caught Pokémon, the full-state handoff, and a guest rejoining under a new id ----------
+// A Pokémon on any player's team is not in the wild. The app reports every team's caught forms (the form it was
+// caught as: evolving doesn't change it). setCaught() keeps those tokens out of the pools and off face-down spaces,
+// and returns a token to its pool once it is no longer on anyone's team (released). A catch made on the board is
+// held out until its owner's report includes it, so nothing is dealt twice in the gap.
+function colorOf(n){for(const c in NAMES)if(NAMES[c].includes(n))return c;return null}
+function setCaught(names){if(mode!=='host')return;const now=new Set(names||[]);
+ boardCaught.forEach(t=>{if(now.has(t))boardCaught.delete(t)});
+ const prev=owned;owned=new Set([...now,...boardCaught]);
+ for(const c in pools)pools[c]=pools[c].filter(n=>!owned.has(n));
+ for(const id in st){const o=st[id];if(!o.token||o.revealed||o.empty||!owned.has(o.token))continue;
+  const n=(pools[get(id).color]||[]).pop();if(n)o.token=n;else{o.token=null;o.empty=true;o.revealed=true}}
+ const onMap=new Set();for(const id in st)if(st[id].token)onMap.add(st[id].token);
+ prev.forEach(n=>{if(owned.has(n)||onMap.has(n))return;const c=colorOf(n);if(c&&!pools[c].includes(n)){pools[c].push(n);shuf(pools[c])}});
+ snapshot()}
+// The host's COMPLETE state, face-down Pokémon and pools included. Never sent to the table: the app puts it in the
+// host backup so a successor can resume exactly where the old host stopped.
+function exportState(){if(mode!=='host')return null;const j=x=>JSON.parse(JSON.stringify(x));
+ return{v:1,seq:sync,spaces:j(st),pools:j(pools),pos:j(pos),home:j(home),players:PL.map(p=>({id:p.id,c:p.c})),owned:[...owned],boardCaught:[...boardCaught]}}
+function restoreState(s){if(mode!=='host'||!s||s.v!==1||!s.spaces||!s.pools)return false;
+ for(const id in s.spaces){if(!st[id])continue;st[id]=Object.assign({},st[id],s.spaces[id])}
+ pools=JSON.parse(JSON.stringify(s.pools));owned=new Set(s.owned||[]);boardCaught=new Set(s.boardCaught||[]);
+ sync=Math.max(sync,s.seq|0);
+ restoreQ=(s.players||[]).map(p=>({c:p.c,pos:s.pos&&s.pos[p.id],home:s.home&&s.home[p.id]}));
+ restorePlayers();log('host: restored the full board (face-down Pokémon included) from the previous host');snapshot();return true}
+// A guest who reconnects gets a new connection id; the app calls this with the old and new ids (matched by guestClientId).
+function adoptPlayer(o,n){if(mode!=='host'||!o||!n||o===n||pos[o]===undefined)return false;
+ pos[n]=pos[o];if(home[o]!==undefined)home[n]=home[o];delete pos[o];delete home[o];delete pendingHome[o];snapshot();return true}
 function snapshot(){sync++;const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:(o.revealed&&!o.empty)?o.token:null,boss:o.boss}}
  lastSnapStr=JSON.stringify({seq:sync,pos,home,spaces:sp});if(mode==='host')send({type:'board-state',snap:lastSnapStr});log(`host → ${PL.length} guests: board-state #${sync} (${lastSnapStr.length} bytes)`);leakCheck();draw();renderHost()}
 function leakCheck(){const rev=new Set(),hid=new Set();for(const id in st){const o=st[id];if(o.token)(o.revealed?rev:hid).add(o.token)}for(const c in pools)pools[c].forEach(n=>hid.add(n));rev.forEach(n=>hid.delete(n));
@@ -111,8 +141,8 @@ function land(p,id,passed=[]){const s=get(id),here=PL.filter(q=>q.id!==p&&pos[q.
  prompt(h+`<br>Wild <b>${o.token}</b> appears${o.boss?' (boss)':''}! Battle starts at full HP.`,[['Caught',()=>resolve(id,'caught')],['Defeated',()=>resolve(id,'defeated')],['Abandon',()=>resolve(id,'abandon')]])}
 function resolve(id,out){const s=get(id),o=st[id];log(`battle result on ${id}: ${out} ${o.token}`);
  if(out==='abandon'){log('host: token stays face-up on its space');prompt('Left on the map. The next visitor fights it fresh.');return}
- if(out==='defeated'){if(o.dup)log(`host: duplicate ${o.token} disappears (not returned to a pool)`);else{const hc=o.home||s.color;pools[hc].push(o.token);shuf(pools[hc]);log(`host: ${o.token} shuffled into ${hc} pool`)}}
- else log(`host: ${o.token} leaves the game`);
+ if(out==='defeated'){if(o.dup)log(`host: duplicate ${o.token} disappears (not returned to a pool)`);else if(!owned.has(o.token)){const hc=o.home||s.color;pools[hc].push(o.token);shuf(pools[hc]);log(`host: ${o.token} shuffled into ${hc} pool`)}}
+ else{log(`host: ${o.token} leaves the game`);boardCaught.add(o.token)}
  if(o.boss){o.boss=false;o.cleared=true}o.dup=false;o.home=s.color;
  if(s.color==='orange'||!pools[s.color].length){o.empty=true;o.token=null;log(s.color==='orange'?'host: legendary space stays empty':'host: pool exhausted — space empty')}
  else{o.token=pools[s.color].pop();o.revealed=false;log(`host: dealt new face-down token on ${id}`)}
@@ -218,6 +248,7 @@ return{
  resolveEncounter(id,out){if(mode==='host'&&st[id]&&st[id].token)resolve(id,out)},
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
  restoreSnapshot,
+ setCaught,exportState,restoreState,adoptPlayer,
  fit:()=>fitView(),
  restoreView,
  setView:v=>setView(v),
