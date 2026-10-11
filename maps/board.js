@@ -80,16 +80,16 @@ function setup(){pools={};for(const c in NAMES)pools[c]=shuf(NAMES[c].slice());s
 // ---------- restore: a new host picks up a game already in progress ----------
 // A snapshot's player ids are the OLD host's lobby ids, which change on a handoff, so players are matched by
 // color (c) instead. Hidden (face-down) tokens are never in a snapshot, so those are simply dealt again.
-let restoreQ=null,owned=new Set(),boardCaught=new Set();
+let restoreQ=null,owned=new Set(),boardCaught=new Set(),placed=new Set();
 // Players are matched to a previous game's entries by their durable client id (cid) first -- it survives a reconnect, a
 // reload and a color change -- and only then by color, and never onto a player who is known to be someone else.
-function restorePlayers(){if(!restoreQ)return;const left=[],taken=new Set();
- const place=(o,p,how)=>{try{console.info('[board] restore',how||'?','->',p.id,'cid',p.cid||'-','color',p.c,'pos',o.pos||'(none)')}catch(e){}taken.add(p.id);if(o.pos&&get(o.pos))pos[p.id]=o.pos;if(o.home&&get(o.home))home[p.id]=o.home};
- restoreQ.forEach(o=>{if(!o.cid)return;const p=PL.find(x=>!taken.has(x.id)&&x.cid===o.cid);if(p){place(o,p,'cid');o.done=true}});
+function restorePlayers(){if(!restoreQ)return;const left=[],taken=new Set(placed);
+ const place=(o,p,how)=>{try{console.info('[board] restore',how||'?','->',p.id,'cid',p.cid||'-','color',p.c,'pos',o.pos||'(none)')}catch(e){}taken.add(p.id);placed.add(p.id);if(o.pos&&get(o.pos))pos[p.id]=o.pos;if(o.home&&get(o.home))home[p.id]=o.home};
+ restoreQ.forEach(o=>{if(!o.cid)return;const p=PL.find(x=>!taken.has(x.id)&&x.cid===o.cid);if(p){place(o,p,'cid');o.done=true;restoreQ.forEach(q=>{if(q!==o&&q.cid===o.cid)q.done=true})}});
  restoreQ.forEach(o=>{if(o.done)return;const p=PL.find(x=>!taken.has(x.id)&&x.c===o.c&&!(x.cid&&o.cid&&x.cid!==o.cid)&&!(o.cid&&!x.cid));if(p)place(o,p,'color');else left.push(o)});
  try{if(left.length)console.info('[board] restore waiting for',left.map(o=>(o.cid||'no-cid')+'@'+(o.pos||'?')).join(', '))}catch(e){}
  restoreQ=left.length?left:null}
-function restoreSnapshot(str,oldPlayers){if(mode!=='host'||!str)return false;let s;try{s=JSON.parse(str)}catch(e){return false}
+function restoreSnapshot(str,oldPlayers){if(mode!=='host'||!str)return false;placed=new Set();let s;try{s=JSON.parse(str)}catch(e){return false}
  if(!s||!s.spaces||!s.pos)return false;const used=new Set();
  for(const id in s.spaces){const r=s.spaces[id],o=st[id];if(!o)continue;
   o.revealed=!!r.revealed;o.empty=!!r.empty;o.boss=!!r.boss;if(!o.boss&&get(id).spawn)o.cleared=true;
@@ -119,7 +119,7 @@ function setCaught(names){if(mode!=='host')return;const now=new Set(names||[]);
 // host backup so a successor can resume exactly where the old host stopped.
 function exportState(){if(mode!=='host')return null;const j=x=>JSON.parse(JSON.stringify(x));
  return{v:1,seq:sync,spaces:j(st),pools:j(pools),pos:j(pos),home:j(home),players:PL.map(p=>({id:p.id,c:p.c,cid:p.cid||null})),pending:j(restoreQ||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home})),owned:[...owned],boardCaught:[...boardCaught]}}
-function restoreState(s){if(mode!=='host'||!s||s.v!==1||!s.spaces||!s.pools)return false;
+function restoreState(s){if(mode!=='host'||!s||s.v!==1||!s.spaces||!s.pools)return false;placed=new Set();
  for(const id in s.spaces){if(!st[id])continue;st[id]=Object.assign({},st[id],s.spaces[id])}
  pools=JSON.parse(JSON.stringify(s.pools));owned=new Set(s.owned||[]);boardCaught=new Set(s.boardCaught||[]);
  sync=Math.max(sync,s.seq|0);
@@ -127,7 +127,7 @@ function restoreState(s){if(mode!=='host'||!s||s.v!==1||!s.spaces||!s.pools)retu
  restorePlayers();log('host: restored the full board (face-down Pokémon included) from the previous host');snapshot();return true}
 // A guest who reconnects gets a new connection id; the app calls this with the old and new ids (matched by guestClientId).
 function adoptPlayer(o,n){if(mode!=='host'||!o||!n||o===n||pos[o]===undefined)return false;
- pos[n]=pos[o];if(home[o]!==undefined)home[n]=home[o];delete pos[o];delete home[o];delete pendingHome[o];if(pendingEnc[o]){pendingEnc[n]=pendingEnc[o];delete pendingEnc[o]}snapshot();return true}
+ if(restoreQ){restoreQ=restoreQ.filter(q=>q.from!==o);if(!restoreQ.length)restoreQ=null}pos[n]=pos[o];placed.add(n);if(home[o]!==undefined)home[n]=home[o];delete pos[o];delete home[o];delete pendingHome[o];if(pendingEnc[o]){pendingEnc[n]=pendingEnc[o];delete pendingEnc[o]}snapshot();return true}
 function snapshot(){sync++;const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:(o.revealed&&!o.empty)?o.token:null,boss:o.boss}}
  lastSnapStr=JSON.stringify({seq:sync,pos,home,spaces:sp});if(mode==='host')send({type:'board-state',snap:lastSnapStr});log(`host → ${PL.length} guests: board-state #${sync} (${lastSnapStr.length} bytes)`);leakCheck();draw();renderHost()}
 function leakCheck(){const rev=new Set(),hid=new Set();for(const id in st){const o=st[id];if(o.token)(o.revealed?rev:hid).add(o.token)}for(const c in pools)pools[c].forEach(n=>hid.add(n));rev.forEach(n=>hid.delete(n));
@@ -298,8 +298,8 @@ return{
  fit:()=>fitView(),
  restoreView,
  setView:v=>setView(v),
- setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>pos[o.id]&&!list.some(n=>n.id===o.id)&&!(o.cid&&list.some(n=>n.cid===o.cid)));
-  if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!gone.some(g=>g.cid&&g.cid===q.cid));gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id]}))}}
+ setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>o.cid&&pos[o.id]&&!list.some(n=>n.id===o.id)&&!list.some(n=>n.cid===o.cid)&&!(restoreQ||[]).some(q=>q.cid===o.cid&&!q.done));
+  if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!q.done);gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id],from:g.id}))}}
  PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
  destroy(){gone=1;closeTok();ro.disconnect();root.remove()}
 };
