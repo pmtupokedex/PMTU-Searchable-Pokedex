@@ -196,7 +196,7 @@ function tokenXY(id){const s=get(id),here=PL.filter(q=>M.pos[q.id]===id);return 
  const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.3*CS,s.y+Math.sin(a)*R*1.3*CS]}}
 // Token thumbnails: opts.tokenImage(name) -> URL | [URLs]. Each name is resolved once; candidates are preloaded in order
 // and the first that loads is drawn. Only face-up tokens are ever looked up, so face-down identities never trigger a request.
-var gone=0,TKI={},TKS=1,TKO=.3,tap=null; // TKS = picture size vs. its space; TKO = nudge up and right, as a fraction of the picture's width
+var gone=0,TKI={},TKS=.8,TKX=-.4,TKY=.4,tap=null; // TKS = picture size vs. its space. TKX/TKY = nudge as a fraction of the picture's width: TKX positive = right, negative = left; TKY positive = up, negative = down
 function tokTry(n){const t=TKI[n],im=new Image();im.onload=()=>{t.ok=true;if(!gone)draw()};
  im.onerror=()=>{if(t.i+1<t.l.length){t.i++;tokTry(n)}else{t.done=true;if(!gone)draw()}};im.src=t.l[t.i]}
 function tokUrl(n){if(!opts.tokenImage)return null;let t=TKI[n];
@@ -215,8 +215,8 @@ function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height
    (o.boss?`<text x="${s.x+R*1.3*CS}" y="${s.y-R*CS}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
  for(const s of SP){if(s.type!=='catch')continue;const o=M.spaces[s.id];if(!o||!o.revealed||o.empty||!o.token)continue;
   const u=tokUrl(o.token),rr=R*1.5*CS*TKS;
-  if(u)h+=`<g data-tk="${xa(o.token)}" style="cursor:pointer"><image href="${xa(u)}" x="${s.x-rr+rr*2*TKO}" y="${s.y-rr-rr*2*TKO}" width="${rr*2}" height="${rr*2}" preserveAspectRatio="xMidYMid meet" pointer-events="all"/></g>`;
-  else if(!sm&&tokFailed(o.token))h+=`<text x="${s.x+rr*2*TKO}" y="${s.y+R*.3-rr*2*TKO}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700" pointer-events="none">${o.token.slice(0,7)}</text>`}
+  if(u)h+=`<g data-tk="${xa(o.token)}" style="cursor:pointer"><image href="${xa(u)}" x="${s.x-rr+rr*2*TKX}" y="${s.y-rr-rr*2*TKY}" width="${rr*2}" height="${rr*2}" preserveAspectRatio="xMidYMid meet" pointer-events="all"/></g>`;
+  else if(!sm&&tokFailed(o.token))h+=`<text x="${s.x+rr*2*TKX}" y="${s.y+R*.3-rr*2*TKY}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700" pointer-events="none">${o.token.slice(0,7)}</text>`}
  PL.forEach((q,i)=>{const c=get(M.home[q.id]);if(!c)return;const d=dims(c),cx=c.x-d.w/2+R*(.7+1.2*i),cy=c.y-d.h/2-R*.1;h+=`<polygon points="${cx},${cy-R*.55} ${cx+R*.55},${cy} ${cx+R*.55},${cy+R*.55} ${cx-R*.55},${cy+R*.55} ${cx-R*.55},${cy}" fill="${q.c}" stroke="#fff" stroke-width="${R*.12}" pointer-events="none"/>`});
  for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
