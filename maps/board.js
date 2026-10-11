@@ -5,6 +5,8 @@
             players              -- [{id,name,c}]   playerId (guest mode)
             getPools(colors)     -- optional: {color:[pokemon names]} for the pools
             noSample, backHref
+            tokenArt(name)       -- optional: URL or ordered URL list of the large picture shown when a thumbnail is tapped
+                                    (falls back to the thumbnail's own URLs); tapping again, anywhere, or Esc closes it
             tokenImage(name)     -- optional: a face-up Pokémon left on a space is drawn as a picture. Return a URL, or an ordered
                                     list of URLs to try (the first that loads is used); if none load, the name is written instead
             showMarkers          -- default true; false draws no space shapes, labels, text, paths or lock icons (the map art
@@ -26,7 +28,7 @@
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
 (function(global){
-const CSS=".bm-root{position:relative;--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n.bm-root #actbar{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.4)}\n.bm-root #actbar[hidden]{display:none}\n.bm-root #mapctl{position:absolute;top:16px;left:16px;z-index:4;display:flex;gap:4px}\n.bm-root #mapctl button{margin:0;opacity:.92;box-shadow:0 1px 4px rgba(0,0,0,.35)}\n.bm-root.bm-aside-hidden aside{display:none}\n.bm-root.bm-aside-hidden #b{height:100%}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}";
+const CSS=".bm-root{position:relative;--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n.bm-root #actbar{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.4)}\n.bm-root #actbar[hidden]{display:none}\n.bm-root #mapctl{position:absolute;top:16px;left:16px;z-index:4;display:flex;gap:4px}\n.bm-root #mapctl button{margin:0;opacity:.92;box-shadow:0 1px 4px rgba(0,0,0,.35)}\n.bm-root.bm-aside-hidden aside{display:none}\n.bm-root.bm-aside-hidden #b{height:100%}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}.bm-root .bm-tkv{display:none;position:absolute;inset:0;z-index:6;background:rgba(0,0,0,.82);align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:24px;box-sizing:border-box;cursor:pointer}.bm-root .bm-tkv.on{display:flex}.bm-root .bm-tkv img{max-width:min(92%,460px);max-height:78%;object-fit:contain}.bm-root .bm-tkv-n{color:#fff;font:600 16px system-ui,sans-serif;text-align:center}";
 const HTML="<svg id=\"b\" viewBox=\"0 0 1000 620\"></svg>\n<aside>\n <div class=\"box\" id=\"bkbox\" hidden><a id=\"bk\" href=\"#\" style=\"color:inherit\">\u2190 Back to the app</a></div>\n <div class=\"box\"><h4>View</h4><button id=\"zi\">+</button><button id=\"zo\">\u2212</button><button id=\"zf\">Fit</button> <small id=\"zl\"></small><br><small>Drag empty map to pan, pinch or scroll to zoom. Dragging a token near the edge scrolls the map.</small></div>\n <div class=\"box\"><h4>Load board</h4><button id=\"imgBtn\">Map image\u2026</button><input id=\"imgF\" type=\"file\" accept=\"image/*\" hidden> <button id=\"sb\">Sample board</button>\n  <textarea id=\"jt\" rows=\"3\" style=\"width:100%;box-sizing:border-box;margin-top:4px\" placeholder=\"Paste editor export JSON\"></textarea><button id=\"jb\">Load JSON</button><small id=\"jm\"></small></div>\n <div class=\"box\"><h4>View as</h4><div id=\"vw\"></div><small id=\"vwn\"></small></div>\n <div class=\"box\"><h4>Players (drag a token on the map)</h4><div id=\"pl\"></div><small>Mock host runs in this page; the log shows the messages that would travel over PeerJS.</small></div>\n <div class=\"box\"><h4>Prompt</h4><div id=\"pr\"><small>Move a token onto a space.</small></div><div style=\"margin-top:6px\"><button id=\"ev\">Draw Event Card (active player)</button><button id=\"lose\">Active player lost a battle</button></div><div id=\"hm\" style=\"margin-top:4px\"></div></div>\n <div class=\"box\" id=\"hostbox\"><h4>Host only: pools &amp; hidden tokens</h4><div id=\"host\"></div></div>\n <div class=\"box\" id=\"netbox\"><h4>What guests receive</h4><div id=\"leak\"></div><details><summary>Last board-state snapshot (JSON)</summary><pre id=\"snapj\" style=\"white-space:pre-wrap;word-break:break-all;font-size:10px;max-height:160px;overflow:auto\"></pre></details></div>\n <div class=\"box\" id=\"logbox\"><h4>Host log</h4><div id=\"log\"></div></div>\n</aside><div id=\"mapctl\"><button id=\"mzi\">+</button><button id=\"mzo\">&minus;</button><button id=\"mzf\">Fit</button><button id=\"mpanel\">Panel</button></div><div id=\"actbar\" hidden></div>";
 function mount(container,opts){
 opts=opts||{};
@@ -35,6 +37,16 @@ const root=document.createElement('div');root.className='bm-root';root.innerHTML
 
 const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={},pendingEnc={},CS=1,ES=1;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
 const $=id=>root.querySelector('#'+id),svg=$('b');
+// Tap-a-thumbnail viewer. Lives inside the board root (not the page) so it also shows in the board's fullscreen mode.
+const tkv=document.createElement('div');tkv.className='bm-tkv';tkv.innerHTML='<img alt=""><div class="bm-tkv-n"></div>';root.appendChild(tkv);
+function tkKey(e){if(e.key==='Escape')closeTok()}
+function closeTok(){tkv.classList.remove('on');document.removeEventListener('keydown',tkKey)}
+function showTok(n){let l=[];try{l=opts.tokenArt?opts.tokenArt(n):[]}catch(e){}l=(Array.isArray(l)?l:[l]).filter(Boolean);
+ if(!l.length&&TKI[n])l=TKI[n].l.slice();
+ const im=tkv.querySelector('img'),nm=tkv.querySelector('.bm-tkv-n');let i=0;nm.textContent=n;im.alt=n;
+ im.onerror=()=>{if(++i<l.length)im.src=l[i];else im.style.display='none'};im.style.display=l.length?'':'none';if(l.length)im.src=l[0];
+ tkT=Date.now();tkv.classList.add('on');document.addEventListener('keydown',tkKey)}
+let tkT=0;tkv.onclick=()=>{if(Date.now()-tkT>350)closeTok()};
 const COL={red:'#e03131',blue:'#2f4fd0',green:'#2f9e44',yellow:'#f5c211',orange:'#c9801f',pink:'#f08a96'};
 let PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:'p3',name:'Brock',c:'#8d6e63'}];
 if(opts.players)PL=opts.players;
@@ -184,7 +196,7 @@ function tokenXY(id){const s=get(id),here=PL.filter(q=>M.pos[q.id]===id);return 
  const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.3*CS,s.y+Math.sin(a)*R*1.3*CS]}}
 // Token thumbnails: opts.tokenImage(name) -> URL | [URLs]. Each name is resolved once; candidates are preloaded in order
 // and the first that loads is drawn. Only face-up tokens are ever looked up, so face-down identities never trigger a request.
-var gone=0,TKI={},TKS=1;
+var gone=0,TKI={},TKS=1,TKO=.3,tap=null; // TKS = picture size vs. its space; TKO = nudge up and right, as a fraction of the picture's width
 function tokTry(n){const t=TKI[n],im=new Image();im.onload=()=>{t.ok=true;if(!gone)draw()};
  im.onerror=()=>{if(t.i+1<t.l.length){t.i++;tokTry(n)}else{t.done=true;if(!gone)draw()}};im.src=t.l[t.i]}
 function tokUrl(n){if(!opts.tokenImage)return null;let t=TKI[n];
@@ -203,8 +215,8 @@ function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height
    (o.boss?`<text x="${s.x+R*1.3*CS}" y="${s.y-R*CS}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
  for(const s of SP){if(s.type!=='catch')continue;const o=M.spaces[s.id];if(!o||!o.revealed||o.empty||!o.token)continue;
   const u=tokUrl(o.token),rr=R*1.5*CS*TKS;
-  if(u)h+=`<image href="${xa(u)}" x="${s.x-rr}" y="${s.y-rr}" width="${rr*2}" height="${rr*2}" preserveAspectRatio="xMidYMid meet" pointer-events="none"/>`;
-  else if(!sm&&tokFailed(o.token))h+=`<text x="${s.x}" y="${s.y+R*.3}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700" pointer-events="none">${o.token.slice(0,7)}</text>`}
+  if(u)h+=`<g data-tk="${xa(o.token)}" style="cursor:pointer"><image href="${xa(u)}" x="${s.x-rr+rr*2*TKO}" y="${s.y-rr-rr*2*TKO}" width="${rr*2}" height="${rr*2}" preserveAspectRatio="xMidYMid meet" pointer-events="all"/></g>`;
+  else if(!sm&&tokFailed(o.token))h+=`<text x="${s.x+rr*2*TKO}" y="${s.y+R*.3-rr*2*TKO}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700" pointer-events="none">${o.token.slice(0,7)}</text>`}
  PL.forEach((q,i)=>{const c=get(M.home[q.id]);if(!c)return;const d=dims(c),cx=c.x-d.w/2+R*(.7+1.2*i),cy=c.y-d.h/2-R*.1;h+=`<polygon points="${cx},${cy-R*.55} ${cx+R*.55},${cy} ${cx+R*.55},${cy+R*.55} ${cx-R*.55},${cy+R*.55} ${cx-R*.55},${cy}" fill="${q.c}" stroke="#fff" stroke-width="${R*.12}" pointer-events="none"/>`});
  for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
@@ -242,21 +254,21 @@ function moveDrag(){if(!drag)return;svg.querySelectorAll(`[data-p="${drag.p}"]`)
  ring.setAttribute('display','');ring.setAttribute('x',s.x-w/2);ring.setAttribute('y',s.y-h/2);ring.setAttribute('width',w);ring.setAttribute('height',h);ring.setAttribute('rx',rc?R*.5:R*1.7*sc2)}
 function dropToken(){if(!drag.moved){drag=null;draw();return}const q={x:drag.x,y:drag.y},p=drag.p;drag=null;const n=nearest(q);
  if(n.best&&n.d<R*2&&n.best.id!==curPos()[p]){if(mode==='guest'){send({type:'board-move',player:p,to:n.best.id});draw()}else hostMove(p,n.best.id)}else draw()}
-svg.onpointerdown=e=>{svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
- if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;startPinch();return}
+svg.onpointerdown=e=>{tap=null;svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+ if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;tap=null;startPinch();return}
  if(ptrs.size>2)return;
  const g=e.target.closest('[data-p]');
  if(g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId)){const off=e.pointerType==='touch'?30:0;drag={p:g.dataset.p,id:e.pointerId,off,...pt({clientX:e.clientX,clientY:e.clientY-off})};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/>`)}
- else pan={id:e.pointerId,x:e.clientX,y:e.clientY}};
-svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+ else{pan={id:e.pointerId,x:e.clientX,y:e.clientY};const k=e.target.closest&&e.target.closest('[data-tk]');tap=k?{id:e.pointerId,x:e.clientX,y:e.clientY,n:k.dataset.tk}:null}};
+svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});if(tap&&tap.id===e.pointerId&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8)tap=null;
  if(pinch&&ptrs.size>=2){doPinch();return}
  if(drag&&drag.id===e.pointerId){const q=pt({clientX:e.clientX,clientY:e.clientY-drag.off});drag.x=q.x;drag.y=q.y;drag.moved=true;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};if(!edgeOn){edgeOn=true;requestAnimationFrame(edgeTick)}moveDrag();return}
  if(pan&&pan.id===e.pointerId){const r=svg.getBoundingClientRect();VX-=(e.clientX-pan.x)*VW()/r.width;VY-=(e.clientY-pan.y)*VH()/r.height;pan.x=e.clientX;pan.y=e.clientY;clampView();applyView()}};
-svg.onpointerup=e=>{if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);
+svg.onpointerup=e=>{if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);if(tap&&tap.id===e.pointerId){const n=tap.n;tap=null;showTok(n)}
  if(pinch){if(ptrs.size<2)pinch=null;return}
  if(pan&&pan.id===e.pointerId)pan=null;
  if(drag&&drag.id===e.pointerId)dropToken(e)};
-svg.onpointercancel=e=>{ptrs.delete(e.pointerId);pinch=null;pan=null;if(drag){drag=null;draw()}};
+svg.onpointercancel=e=>{tap=null;ptrs.delete(e.pointerId);pinch=null;pan=null;if(drag){drag=null;draw()}};
 svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();zoomAt((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height,Z*Math.exp(-e.deltaY*.0015))},{passive:false});
 $('zi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('zo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('zf').onclick=fitView;$('mzi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('mzo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('mzf').onclick=fitView;$('mpanel').onclick=()=>root.classList.toggle('bm-aside-hidden');if(mode!=='mock')root.classList.add('bm-aside-hidden');const ro=new ResizeObserver(()=>{updEA();clampView();applyView()});ro.observe(svg);
 $('ev').onclick=()=>drawEvent();$('lose').onclick=()=>{const p=active,n=PL.find(x=>x.id===p).name,h=home[p];if(!h){prompt('No Current Home set.');return}log(`battle lost: ${n} respawns at ${h}`);pos[p]=h;snapshot();prompt(`<b>${n}</b> lost the battle and returns to <b>${get(h).label||h}</b>.`)};$('sb').onclick=()=>{img=null;sampleBoard()};
@@ -286,7 +298,7 @@ return{
  restoreView,
  setView:v=>setView(v),
  setPlayers(list){PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
- destroy(){gone=1;ro.disconnect();root.remove()}
+ destroy(){gone=1;closeTok();ro.disconnect();root.remove()}
 };
 
 }
