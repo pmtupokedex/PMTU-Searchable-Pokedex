@@ -196,7 +196,7 @@ function tokenXY(id){const s=get(id),here=PL.filter(q=>M.pos[q.id]===id);return 
  const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.3*CS,s.y+Math.sin(a)*R*1.3*CS]}}
 // Token thumbnails: opts.tokenImage(name) -> URL | [URLs]. Each name is resolved once; candidates are preloaded in order
 // and the first that loads is drawn. Only face-up tokens are ever looked up, so face-down identities never trigger a request.
-var gone=0,TKI={},TKS=.8,TKX=-.4,TKY=.4,tap=null; // TKS = picture size vs. its space. TKX/TKY = nudge as a fraction of the picture's width: TKX positive = right, negative = left; TKY positive = up, negative = down
+var gone=0,TKI={},TKS=1,TKX=-.3,TKY=.3,tap=null; // TKS = picture size vs. its space. TKX/TKY = nudge as a fraction of the picture's width: TKX positive = right, negative = left; TKY positive = up, negative = down
 function tokTry(n){const t=TKI[n],im=new Image();im.onload=()=>{t.ok=true;if(!gone)draw()};
  im.onerror=()=>{if(t.i+1<t.l.length){t.i++;tokTry(n)}else{t.done=true;if(!gone)draw()}};im.src=t.l[t.i]}
 function tokUrl(n){if(!opts.tokenImage)return null;let t=TKI[n];
