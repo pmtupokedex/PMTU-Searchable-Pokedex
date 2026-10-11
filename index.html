@@ -43951,7 +43951,17 @@
         // the host backup and for saving the board with the game save. Never leaves a host's / solo player's device otherwise.
         function boardStatePayload() {
             try {
-                if (!boardCtrl || lobbyState.role === 'guest') return null;
+                if (lobbyState.role === 'guest') return null;
+                // A device that was handed the host role but whose board has not been built yet (nobody opened the map) -- or is
+                // still being built and has not had its restore applied -- holds the board it was GIVEN in boardPendingRestore.
+                // Passing that on is what keeps the next host (and the host backup) from losing everyone's positions.
+                if (!boardCtrl || boardBuildPromise) {
+                    const pr = boardPendingRestore;
+                    if (pr && pr.full && pr.region) {
+                        return { v: 1, region: pr.region, style: pr.style === 'full' ? 'full' : 'condensed', state: pr.full, reports: pr.reports || {} };
+                    }
+                    if (!boardCtrl) return null;
+                }
                 const state = boardCtrl.exportState();
                 return state ? { v: 1, region: boardConfig.region, style: boardConfig.style, state, reports: boardCaughtReports } : null;
             } catch (err) { return null; }
