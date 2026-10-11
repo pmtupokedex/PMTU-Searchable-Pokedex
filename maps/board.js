@@ -151,11 +151,18 @@ function land(p,id,passed=[]){const s=get(id),here=PL.filter(q=>q.id!==p&&pos[q.
  prompt(h+`<br>Wild <b>${o.token}</b> appears${o.boss?' (boss)':''}! Battle starts at full HP.`,[['Caught',()=>resolve(id,'caught')],['Defeated',()=>resolve(id,'defeated')],['Abandon',()=>resolve(id,'abandon')]])}
 function resolve(id,out){const s=get(id),o=st[id];log(`battle result on ${id}: ${out} ${o.token}`);
  if(out==='abandon'){log('host: token stays face-up on its space');prompt('Left on the map. The next visitor fights it fresh.');return}
- if(out==='defeated'){if(o.dup)log(`host: duplicate ${o.token} disappears (not returned to a pool)`);else if(!owned.has(o.token)){const hc=o.home||s.color;pools[hc].push(o.token);shuf(pools[hc]);log(`host: ${o.token} shuffled into ${hc} pool`)}}
+ // A defeated token goes back to its pool -- but only AFTER the space's replacement is dealt, so the Pokémon that was
+ // just defeated can't be the one dealt straight back onto the same space (dealing it from the shuffled pool afterwards could).
+ let back=null;
+ if(out==='defeated'){if(o.dup)log(`host: duplicate ${o.token} disappears (not returned to a pool)`);else if(!owned.has(o.token))back={c:o.home||s.color,n:o.token}}
  else{log(`host: ${o.token} leaves the game`);boardCaught.add(o.token)}
  if(o.boss){o.boss=false;o.cleared=true}o.dup=false;o.home=s.color;
- if(s.color==='orange'||!pools[s.color].length){o.empty=true;o.token=null;log(s.color==='orange'?'host: legendary space stays empty':'host: pool exhausted — space empty')}
- else{o.token=pools[s.color].pop();o.revealed=false;log(`host: dealt new face-down token on ${id}`)}
+ let nt=null;if(s.color!=='orange'&&pools[s.color].length)nt=pools[s.color].pop();
+ // Nothing else left in this pool to deal: the defeated one stays in play on its own space rather than vanishing from the map.
+ if(!nt&&back&&back.c===s.color&&s.color!=='orange'){nt=back.n;back=null;log(`host: no other ${s.color} Pokémon left — ${nt} is dealt face-down again`)}
+ if(back){pools[back.c].push(back.n);shuf(pools[back.c]);log(`host: ${back.n} shuffled into ${back.c} pool`)}
+ if(nt){o.token=nt;o.revealed=false;log(`host: dealt new face-down token on ${id}`)}
+ else{o.empty=true;o.token=null;log(s.color==='orange'?'host: legendary space stays empty':'host: pool exhausted — space empty')}
  snapshot();prompt('Resolved.')}
 const EV=['Free Potion: gain an Item card.','Team Rocket ambush: lose a turn.','LEGENDARY','Rare Candy found.'];
 function drawEvent(){const c=EV[Math.random()*EV.length|0];log(`host: Event Deck draw → ${c==='LEGENDARY'?'legendary encounter':c}`);
