@@ -43895,7 +43895,22 @@
             }
             const entry = peerId && lobbyState.connections.get(peerId);
             if (entry && entry.conn && entry.conn.open) { try { entry.conn.send({ type: 'board-caught-request' }); } catch (err) { /* gone */ } }
-            if (boardCtrl) { boardSyncPlayers(); boardCtrl.resend(); }
+            const hostBoardReady = !!boardCtrl && !boardBuildPromise && typeof boardSig === 'string' && boardSig.indexOf('host:') === 0;
+            if (hostBoardReady) { boardSyncPlayers(); boardCtrl.resend(); }
+            else boardEnsureHostBoardEarly();
+        }
+        // Builds the host's board without waiting for someone to open the map, so every guest gets the board-state straight away
+        // (and a host who was just handed the game consumes the board it was given at once). Host only, only while a game is in
+        // progress and the save has the in-app region map turned on; guests never build early. A failed attempt (for example the
+        // Pokémon data still loading) is simply retried the next time a guest identifies.
+        function boardEnsureHostBoardEarly() {
+            if (lobbyState.role !== 'host') return;
+            if (!isGameOfficiallyStarted()) return;
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            try { console.info('[board] building the host board early (game in progress, map enabled)'); } catch (e) { /* no console */ }
+            boardEnsureBoard().then(c => { boardSyncPlayers(); c.resend(); }).catch(err => {
+                try { console.info('[board] early build did not complete:', err && err.message); } catch (e) { /* no console */ }
+            });
         }
         // --- caught Pokémon: each team's caught forms -> the host's board, so they stay out of the wild pool ---
         // The form a Pokémon was CAUGHT as is stamped on the member (member.caughtAs) the first time a save is written
