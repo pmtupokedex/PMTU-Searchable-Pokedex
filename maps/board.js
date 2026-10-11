@@ -86,7 +86,7 @@ let restoreQ=null,owned=new Set(),boardCaught=new Set();
 function restorePlayers(){if(!restoreQ)return;const left=[],taken=new Set();
  const place=(o,p)=>{taken.add(p.id);if(o.pos&&get(o.pos))pos[p.id]=o.pos;if(o.home&&get(o.home))home[p.id]=o.home};
  restoreQ.forEach(o=>{if(!o.cid)return;const p=PL.find(x=>!taken.has(x.id)&&x.cid===o.cid);if(p){place(o,p);o.done=true}});
- restoreQ.forEach(o=>{if(o.done)return;const p=PL.find(x=>!taken.has(x.id)&&x.c===o.c&&!(x.cid&&o.cid&&x.cid!==o.cid));if(p)place(o,p);else left.push(o)});
+ restoreQ.forEach(o=>{if(o.done)return;const p=PL.find(x=>!taken.has(x.id)&&x.c===o.c&&!(x.cid&&o.cid&&x.cid!==o.cid)&&!(o.cid&&!x.cid));if(p)place(o,p);else left.push(o)});
  restoreQ=left.length?left:null}
 function restoreSnapshot(str,oldPlayers){if(mode!=='host'||!str)return false;let s;try{s=JSON.parse(str)}catch(e){return false}
  if(!s||!s.spaces||!s.pos)return false;const used=new Set();
@@ -117,12 +117,12 @@ function setCaught(names){if(mode!=='host')return;const now=new Set(names||[]);
 // The host's COMPLETE state, face-down Pokémon and pools included. Never sent to the table: the app puts it in the
 // host backup so a successor can resume exactly where the old host stopped.
 function exportState(){if(mode!=='host')return null;const j=x=>JSON.parse(JSON.stringify(x));
- return{v:1,seq:sync,spaces:j(st),pools:j(pools),pos:j(pos),home:j(home),players:PL.map(p=>({id:p.id,c:p.c,cid:p.cid||null})),owned:[...owned],boardCaught:[...boardCaught]}}
+ return{v:1,seq:sync,spaces:j(st),pools:j(pools),pos:j(pos),home:j(home),players:PL.map(p=>({id:p.id,c:p.c,cid:p.cid||null})),pending:j(restoreQ||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home})),owned:[...owned],boardCaught:[...boardCaught]}}
 function restoreState(s){if(mode!=='host'||!s||s.v!==1||!s.spaces||!s.pools)return false;
  for(const id in s.spaces){if(!st[id])continue;st[id]=Object.assign({},st[id],s.spaces[id])}
  pools=JSON.parse(JSON.stringify(s.pools));owned=new Set(s.owned||[]);boardCaught=new Set(s.boardCaught||[]);
  sync=Math.max(sync,s.seq|0);
- restoreQ=(s.players||[]).map(p=>({c:p.c,cid:p.cid||null,pos:s.pos&&s.pos[p.id],home:s.home&&s.home[p.id]}));
+ restoreQ=(s.players||[]).map(p=>({c:p.c,cid:p.cid||null,pos:s.pos&&s.pos[p.id],home:s.home&&s.home[p.id]})).concat((s.pending||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home})));
  restorePlayers();log('host: restored the full board (face-down Pokémon included) from the previous host');snapshot();return true}
 // A guest who reconnects gets a new connection id; the app calls this with the old and new ids (matched by guestClientId).
 function adoptPlayer(o,n){if(mode!=='host'||!o||!n||o===n||pos[o]===undefined)return false;
@@ -297,7 +297,9 @@ return{
  fit:()=>fitView(),
  restoreView,
  setView:v=>setView(v),
- setPlayers(list){PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
+ setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>pos[o.id]&&!list.some(n=>n.id===o.id)&&!(o.cid&&list.some(n=>n.cid===o.cid)));
+  if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!gone.some(g=>g.cid&&g.cid===q.cid));gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id]}))}}
+ PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
  destroy(){gone=1;closeTok();ro.disconnect();root.remove()}
 };
 
