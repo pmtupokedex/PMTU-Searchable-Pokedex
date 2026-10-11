@@ -44196,7 +44196,12 @@
                 text = 'Nothing left to catch here.';
             } else if (info.kind === 'city' || info.kind === 'special') {
                 const acts = info.space.actions || [];
-                text = (info.space.label || 'This location') + (acts.length ? ' \u2014 ' + acts.join(' \u00b7 ') : '');
+                text = (info.space.label || 'This location') + (acts.length ? ' \u2014 ' + acts.map(boardActionLabel).join(' \u00b7 ') : '');
+                // Actions that can be started from here get a button; the rest stay as text for now.
+                acts.forEach(a => {
+                    const leaderId = boardActionGymLeaderId(a);
+                    if (leaderId) buttons.push({ id: 'gym:' + leaderId, label: 'Gym Battle: ' + ((GYM_LEADERS_BY_ID[leaderId] || {}).name || leaderId) });
+                });
             } else {
                 return;
             }
@@ -44216,6 +44221,8 @@
                 else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-encounter', player: 'host' });
             } else if (id === 'battle' && info) {
                 boardStartWildBattle(info);
+            } else if (id.startsWith('gym:')) {
+                boardStartGymBattle(id.slice(4));
             } else if (id.startsWith('home:')) {
                 const city = id.slice(5);
                 if (lobbyState.role === 'guest') boardSend({ type: 'board-sethome', city });
@@ -44223,6 +44230,37 @@
                 if (info) { info.homeOptions = (info.homeOptions || []).filter(o => o.id !== city); boardDeliverLanding(info); } // keep the other choices
             }
         }
+        // ---- Board space actions ----
+        // A space's `actions` entries are either plain text (display only) or an object
+        // such as { type: 'gym-battle', leader: 'kanto-brock' } (leader = an id from gym-leaders.json).
+        // Older maps wrote Gym Battles as text ("Gym Battle (Brock)"), so that form is still understood.
+        function boardActionGymLeaderId(a) {
+            if (a && typeof a === 'object') return a.type === 'gym-battle' && a.leader ? String(a.leader) : null;
+            const m = typeof a === 'string' ? a.match(/^\s*Gym Battle\s*\((.+)\)\s*$/i) : null;
+            if (!m) return null;
+            const name = m[1].trim().toLowerCase();
+            const hits = Object.values(GYM_LEADERS_BY_ID).filter(t => t.category === 'gym-leader' && String(t.name).toLowerCase() === name);
+            return hits.length === 1 ? hits[0].id : null; // ambiguous or not loaded yet: no button
+        }
+        function boardActionLabel(a) {
+            if (typeof a === 'string') return a;
+            if (a && a.type === 'gym-battle') {
+                const leader = GYM_LEADERS_BY_ID[a.leader];
+                return 'Gym Battle (' + (leader ? leader.name : (a.leader || '?')) + ')';
+            }
+            return (a && (a.label || a.type)) || '';
+        }
+        // Puts the Gym Leader card in the Arena the same way Choose Gym Leader does (so the Badge, Next Round
+        // line-up and Elite Four / Champion stage rule all apply), after the usual replace confirmation.
+        function boardStartGymBattle(leaderId) {
+            const leader = GYM_LEADERS_BY_ID[leaderId];
+            if (!leader) { showGameToast('Could not find that Gym Leader card (' + leaderId + ').'); return; }
+            if (isActiveSaveReadOnly()) return;
+            const slot = isGymLeaderAttackerCard(leaderId) ? 'attacker' : 'defender';
+            setGameScreen('battle');
+            confirmBattleSlotReplace(slot, () => sendGymLeaderCardToArena(leaderId));
+        }
+
         // Same steps as picking a wild Pok\u00e9mon from the gallery (confirmBattleWildSelection), minus the pick itself.
         function boardStartWildBattle(info) {
             const entry = POKEMON_BY_NAME[info.token];
