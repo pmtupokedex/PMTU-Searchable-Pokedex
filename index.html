@@ -25364,10 +25364,20 @@
         // Replacing an occupied half takes part in that battle. Allowed for whoever owns the half, or owns the OTHER half
         // (they're in this battle). Anyone else may only fill an EMPTY half -- or swap a lone wild/Trainer/Gym Leader
         // that nobody has challenged yet; they can't replace a player's Pok\u00e9mon, or either half of a battle already set up.
-        function isBattleSlotReplaceBlocked(slot, peerKey) {
+        // An EDIT (HP / status / level / fainted / evolve / Dynamax / attached cards) re-sends the very same ownerless
+        // Pok\u00e9mon or card into the half it already occupies. That is never a replacement, so it's open to anyone
+        // (the players controlling a Wild/Trainer/Gym Leader half edit it). Told apart by uid, falling back to name/dex
+        // for an entry that never had one.
+        function isOwnerlessSlotEdit(prev, member) {
+            if (!prev || prev.ownerId || !prev.member || !member) return false;
+            if (prev.member.uid && member.uid) return prev.member.uid === member.uid;
+            return prev.member.name === member.name && prev.member.dex === member.dex;
+        }
+        function isBattleSlotReplaceBlocked(slot, peerKey, member) {
             const prev = hostBattleArenaState[slot];
             const other = hostBattleArenaState[slot === 'attacker' ? 'defender' : 'attacker'];
             if (!prev || prev.ownerId === peerKey) return false;
+            if (isOwnerlessSlotEdit(prev, member)) return false;
             const inThisBattle = !!(other && other.ownerId === peerKey);
             return !inThisBattle && !!(prev.ownerId || other);
         }
@@ -25393,7 +25403,7 @@
                 broadcastBattleArenaState();
                 return;
             }
-            if (member && isBattleSlotReplaceBlocked(slot, peerKey)) {
+            if (member && isBattleSlotReplaceBlocked(slot, peerKey, member)) {
                 sendBattleNotice(peerKey, BATTLE_OUTSIDER_REPLACE_MESSAGE);
                 broadcastBattleArenaState(); // puts the sender's screen back to what's actually there
                 return;
