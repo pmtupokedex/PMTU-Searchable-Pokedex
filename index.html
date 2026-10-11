@@ -38427,8 +38427,20 @@
         }
 
         function resolveGymBadgeAward(leaderId) {
+            if (isActiveSaveReadOnly()) return null;
+            const award = buildGymBadgeAward(leaderId);
+            if (!award) return null;
+            award.optionIds = getOpenGymAwardOptionIds(award);
+            if (!award.optionIds.length) return null;
+            return award;
+        }
+
+        // The Badge slot a Gym Leader / Elite Four / Villain / Titan card fills, with every Badge that slot
+        // could hold in optionIds (not yet filtered to what is still open). Null for cards that award nothing
+        // (Champions, Rivals) or when the Badge data hasn't loaded.
+        function buildGymBadgeAward(leaderId) {
             const leader = GYM_LEADERS_BY_ID[leaderId];
-            if (!leader || isActiveSaveReadOnly()) return null;
+            if (!leader) return null;
             const region = getActiveRegionForBadges();
             const own = typeof leader.badge === 'string' ? leader.badge : null;
             let category = null, slotKey = null, options = [];
@@ -38454,10 +38466,15 @@
             }
             if (!options.length) return null;
             const ids = options.map(o => o.id);
-            const award = { category, slotKey, optionIds: ids.includes(own) ? [own] : ids, leaderId };
-            award.optionIds = getOpenGymAwardOptionIds(award);
-            if (!award.optionIds.length) return null;
-            return award;
+            return { category, slotKey, optionIds: ids.includes(own) ? [own] : ids, leaderId };
+        }
+
+        // Whether this player already holds the Badge a card would award. A Gym Badge slot is shared by every
+        // Gym Leader of that Tier, so beating one also counts as beating the alternatives. Champions have no
+        // Badge, so nothing records a win over them and this is always false for them.
+        function isGymLeaderDefeated(leaderId) {
+            const award = buildGymBadgeAward(leaderId);
+            return !!award && getOpenGymAwardOptionIds(award).length === 0;
         }
 
         function queueGymBadgeAward(leaderId) {
@@ -44196,12 +44213,15 @@
                 text = 'Nothing left to catch here.';
             } else if (info.kind === 'city' || info.kind === 'special') {
                 const acts = info.space.actions || [];
-                text = (info.space.label || 'This location') + (acts.length ? ' \u2014 ' + acts.map(boardActionLabel).join(' \u00b7 ') : '');
-                // Actions that can be started from here get a button; the rest stay as text for now.
-                acts.forEach(a => {
-                    const leaderId = boardActionGymLeaderId(a);
-                    if (leaderId) buttons.push({ id: 'gym:' + leaderId, label: 'Gym Battle: ' + ((GYM_LEADERS_BY_ID[leaderId] || {}).name || leaderId) });
+                // Battle actions get a button unless this player already holds that Badge; the rest stay as text for now.
+                const parts = acts.map(a => {
+                    const r = boardResolveBattleAction(a);
+                    if (!r) return boardActionLabel(a);
+                    if (boardBattleActionDefeated(r)) return boardActionLabel(a) + ' \u2713 defeated';
+                    buttons.push({ id: 'bact:' + r.type + ':' + (r.leaderId || ''), label: boardBattleButtonLabel(r) });
+                    return boardActionLabel(a);
                 });
+                text = (info.space.label || 'This location') + (parts.length ? ' \u2014 ' + parts.join(' \u00b7 ') : '');
             } else {
                 return;
             }
@@ -44221,8 +44241,13 @@
                 else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-encounter', player: 'host' });
             } else if (id === 'battle' && info) {
                 boardStartWildBattle(info);
-            } else if (id.startsWith('gym:')) {
-                boardStartGymBattle(id.slice(4));
+            } else if (id.startsWith('bact:')) {
+                const [, type, leaderId] = id.split(':');
+                boardRunBattleAction(type, leaderId, info);
+            } else if (id.startsWith('bpick:')) {
+                boardStartGymBattle(id.slice(6));
+            } else if (id === 'back' && info) {
+                boardDeliverLanding(info);
             } else if (id.startsWith('home:')) {
                 const city = id.slice(5);
                 if (lobbyState.role === 'guest') boardSend({ type: 'board-sethome', city });
@@ -44231,24 +44256,89 @@
             }
         }
         // ---- Board space actions ----
-        // A space's `actions` entries are either plain text (display only) or an object
-        // such as { type: 'gym-battle', leader: 'kanto-brock' } (leader = an id from gym-leaders.json).
-        // Older maps wrote Gym Battles as text ("Gym Battle (Brock)"), so that form is still understood.
-        function boardActionGymLeaderId(a) {
-            if (a && typeof a === 'object') return a.type === 'gym-battle' && a.leader ? String(a.leader) : null;
-            const m = typeof a === 'string' ? a.match(/^\s*Gym Battle\s*\((.+)\)\s*$/i) : null;
-            if (!m) return null;
-            const name = m[1].trim().toLowerCase();
-            const hits = Object.values(GYM_LEADERS_BY_ID).filter(t => t.category === 'gym-leader' && String(t.name).toLowerCase() === name);
-            return hits.length === 1 ? hits[0].id : null; // ambiguous or not loaded yet: no button
+        // A space's `actions` entries are either plain text (display only) or an object such as
+        //   { type: 'gym-battle', leader: 'kanto-brock', label: 'Gym Battle (Brock)' }
+        // leader = an id from gym-leaders.json; label = the text shown for it (blank: made from the type and leader).
+        // Elite Four and Champion actions may leave `leader` out, and the player then chooses which card to face.
+        // Older maps wrote these as text ("Gym Battle (Brock)", "Battle Elite Four"), which is still understood.
+        const BOARD_BATTLE_ACTIONS = {
+            'gym-battle':        { category: 'gym-leader', prefix: 'Gym Battle',     legacy: /^\s*Gym Battle\s*\((.+)\)\s*$/i },
+            'villain-battle':    { category: 'villain',    prefix: 'Villain Battle', legacy: /^\s*Villain Battle\s*\((.+)\)\s*$/i },
+            'elite-four-battle': { category: 'elite-four', name: 'Battle Elite Four', anyCard: true, legacy: /^\s*Battle Elite Four\s*$/i },
+            'champion-battle':   { category: 'champion',   name: 'Battle Champion',   anyCard: true, legacy: /^\s*Battle Champion\s*$/i },
+        };
+        // This board's cards of one category, in the data file's order.
+        function boardLeadersOfCategory(category) {
+            const region = boardWantedConfig().region;
+            return Object.values(GYM_LEADERS_BY_ID).filter(t => t.category === category && normalizeToArray(t.region).includes(region));
+        }
+        // "Team Rocket" exists in several regions, so a name is looked up within this board's region first.
+        function boardFindLeaderByName(category, name) {
+            const want = String(name).trim().toLowerCase();
+            const named = Object.values(GYM_LEADERS_BY_ID).filter(t => t.category === category && String(t.name).toLowerCase() === want);
+            if (named.length <= 1) return named[0] ? named[0].id : null;
+            const here = named.filter(t => normalizeToArray(t.region).includes(boardWantedConfig().region));
+            return here.length === 1 ? here[0].id : null;
+        }
+        function boardDefaultActionLabel(type, leaderId) {
+            const def = BOARD_BATTLE_ACTIONS[type];
+            const leader = leaderId ? GYM_LEADERS_BY_ID[leaderId] : null;
+            if (def.anyCard) return def.name + (leader ? ' (' + leader.name + ')' : '');
+            return def.prefix + ' (' + (leader ? leader.name : (leaderId || '?')) + ')';
+        }
+        // A battle action in one shape, or null if it isn't one (or its leader can't be found).
+        function boardResolveBattleAction(a) {
+            let type = null, leaderId = null, label = null;
+            if (a && typeof a === 'object') {
+                if (!BOARD_BATTLE_ACTIONS[a.type]) return null;
+                type = a.type; leaderId = a.leader ? String(a.leader) : null; label = a.label || null;
+            } else if (typeof a === 'string') {
+                for (const [t, def] of Object.entries(BOARD_BATTLE_ACTIONS)) {
+                    const m = a.match(def.legacy);
+                    if (!m) continue;
+                    type = t; label = a;
+                    if (!def.anyCard) { leaderId = boardFindLeaderByName(def.category, m[1]); if (!leaderId) return null; }
+                    break;
+                }
+            }
+            if (!type) return null;
+            const def = BOARD_BATTLE_ACTIONS[type];
+            if (!def.anyCard && !leaderId) return null;
+            return { type, category: def.category, leaderId, label: label || boardDefaultActionLabel(type, leaderId) };
         }
         function boardActionLabel(a) {
             if (typeof a === 'string') return a;
-            if (a && a.type === 'gym-battle') {
-                const leader = GYM_LEADERS_BY_ID[a.leader];
-                return 'Gym Battle (' + (leader ? leader.name : (a.leader || '?')) + ')';
-            }
-            return (a && (a.label || a.type)) || '';
+            if (a && a.label) return a.label;
+            const r = boardResolveBattleAction(a);
+            return r ? r.label : ((a && a.type) || '');
+        }
+        // The cards this action can put in the Arena: the one it names, or every card of its category here.
+        function boardBattleChoices(r) {
+            if (r.leaderId) return GYM_LEADERS_BY_ID[r.leaderId] ? [GYM_LEADERS_BY_ID[r.leaderId]] : [];
+            return boardLeadersOfCategory(r.category);
+        }
+        // Already earned this action's Badge (see isGymLeaderDefeated()), so the board no longer offers it.
+        // Only the board's button is withheld -- a card can still be put in the Defender slot by hand.
+        function boardBattleActionDefeated(r) {
+            const first = boardBattleChoices(r)[0];
+            return !!first && isGymLeaderDefeated(first.id);
+        }
+        function boardBattleButtonLabel(r) {
+            const def = BOARD_BATTLE_ACTIONS[r.type];
+            const leader = r.leaderId ? GYM_LEADERS_BY_ID[r.leaderId] : null;
+            return (def.anyCard ? def.name : def.prefix) + (leader ? ': ' + leader.name : '');
+        }
+        // Starts the battle for a button. With no card named (Elite Four / Champion) the player picks one first.
+        function boardRunBattleAction(type, leaderId, info) {
+            const def = BOARD_BATTLE_ACTIONS[type];
+            if (!def) return;
+            if (leaderId) { boardStartGymBattle(leaderId); return; }
+            const choices = boardBattleChoices({ type, category: def.category, leaderId: null });
+            if (!choices.length) { showGameToast('No ' + def.category.replace('-', ' ') + ' cards found for this region.'); return; }
+            if (choices.length === 1) { boardStartGymBattle(choices[0].id); return; }
+            const buttons = choices.map(t => ({ id: 'bpick:' + t.id, label: t.name }));
+            buttons.push({ id: 'back', label: 'Back' });
+            if (boardCtrl) boardCtrl.showAction({ text: 'Who will you face?', buttons, info });
         }
         // Puts the Gym Leader card in the Arena the same way Choose Gym Leader does (so the Badge, Next Round
         // line-up and Elite Four / Champion stage rule all apply), after the usual replace confirmation.
