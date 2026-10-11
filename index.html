@@ -44218,6 +44218,8 @@
                     const r = boardResolveBattleAction(a);
                     if (!r) return boardActionLabel(a);
                     if (boardBattleActionDefeated(r)) return boardActionLabel(a) + ' \u2713 defeated';
+                    const lock = boardBattleActionLock(r);
+                    if (lock) return boardActionLabel(a) + ' \ud83d\udd12 ' + lock;
                     buttons.push({ id: 'bact:' + r.type + ':' + (r.leaderId || ''), label: boardBattleButtonLabel(r) });
                     return boardActionLabel(a);
                 });
@@ -44246,6 +44248,10 @@
                 boardRunBattleAction(type, leaderId, info);
             } else if (id.startsWith('bpick:')) {
                 boardStartGymBattle(id.slice(6));
+            } else if (id.startsWith('brand:')) {
+                const def = BOARD_BATTLE_ACTIONS[id.slice(6)];
+                const choices = def ? boardBattleChoices({ category: def.category, leaderId: null }) : [];
+                if (choices.length) boardStartGymBattle(choices[Math.floor(Math.random() * choices.length)].id);
             } else if (id === 'back' && info) {
                 boardDeliverLanding(info);
             } else if (id.startsWith('home:')) {
@@ -44323,6 +44329,14 @@
             const first = boardBattleChoices(r)[0];
             return !!first && isGymLeaderDefeated(first.id);
         }
+        // Why this action can't be started yet, or null. The Champion can only be challenged by a player who
+        // holds the Elite Four Badge. (Beating the Champion ends the game, so nothing records a Champion win.)
+        function boardBattleActionLock(r) {
+            if (r.category !== 'champion') return null;
+            const e4 = boardLeadersOfCategory('elite-four')[0];
+            if (e4 && !isGymLeaderDefeated(e4.id)) return 'needs the Elite Four Badge';
+            return null;
+        }
         function boardBattleButtonLabel(r) {
             const def = BOARD_BATTLE_ACTIONS[r.type];
             const leader = r.leaderId ? GYM_LEADERS_BY_ID[r.leaderId] : null;
@@ -44332,12 +44346,17 @@
         function boardRunBattleAction(type, leaderId, info) {
             const def = BOARD_BATTLE_ACTIONS[type];
             if (!def) return;
+            // Checked again now, in case the prompt on screen is out of date.
+            const r = { type, category: def.category, leaderId: leaderId || null };
+            if (boardBattleActionDefeated(r)) { showGameToast('You already hold that Badge.'); return; }
+            const lock = boardBattleActionLock(r);
+            if (lock) { showGameToast('This battle ' + lock + '.'); return; }
             if (leaderId) { boardStartGymBattle(leaderId); return; }
-            const choices = boardBattleChoices({ type, category: def.category, leaderId: null });
+            const choices = boardBattleChoices(r);
             if (!choices.length) { showGameToast('No ' + def.category.replace('-', ' ') + ' cards found for this region.'); return; }
             if (choices.length === 1) { boardStartGymBattle(choices[0].id); return; }
             const buttons = choices.map(t => ({ id: 'bpick:' + t.id, label: t.name }));
-            buttons.push({ id: 'back', label: 'Back' });
+            buttons.push({ id: 'brand:' + type, label: 'Random' }, { id: 'back', label: 'Back' });
             if (boardCtrl) boardCtrl.showAction({ text: 'Who will you face?', buttons, info });
         }
         // Puts the Gym Leader card in the Arena the same way Choose Gym Leader does (so the Badge, Next Round
