@@ -55,8 +55,8 @@ let view='host',M={pos:{},home:{},spaces:{}},lastSnapStr='',SP=[],LK=[],W=1000,H
 const curPos=()=>mode==='guest'?M.pos:pos;
 const get=id=>SP.find(s=>s.id===id),shuf=a=>{for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
 const log=t=>$('log').insertAdjacentHTML('afterbegin',`<div>${t}</div>`);
-// An action is a plain text string, or an object like {type:'gym-battle',leader:'kanto-brock'}.
-const actLabel=a=>typeof a==='string'?a:(a&&a.type==='gym-battle'?'Gym Battle ('+(a.leader||'?')+')':(a&&(a.label||a.type))||'');
+// An action is a plain text string, or an object like {type:'gym-battle',leader:'kanto-brock',label:'Gym Battle (Brock)'}.
+const actLabel=a=>typeof a==='string'?a:((a&&(a.label||(a.leader?a.type+' ('+a.leader+')':a.type)))||'');
 // ---------- boards ----------
 function sampleBoard(){const S=[['A','city',0,90,540,'Pallet'],['B','catch','red',200,480],['C','event',0,300,430],['D','catch','red',410,450],['E','city',0,530,400,'Viridian'],['F','catch','green',610,300],['G','event',0,710,255],['H','catch','green',800,205],['I','city',0,900,110,'Cerulean'],['J','catch','blue',650,480,'','Snorlax'],['K','catch','yellow',770,530],['L','event',0,870,470],['M','catch','yellow',920,380],['N','catch','orange',950,250]]
  .map(([id,type,color,x,y,label,spawn])=>({id,type,color,x,y,label,spawn,actions:type==='city'?['Poké Mart','Pokémon Center','Gym Battle']:[]}));
