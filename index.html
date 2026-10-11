@@ -2708,6 +2708,15 @@
             display: block;
         }
 
+        .game-lobby-cancel-rejoin-btn {
+            display: none;
+            margin: 8px auto 0;
+        }
+
+        .game-lobby-cancel-rejoin-btn.visible {
+            display: block;
+        }
+
         .game-lobby-status.error {
             color: #b32d2d;
         }
@@ -15612,6 +15621,10 @@
                          it inline rather than alert()" pattern used
                          everywhere else in this panel. -->
                     <p class="game-lobby-status" id="game-lobby-status"></p>
+                    <!-- Only shown while a rejoin attempt is running (see
+                         updateRejoinCancelButton()); stops it on the spot
+                         instead of waiting for it to time out. -->
+                    <button class="filter-btn exclude game-lobby-cancel-rejoin-btn" id="game-lobby-cancel-rejoin-btn" type="button">Cancel Rejoin</button>
 
                     <!-- Shown only once per host save this device
                          connects to for the first time (see
@@ -41201,6 +41214,28 @@
             el.classList.toggle('visible', Boolean(message));
             el.classList.toggle('error', kind === 'error');
             el.classList.toggle('pending', kind === 'pending');
+            updateRejoinCancelButton(Boolean(message) && kind === 'pending');
+        }
+
+        // True while this device is actively trying to get back into a lobby
+        // it was in (the recovery loop, a pending failover claim, or a resume
+        // after a reload). try/catch because setLobbyStatus() can run before
+        // those `let`s further down the script have been initialised.
+        function isRejoinInProgress() {
+            try { return !!(hostTransferRejoinTimer || failoverTimer || failoverProbe); } catch (err) { return false; }
+        }
+
+        // Shows the Cancel Rejoin button only while a rejoin is running and a
+        // pending status is on screen. statusIsPending: pass what the status
+        // line is about to show; omitted, it's read from the status line.
+        function updateRejoinCancelButton(statusIsPending) {
+            const btn = document.getElementById('game-lobby-cancel-rejoin-btn');
+            if (!btn) return;
+            if (statusIsPending === undefined) {
+                const el = document.getElementById('game-lobby-status');
+                statusIsPending = !!(el && el.classList.contains('visible') && el.classList.contains('pending'));
+            }
+            btn.classList.toggle('visible', !!statusIsPending && isRejoinInProgress());
         }
 
         // The "Create or load a save first, then tap Play Solo / Host a
@@ -41261,6 +41296,11 @@
         }
 
         function beginSoloFlow() {
+            // Starting solo play ends any rejoin in progress right away. Done
+            // before the role check below: while rejoining, the role is
+            // 'guest' (so this would silently do nothing) and the loop keeps
+            // resetting the lobby screen.
+            if (isRejoinInProgress() || resumingLastLobby) cancelRejoinAttempt('');
             if (lobbyState.role !== null) return;
             if (activeSaveSlot === null) {
                 setLobbyStatus('Create or load a save first, then tap Play Solo again.', 'error');
@@ -41286,6 +41326,7 @@
         }
 
         function startSoloSession(color) {
+            stopRejoinAttempts(); // backstop: nothing may retry a join over a solo session
             if (lobbyState.role !== null || activeSaveSlot === null) return;
             const save = gameSaves[activeSaveSlot];
             if (save) { save.hostPlayerColor = color; persistGameSaves(); }
@@ -42092,6 +42133,10 @@
         // (chooseHostOnly()/chooseHostAsPlayer() below), which is what
         // actually calls startHostingLobby().
         function beginHostFlow() {
+            // Trying to host a new game ends any rejoin in progress right away
+            // -- its loop would otherwise keep resetting this screen and, once
+            // hosting starts, the new lobby itself.
+            if (isRejoinInProgress() || resumingLastLobby) cancelRejoinAttempt('');
             if (!requireLobbyLibs()) return;
             if (activeSaveSlot === null) {
                 setLobbyStatus('Create or load a save first, then tap Host a Lobby again.', 'error');
@@ -42158,6 +42203,7 @@
                 if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
                 return;
             }
+            stopRejoinAttempts(); // backstop: nothing may retry a join over the lobby being created
             endSoloSession();
             resetLobbyState();
             boardPendingRestore = null; // a fresh lobby never inherits a previous game's board
@@ -43222,12 +43268,45 @@
             hostTransferRejoinTimer = null;
             hostTransferGraceUntil = 0;
             hostTransferTryCount = 0;
+            updateRejoinCancelButton();
         }
+
+        // Bumped whenever a rejoin is cancelled so a join attempt's delayed
+        // retry (a pending setTimeout) can tell it was cancelled and not fire.
+        let lobbyJoinGeneration = 0;
+
+        // Stops every automatic rejoin mechanism without touching the lobby
+        // session record or host backup: the recovery loop, a pending
+        // failover claim, a resume-after-reload, and any queued join retry.
+        function stopRejoinAttempts() {
+            lobbyJoinGeneration++;
+            joinInFlightSince = 0;
+            resumingLastLobby = false;
+            cancelHostTransferRejoin();
+            cancelFailoverPromotion();
+        }
+
+        // The user gave up on getting back in (Cancel Rejoin button), or is
+        // about to host a different game. Same end state as leaving the lobby
+        // on purpose: nothing keeps retrying, a reload won't resume it, and
+        // the screen is back on the host/join choice.
+        function cancelRejoinAttempt(message) {
+            htTrace('rejoin cancelled by user');
+            stopRejoinAttempts();
+            clearLobbySession();
+            if (lobbyState.role === 'guest') clearHostBackup();
+            const wasActive = lobbyState.role !== null;
+            resetLobbyState();
+            setLobbyStatus(message === undefined ? 'Rejoin cancelled.' : message, '');
+            return wasActive;
+        }
+
         function startHostTransferRejoinLoop(code, staleConn) {
             clearInterval(hostTransferRejoinTimer);
             if (!code) return;
             const startedAt = Date.now();
             hostTransferRejoinTimer = setInterval(() => {
+                updateRejoinCancelButton();
                 // Became the host in the meantime (failover): nothing to rejoin.
                 if (lobbyState.role === 'host') { clearInterval(hostTransferRejoinTimer); hostTransferRejoinTimer = null; return; }
                 const conn = lobbyState.hostConn;
@@ -43250,6 +43329,7 @@
                 if (lobbyState.role === 'guest' && conn && conn !== staleConn && conn.open) return;
                 joinLobbyByCode(code);
             }, 2000);
+            updateRejoinCancelButton(); // (the status may already be on screen)
         }
 
         // ---- Old host ----
@@ -44703,6 +44783,9 @@
                 return;
             }
             const attemptNumber = attempt || 0;
+            // A retry queued before Cancel Rejoin / Host a Lobby was pressed
+            // must not bring the connection back.
+            const joinGeneration = lobbyJoinGeneration;
             // Guards the retry-on-error logic below: peer.on('error')
             // stays attached for this peer's entire lifetime, not just
             // the initial handshake -- PeerJS can fire a peer-level error
@@ -44775,7 +44858,7 @@
                     peer.destroy();
                     if (Date.now() < hostTransferGraceUntil) return; // the recovery loop retries
                     if (attemptNumber < LOBBY_JOIN_RETRY_LIMIT) {
-                        setTimeout(() => joinLobbyByCode(cleanCode, attemptNumber + 1), LOBBY_JOIN_RETRY_DELAY_MS);
+                        setTimeout(() => { if (joinGeneration === lobbyJoinGeneration) joinLobbyByCode(cleanCode, attemptNumber + 1); }, LOBBY_JOIN_RETRY_DELAY_MS);
                         return;
                     }
                     setLobbyStatus('Could not connect \u2014 check your connection and try again.', 'error');
@@ -44784,6 +44867,7 @@
             });
 
             peer.on('error', (err) => {
+                if (joinGeneration !== lobbyJoinGeneration) return; // cancelled meanwhile
                 htTrace('peer error: ' + (err && err.type));
                 joinInFlightSince = 0;
                 if (err && err.type === 'peer-unavailable' && Date.now() < hostTransferGraceUntil && lobbyState.role === 'guest') {
@@ -44819,7 +44903,7 @@
                     // attempt's peer and try again rather than treating
                     // one bad attempt as final.
                     peer.destroy();
-                    setTimeout(() => joinLobbyByCode(cleanCode, attemptNumber + 1), LOBBY_JOIN_RETRY_DELAY_MS);
+                    setTimeout(() => { if (joinGeneration === lobbyJoinGeneration) joinLobbyByCode(cleanCode, attemptNumber + 1); }, LOBBY_JOIN_RETRY_DELAY_MS);
                     return;
                 }
                 setLobbyStatus('Could not connect \u2014 check your connection and try again.', 'error');
@@ -46445,6 +46529,11 @@
                 return;
             }
 
+
+            if (e.target.closest('.game-lobby-cancel-rejoin-btn')) {
+                cancelRejoinAttempt();
+                return;
+            }
 
             const lobbyHostBtn = e.target.closest('.game-lobby-host-btn');
             if (lobbyHostBtn) {
