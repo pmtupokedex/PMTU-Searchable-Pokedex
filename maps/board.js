@@ -5,6 +5,8 @@
             players              -- [{id,name,c}]   playerId (guest mode)
             getPools(colors)     -- optional: {color:[pokemon names]} for the pools
             noSample, backHref
+            tokenImage(name)     -- optional: a face-up Pokémon left on a space is drawn as a picture. Return a URL, or an ordered
+                                    list of URLs to try (the first that loads is used); if none load, the name is written instead
             showMarkers          -- default true; false draws no space shapes, labels, text, paths or lock icons (the map art
                                     carries them) -- only player tokens, home markers and the yellow drop highlight
             onLanding(info)      -- host/solo: a player's move ended; info = {player,space,kind,token,boss,alsoHere,homeOptions}
@@ -180,6 +182,16 @@ const dims=s=>({w:s.w||80*K,h:s.h||40*K});
 function tokenXY(id){const s=get(id),here=PL.filter(q=>M.pos[q.id]===id);return q=>{const i=here.indexOf(q),n=here.length;if(n<2)return[s.x,s.y];
  if(s.type==='city'||s.type==='special'){const d=dims(s);return[s.x-d.w*.3+i*(d.w*.6/(n-1)),s.y]}
  const a=2*Math.PI*i/n-Math.PI/2;return[s.x+Math.cos(a)*R*1.3*CS,s.y+Math.sin(a)*R*1.3*CS]}}
+// Token thumbnails: opts.tokenImage(name) -> URL | [URLs]. Each name is resolved once; candidates are preloaded in order
+// and the first that loads is drawn. Only face-up tokens are ever looked up, so face-down identities never trigger a request.
+var gone=0,TKI={},TKS=1;
+function tokTry(n){const t=TKI[n],im=new Image();im.onload=()=>{t.ok=true;if(!gone)draw()};
+ im.onerror=()=>{if(t.i+1<t.l.length){t.i++;tokTry(n)}else{t.done=true;if(!gone)draw()}};im.src=t.l[t.i]}
+function tokUrl(n){if(!opts.tokenImage)return null;let t=TKI[n];
+ if(!t){let l=[];try{l=opts.tokenImage(n)}catch(e){}l=Array.isArray(l)?l.filter(Boolean):(l?[l]:[]);t=TKI[n]={l,i:0,ok:false,done:!l.length};if(l.length)tokTry(n)}
+ return t.ok?t.l[t.i]:null}
+function tokFailed(n){const t=TKI[n];return !!t&&t.done&&!t.ok}
+function xa(u){return String(u).replace(/&/g,'&amp;').replace(/"/g,'&quot;')}
 function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:'';const fo=img?.72:1,sw=.36*R,sm=opts.showMarkers!==false;
  if(sm)for(const [a,b,g] of LK){const A=get(a),B=get(b);h+=`<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${g?'#ffb000':'#222'}" stroke-width="${g?sw*1.3:sw}" opacity="${img?.8:1}"${g?` stroke-dasharray="${R*.9} ${R*.5}"`:''}/>`;
   if(g){const mx=(A.x+B.x)/2,my=(A.y+B.y)/2;h+=`<circle cx="${mx}" cy="${my}" r="${R*.8}" fill="#ffb000" stroke="#000" stroke-width="${R*.1}"/><text x="${mx}" y="${my+R*.35}" text-anchor="middle" font-size="${R*.95}">🔒</text><text x="${mx}" y="${my+R*1.9}" text-anchor="middle" font-size="${R*.8}" fill="#000" stroke="#fff" stroke-width="${R*.2}" paint-order="stroke">${g.note.slice(2)}</text>`}}
@@ -187,8 +199,12 @@ function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height
   if(s.type==='city'||s.type==='special')h+=`<rect x="${s.x-e.w/2}" y="${s.y-e.h/2}" width="${e.w}" height="${e.h}" rx="${R*.3}" fill="${s.type==='city'?'#1b1b1b':'#8a8a92'}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.35}" text-anchor="middle" fill="#fff" font-size="${R*.9}">${s.label||s.id}</text>`;
   else if(s.type==='event')h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="${COL[s.color]||'#f2f2f2'}" stroke="#000" stroke-width="${R*.1}" opacity="${fo}"/><text x="${s.x}" y="${s.y+R*.45}" text-anchor="middle" font-size="${R*1.3}" font-weight="700" fill="#fff" stroke="#000" stroke-width="${R*.14}" paint-order="stroke">E</text>`;
   else if(s.type==='catch'){const em=o&&o.empty;h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="${COL[s.color]||'#999'}" opacity="${em?.25:fo}" stroke="#000" stroke-width="${R*.1}"/>`+
-   (em?`<text x="${s.x}" y="${s.y+R*.4}" text-anchor="middle" font-size="${R*1.1}">✕</text>`:o.revealed?`<text x="${s.x}" y="${s.y+R*.3}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">${o.token.slice(0,7)}</text>`:`<text x="${s.x}" y="${s.y+R*.5}" text-anchor="middle" font-size="${R*1.4}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">?</text>`+(M.peek&&o.token?`<text x="${s.x}" y="${s.y+R*2.5}" text-anchor="middle" font-size="${R*.7}" font-style="italic" fill="#fff" stroke="#000" stroke-width="${R*.15}" paint-order="stroke">${o.token}</text>`:''))+
+   (em?`<text x="${s.x}" y="${s.y+R*.4}" text-anchor="middle" font-size="${R*1.1}">✕</text>`:o.revealed?(tokUrl(o.token)?'':`<text x="${s.x}" y="${s.y+R*.3}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">${o.token.slice(0,7)}</text>`):`<text x="${s.x}" y="${s.y+R*.5}" text-anchor="middle" font-size="${R*1.4}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">?</text>`+(M.peek&&o.token?`<text x="${s.x}" y="${s.y+R*2.5}" text-anchor="middle" font-size="${R*.7}" font-style="italic" fill="#fff" stroke="#000" stroke-width="${R*.15}" paint-order="stroke">${o.token}</text>`:''))+
    (o.boss?`<text x="${s.x+R*1.3*CS}" y="${s.y-R*CS}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
+ for(const s of SP){if(s.type!=='catch')continue;const o=M.spaces[s.id];if(!o||!o.revealed||o.empty||!o.token)continue;
+  const u=tokUrl(o.token),rr=R*1.5*CS*TKS;
+  if(u)h+=`<image href="${xa(u)}" x="${s.x-rr}" y="${s.y-rr}" width="${rr*2}" height="${rr*2}" preserveAspectRatio="xMidYMid meet" pointer-events="none"/>`;
+  else if(!sm&&tokFailed(o.token))h+=`<text x="${s.x}" y="${s.y+R*.3}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700" pointer-events="none">${o.token.slice(0,7)}</text>`}
  PL.forEach((q,i)=>{const c=get(M.home[q.id]);if(!c)return;const d=dims(c),cx=c.x-d.w/2+R*(.7+1.2*i),cy=c.y-d.h/2-R*.1;h+=`<polygon points="${cx},${cy-R*.55} ${cx+R*.55},${cy} ${cx+R*.55},${cy+R*.55} ${cx-R*.55},${cy+R*.55} ${cx-R*.55},${cy}" fill="${q.c}" stroke="#fff" stroke-width="${R*.12}" pointer-events="none"/>`});
  for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
@@ -270,7 +286,7 @@ return{
  restoreView,
  setView:v=>setView(v),
  setPlayers(list){PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
- destroy(){ro.disconnect();root.remove()}
+ destroy(){gone=1;ro.disconnect();root.remove()}
 };
 
 }
