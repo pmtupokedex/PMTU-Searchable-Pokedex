@@ -43043,7 +43043,7 @@
                 gameStarted: !!lobbyState.gameOfficiallyStarted,
                 oldHostClientId: getOrCreateGuestClientId(),
                 succession: hostSuccessionOrder.filter(id => connectedIds.has(id)),
-                save: cloneJSON(S),
+                save: cloneSaveForBackup(S),
                 board: boardBackupPayload(), // the board's complete state (face-down Pokémon included) for a successor
             };
         }
@@ -43272,7 +43272,7 @@
             }, HOST_TRANSFER_OFFER_TIMEOUT_MS);
             entry.conn.send({
                 type: 'host-transfer-offer',
-                save: cloneJSON(gameSaves[activeSaveSlot]),
+                save: cloneSaveForBackup(gameSaves[activeSaveSlot]),
                 code: lobbyState.code,
                 hostName: lobbyState.hostName,
                 hostIsPlayer: !!lobbyState.hostIsPlayer,
@@ -43727,6 +43727,7 @@
         // so a new host can resume the same board instead of starting a fresh one. See boardEnsureBoard().
         var boardLastPlayers = null, boardPendingRestore = null;
         var boardCaughtReports = {}, boardLastReportSig = null, boardClientPeer = {};
+        var boardSaveTimer = null, boardSaveKey = null, boardSaveDirty = false; // see boardSaveSoon()
         var boardConfig = { region: null, style: null }; // what the mounted board was built for
         var boardEncounter = null;   // host/solo only: the wild encounter a landing started (spaceId, playerId, name, uid once it's in the Arena)
         var boardPoolAudit = [];
@@ -43756,6 +43757,7 @@
                 .map((p, i) => ({ id: p.id, name: p.name || 'Trainer', c: BOARD_COLOR_HEX[p.color] || BOARD_COLOR_HEX[PLAYER_COLORS[i % PLAYER_COLORS.length]], cid: boardClientIdFor(p.id) }));
         }
         function boardSend(msg) {
+            if (msg && msg.type === 'board-state' && lobbyState.role !== 'guest') boardSaveSoon(); // solo too: the board is saved with the game save
             if (msg && msg.type === 'board-state' && lobbyState.role === 'host') { msg.region = boardConfig.region; msg.style = boardConfig.style; scheduleHostBackup(); } // tells guests which board this is
             if (lobbyState.role === 'host') {
                 lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send(msg); });
@@ -43801,19 +43803,22 @@
             const myId = getMyLobbyPlayerId() || 'host';
             const hostPlays = !guest && (lobbyState.role === null || !!lobbyState.hostIsPlayer);
             const cfg = boardWantedConfig();
-            const sig = (guest ? 'guest:' : 'host:') + myId + (hostPlays ? ':plays' : ':display') + '|' + cfg.region + '|' + cfg.style;
+            const saveKey = guest ? null : boardCurrentSaveKey(); // the board belongs to ONE save: a different save is a different board
+            const sig = (guest ? 'guest:' : 'host:') + myId + (hostPlays ? ':plays' : ':display') + '|' + cfg.region + '|' + cfg.style + '|' + (saveKey || '');
             if (boardCtrl && boardSig === sig) return Promise.resolve(boardCtrl);
             if (boardBuildPromise) return boardBuildPromise;
             boardBuildPromise = (async () => {
                 if (!Object.keys(POKEMON_BY_NAME).length) throw new Error('the Pokémon data is still loading, try again in a moment');
                 await boardEnsureScript();
                 const d = await boardFetchData(cfg.region);
-                if (boardCtrl) { boardCtrl.destroy(); boardCtrl = null; }
+                if (boardCtrl) { boardSaveNow(true); boardCtrl.destroy(); boardCtrl = null; } // keep what the old board had reached
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
                 boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
                 boardSig = sig;
+                boardSaveKey = saveKey;
+                boardSaveDirty = false;
                 boardConfig = cfg;
                 boardPlayersSig = JSON.stringify(players);
                 boardCtrl.loadBoard(d, { style: cfg.style });
@@ -43827,6 +43832,10 @@
                     if (pr.full) restored = boardCtrl.restoreState(pr.full); // exact: face-down Pokémon kept
                     if (!restored && pr.snap) boardCtrl.restoreSnapshot(pr.snap, pr.players); // older backup: revealed ones only
                     if (pr.reports) boardCaughtReports = Object.assign({}, pr.reports);
+                } else if (!guest) {
+                    // Otherwise pick up where this save's board left off (a reload, a returning session, a save loaded again).
+                    const saved = boardLoadSavedState(cfg);
+                    if (saved && boardCtrl.restoreState(saved.state) && saved.reports) boardCaughtReports = Object.assign({}, saved.reports);
                 }
                 // A host that isn't playing is the table's display: read-only, face-down Pokémon stay hidden.
                 if (lobbyState.role === 'host' && !lobbyState.hostIsPlayer) boardCtrl.setView('tv');
@@ -43938,13 +43947,67 @@
             delete reports[getOrCreateGuestClientId()];
             return { full: offer.board.state, reports, region: offer.board.region, style: offer.board.style === 'full' ? 'full' : 'condensed' };
         }
-        function boardBackupPayload() {
+        // The board's complete state (face-down Pokémon, pools, positions, Homes, caught reports) as one plain object. Used for
+        // the host backup and for saving the board with the game save. Never leaves a host's / solo player's device otherwise.
+        function boardStatePayload() {
             try {
-                if (!boardCtrl || lobbyState.role !== 'host') return null;
+                if (!boardCtrl || lobbyState.role === 'guest') return null;
                 const state = boardCtrl.exportState();
-                return state ? { region: boardConfig.region, style: boardConfig.style, state, reports: boardCaughtReports } : null;
+                return state ? { v: 1, region: boardConfig.region, style: boardConfig.style, state, reports: boardCaughtReports } : null;
             } catch (err) { return null; }
         }
+        function boardBackupPayload() {
+            return lobbyState.role === 'host' ? boardStatePayload() : null;
+        }
+        // ---- Saving the board with the game save --------------------------------------------------------------------------
+        // The board lives in memory, so without this a reload (or loading another save and coming back) dealt a brand-new one:
+        // tokens at the start, every Pokémon reset and re-shuffled. It is stored on the host's / solo player's save itself
+        // (save.boardState), a moment after any change, and put back when the board is next built for that save. Guests never
+        // save a board; the host's is the one that counts. Not for a session that isn't a save (nothing to attach it to).
+        function boardCurrentSaveKey() {
+            if (lobbyState.role === 'guest' || activeSaveSlot === null) return null;
+            const s = gameSaves[activeSaveSlot];
+            return (s && s.hostSaveId) || null;
+        }
+        function boardLoadSavedState(cfg) {
+            const s = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            const b = s && s.boardState;
+            // Only a board built for the same region and style (a different map's spaces would mean nothing here).
+            if (b && b.v === 1 && b.region === cfg.region && b.style === cfg.style && b.state && b.state.v === 1) return b;
+            return null;
+        }
+        function boardSaveSoon() {
+            boardSaveDirty = true;
+            if (boardSaveTimer) clearTimeout(boardSaveTimer);
+            boardSaveTimer = setTimeout(() => boardSaveNow(), 800);
+        }
+        // Writes into the save this board was built for (looked up by its id, not by "whichever save is active now"), so a
+        // write that lands after the player switched saves still goes to the right one. `force` is for the moment the old
+        // board is being thrown away.
+        function boardSaveNow(force) {
+            if (boardSaveTimer) { clearTimeout(boardSaveTimer); boardSaveTimer = null; }
+            if (!boardSaveDirty) return;
+            // A board still being built hasn't had its saved state put back yet: saving now would overwrite it with a fresh deal.
+            if (boardBuildPromise && !force) { boardSaveSoon(); return; }
+            try {
+                if (!boardCtrl || lobbyState.role === 'guest' || !boardSaveKey) return;
+                const slot = gameSaves.findIndex(s => s && s.hostSaveId === boardSaveKey);
+                if (slot < 0) return;
+                const payload = boardStatePayload();
+                if (!payload) return;
+                gameSaves[slot].boardState = payload;
+                boardSaveDirty = false;
+                persistGameSaves();
+            } catch (err) { try { console.warn('Could not save the board:', err); } catch (e2) { /* no console */ } }
+        }
+        // The board is already sent to a successor separately, so its save-copy doesn't need to carry a second one.
+        function cloneSaveForBackup(save) {
+            const copy = cloneJSON(save);
+            if (copy) delete copy.boardState;
+            return copy;
+        }
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') boardSaveNow(true); });
+        if (window.addEventListener) window.addEventListener('pagehide', () => boardSaveNow(true));
         // --- pools: TEMPORARY stand-in for the Pokédex selector = every Pokémon carrying the save's region tag (kanto = the original 151) ---
         // A token's color comes from the color word in its search tags (pink/green/blue/yellow/red); the
         // 'legendary' tag puts it in the orange pool. Anything with none or several color tags is left
@@ -43974,6 +44037,8 @@
         // Homes and caught reports must not carry over: the host drops its board, guests are told to drop theirs, and if the
         // map is open a fresh one comes up.
         function boardResetLocal() {
+            boardSaveNow(true); // whatever the old game's board had reached is saved to THAT save before it's dropped
+            boardSaveKey = null; boardSaveDirty = false;
             if (boardCtrl) { try { boardCtrl.destroy(); } catch (err) { /* already gone */ } boardCtrl = null; }
             boardSig = null; boardPendingRestore = null; boardEncounter = null;
             boardCaughtReports = {}; boardLastReportSig = null; boardClientPeer = {};
