@@ -41310,6 +41310,7 @@
         }
 
         function resetLobbyState() {
+            pendingGuestSetupAfterJoin = false;
             stopLobbyHeartbeat();
             releaseLobbyWakeLock();
             // Grab the outgoing peer and swap lobbyState to its fresh,
@@ -42281,7 +42282,10 @@
             if (switchedGame) {
                 lobbyState.gameOfficiallyStarted = false;
                 lobbyState.starterChosen = { host: lobbyState.hostIsPlayer && !!hostData.starterLocked };
-                boardResetForNewSave();
+                // Isolated: the welcomes below are what tell every guest the game changed. If this step ever
+                // threw, they'd never be sent and guests would carry on in the old game -- previous Trainer
+                // Cards, starters and the "game started" flag all intact.
+                try { boardResetForNewSave(); } catch (err) { try { console.warn('Board reset failed during save switch:', err); } catch (e2) { /* no console */ } }
             }
             // Colors belong to the PREVIOUS save's identities -- every
             // connected player is about to re-identify against this one
@@ -44766,11 +44770,7 @@
                     // On a save that uses Trainer Cards, a guest without
                     // one is sent to a forced pick of it first (which
                     // carries on to the starter itself).
-                    if (!(needsTrainerCardForSetup() && beginForcedTrainerCardPick())) {
-                        openGamePanel();
-                        setGameScreen('team');
-                        openTeamAddPromptOverlay();
-                    }
+                    runGuestSetupPrompt();
                 } else if (data.type === 'deck-state' && data.decks && data.handCounts) {
                     // Public counts only (draw/discard sizes, everyone's
                     // hand *count*) -- see broadcastDeckState()'s own
@@ -45179,6 +45179,8 @@
             // joining.
             const data = getActiveSaveData();
             reportLobbyProgress(computeBadgePoints(data), (data.team.members || []).length > 0);
+            // 'start-game' arrived while this device was still on the naming step -- see runGuestSetupPrompt().
+            if (pendingGuestSetupAfterJoin) runGuestSetupPrompt();
         }
 
         function leaveLobby() {
@@ -45247,6 +45249,30 @@
         // without choosing -- see allLobbyStartersChosen(), which is what
         // actually decides whether the button's even reachable here
         // again versus having already moved on to Start Game).
+        // Guest side of 'start-game': the forced Trainer Card pick (on a save that uses them), then the Starter prompt.
+        // It has to wait until this device has actually joined the host's CURRENT game. Until the naming/color step is
+        // confirmed (a first join, or the host having switched to a different save under a live lobby -- see
+        // resyncLobbyForNewHostSave()), the active save is still the previous game's -- or none at all -- so
+        // needsTrainerCardForSetup() answers for the wrong save and comes out false: the card step was skipped and
+        // the player went straight to a starter. Held instead, and run from finalizeGuestJoin() once the new game's
+        // own save is active. (var, not let: resetLobbyState() clears it and can run before this section does.)
+        var pendingGuestSetupAfterJoin = false;
+        function runGuestSetupPrompt() {
+            if (lobbyState.role === 'guest' && !lobbyState.linkedGuestSaveId) {
+                pendingGuestSetupAfterJoin = true;
+                htTrace('start-game held until this game is joined');
+                return;
+            }
+            pendingGuestSetupAfterJoin = false;
+            const needsCard = needsTrainerCardForSetup();
+            htTrace('start-game: needsCard=' + needsCard + ' enabled=' + isTrainerCardsEnabledForActiveSave() + ' locked=' + isTrainerCardLocked() + ' readOnly=' + isActiveSaveReadOnly());
+            if (!(needsCard && beginForcedTrainerCardPick())) {
+                openGamePanel();
+                setGameScreen('team');
+                openTeamAddPromptOverlay();
+            }
+        }
+
         function beginGameSetup() {
             const solo = isSoloSessionActive();
             if (lobbyState.role !== 'host' && !solo) return;
