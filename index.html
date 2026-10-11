@@ -25215,6 +25215,7 @@
                     st.dice[slot] = { attack: null, effect: null, status: null, rerolled: false };
                     st.entered[slot] = false;
                     st.rerolls[slot] = 0;
+                    st.diceCounts[slot] = makeDefaultBattleDiceCounts();
                 }
             });
             if (!st.attacker && !st.defender) { st.inProgress = false; st.record = makeEmptyBattleRecord(); }
@@ -25291,6 +25292,36 @@
         // 'host') rather than anything the sender claims about
         // themselves -- same convention hostApplyDraw() etc. already
         // follow. wild:true tags the entry as ownerless instead.
+        // ---- Who is part of a battle? The owners of the two halves. A half with no owner (a wild Pok\u00e9mon, a Trainer's, a
+        // Gym Leader card) has ownerId null, so it never makes anyone a participant.
+        // A battle "between players" has a player's Pok\u00e9mon in BOTH halves; anyone owning neither is a spectator of it.
+        function isSpectatorOfPlayerBattle(peerKey) {
+            const a = hostBattleArenaState.attacker, d = hostBattleArenaState.defender;
+            return !!(a && d && a.ownerId && d.ownerId && a.ownerId !== peerKey && d.ownerId !== peerKey);
+        }
+        // Replacing an occupied half takes part in that battle. Allowed for whoever owns the half, or owns the OTHER half
+        // (they're in this battle). Anyone else may only fill an EMPTY half -- or swap a lone wild/Trainer/Gym Leader
+        // that nobody has challenged yet; they can't replace a player's Pok\u00e9mon, or either half of a battle already set up.
+        function isBattleSlotReplaceBlocked(slot, peerKey) {
+            const prev = hostBattleArenaState[slot];
+            const other = hostBattleArenaState[slot === 'attacker' ? 'defender' : 'attacker'];
+            if (!prev || prev.ownerId === peerKey) return false;
+            const inThisBattle = !!(other && other.ownerId === peerKey);
+            return !inThisBattle && !!(prev.ownerId || other);
+        }
+        const BATTLE_SPECTATOR_ZONES_MESSAGE = 'Only the two players in this battle can use its Battle Card and Field Effect zones.';
+        const BATTLE_SPECTATOR_END_MESSAGE = 'Only the two players in this battle can end it.';
+        const BATTLE_SPECTATOR_BEGIN_MESSAGE = 'Only the two players in this battle can begin it.';
+        const BATTLE_SPECTATOR_NEXT_MESSAGE = 'Only the two players in this battle can start its next round.';
+        // The phase actions a spectator of a battle between two other players isn't allowed to trigger.
+        const BATTLE_SPECTATOR_BLOCKED_PHASES = ['begin', 'next', 'end', 'reveal'];
+        function getBattleSpectatorPhaseMessage(action) {
+            if (action === 'begin') return BATTLE_SPECTATOR_BEGIN_MESSAGE;
+            if (action === 'next') return BATTLE_SPECTATOR_NEXT_MESSAGE;
+            if (action === 'end') return BATTLE_SPECTATOR_END_MESSAGE;
+            return BATTLE_SPECTATOR_ZONES_MESSAGE; // 'reveal' flips the Battle Cards over
+        }
+        const BATTLE_OUTSIDER_REPLACE_MESSAGE = 'You can only replace a Pok\u00e9mon in the Battle Arena if you\u2019re part of that battle.';
         function hostApplyBattleSetSlot(slot, peerKey, member, wild, trainer, queue) {
             if (slot !== 'attacker' && slot !== 'defender') return;
             // Backstop for the client-side checks: a Pok\u00e9mon with an
@@ -25298,6 +25329,11 @@
             if (member && !wild && isBattleIneligibleMember(member)) {
                 sendBattleNotice(peerKey, BATTLE_OVERLAY_BLOCK_MESSAGE);
                 broadcastBattleArenaState();
+                return;
+            }
+            if (member && isBattleSlotReplaceBlocked(slot, peerKey)) {
+                sendBattleNotice(peerKey, BATTLE_OUTSIDER_REPLACE_MESSAGE);
+                broadcastBattleArenaState(); // puts the sender's screen back to what's actually there
                 return;
             }
             ensureMemberUid(member); // (no-op for an empty half)
@@ -25345,6 +25381,7 @@
             }
             if (!sameOccupant && hostBattleArenaState.moves) hostBattleArenaState.moves[slot] = null;
             if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, status: null, rerolled: false };
+            if (!sameOccupant && hostBattleArenaState.diceCounts) hostBattleArenaState.diceCounts[slot] = makeDefaultBattleDiceCounts(); // a different Pok\u00e9mon starts from the default dice
             if (!hostBattleArenaState.rerolls) hostBattleArenaState.rerolls = { attacker: 0, defender: 0 };
             if (!member || !sameOccupant) hostBattleArenaState.rerolls[slot] = 0;
             // A team member taking a half during a battle has taken part.
@@ -25537,6 +25574,10 @@
         // Same request -> Host applies -> full-state broadcast shape as
         // the slot functions above. ----
         function requestBattlePhase(action) {
+            if (BATTLE_SPECTATOR_BLOCKED_PHASES.includes(action) && isArenaSpectatorOfPlayerBattle()) {
+                showBattleArenaNotice(getBattleSpectatorPhaseMessage(action)); // the host would refuse it anyway
+                return;
+            }
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-phase', action });
             } else if (lobbyState.role === 'host') {
@@ -25618,6 +25659,12 @@
 
         function hostApplyBattlePhase(peerKey, action) {
             const st = hostBattleArenaState;
+            // Two other players' battle isn't the spectators' to begin, advance, end, or flip the Battle Cards of.
+            if (BATTLE_SPECTATOR_BLOCKED_PHASES.includes(action) && isSpectatorOfPlayerBattle(peerKey)) {
+                sendBattleNotice(peerKey, getBattleSpectatorPhaseMessage(action));
+                broadcastBattleArenaState();
+                return;
+            }
             let gymBadgeDelivery = null;
             if (action === 'begin') {
                 if (!st.inProgress) {
@@ -25659,6 +25706,7 @@
                     });
                     st.moves = { attacker: null, defender: null };
                     st.dice = makeEmptyBattleDice();
+                    st.diceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() }; // a new round starts from the default dice
                     hostAdvanceTrainerIfFainted(st);
                     hostAdvanceGymLeaderIfFainted(st);
                     st.entered = { attacker: false, defender: false }; // nobody is new next round
@@ -25679,6 +25727,7 @@
                 st.inProgress = false;
                 st.moves = { attacker: null, defender: null };
                 st.dice = makeEmptyBattleDice();
+                st.diceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() }; // so the next battle starts clean
                 st.entered = { attacker: false, defender: false };
                 st.rerolls = { attacker: 0, defender: 0 };
                 st.record = makeEmptyBattleRecord();
@@ -25779,6 +25828,25 @@
         // person is playing everything, so nobody needs excluding. ----
 
         // The shared entry for a slot, or null solo / when empty.
+        // True when this device is only WATCHING a battle between two other players: both halves hold a player's Pok\u00e9mon
+        // (not a wild/Trainer/Gym Leader one, which has no owner) and neither is mine. Solo has no spectators.
+        function isArenaSpectatorOfPlayerBattle() {
+            if (lobbyState.role === null) return false;
+            const a = getArenaSlotEntry('attacker'), d = getArenaSlotEntry('defender');
+            if (!a || !d || !a.ownerId || !d.ownerId) return false;
+            const me = getMyLobbyPlayerId();
+            return a.ownerId !== me && d.ownerId !== me;
+        }
+        // Mirror of the host's isBattleSlotReplaceBlocked(), from this device's copy of the Arena.
+        function isArenaSlotReplaceBlockedForMe(slot) {
+            if (lobbyState.role === null) return false;
+            const me = getMyLobbyPlayerId();
+            const prev = getArenaSlotEntry(slot);
+            const other = getArenaSlotEntry(slot === 'attacker' ? 'defender' : 'attacker');
+            if (!prev || prev.ownerId === me) return false;
+            const inThisBattle = !!(other && other.ownerId === me);
+            return !inThisBattle && !!(prev.ownerId || other);
+        }
         function getArenaSlotEntry(slot) {
             if (lobbyState.role === null || !guestBattleArenaCache) return null;
             const entry = guestBattleArenaCache[slot] || null;
@@ -33870,7 +33938,7 @@
             if (lobbyState.role === null) {
                 if (index === null) battleEnteredThisRound.attacker = false;
                 else if (isNewOccupant) battleEnteredThisRound.attacker = battleInProgress;
-                if (index === null || isNewOccupant) battleRerollsUsed.attacker = 0;
+                if (index === null || isNewOccupant) { battleRerollsUsed.attacker = 0; battleDiceCounts.attacker = makeDefaultBattleDiceCounts(); }
             }
             if (isNewOccupant && lobbyState.role === null) noteSoloBattleParticipants();
             // A new Pok\u00e9mon entering the Arena cries (re-picking whoever's
@@ -33905,7 +33973,7 @@
             if (lobbyState.role === null) {
                 if (index === null) battleEnteredThisRound.defender = false;
                 else if (isNewOccupant) battleEnteredThisRound.defender = battleInProgress;
-                if (index === null || isNewOccupant) battleRerollsUsed.defender = 0;
+                if (index === null || isNewOccupant) { battleRerollsUsed.defender = 0; battleDiceCounts.defender = makeDefaultBattleDiceCounts(); }
             }
             // A real pick always replaces whatever was there before,
             // wild or not -- stale battleWildPokemon data left behind
@@ -34328,6 +34396,7 @@
         // openBattleFieldOverlay() just below); Battle Card is still a
         // placeholder, see the block comment above.
         function handleBattleZoneTap(slotName, zoneName) {
+            if (isArenaSpectatorOfPlayerBattle()) { showBattleArenaNotice(BATTLE_SPECTATOR_ZONES_MESSAGE); return; }
             if (zoneName === 'fieldEffect') {
                 openBattleFieldOverlay(slotName);
                 return;
@@ -34384,6 +34453,11 @@
         // cardId null empties the zone.
         function hostApplyBattleFieldEffect(peerKey, slot, cardId) {
             if (slot !== 'attacker' && slot !== 'defender') return;
+            if (isSpectatorOfPlayerBattle(peerKey)) {
+                sendBattleNotice(peerKey, BATTLE_SPECTATOR_ZONES_MESSAGE);
+                broadcastBattleArenaState();
+                return;
+            }
             if (cardId !== null) {
                 const card = typeof cardId === 'string' ? CARDS_BY_ID[cardId] : null;
                 if (!card || card.cardType !== 'Field') return;
@@ -34587,6 +34661,10 @@
         // tied to any hand.
         function hostApplyBattleCardPlay(peerKey, slot, cardId, fromHand) {
             if (slot !== 'attacker' && slot !== 'defender') return;
+            if (isSpectatorOfPlayerBattle(peerKey)) {
+                sendBattleNotice(peerKey, BATTLE_SPECTATOR_ZONES_MESSAGE);
+                return;
+            }
             if (!isBattleCardTagged(CARDS_BY_ID[cardId])) return;
             if (!battleCardOccupantOk(peerKey, slot)) {
                 sendBattleNotice(peerKey, 'Battle Cards can only be played for your own Pok\u00e9mon.');
@@ -35148,11 +35226,13 @@
             const defenderIn = !!getBattleSlotMember('defender');
             if (battleInProgress && !attackerIn && !defenderIn) battleInProgress = false;
             beginBtn.style.display = battleInProgress ? 'none' : '';
-            beginBtn.disabled = !(attackerIn && defenderIn);
+            const spectating = isArenaSpectatorOfPlayerBattle(); // two other players' battle: Begin / Next Round / End aren't mine
+            beginBtn.disabled = !(attackerIn && defenderIn) || spectating;
             // Hidden when a Fainted Pok\u00e9mon has nobody to replace it,
             // leaving End Battle alone (see isBattleNextRoundBlocked()).
             const nextRoundShowing = battleInProgress && !isBattleNextRoundBlocked();
             nextBtn.style.display = nextRoundShowing ? '' : 'none';
+            nextBtn.disabled = spectating;
             // A Fainted Pok\u00e9mon in either half means the round is over:
             // glow/pulse Next Round to nudge the player on (see the CSS
             // for .battle-next-round-hint).
@@ -35162,12 +35242,13 @@
             });
             nextBtn.classList.toggle('battle-next-round-hint', nextRoundShowing && anyFainted);
             endBtn.style.display = battleInProgress ? '' : 'none';
+            endBtn.disabled = spectating;
             // Battle over (Next Round is gone because nobody is left to
             // send out on one side): End Battle takes over the same
             // glow/pulse as the nudge.
             endBtn.classList.toggle('battle-next-round-hint', battleInProgress && isBattleNextRoundBlocked());
             const revealBtn = document.getElementById('game-battle-reveal-cards-btn');
-            if (revealBtn) revealBtn.style.display = (battleInProgress && hasFacedownBattleCard()) ? '' : 'none';
+            if (revealBtn) revealBtn.style.display = (battleInProgress && hasFacedownBattleCard() && !spectating) ? '' : 'none';
             // The Battle Card / Field Move Effect badges (and the Gym
             // Leader HP/Status badges) only show while a battle is
             // ongoing, so they follow the same phase changes.
@@ -35269,6 +35350,7 @@
             resetBattleCalcResult('defender');
             clearBattleDiceResults('attacker');
             clearBattleDiceResults('defender');
+            battleDiceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() }; // a new round starts from the default dice
             renderBattleMoves('attacker');
             renderBattleMoves('defender');
             renderBattleCalcReadout('attacker');
@@ -35292,6 +35374,7 @@
             const earnedLeaderId = (battleInProgress && !isSoloAttackerSideSpent()) ? getDefeatedGymLeaderIdInDefender() : null;
             battleInProgress = false;
             syncBattleMusicToArena(); // solo Play a Game session: back to Route
+            battleDiceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() }; // so the next battle starts clean
             hostClearBattleCards();
             syncSoloBattleCards();
             // Field Move Effects belong to the battle that just ended.
@@ -35389,6 +35472,7 @@
             battleInProgress = false;
             battleEnteredThisRound = { attacker: false, defender: false };
             battleRerollsUsed = { attacker: 0, defender: 0 };
+            battleDiceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
             battleRecord = makeEmptyBattleRecord();
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
@@ -37137,6 +37221,7 @@
         // Runs onConfirm straight away when nothing would be replaced;
         // otherwise opens the confirmation and runs it only on Replace.
         function confirmBattleSlotReplace(slot, onConfirm) {
+            if (isArenaSlotReplaceBlockedForMe(slot)) { showBattleArenaNotice(BATTLE_OUTSIDER_REPLACE_MESSAGE); return; }
             const info = getBattleSlotReplaceDescription(slot);
             if (!info) {
                 onConfirm();
@@ -43120,6 +43205,7 @@
                 hostColor: lobbyState.hostColor || null,
                 gameStarted: !!lobbyState.gameOfficiallyStarted,
                 oldHostClientId: getOrCreateGuestClientId(),
+                board: boardBackupPayload(), // the whole board, face-down Pok\u00e9mon included, same as the stored backup
             });
             setLobbyStatus(`Waiting for ${entry.name} to accept\u2026`, 'pending');
         }
@@ -43159,8 +43245,9 @@
                 persistActiveSaveSlot();
                 closeOverflowPrompt();
             }
-            stopLocalMusicPlayback(); // this device is no longer the one playing for the table
             resetLobbyState();
+            // No longer the one playing for the table. After the reset, so the pause isn't broadcast to guests as the host's.
+            stopLocalMusicPlayback();
             if (wasPlayer) {
                 hostTransferGraceUntil = Date.now() + HOST_TRANSFER_GRACE_MS;
                 setLobbyStatus(`${newHostName} is now hosting \u2014 reconnecting you\u2026`, 'pending');
@@ -43276,6 +43363,8 @@
             forcedHostRoomCode = offer.code;
             openGamePanel();
             setGameScreen('lobby');
+            // Whatever the table was listening to carries on under the new host (see resumeMusicAfterTakeover()).
+            musicTakeoverCarry = musicMirror.isPlaying ? { ...musicMirror, at: Date.now() } : null;
             const color = PLAYER_COLORS.includes(built.color) ? built.color : null;
             const boardCarry = boardCarryFromOffer(offer) || ((boardLastState && typeof boardLastState.snap === 'string' && boardLastPlayers)
                 ? { snap: boardLastState.snap, region: boardLastState.region, style: boardLastState.style === 'full' ? 'full' : 'condensed', players: boardLastPlayers }
@@ -43551,12 +43640,23 @@
             }
             return { region: getActiveRegionForBadges() || 'kanto', style: getRegionMapSettingsForActiveSave().style };
         }
+        // The durable per-device id (the same one hands and Trainer Card claims are keyed by), which survives a reconnect, a
+        // reload and a color change -- unlike the connection id or the color. Only the host/solo device can know it for
+        // everyone; a guest has no way to see other players' ids.
+        function boardClientIdFor(id) {
+            try {
+                if (lobbyState.role === 'guest') return undefined;
+                if (id === 'host') return getOrCreateGuestClientId();
+                const entry = lobbyState.connections.get(id);
+                return (entry && entry.guestClientId) || undefined;
+            } catch (err) { return undefined; }
+        }
         function boardPlayers() {
-            if (lobbyState.role === null) return [{ id: 'host', name: 'You', c: BOARD_COLOR_HEX.red }];
+            if (lobbyState.role === null) return [{ id: 'host', name: 'You', c: BOARD_COLOR_HEX.red, cid: boardClientIdFor('host') }];
             return lobbyState.players
                 // hostIsPlayer is host-only state; on a guest the host's roster entry carries a color exactly when the host is playing
                 .filter(p => p.id !== 'host' || (lobbyState.role === 'host' ? lobbyState.hostIsPlayer : !!p.color))
-                .map((p, i) => ({ id: p.id, name: p.name || 'Trainer', c: BOARD_COLOR_HEX[p.color] || BOARD_COLOR_HEX[PLAYER_COLORS[i % PLAYER_COLORS.length]] }));
+                .map((p, i) => ({ id: p.id, name: p.name || 'Trainer', c: BOARD_COLOR_HEX[p.color] || BOARD_COLOR_HEX[PLAYER_COLORS[i % PLAYER_COLORS.length]], cid: boardClientIdFor(p.id) }));
         }
         function boardSend(msg) {
             if (msg && msg.type === 'board-state' && lobbyState.role === 'host') { msg.region = boardConfig.region; msg.style = boardConfig.style; scheduleHostBackup(); } // tells guests which board this is
@@ -45203,6 +45303,9 @@
         function finalizeLobbyGameStart() {
             const solo = isSoloSessionActive();
             if (lobbyState.role !== 'host' && !solo) return;
+            // Start the game on the first track of the Route playlist rather than one past wherever it was last left off
+            // (with shuffle on, it still starts somewhere random, as shuffle always does).
+            delete musicLastTrackIdByCategory.route;
             setActiveMusicCategory('route');
             if (isCategoryAudible('music')) {
                 musicAudio.volume = getCategoryVolume('music');
@@ -48119,6 +48222,10 @@
         // What the host's last broadcast said (see applyGuestMusicMirror()). Only used if this device becomes the host mid-session
         // (a handoff), so it can carry on playing what the table was listening to -- see resumeMusicAfterTakeover().
         let musicMirror = { isPlaying: false, trackTitle: null, category: null };
+        // Set by completeHostTakeover() (the one place a guest becomes the host): what the table was listening to when the old
+        // host went away. Kept apart from musicMirror because becoming host passes through a brief "no lobby" state that
+        // would otherwise wipe it before the new host's player is ready.
+        let musicTakeoverCarry = null;
 
         function saveMusicPlayerState() {
             try {
@@ -48666,9 +48773,10 @@
         // If the table was listening to music when the previous host handed off, carry on with it: same category, same track
         // if it can be found. Silently stays paused if the browser blocks autoplay.
         function resumeMusicAfterTakeover() {
-            const m = musicMirror;
-            musicMirror = { isPlaying: false, trackTitle: null, category: null };
-            if (!m.isPlaying || !m.category || musicQueueIndex >= 0 && !musicAudio.paused) return;
+            const m = musicTakeoverCarry;
+            musicTakeoverCarry = null;
+            if (!m || !m.isPlaying || !m.category || Date.now() - m.at > 60000) return; // nothing to carry, or stale
+            if (musicQueueIndex >= 0 && !musicAudio.paused) return;
             rebuildMusicQueue({ keepCurrentTrack: false });
             if (m.trackTitle) {
                 const i = musicQueue.findIndex(track => track.title === m.trackTitle);
@@ -48676,13 +48784,15 @@
             }
             if (musicQueueIndex >= 0 && isCategoryAudible('music')) {
                 musicAudio.volume = getCategoryVolume('music');
-                musicAudio.play().catch(() => { renderMusicPlayerUI(); /* autoplay blocked: show it as paused */ });
+                musicAudio.play().catch(() => {
+                    renderMusicPlayerUI(); // autoplay blocked: show it as paused
+                    showGameToast('The music is paused \u2014 press play to pick it back up.');
+                });
                 renderMusicPlayerUI(); // also tells the guests it's playing
             }
         }
         function syncMusicUIForLobbyRole() {
             const remote = lobbyState.role === 'guest';
-            if (lobbyState.role === null) musicMirror = { isPlaying: false, trackTitle: null, category: null }; // not in a lobby: nothing to carry over
             musicGameStageSelect.disabled = remote;
             if (remote) {
                 stopLocalMusicPlayback();
