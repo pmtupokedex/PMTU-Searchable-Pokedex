@@ -2397,7 +2397,8 @@
 
         .game-lobby[data-state="naming"] .game-lobby-saves,
         .game-lobby[data-state="color-pick"] .game-lobby-saves,
-        .game-lobby[data-state="host-role"] .game-lobby-saves {
+        .game-lobby[data-state="host-role"] .game-lobby-saves,
+        .game-lobby[data-state="host-setup"] .game-lobby-saves {
             display: none;
         }
 
@@ -2447,13 +2448,39 @@
             display: flex;
         }
 
+        /* Host-setup step -- the host's counterpart to the guest's
+           .game-lobby-naming step: name, plus a color grid when the
+           host is also playing, with one confirm button (see
+           openHostSetup() in the script). Same standalone-card look. */
+        .game-lobby-host-setup {
+            display: none;
+            flex-direction: column;
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .game-lobby-host-setup .filter-btn:not(.game-player-color-swatch-btn) {
+            margin: 4px 0 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .game-lobby[data-state="host-setup"] .game-lobby-choice {
+            display: none;
+        }
+
+        .game-lobby[data-state="host-setup"] .game-lobby-host-setup {
+            display: flex;
+        }
+
         /* Bare color-pick step -- no name field, just swatches. Reused
            for two different moments (see openLobbyColorPick() in the
-           script): a host choosing to play needing its own color for
-           the first time, and a returning guest whose remembered color
+           script): a solo player picking a color for the first time,
+           and a returning guest whose remembered color
            (see gameGuestSaves[...].playerColor) has since been taken by
            someone else and needs a new one before it can finish
-           reconnecting. Same standalone-card look as the two steps
+           reconnecting. Same standalone-card look as the steps
            above. */
         .game-lobby-color-pick {
             display: none;
@@ -3179,6 +3206,7 @@
         }
         .game-save-new-form select,
         .game-save-defaults-card select,
+        .game-save-default-preferred-name-input,
         .game-new-name-input {
             font-size: 15px;
             padding: 8px 10px;
@@ -15448,6 +15476,10 @@
                         <div id="game-save-defaults-body">
                             <p class="game-save-slot-meta">Applied automatically to new saves below &mdash; still changeable per-save at creation time.</p>
     
+                            <label for="game-save-default-preferred-name">Preferred Name</label>
+                            <input type="text" id="game-save-default-preferred-name" class="game-save-default-preferred-name-input" placeholder="Trainer" maxlength="20" autocomplete="off" spellcheck="false">
+                            <p class="game-save-slot-meta">Fills in automatically whenever you're asked for your name &mdash; still changeable each time.</p>
+    
                             <label for="game-save-default-length">Game Length</label>
                             <select id="game-save-default-length" class="game-save-default-length-select">
                                 <option value="short">Short</option>
@@ -15532,20 +15564,17 @@
                     </div>
                         </div>
 
-                    <!-- Host still asks for a display name up front --
-                         Join no longer does (see the naming step below):
-                         a guest doesn't know its own name for *this*
+                    <!-- Neither Host nor Join asks for a name here any
+                         more. A guest doesn't know its own name for *this*
                          particular game until it's actually connected and
-                         the host's hostSaveId is known, so asking here
-                         would either ask twice or ask before it's
-                         possible to know the right default. -->
+                         the host's hostSaveId is known (see the naming step
+                         below); the host gives its name on the same screen
+                         as its color (see .game-lobby-host-setup below). -->
                     <div class="game-lobby-choice">
                         <div class="game-lobby-card">
                             <p class="game-lobby-card-title">Host a Lobby</p>
                             <p class="game-lobby-card-blurb">Your device plays the music. Everyone else joins with a room code and can change the playlist from their own devices.</p>
                             <p class="game-lobby-host-note">The host's device keeps the game connected for everyone, so it needs to stay awake and on-screen for the whole session — a locked phone can still drop players. A laptop or tablet that won't sleep makes the steadiest host; other players are still fine joining from their phones.</p>
-                            <label>Your Name</label>
-                            <input type="text" class="game-lobby-input game-lobby-host-name" placeholder="Trainer" maxlength="20">
                             <button class="filter-btn game-lobby-host-btn">Host a Lobby</button>
                         </div>
                         <div class="game-lobby-card">
@@ -15603,11 +15632,9 @@
 
                     <!-- Shown right after "Host a Lobby" is tapped (see
                          beginHostFlow() in the script), before hosting
-                         actually starts -- "Just Hosting" goes straight
-                         to the existing host flow unchanged; "I'll Be
-                         Playing Too" continues on to a player color pick
-                         (skipped if this save already has one on file,
-                         see chooseHostAsPlayer()) before hosting starts. -->
+                         actually starts. Both choices continue to the
+                         host-setup step below (see openHostSetup()); only
+                         "I'll Be Playing Too" shows the color grid. -->
                     <div class="game-lobby-host-role">
                         <p class="game-lobby-card-title">One More Thing…</p>
                         <p class="game-lobby-card-blurb">Will you also be playing a hand on this device, or is it just running the lobby?</p>
@@ -15616,10 +15643,29 @@
                         <button class="filter-btn exclude game-lobby-host-role-back-btn">Back</button>
                     </div>
 
+                    <!-- Host's name (and, if playing, color) on one screen,
+                         mirroring the guest's naming step above. The name
+                         is pre-filled from what this save last hosted as,
+                         else the Preferred Name under Default Save
+                         Settings; the color from this save's remembered
+                         one. See openHostSetup() in the script. -->
+                    <div class="game-lobby-host-setup">
+                        <p class="game-lobby-card-title">Almost Ready</p>
+                        <p class="game-lobby-card-blurb" id="game-lobby-host-setup-blurb"></p>
+                        <label>Your Name</label>
+                        <input type="text" class="game-lobby-input game-lobby-host-setup-name" placeholder="Trainer" maxlength="20">
+                        <div class="game-lobby-host-setup-color">
+                            <label>Your Color</label>
+                            <div class="game-player-color-grid" id="game-lobby-host-setup-color-grid"></div>
+                        </div>
+                        <button class="filter-btn game-lobby-host-setup-confirm-btn" disabled>Start Hosting</button>
+                        <button class="filter-btn exclude game-lobby-host-setup-cancel-btn">Back</button>
+                    </div>
+
                     <!-- Bare color-pick step, no name field -- see
                          openLobbyColorPick() in the script for the two
-                         moments this is reused for (a hosting-and-playing
-                         host picking a color for the first time, and a
+                         moments this is reused for (a solo player
+                         picking a color for the first time, and a
                          returning guest whose remembered color has since
                          been taken by someone else). Tapping an
                          available swatch commits immediately, same as
@@ -19941,6 +19987,20 @@
 
         let gameSaveDefaults = loadGameSaveDefaults();
 
+        // The player's Preferred Name (Default Save Settings card) --
+        // device-wide rather than per-save, and not applied to the
+        // "+ New Save" form (a save's own name is a different thing).
+        // It pre-fills every "what should others call you?" field, and
+        // is the fallback when that field is left blank.
+        function getPreferredName() {
+            return String((gameSaveDefaults && gameSaveDefaults.preferredName) || '').trim().slice(0, 20);
+        }
+
+        // Typed name -> Preferred Name -> 'Trainer'.
+        function resolveLobbyName(typed) {
+            return String(typed || '').trim() || getPreferredName() || 'Trainer';
+        }
+
         // Applies whatever's in gameSaveDefaults to a save-creation
         // form's own selects -- called from beginCreatingSave() below,
         // right as that form opens. A field simply left unset in
@@ -19991,6 +20051,8 @@
                 const select = document.querySelector(selector);
                 if (select) select.value = gameSaveDefaults[key];
             });
+            const preferredNameInput = document.getElementById('game-save-default-preferred-name');
+            if (preferredNameInput) preferredNameInput.value = getPreferredName();
             syncRegionMapStyleRows();
         }
 
@@ -40878,7 +40940,6 @@
             const scrollEl = document.getElementById('game-scroll');
             if (scrollEl) scrollEl.scrollTop = 0;
             if (screenId === 'main') renderBattleArenaGate();
-            if (screenId === 'lobby') prefillLobbyHostName();
             if (screenId === 'decks') renderDecksScreen();
             if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); }
             if (screenId === 'battle') {
@@ -40904,21 +40965,6 @@
             if (screenId === 'trainer-card') enterTrainerCardScreen();
             boardApplySize();
             if (screenId === 'board') initBoardScreen();
-        }
-
-        // Auto-fills the Host card's name field from whatever this
-        // device called itself the last time it hosted *this* save (see
-        // startHostingLobby(), which is what actually records
-        // hostDisplayName onto the save) -- so continuing a game the
-        // next day doesn't require re-typing a name that's already on
-        // file. Only touches the field if it's currently empty, so it
-        // never clobbers something already typed (e.g. navigating away
-        // from the Lobby screen and back mid-edit).
-        function prefillLobbyHostName() {
-            const input = document.querySelector('.game-lobby-host-name');
-            if (!input || input.value) return;
-            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
-            if (save && save.hostDisplayName) input.value = save.hostDisplayName;
         }
 
         // Called on load and every time the panel closes, so it's always
@@ -41989,8 +42035,8 @@
         let lobbyColorPickOnCancel = null;
 
         // Opens .game-lobby-color-pick for one of its two use cases (see
-        // that class's own CSS comment): a hosting-and-playing host
-        // picking a color for the first time, or a returning guest whose
+        // that class's own CSS comment): a solo player picking a color
+        // for the first time, or a returning guest whose
         // remembered color has since been taken by someone else.
         // Choosing an available swatch commits immediately -- no
         // separate Confirm button, same as the Note Color picker
@@ -42029,8 +42075,7 @@
         // .game-lobby-host-role step this hands off to next
         // (chooseHostOnly()/chooseHostAsPlayer() below), which is what
         // actually calls startHostingLobby().
-        let pendingHostName = 'Trainer';
-        function beginHostFlow(name) {
+        function beginHostFlow() {
             if (!requireLobbyLibs()) return;
             if (activeSaveSlot === null) {
                 setLobbyStatus('Create or load a save first, then tap Host a Lobby again.', 'error');
@@ -42039,33 +42084,53 @@
                 if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
                 return;
             }
-            pendingHostName = (name || '').trim() || 'Trainer';
             document.getElementById('game-lobby').dataset.state = 'host-role';
         }
 
         function chooseHostOnly() {
-            startHostingLobby(pendingHostName, false, null);
+            openHostSetup(false);
         }
 
         function chooseHostAsPlayer() {
-            const save = gameSaves[activeSaveSlot];
+            openHostSetup(true);
+        }
+
+        // The host's counterpart to the guest's naming step: name (and,
+        // when playing, color) on one screen, then Start Hosting. Both
+        // are pre-filled so a returning host just confirms -- name from
+        // what this save last hosted as (the generic 'Trainer' fallback
+        // doesn't count, or it would hide the Preferred Name forever),
+        // else the Preferred Name; color from this save's remembered
+        // one (nobody else can be connected yet, so it can't collide).
+        let hostSetupIsPlayer = false;
+        let hostSetupSelectedColor = null;
+
+        function openHostSetup(isPlayer) {
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            hostSetupIsPlayer = !!isPlayer;
+            const rememberedName = save && save.hostDisplayName && save.hostDisplayName !== 'Trainer' ? save.hostDisplayName : '';
+            const nameInput = document.querySelector('.game-lobby-host-setup-name');
+            if (nameInput) nameInput.value = rememberedName || getPreferredName();
+            document.getElementById('game-lobby-host-setup-blurb').textContent = hostSetupIsPlayer
+                ? 'What should other players call you, and which color should they see next to your name while you play?'
+                : 'What should other players call you?';
+            const colorWrap = document.querySelector('.game-lobby-host-setup-color');
+            if (colorWrap) colorWrap.style.display = hostSetupIsPlayer ? '' : 'none';
             const savedColor = save && save.hostPlayerColor;
-            if (savedColor && PLAYER_COLORS.includes(savedColor)) {
-                // Nobody else can possibly be connected yet at the
-                // moment hosting is about to start -- this device's own
-                // remembered color can never collide with anything, so
-                // it's safe to reuse silently rather than re-asking
-                // every single time this same save hosts again.
-                startHostingLobby(pendingHostName, true, savedColor);
-                return;
+            hostSetupSelectedColor = (hostSetupIsPlayer && PLAYER_COLORS.includes(savedColor)) ? savedColor : null;
+            if (hostSetupIsPlayer) {
+                renderPlayerColorGrid(document.getElementById('game-lobby-host-setup-color-grid'), [], hostSetupSelectedColor);
             }
-            openLobbyColorPick({
-                title: 'Choose Your Color',
-                blurb: 'Pick the color other players will see next to your name while you play.',
-                takenColors: [],
-                onChoose: (color) => startHostingLobby(pendingHostName, true, color),
-                onCancel: () => { document.getElementById('game-lobby').dataset.state = 'host-role'; },
-            });
+            updateHostSetupConfirmState();
+            document.getElementById('game-lobby').dataset.state = 'host-setup';
+            if (nameInput) nameInput.focus();
+        }
+
+        // Playing needs a color before hosting can start; hosting only
+        // has nothing else to pick.
+        function updateHostSetupConfirmState() {
+            const btn = document.querySelector('.game-lobby-host-setup-confirm-btn');
+            if (btn) btn.disabled = hostSetupIsPlayer && !hostSetupSelectedColor;
         }
 
         function startHostingLobby(name, isPlayer, color) {
@@ -42081,16 +42146,15 @@
             resetLobbyState();
             boardPendingRestore = null; // a fresh lobby never inherits a previous game's board
             lobbyState.role = 'host';
-            lobbyState.hostName = (name || '').trim() || 'Trainer';
+            lobbyState.hostName = resolveLobbyName(name);
             lobbyState.hostSaveId = gameSaves[activeSaveSlot].hostSaveId;
             lobbyState.hostIsPlayer = !!isPlayer;
             lobbyState.hostColor = isPlayer ? color : null;
             // Remembered per-save (not globally) so re-loading a
             // *different* save later doesn't carry over a name that
-            // belonged to a different game -- see prefillLobbyHostName(),
-            // which is what reads this back. hostPlayerColor gets the
-            // same treatment (see chooseHostAsPlayer() above, which is
-            // what reads it back), and is left untouched -- not cleared --
+            // belonged to a different game -- see openHostSetup(), which
+            // is what reads this back. hostPlayerColor gets the
+            // same treatment (also read back there), and is left untouched -- not cleared --
             // when hosting only, so choosing to play again later still
             // remembers it.
             gameSaves[activeSaveSlot].hostDisplayName = lobbyState.hostName;
@@ -45055,7 +45119,7 @@
             lobbyEl.dataset.state = 'naming';
             const nameInput = document.querySelector('.game-lobby-naming-name');
             if (nameInput) {
-                nameInput.value = '';
+                nameInput.value = getPreferredName();
                 nameInput.focus();
             }
             lobbyNamingSelectedColor = null;
@@ -45081,7 +45145,7 @@
                 setLobbyStatus('This host hasn\u2019t loaded a save yet \u2014 try again shortly.', 'error');
                 return;
             }
-            const cleanName = (name || '').trim() || 'Trainer';
+            const cleanName = resolveLobbyName(name);
             const cleanColor = PLAYER_COLORS.includes(color) ? color : null;
             const ruleset = lobbyState.hostRuleset || {};
             const now = new Date().toISOString();
@@ -46250,7 +46314,7 @@
             const lobbyHostBtn = e.target.closest('.game-lobby-host-btn');
             if (lobbyHostBtn) {
                 const card = lobbyHostBtn.closest('.game-lobby-card');
-                beginHostFlow(card.querySelector('.game-lobby-host-name').value);
+                beginHostFlow();
                 return;
             }
 
@@ -46272,6 +46336,21 @@
                 return;
             }
 
+            const hostSetupConfirmBtn = e.target.closest('.game-lobby-host-setup-confirm-btn');
+            if (hostSetupConfirmBtn) {
+                if (hostSetupConfirmBtn.disabled) return; // belt-and-suspenders -- the button's own disabled state already prevents this
+                const hostName = document.querySelector('.game-lobby-host-setup-name').value;
+                if (hostSetupIsPlayer) startHostingLobby(hostName, true, hostSetupSelectedColor);
+                else startHostingLobby(hostName, false, null);
+                return;
+            }
+
+            const hostSetupCancelBtn = e.target.closest('.game-lobby-host-setup-cancel-btn');
+            if (hostSetupCancelBtn) {
+                document.getElementById('game-lobby').dataset.state = 'host-role';
+                return;
+            }
+
             const lobbyColorPickCancelBtn = e.target.closest('.game-lobby-color-pick-cancel-btn');
             if (lobbyColorPickCancelBtn) {
                 const cancelFn = lobbyColorPickOnCancel;
@@ -46290,7 +46369,11 @@
             const playerColorSwatchBtn = e.target.closest('.game-player-color-swatch-btn');
             if (playerColorSwatchBtn && !playerColorSwatchBtn.disabled) {
                 const color = playerColorSwatchBtn.dataset.color;
-                if (playerColorSwatchBtn.closest('#game-lobby-naming-color-grid')) {
+                if (playerColorSwatchBtn.closest('#game-lobby-host-setup-color-grid')) {
+                    hostSetupSelectedColor = color;
+                    renderPlayerColorGrid(document.getElementById('game-lobby-host-setup-color-grid'), [], color);
+                    updateHostSetupConfirmState();
+                } else if (playerColorSwatchBtn.closest('#game-lobby-naming-color-grid')) {
                     lobbyNamingSelectedColor = color;
                     renderPlayerColorGrid(document.getElementById('game-lobby-naming-color-grid'), lobbyNamingTakenColors, color);
                     const namingConfirmBtn = document.querySelector('.game-lobby-naming-confirm-btn');
@@ -47757,6 +47840,18 @@
             // Same idea again for Trainer Cards: refreshes the tile's lock
             // (only matters while no real save is active yet).
             if (key === 'trainerCardsEnabled') renderTrainerCardAvailability();
+        });
+
+        // Preferred Name is a text field, so it saves on every keystroke
+        // (the 'change' listener above only fires once the field loses
+        // focus, which would drop an edit made right before navigating
+        // away). Cleared field = no preference.
+        document.getElementById('game-scroll').addEventListener('input', (e) => {
+            if (e.target.id !== 'game-save-default-preferred-name') return;
+            const value = e.target.value.trim();
+            if (value) gameSaveDefaults.preferredName = value;
+            else delete gameSaveDefaults.preferredName;
+            persistGameSaveDefaults();
         });
 
         // ---- Audio settings (global + per-category mute & volume) ------
