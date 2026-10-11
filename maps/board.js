@@ -84,9 +84,10 @@ let restoreQ=null,owned=new Set(),boardCaught=new Set();
 // Players are matched to a previous game's entries by their durable client id (cid) first -- it survives a reconnect, a
 // reload and a color change -- and only then by color, and never onto a player who is known to be someone else.
 function restorePlayers(){if(!restoreQ)return;const left=[],taken=new Set();
- const place=(o,p)=>{taken.add(p.id);if(o.pos&&get(o.pos))pos[p.id]=o.pos;if(o.home&&get(o.home))home[p.id]=o.home};
- restoreQ.forEach(o=>{if(!o.cid)return;const p=PL.find(x=>!taken.has(x.id)&&x.cid===o.cid);if(p){place(o,p);o.done=true}});
- restoreQ.forEach(o=>{if(o.done)return;const p=PL.find(x=>!taken.has(x.id)&&x.c===o.c&&!(x.cid&&o.cid&&x.cid!==o.cid)&&!(o.cid&&!x.cid));if(p)place(o,p);else left.push(o)});
+ const place=(o,p,how)=>{try{console.info('[board] restore',how||'?','->',p.id,'cid',p.cid||'-','color',p.c,'pos',o.pos||'(none)')}catch(e){}taken.add(p.id);if(o.pos&&get(o.pos))pos[p.id]=o.pos;if(o.home&&get(o.home))home[p.id]=o.home};
+ restoreQ.forEach(o=>{if(!o.cid)return;const p=PL.find(x=>!taken.has(x.id)&&x.cid===o.cid);if(p){place(o,p,'cid');o.done=true}});
+ restoreQ.forEach(o=>{if(o.done)return;const p=PL.find(x=>!taken.has(x.id)&&x.c===o.c&&!(x.cid&&o.cid&&x.cid!==o.cid)&&!(o.cid&&!x.cid));if(p)place(o,p,'color');else left.push(o)});
+ try{if(left.length)console.info('[board] restore waiting for',left.map(o=>(o.cid||'no-cid')+'@'+(o.pos||'?')).join(', '))}catch(e){}
  restoreQ=left.length?left:null}
 function restoreSnapshot(str,oldPlayers){if(mode!=='host'||!str)return false;let s;try{s=JSON.parse(str)}catch(e){return false}
  if(!s||!s.spaces||!s.pos)return false;const used=new Set();
