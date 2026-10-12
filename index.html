@@ -4885,6 +4885,10 @@
             gap: 6px;
         }
 
+        .game-deck-look-card-options-grid--single {
+            grid-template-columns: 1fr;
+        }
+
         .game-deck-look-card-options-grid .filter-btn {
             margin: 0;
             width: 100%;
@@ -28727,6 +28731,7 @@
                 return;
             }
             closeDeckLookPrompt();
+            deckLookPendingMode = null; // a manual look is never a Department Store one
             requestLookAtTopCards(deckName, count);
         }
 
@@ -28746,6 +28751,14 @@
         // below.
         let deckLookViewerDeckName = null;
         let deckLookViewerCards = [];
+        // 'keep-one' while the viewer is showing a Department Store look (see boardUseDepartmentStore()): each card
+        // gets a single Keep button instead of the usual three, and keeping one adds it to the hand and sends every
+        // other peeked card to the bottom of the deck. null = the normal viewer. deckLookPendingMode is set just
+        // before the look is requested and picked up by openDeckLookViewer() when the cards arrive (immediately for the
+        // Host/solo, a moment later for a guest); it expires, and a manual Look at Top clears it, so a request that
+        // never gets answered can't turn a later manual look into one of these.
+        let deckLookViewerMode = null;
+        let deckLookPendingMode = null;
 
         // Opens the viewer with exactly the cards hostApplyLookRequest()
         // sent -- either called directly (Host/solo, see
@@ -28753,6 +28766,8 @@
         // result' network message (guest, see the wireHostConnection()
         // listener).
         function openDeckLookViewer(deckName, cards) {
+            deckLookViewerMode = (deckLookPendingMode && deckLookPendingMode.deck === deckName && Date.now() - deckLookPendingMode.at < 60000) ? deckLookPendingMode.mode : null;
+            deckLookPendingMode = null;
             deckLookViewerDeckName = deckName;
             deckLookViewerCards = cards.slice();
             renderDeckLookViewer();
@@ -28766,6 +28781,7 @@
         // designed in asked for.
         function closeDeckLookViewer() {
             deckLookViewerDeckName = null;
+            deckLookViewerMode = null;
             deckLookViewerCards = [];
             document.getElementById('game-deck-look-viewer-overlay').classList.remove('visible');
         }
@@ -28787,7 +28803,7 @@
             if (!overlay || !titleEl || !stackEl || !deckLookViewerDeckName) return;
 
             const deckName = deckLookViewerDeckName;
-            titleEl.textContent = `Top of ${deckName}`;
+            titleEl.textContent = deckLookViewerMode === 'keep-one' ? 'Department Store \u2014 keep one, the other goes to the bottom' : `Top of ${deckName}`;
 
             if (!deckLookViewerCards.length) {
                 stackEl.style.height = '';
@@ -28804,7 +28820,11 @@
             stackEl.innerHTML = deckLookViewerCards.map((cardId, i) => {
                 const card = CARDS_BY_ID[cardId];
                 const name = card ? card.name : cardId;
-                const optionsInner = `
+                const optionsInner = deckLookViewerMode === 'keep-one' ? `
+                    <div class="game-deck-look-card-options-grid game-deck-look-card-options-grid--single">
+                        <button class="filter-btn exclude game-deck-look-keep-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Keep (Add to Hand)</button>
+                    </div>
+                ` : `
                     <div class="game-deck-look-card-options-grid">
                         <button class="filter-btn game-deck-look-top-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Top of Deck</button>
                         <button class="filter-btn game-deck-look-bottom-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Bottom of Deck</button>
@@ -28831,6 +28851,16 @@
         function resolveDeckLookCard(cardId, action) {
             const deckName = deckLookViewerDeckName;
             if (!deckName) return;
+            if (action === 'keep') {
+                // Department Store: the chosen card to the hand, every other peeked card to the bottom of the deck.
+                const others = deckLookViewerCards.filter(id => id !== cardId);
+                requestLookAddToHand(deckName, cardId);
+                others.forEach(id => requestLookMoveToBottom(deckName, id));
+                const kept = CARDS_BY_ID[cardId];
+                closeDeckLookViewer();
+                showGameToast('Department Store: kept ' + (kept ? kept.name : 'the card') + (others.length ? '; the other went to the bottom of the deck.' : '.'));
+                return;
+            }
             const idx = deckLookViewerCards.indexOf(cardId);
             if (idx !== -1) deckLookViewerCards.splice(idx, 1);
             if (action === 'top') requestLookMoveToTop(deckName, cardId);
@@ -44217,6 +44247,15 @@
                 const acts = info.space.actions || [];
                 // Battle actions get a button unless this player already holds that Badge; the rest stay as text for now.
                 const parts = acts.map(a => {
+                    const sv = boardResolveServiceAction(a);
+                    if (sv) { buttons.push({ id: 'sact:' + sv.type, label: sv.name }); return boardActionLabel(a); }
+                    const it = boardResolveItemAction(a);
+                    if (it) {
+                        const found = boardFindItemCard(it.item);
+                        if (found && boardGainItemClaimed(found)) return boardActionLabel(a) + ' \u2713 gained';
+                        buttons.push({ id: 'gitem:' + encodeURIComponent(it.item), label: 'Gain Item: ' + it.item });
+                        return boardActionLabel(a);
+                    }
                     const r = boardResolveBattleAction(a);
                     if (!r) return boardActionLabel(a);
                     if (boardBattleActionDefeated(r)) return boardActionLabel(a) + ' \u2713 defeated';
@@ -44246,6 +44285,15 @@
                 else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-encounter', player: 'host' });
             } else if (id === 'battle' && info) {
                 boardStartWildBattle(info);
+            } else if (id.startsWith('gitem:')) {
+                boardGainItem(decodeURIComponent(id.slice(6)));
+            } else if (id.startsWith('sact:')) {
+                boardRunServiceAction(id.slice(5), info);
+            } else if (id.startsWith('pcrev:')) {
+                boardCenterRevive(Number(id.slice(6)));
+                boardCenterContinue();
+            } else if (id === 'pcdone') {
+                boardCenterFinish();
             } else if (id.startsWith('bact:')) {
                 const [, type, leaderId] = id.split(':');
                 boardRunBattleAction(type, leaderId, info);
@@ -44319,7 +44367,11 @@
             if (typeof a === 'string') return a;
             if (a && a.label) return a.label;
             const r = boardResolveBattleAction(a);
-            return r ? r.label : ((a && a.type) || '');
+            if (r) return r.label;
+            const sv = boardResolveServiceAction(a);
+            if (sv) return sv.name;
+            const it = boardResolveItemAction(a);
+            return it ? it.label : ((a && a.type) || '');
         }
         // The cards this action can put in the Arena: the one it names, or every card of its category here.
         function boardBattleChoices(r) {
@@ -44362,6 +44414,157 @@
             buttons.push({ id: 'brand:' + type, label: 'Random' }, { id: 'back', label: 'Back' });
             if (boardCtrl) boardCtrl.showAction({ text: 'Who will you face?', buttons, info });
         }
+        // ---- Poké Mart / Pokémon Center ----
+        // Plain actions with no card or leader: { type: 'poke-mart' } and { type: 'pokemon-center' } (plus an optional
+        // label), or the text "Poké Mart" / "Pokémon Center" (with or without the accents) from older maps.
+        const BOARD_SERVICE_ACTIONS = {
+            'poke-mart':      { name: 'Pok\u00e9 Mart',      legacy: /^\s*Pok[e\u00e9]\s*Mart\s*$/i },
+            'pokemon-center': { name: 'Pok\u00e9mon Center', legacy: /^\s*Pok[e\u00e9]mon\s*Center\s*$/i },
+            'department-store': { name: 'Department Store', legacy: /^\s*Dep(?:artmen)?t\.?\s*Store\s*$/i },
+        };
+        function boardResolveServiceAction(a) {
+            let type = null;
+            if (a && typeof a === 'object') { if (BOARD_SERVICE_ACTIONS[a.type]) type = a.type; }
+            else if (typeof a === 'string') {
+                const text = a.normalize('NFC'); // so "e" + a combining accent still matches
+                type = Object.keys(BOARD_SERVICE_ACTIONS).find(t => BOARD_SERVICE_ACTIONS[t].legacy.test(text)) || null;
+            }
+            return type ? { type, name: BOARD_SERVICE_ACTIONS[type].name } : null;
+        }
+        function boardRunServiceAction(type, info) {
+            if (type === 'poke-mart') boardUsePokeMart();
+            else if (type === 'pokemon-center') boardUsePokemonCenter(info);
+            else if (type === 'department-store') boardUseDepartmentStore();
+        }
+
+        // Department Store: look at the top 2 cards of the Item deck, keep one (it goes to the hand) and the other goes
+        // to the bottom of the deck. Uses the Decks screen's own Look at Top viewer, in its keep-one mode.
+        function boardUseDepartmentStore() {
+            if (isActiveSaveReadOnly()) return;
+            if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Virtual decks are off for this save \u2014 look at the top 2 cards of your physical Item deck, keep one, and put the other on the bottom.'); return; }
+            openGamePanel(); // the board is a main view now, not inside the panel
+            setGameScreen('decks');
+            deckLookPendingMode = { mode: 'keep-one', deck: 'Item Deck', at: Date.now() };
+            requestLookAtTopCards('Item Deck', 2);
+        }
+
+        // Poké Mart: draw one card from the Item deck, the same way Draw Event Card draws from the Event deck.
+        // (Lumiose City will later offer a Donut card as an alternative.)
+        function boardUsePokeMart() {
+            if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Virtual decks are off for this save \u2014 draw from your physical Item deck.'); return; }
+            requestDrawCard('Item Deck');
+            openGamePanel(); // the board is a main view now, not inside the panel
+            setGameScreen('decks'); // the drawn card shows up in the hand there
+        }
+
+        // Pokémon Center: removes every Status Condition on the team and revives up to boardPokemonCenterRevives()
+        // Fainted Pokémon. A player with no more Fainted Pokémon than that has them all revived at once; with more,
+        // they choose which ones, one at a time.
+        function boardPokemonCenterRevives() {
+            return 2; // a fixed 2 for now; written as a function so a house rule can scale it with Badges later
+        }
+        let boardCenterSession = null; // { left, revived: [names], cleared, info } while the picker is open
+        function boardTeamIndexes(test) {
+            const out = [];
+            (getActiveSaveData().team.members || []).forEach((m, i) => { if (m && test(m)) out.push(i); });
+            return out;
+        }
+        function boardClearTeamStatus(index) {
+            const m = getTeamSlotMember(index);
+            if (!m || !m.status) return false;
+            m.status = null;
+            m.statusCounter = undefined;
+            m.statusCardSide = undefined;
+            persistTeamSlotChange(index);
+            return true;
+        }
+        function boardUsePokemonCenter(info) {
+            if (isActiveSaveReadOnly()) return;
+            if (!boardTeamIndexes(m => m.fainted || m.status).length) { showGameToast('Your team is already in perfect health.'); return; }
+            let cleared = 0;
+            boardTeamIndexes(m => m.status).forEach(i => { if (boardClearTeamStatus(i)) cleared++; });
+            boardCenterSession = { left: boardPokemonCenterRevives(), revived: [], cleared, info };
+            boardCenterContinue();
+        }
+        function boardCenterRevive(index) {
+            const m = getTeamSlotMember(index);
+            if (!m || !m.fainted) return;
+            const name = getBattleMemberDisplay(m).name || 'Pok\u00e9mon';
+            reviveTeamMember(index);
+            boardCenterSession.revived.push(name);
+            boardCenterSession.left--;
+        }
+        function boardCenterContinue() {
+            const ses = boardCenterSession;
+            if (!ses) return;
+            const fainted = boardTeamIndexes(m => m.fainted);
+            if (fainted.length && ses.left > 0 && fainted.length <= ses.left) fainted.forEach(boardCenterRevive); // room for all of them
+            else if (fainted.length && ses.left > 0) {
+                const buttons = fainted.map(i => ({ id: 'pcrev:' + i, label: getBattleMemberDisplay(getTeamSlotMember(i)).name || 'Pok\u00e9mon' }));
+                buttons.push({ id: 'pcdone', label: 'Done' });
+                if (boardCtrl) boardCtrl.showAction({ text: 'Pok\u00e9mon Center \u2014 choose a Pok\u00e9mon to revive (' + ses.left + ' left)', buttons, info: ses.info });
+                return;
+            }
+            boardCenterFinish();
+        }
+        function boardCenterFinish() {
+            const ses = boardCenterSession;
+            boardCenterSession = null;
+            if (!ses) return;
+            const parts = [];
+            if (ses.revived.length) parts.push('revived ' + ses.revived.join(' and '));
+            if (ses.cleared) parts.push('removed ' + (ses.cleared === 1 ? 'a Status Condition' : 'Status Conditions from ' + ses.cleared + ' Pok\u00e9mon'));
+            showGameToast('Pok\u00e9mon Center: ' + (parts.join(', ') || 'nothing needed') + '.');
+        }
+
+        // ---- Gain Item ----
+        // { type: 'gain-item', item: 'Pok\u00e9 Flute' } (plus an optional label), or the text "Gain Item (Poke Flute)" from
+        // older maps. Looks the card up by name in the Reward Item Deck, then the Shop Deck, stops at the first deck
+        // that has it, and puts it straight into this player's hand -- free, with no Pok\u00e9 Coin cost in the Shop's case.
+        const BOARD_GAIN_ITEM_DECKS = ['Reward Item Deck', 'Shop Deck'];
+        // Names are compared without accents, case or punctuation, so "Poke Flute" finds "Pok\u00e9 Flute" and "SS Anne Ticket"
+        // finds "S.S. Anne Ticket".
+        function boardCardNameKey(name) {
+            return String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        }
+        function boardResolveItemAction(a) {
+            let item = null, label = null;
+            if (a && typeof a === 'object') {
+                if (a.type !== 'gain-item' || !a.item) return null;
+                item = String(a.item).trim(); label = a.label || null;
+            } else if (typeof a === 'string') {
+                const m = a.match(/^\s*Gain Item\s*\((.+)\)\s*$/i);
+                if (!m) return null;
+                item = m[1].trim(); label = a;
+            }
+            return item ? { type: 'gain-item', item, label: label || 'Gain Item (' + item + ')' } : null;
+        }
+        function boardFindItemCard(item) {
+            const key = boardCardNameKey(item);
+            for (const deckName of BOARD_GAIN_ITEM_DECKS) {
+                const card = Object.values(CARDS_BY_ID).find(c => c.cardDeck === deckName && cardMatchesActiveRegion(c) && boardCardNameKey(c.name) === key);
+                if (card) return { card, deckName };
+            }
+            return null;
+        }
+        // One-time Reward cards (the Pok\u00e9 Flute, say) can only be gained once per player.
+        function boardGainItemClaimed(found) {
+            return found.card.oneTime === 'yes' && getLocalOneTimeClaims(found.deckName).includes(found.card.id);
+        }
+        function boardGainItem(item) {
+            if (isActiveSaveReadOnly()) return;
+            const found = boardFindItemCard(item);
+            if (!found) { showGameToast('Could not find "' + item + '" in the Reward Item or Shop deck.'); return; }
+            const name = found.card.name;
+            if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Virtual decks are off for this save \u2014 take the ' + name + ' card from your physical ' + found.deckName + '.'); return; }
+            if (boardGainItemClaimed(found)) { showGameToast('You have already gained the ' + name + '.'); return; }
+            if (DECK_SHOP_MENU[found.deckName]) acquireShopCard(found.deckName, found.card.id);
+            else requestGainReward(found.deckName, found.card.id);
+            openGamePanel(); // the board is a main view now, not inside the panel
+            setGameScreen('decks'); // the card shows up in the hand there
+            showGameToast('Gained ' + name + ' (' + found.deckName + ').');
+        }
+
         // Puts the Gym Leader card in the Arena the same way Choose Gym Leader does (so the Badge, Next Round
         // line-up and Elite Four / Champion stage rule all apply), after the usual replace confirmation.
         function boardStartGymBattle(leaderId) {
@@ -47857,6 +48060,11 @@
             const handBtn = e.target.closest('.game-deck-look-hand-btn');
             if (handBtn) {
                 resolveDeckLookCard(handBtn.dataset.cardId, 'hand');
+                return;
+            }
+            const keepBtn = e.target.closest('.game-deck-look-keep-btn');
+            if (keepBtn) {
+                resolveDeckLookCard(keepBtn.dataset.cardId, 'keep');
                 return;
             }
             const lookCard = e.target.closest('.game-deck-look-card');
