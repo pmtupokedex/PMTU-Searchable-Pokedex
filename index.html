@@ -8023,6 +8023,48 @@
             display: flex;
         }
 
+
+        /* Catch attempt overlay -- see openCatchOverlay() in the script.
+           Same backdrop/positioning as #game-battle-field-overlay. */
+        #game-catch-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 21;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #game-catch-overlay.visible { display: flex; }
+        #game-catch-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
+        .game-catch-pokemon-img {
+            width: 140px; height: 140px; object-fit: contain; display: block; margin: 0 auto 8px;
+        }
+        .game-catch-pokemon-name { font-weight: bold; margin: 0 0 10px; }
+        .game-catch-card-img {
+            width: 100%; max-width: 200px; display: block; margin: 0 auto 10px;
+            border-radius: 8px; cursor: pointer;
+        }
+        .game-catch-roll-result {
+            font-size: 36px; font-weight: bold; margin: 4px 0 2px;
+        }
+        .game-catch-total { font-size: 14px; color: #555; margin: 0 0 10px; }
+        .game-catch-bonus {
+            margin: 10px 0; padding: 8px 12px; text-align: left;
+            border: 2px solid rgba(0, 0, 0, 0.15); border-radius: 10px;
+            background: rgba(255, 255, 255, 0.6);
+        }
+        .game-catch-bonus-title {
+            font-size: 13px; font-weight: bold; text-transform: uppercase;
+            letter-spacing: 0.5px; text-align: center; margin: 0 0 6px;
+        }
+        .game-catch-bonus-row { display: flex; justify-content: space-between; font-size: 14px; padding: 2px 0; }
+        .game-catch-bonus-row.total { border-top: 1px solid rgba(0,0,0,0.2); margin-top: 4px; padding-top: 4px; font-weight: bold; }
+        .game-catch-bonus-empty { font-size: 13px; color: #555; text-align: center; margin: 0; }
+        #game-catch-overlay .game-catch-actions { display: flex; flex-direction: column; gap: 8px; }
+
         .game-team-cards-section + .game-team-cards-section {
             margin-top: 16px;
         }
@@ -16490,6 +16532,18 @@
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude game-battle-field-close-btn">Close</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Catch attempt overlay -- see openCatchOverlay()/
+             renderCatchOverlay() in the script. Opened by Catch This
+             Pok&eacute;mon; the actual catch (catchWildPokemon()/
+             requestBattleCatchWild()) only happens from its Add to Team
+             button. -->
+        <div id="game-catch-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Catch Attempt</p>
+                <div id="game-catch-body"></div>
             </div>
         </div>
 
@@ -25747,6 +25801,21 @@
 
         function hostApplyBattlePhase(peerKey, action) {
             const st = hostBattleArenaState;
+            // 'end-failed-catch' (Catch overlay's Failed to Catch): a normal
+            // End Battle, except the Wild Pok\u00e9mon goes back to the Virtual
+            // Game Board's pool whether or not it's Fainted. Only the
+            // player battling that Wild Pok\u00e9mon may send it.
+            let failedCatch = false;
+            if (action === 'end-failed-catch') {
+                const wildEntry = st.defender;
+                const attackerEntry = st.attacker;
+                if (!wildEntry || wildEntry.ownerId || !attackerEntry || attackerEntry.ownerId !== peerKey) {
+                    sendBattleNotice(peerKey, 'Only the player battling this Pok\u00e9mon can fail to catch it.');
+                    return;
+                }
+                action = 'end';
+                failedCatch = true;
+            }
             // Two other players' battle isn't the spectators' to begin, advance, end, or flip the Battle Cards of.
             if (BATTLE_SPECTATOR_BLOCKED_PHASES.includes(action) && isSpectatorOfPlayerBattle(peerKey)) {
                 sendBattleNotice(peerKey, getBattleSpectatorPhaseMessage(action));
@@ -25828,7 +25897,7 @@
                 // solo End Battle gets this from recallBattleDefender(), and a recall/replacement or a catch
                 // from hostApplyBattleSetSlot()/hostApplyBattleCatchWild() -- this branch clears the half
                 // directly, so it has to say so itself.)
-                if (st.defender && !st.defender.ownerId) boardNoteWildLeft(st.defender.member);
+                if (st.defender && !st.defender.ownerId) boardNoteWildLeft(st.defender.member, failedCatch ? 'defeated' : undefined);
                 st.attacker = null;
                 st.defender = null;
                 // Field Move Effects belong to the battle that just ended;
@@ -26419,6 +26488,12 @@
             if (isActiveSaveReadOnly()) return;
             const card = CARDS_BY_ID[cardId];
             if (!card) return;
+            // A Catch Card played while a Catch attempt is waiting for
+            // one goes into that attempt (see playCatchCardFromHand()).
+            if (catchCardPickActive && isCatchCardTagged(card)) {
+                playCatchCardFromHand(cardId);
+                return;
+            }
             // A card tagged "battleCard": "yes" goes facedown into the
             // Battle Arena's Battle Card zone instead of the Active Card
             // zone -- see playBattleCardFromHand().
@@ -28112,6 +28187,8 @@
                     let optionsHtml = optionsInner;
                     if (battleCardPlayTarget) {
                         if (!card || !isBattleCardTagged(card)) pickCls = ' pick-dimmed';
+                    } else if (catchCardPickActive) {
+                        if (!card || !isCatchCardTagged(card)) pickCls = ' pick-dimmed';
                     } else if (attachPickMode) {
                         if (isAttachPickHandCardEligible(cardId)) {
                             optionsHtml = `<div class="game-hand-card-options-grid game-hand-pick-grid"><button class="filter-btn game-hand-pick-attach-btn" type="button" data-card-id="${escapeHtml(cardId)}">Attach to ${escapeHtml(attachPickMode.memberName)}</button></div>`;
@@ -29433,6 +29510,9 @@
             // fell (see earnBattleBonusesForDefeat()).
             reportBattleFaint(member, false, index === 'wild' || index === 'trainer'); // see makeEmptyBattleRecord()
             member.fainted = true;
+            // Remembered for the Catch overlay's bonus: the status is
+            // cleared just below, so this is the only record of it.
+            member.faintedWithStatus = !!member.status;
             member.status = null;
             member.statusCounter = undefined;
             member.statusCardSide = undefined;
@@ -29480,6 +29560,7 @@
             const member = getTeamSlotMember(index);
             if (!member || !member.fainted) return;
             member.fainted = false;
+            delete member.faintedWithStatus;
             const hpRule = getHpRule(getActiveSaveData());
             const max = getTeamMemberHpMax(member, hpRule);
             if (max !== null) member.hp = max;
@@ -34654,6 +34735,12 @@
         // has been played.
         let battleCardPlayTarget = null;
 
+        // Catch attempt state -- see the Catch attempt overlay block
+        // further down. Declared here so setGameScreen() can never
+        // reach them before they exist.
+        let catchAttempt = null;
+        let catchCardPickActive = false;
+
         let soloBattleCards = { attacker: null, defender: null };
 
         function getBattleCardsStore() {
@@ -37953,6 +38040,7 @@
             // battle-record report -- the battle is over). Done after the
             // form reset above so the max matches its base form, and
             // before the roster/replace split so both paths get it.
+            delete member.faintedWithStatus;
             if (member.fainted) {
                 member.fainted = false;
                 const caughtHpRule = getHpRule(getActiveSaveData());
@@ -41002,7 +41090,7 @@
             }
             // A Battle Card badge tap remembers which half it came from
             // (see battleCardPlayTarget) only while on Hand & Decks.
-            if (screenId !== 'decks') { battleCardPlayTarget = null; attachPickMode = null; }
+            if (screenId !== 'decks') { battleCardPlayTarget = null; attachPickMode = null; catchCardPickActive = false; }
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
                 el.classList.toggle('active', el.id === `game-screen-${screenId}`);
@@ -41022,10 +41110,12 @@
             if (scrollEl) scrollEl.scrollTop = 0;
             if (screenId === 'main') renderBattleArenaGate();
             if (screenId === 'decks') renderDecksScreen();
-            if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); }
+            if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); hideCatchOverlay(); }
             if (screenId === 'battle') {
                 renderBattleAttackerSlot();
                 renderBattleDefenderSlot();
+                // Back from Hand & Decks mid-attempt: pick the overlay up again.
+                if (catchAttempt) showCatchOverlay();
             }
             if (screenId === 'rulebook-picker') renderRulebookPicker();
             if (screenId === 'rulebook') initRulebookScreen();
@@ -46595,11 +46685,9 @@
             }
 
             if (e.target.closest('#game-battle-catch-wild-btn')) {
-                // Once a Lobby session exists, the Wild Pok\u00e9mon is
-                // shared -- the Host arbitrates near-simultaneous
-                // catches (see hostApplyBattleCatchWild()).
-                if (lobbyState.role !== null) requestBattleCatchWild();
-                else catchWildPokemon();
+                // Opens the Catch Attempt overlay; its Add to Team button
+                // is what actually catches (see finishCatchAttempt()).
+                openCatchOverlay();
                 return;
             }
             if (e.target.closest('#game-battle-begin-btn')) {
@@ -47755,6 +47843,178 @@
             if (cardPick) {
                 selectTeamCardsOverlayOption(cardPick.dataset.slot, cardPick.dataset.cardPick);
                 return;
+            }
+        });
+
+        // ---- Catch attempt overlay -------------------------------------
+        //
+        // "Catch This Pok\u00e9mon" opens this instead of catching right
+        // away. It shows the Wild Pok\u00e9mon, a d6 roll, an optional Catch
+        // Card (played from Hand & Decks, where only cards tagged
+        // "catchCard": "yes" are left undimmed) and the Catch bonus.
+        //
+        // catchAttempt = { fainted, hadStatus, roll, cardId } -- the two
+        // flags are snapshotted when the attempt STARTS, so reviving or
+        // editing the Pok\u00e9mon afterwards can't change the bonus.
+        // The attempt survives a trip to Hand & Decks (see
+        // setGameScreen()) and is dropped on Close or on catching.
+        //
+        // Bonus rules so far: +2 if it was Fainted when the attempt
+        // started, +1 more if it had a Status Condition when it fainted
+        // (faintTeamMember() records member.faintedWithStatus). Add new
+        // rules to getCatchBonusLines() -- a card's own bonus belongs
+        // there too, once cards.json has the data for it.
+        function isCatchCardTagged(card) {
+            return !!card && String(card.catchCard).toLowerCase() === 'yes';
+        }
+
+        function getCatchTargetMember() {
+            const entry = getArenaSlotEntry('defender');
+            if (entry && !entry.ownerId && entry.member) return entry.member;
+            return battleWildPokemon;
+        }
+
+        function getCatchBonusLines(attempt) {
+            const lines = [];
+            if (attempt.fainted) lines.push({ label: 'Fainted before the attempt', amount: 2 });
+            if (attempt.fainted && attempt.hadStatus) lines.push({ label: 'Had a Status Condition when it fainted', amount: 1 });
+            return lines;
+        }
+
+        function openCatchOverlay() {
+            const member = getCatchTargetMember();
+            if (!member || isActiveSaveReadOnly()) return;
+            catchAttempt = {
+                fainted: !!member.fainted,
+                hadStatus: !!member.fainted && !!member.faintedWithStatus,
+                roll: null,
+                cardId: null
+            };
+            showCatchOverlay();
+        }
+
+        function showCatchOverlay() {
+            renderCatchOverlay();
+            const overlay = document.getElementById('game-catch-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+
+        function hideCatchOverlay() {
+            const overlay = document.getElementById('game-catch-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+
+        function closeCatchOverlay() {
+            catchAttempt = null;
+            catchCardPickActive = false;
+            hideCatchOverlay();
+        }
+
+        function renderCatchOverlay() {
+            const body = document.getElementById('game-catch-body');
+            const member = getCatchTargetMember();
+            if (!body || !catchAttempt || !member) return;
+            const a = catchAttempt;
+            const overrideEntry = member.formOverride ? POKEMON_BY_NAME[member.formOverride] : null;
+            const artSrc = overrideEntry ? overrideEntry.src : member.src;
+            const artShinySrc = overrideEntry ? (overrideEntry.shinysrc || '') : member.shinysrc;
+            const displaySrc = (member.shiny && hasShinyForm(artShinySrc)) ? artShinySrc : (artSrc || '');
+            const displayName = (overrideEntry ? overrideEntry.name : member.name) || 'Unknown';
+
+            const lines = getCatchBonusLines(a);
+            const bonus = lines.reduce((n, l) => n + l.amount, 0);
+            const card = a.cardId ? CARDS_BY_ID[a.cardId] : null;
+
+            let html = `<img class="game-catch-pokemon-img" src="${escapeHtml(displaySrc)}" alt="${escapeHtml(displayName)}">`;
+            html += `<p class="game-catch-pokemon-name">${escapeHtml(displayName)}</p>`;
+            if (card) {
+                html += card.imageUrl && card.imageUrl !== 'placeholder'
+                    ? `<img class="game-catch-card-img" src="${escapeHtml(card.imageUrl)}" alt="${escapeHtml(card.name)}" data-card-id="${escapeHtml(card.id || a.cardId)}">`
+                    : `<p class="game-confirm-subtext">Catch Card: ${escapeHtml(card.name)}</p>`;
+            }
+            html += '<div class="game-catch-bonus"><p class="game-catch-bonus-title">Catch Bonus</p>';
+            if (lines.length) {
+                html += lines.map(l => `<div class="game-catch-bonus-row"><span>${escapeHtml(l.label)}</span><span>+${l.amount}</span></div>`).join('');
+                html += `<div class="game-catch-bonus-row total"><span>Total bonus</span><span>+${bonus}</span></div>`;
+            } else {
+                html += '<p class="game-catch-bonus-empty">No bonuses.</p>';
+            }
+            html += '</div>';
+            if (a.roll !== null) {
+                html += `<div class="game-catch-roll-result">${a.roll}</div>`;
+                html += `<p class="game-catch-total">Roll ${a.roll} + bonus ${bonus} = <strong>${a.roll + bonus}</strong></p>`;
+            }
+            html += '<div class="game-catch-actions">';
+            html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll d6' : 'Roll Again'}</button>`;
+            if (!a.cardId) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
+            html += '<button class="filter-btn include game-catch-finish-btn" type="button">Caught \u2014 Add to Team</button>';
+            html += '<button class="filter-btn exclude game-catch-fail-btn" type="button">Failed to Catch</button>';
+            html += '<button class="filter-btn game-catch-close-btn" type="button">Close</button>';
+            html += '</div>';
+            body.innerHTML = html;
+        }
+
+        function beginCatchCardHandPlay() {
+            if (!catchAttempt) return;
+            if (!isVirtualDecksEnabledForActiveSave()) {
+                showBattleArenaNotice('This save doesn\u2019t use virtual decks, so there\u2019s no hand to play a Catch Card from.');
+                return;
+            }
+            hideCatchOverlay();
+            catchCardPickActive = true;
+            setGameScreen('decks');
+            showDecksNotice('Play a Catch Card from your hand.');
+        }
+
+        function playCatchCardFromHand(cardId) {
+            if (!catchAttempt || catchAttempt.cardId) return;
+            const card = CARDS_BY_ID[cardId];
+            if (!isCatchCardTagged(card)) return;
+            const deckName = getEffectiveCardDeck(card) || getDeckToolList()[0];
+            // Played = out of the hand and onto its deck's discard pile.
+            requestDiscardCard(deckName, cardId);
+            catchAttempt.cardId = cardId;
+            catchCardPickActive = false;
+            setGameScreen('battle'); // re-shows the overlay
+        }
+
+        // Failed to Catch: ends the battle and sends the Wild Pok\u00e9mon
+        // back to the Virtual Game Board's pool (the same 'defeated'
+        // outcome a fainted Wild Pok\u00e9mon gets). Solo it ends the battle
+        // directly; in a lobby the Host does it (see
+        // hostApplyBattlePhase()'s 'end-failed-catch').
+        function failCatchAttempt() {
+            closeCatchOverlay();
+            if (lobbyState.role !== null) { requestBattlePhase('end-failed-catch'); return; }
+            boardNoteWildLeft(battleWildPokemon, 'defeated');
+            endBattle();
+        }
+
+        function finishCatchAttempt() {
+            closeCatchOverlay();
+            // Once a Lobby session exists, the Wild Pok\u00e9mon is shared --
+            // the Host arbitrates near-simultaneous catches (see
+            // hostApplyBattleCatchWild()).
+            if (lobbyState.role !== null) requestBattleCatchWild();
+            else catchWildPokemon();
+        }
+
+        document.getElementById('game-catch-overlay').addEventListener('click', (e) => {
+            if (e.target.closest('.game-catch-roll-btn')) {
+                if (catchAttempt) {
+                    catchAttempt.roll = Math.floor(Math.random() * 6) + 1;
+                    renderCatchOverlay();
+                }
+                return;
+            }
+            if (e.target.closest('.game-catch-play-card-btn')) { beginCatchCardHandPlay(); return; }
+            if (e.target.closest('.game-catch-finish-btn')) { finishCatchAttempt(); return; }
+            if (e.target.closest('.game-catch-fail-btn')) { failCatchAttempt(); return; }
+            if (e.target.closest('.game-catch-close-btn')) { closeCatchOverlay(); return; }
+            const cardImg = e.target.closest('.game-catch-card-img');
+            if (cardImg && catchAttempt && catchAttempt.cardId) {
+                const c = CARDS_BY_ID[catchAttempt.cardId];
+                if (c) openTeamCardImageViewer(c.imageUrl, c.name);
             }
         });
 
