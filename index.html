@@ -44249,6 +44249,11 @@
                 const parts = acts.map(a => {
                     const sv = boardResolveServiceAction(a);
                     if (sv) { buttons.push({ id: 'sact:' + sv.type, label: sv.name }); return boardActionLabel(a); }
+                    const rl = boardResolveRollAction(a);
+                    if (rl) {
+                        buttons.push({ id: 'rfi', label: 'Roll d6 for Item' });
+                        return boardActionLabel(a) + ' (' + boardRollSummary(rl.table) + ')';
+                    }
                     const it = boardResolveItemAction(a);
                     if (it) {
                         const found = boardFindItemCard(it.item);
@@ -44285,6 +44290,8 @@
                 else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-encounter', player: 'host' });
             } else if (id === 'battle' && info) {
                 boardStartWildBattle(info);
+            } else if (id === 'rfi' && info) {
+                boardRollForItem(info);
             } else if (id.startsWith('gitem:')) {
                 boardGainItem(decodeURIComponent(id.slice(6)));
             } else if (id.startsWith('sact:')) {
@@ -44371,7 +44378,8 @@
             const sv = boardResolveServiceAction(a);
             if (sv) return sv.name;
             const it = boardResolveItemAction(a);
-            return it ? it.label : ((a && a.type) || '');
+            if (it) return it.label;
+            return (a && a.type === 'roll-for-item') ? 'Roll For Item' : ((a && a.type) || '');
         }
         // The cards this action can put in the Arena: the one it names, or every card of its category here.
         function boardBattleChoices(r) {
@@ -44551,18 +44559,86 @@
         function boardGainItemClaimed(found) {
             return found.card.oneTime === 'yes' && getLocalOneTimeClaims(found.deckName).includes(found.card.id);
         }
-        function boardGainItem(item) {
-            if (isActiveSaveReadOnly()) return;
+        // Finds the named card and puts it in this player's hand. Returns { gained, text } (text says what happened,
+        // or why nothing did), or null when the save is read-only.
+        function boardGrantItem(item) {
+            if (isActiveSaveReadOnly()) return null;
             const found = boardFindItemCard(item);
-            if (!found) { showGameToast('Could not find "' + item + '" in the Reward Item or Shop deck.'); return; }
+            if (!found) return { gained: false, text: 'Could not find "' + item + '" in the Reward Item or Shop deck.' };
             const name = found.card.name;
-            if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Virtual decks are off for this save \u2014 take the ' + name + ' card from your physical ' + found.deckName + '.'); return; }
-            if (boardGainItemClaimed(found)) { showGameToast('You have already gained the ' + name + '.'); return; }
+            if (!isVirtualDecksEnabledForActiveSave()) return { gained: false, text: 'Virtual decks are off for this save \u2014 take the ' + name + ' card from your physical ' + found.deckName + '.' };
+            if (boardGainItemClaimed(found)) return { gained: false, text: 'You have already gained the ' + name + '.' };
             if (DECK_SHOP_MENU[found.deckName]) acquireShopCard(found.deckName, found.card.id);
             else requestGainReward(found.deckName, found.card.id);
-            openGamePanel(); // the board is a main view now, not inside the panel
-            setGameScreen('decks'); // the card shows up in the hand there
-            showGameToast('Gained ' + name + ' (' + found.deckName + ').');
+            return { gained: true, text: 'Gained ' + name + ' (' + found.deckName + ').' };
+        }
+        function boardGainItem(item) {
+            const out = boardGrantItem(item);
+            if (!out) return;
+            if (out.gained) {
+                openGamePanel(); // the board is a main view now, not inside the panel
+                setGameScreen('decks'); // the card shows up in the hand there
+            }
+            showGameToast(out.text);
+        }
+
+        // ---- Roll For Item ----
+        // { type: 'roll-for-item', table: [six item names, for a d6 roll of 1 to 6], label } -- each space has its own table.
+        // The player rolls a d6 and gains the card named for the result, found the same way as Gain Item. The table entry
+        // "Random TM Card" instead draws from the highest TM deck available to this player: the plain TM Deck, or with
+        // Tiered TM Decks on, the Expert, then Advanced, then Basic deck, whichever they've unlocked.
+        function boardResolveRollAction(a) {
+            if (!a || typeof a !== 'object' || a.type !== 'roll-for-item') return null;
+            const table = (Array.isArray(a.table) ? a.table : []).slice(0, 6).map(x => String(x || '').trim());
+            while (table.length < 6) table.push('');
+            return table.some(Boolean) ? { type: 'roll-for-item', table, label: a.label || 'Roll For Item' } : null;
+        }
+        // "1: Potion \u00b7 2: Revive \u00b7 5\u20136: Treasure" -- faces that give the same item are listed together.
+        function boardRollSummary(table) {
+            const groups = [];
+            table.forEach((item, i) => {
+                if (!item) return;
+                const key = boardCardNameKey(item);
+                let g = groups.find(x => x.key === key);
+                if (!g) groups.push(g = { key, item, faces: [] });
+                g.faces.push(i + 1);
+            });
+            const faceText = faces => {
+                const runs = [];
+                faces.forEach(f => {
+                    const last = runs[runs.length - 1];
+                    if (last && f === last[1] + 1) last[1] = f; else runs.push([f, f]);
+                });
+                return runs.map(([lo, hi]) => lo === hi ? String(lo) : lo + '\u2013' + hi).join(', ');
+            };
+            return groups.map(g => faceText(g.faces) + ': ' + g.item).join(' \u00b7 ');
+        }
+        function boardHighestTMDeck() {
+            if (!isTieredTMDecksEnabledForActiveSave()) return 'TM Deck';
+            return [TM_TIER_DECK_NAMES.Expert, TM_TIER_DECK_NAMES.Advanced, TM_TIER_DECK_NAMES.Basic].find(d => isTMDeckUnlockedForActiveSave(d)) || TM_TIER_DECK_NAMES.Basic;
+        }
+        function boardGrantRandomTM() {
+            if (isActiveSaveReadOnly()) return null;
+            const deckName = boardHighestTMDeck();
+            if (!isVirtualDecksEnabledForActiveSave()) return { gained: false, text: 'Virtual decks are off for this save \u2014 draw a card from your physical ' + deckName + '.' };
+            requestDrawCard(deckName);
+            return { gained: true, text: 'Drew a card from the ' + deckName + '.' };
+        }
+        function boardRollForItem(info) {
+            let rl = null;
+            ((info && info.space && info.space.actions) || []).some(a => (rl = boardResolveRollAction(a)));
+            if (!rl || isActiveSaveReadOnly()) return;
+            const roll = 1 + Math.floor(Math.random() * 6);
+            const entry = rl.table[roll - 1];
+            const prefix = 'Rolled a ' + roll + (entry ? ' \u2014 ' + entry + '. ' : '. ');
+            if (!entry) { showGameToast(prefix + 'Nothing this time.'); return; }
+            const out = boardCardNameKey(entry) === 'randomtmcard' ? boardGrantRandomTM() : boardGrantItem(entry);
+            if (!out) return;
+            if (out.gained) {
+                openGamePanel(); // the board is a main view now, not inside the panel
+                setGameScreen('decks'); // the card shows up in the hand there
+            }
+            showGameToast(prefix + out.text);
         }
 
         // Puts the Gym Leader card in the Arena the same way Choose Gym Leader does (so the Badge, Next Round
