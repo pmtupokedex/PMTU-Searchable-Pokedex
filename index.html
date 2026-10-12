@@ -8039,30 +8039,35 @@
         }
         #game-catch-overlay.visible { display: flex; }
         #game-catch-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
-        .game-catch-pokemon-img {
-            width: 140px; height: 140px; object-fit: contain; display: block; margin: 0 auto 8px;
+        .game-catch-breakdown-note { font-size: 14px; color: #555; margin: 0 0 8px; text-align: center; }
+        .game-catch-breakdown-section + .game-catch-breakdown-section {
+            margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.2);
         }
-        .game-catch-pokemon-name { font-weight: bold; margin: 0 0 10px; }
-        .game-catch-card-img {
-            width: 100%; max-width: 200px; display: block; margin: 0 auto 10px;
-            border-radius: 8px; cursor: pointer;
+        .game-catch-roll-line {
+            display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+            gap: 6px; margin: 8px 0 6px; font-size: 24px; font-weight: bold;
         }
-        .game-catch-roll-result {
-            font-size: 36px; font-weight: bold; margin: 4px 0 2px;
-        }
-        .game-catch-total { font-size: 14px; color: #555; margin: 0 0 10px; }
-        .game-catch-bonus {
+        .game-catch-roll-line .game-battle-dice-result-icon { margin: 0; vertical-align: middle; }
+        .game-catch-result { text-align: center; margin: 0 0 10px; }
+        .game-catch-result-main { font-weight: bold; font-size: 16px; margin: 0 0 2px; }
+        .game-catch-result-sub { font-size: 14px; color: #555; margin: 0; }
+        .game-catch-roll-line .game-catch-total-big { font-size: 40px; line-height: 1; }
+        .game-catch-breakdown {
             margin: 10px 0; padding: 8px 12px; text-align: left;
             border: 2px solid rgba(0, 0, 0, 0.15); border-radius: 10px;
             background: rgba(255, 255, 255, 0.6);
         }
-        .game-catch-bonus-title {
+        .game-catch-breakdown-title {
             font-size: 13px; font-weight: bold; text-transform: uppercase;
             letter-spacing: 0.5px; text-align: center; margin: 0 0 6px;
         }
-        .game-catch-bonus-row { display: flex; justify-content: space-between; font-size: 14px; padding: 2px 0; }
-        .game-catch-bonus-row.total { border-top: 1px solid rgba(0,0,0,0.2); margin-top: 4px; padding-top: 4px; font-weight: bold; }
-        .game-catch-bonus-empty { font-size: 13px; color: #555; text-align: center; margin: 0; }
+        .game-catch-breakdown-row { display: flex; justify-content: space-between; font-size: 14px; padding: 2px 0; }
+        .game-catch-breakdown-row.total { border-top: 1px solid rgba(0,0,0,0.2); margin-top: 4px; padding-top: 4px; font-weight: bold; }
+        .game-catch-manual-row { align-items: center; }
+        .game-catch-manual-controls { display: inline-flex; align-items: center; gap: 6px; }
+        .game-catch-manual-controls .filter-btn { margin: 0; padding: 2px 10px; }
+        .game-catch-manual-value { min-width: 1.4em; text-align: center; font-weight: bold; }
+        .game-catch-breakdown-empty { font-size: 13px; color: #555; text-align: center; margin: 0; }
         #game-catch-overlay .game-catch-actions { display: flex; flex-direction: column; gap: 8px; }
 
         .game-team-cards-section + .game-team-cards-section {
@@ -24115,6 +24120,11 @@
             const targetDeckName = MAIN_DECK_NAMES.includes(deckName) ? deckName : 'Item Deck';
             ensureDeckBuilt(store, targetDeckName);
             store[targetDeckName].discardPile.push(cardId);
+            // Saved here, after the push: callers like hostApplyDiscard()
+            // persist the hand BEFORE calling this, so without this a
+            // reload right after a discard saved the card out of the
+            // hand but never into the pile -- the card vanished.
+            if (store !== unsavedDeckState) persistGameSaves();
         }
 
         // ---- Per-player hand storage ----
@@ -47888,7 +47898,8 @@
                 fainted: !!member.fainted,
                 hadStatus: !!member.fainted && !!member.faintedWithStatus,
                 roll: null,
-                cardId: null
+                cardId: null,
+                manualBonus: 0 // hand-entered, until Catch Cards carry their own bonus data
             };
             showCatchOverlay();
         }
@@ -47922,33 +47933,70 @@
             const displayName = (overrideEntry ? overrideEntry.name : member.name) || 'Unknown';
 
             const lines = getCatchBonusLines(a);
-            const bonus = lines.reduce((n, l) => n + l.amount, 0);
+            const bonus = lines.reduce((n, l) => n + l.amount, 0) + (a.manualBonus || 0);
             const card = a.cardId ? CARDS_BY_ID[a.cardId] : null;
 
-            let html = `<img class="game-catch-pokemon-img" src="${escapeHtml(displaySrc)}" alt="${escapeHtml(displayName)}">`;
-            html += `<p class="game-catch-pokemon-name">${escapeHtml(displayName)}</p>`;
+            let html = `<img class="game-team-detail-img" src="${escapeHtml(displaySrc)}" alt="${escapeHtml(displayName)}">`;
+            html += `<p class="game-confirm-title">${escapeHtml(displayName)}</p>`;
             if (card) {
+                // Same dark .game-team-cards-detail box the card art gets in
+                // every other overlay that shows a card.
                 html += card.imageUrl && card.imageUrl !== 'placeholder'
-                    ? `<img class="game-catch-card-img" src="${escapeHtml(card.imageUrl)}" alt="${escapeHtml(card.name)}" data-card-id="${escapeHtml(card.id || a.cardId)}">`
+                    ? `<div class="game-team-cards-detail"><img class="game-team-cards-photo" src="${escapeHtml(card.imageUrl)}" alt="${escapeHtml(card.name)}" data-card-id="${escapeHtml(card.id || a.cardId)}"></div>`
                     : `<p class="game-confirm-subtext">Catch Card: ${escapeHtml(card.name)}</p>`;
             }
-            html += '<div class="game-catch-bonus"><p class="game-catch-bonus-title">Catch Bonus</p>';
-            if (lines.length) {
-                html += lines.map(l => `<div class="game-catch-bonus-row"><span>${escapeHtml(l.label)}</span><span>+${l.amount}</span></div>`).join('');
-                html += `<div class="game-catch-bonus-row total"><span>Total bonus</span><span>+${bonus}</span></div>`;
-            } else {
-                html += '<p class="game-catch-bonus-empty">No bonuses.</p>';
+            // The Wild Pok\u00e9mon's catchValue from pokemon-data.json (a
+            // member only stores its name, so look the entry up by that;
+            // an active Mega/G-Max form counts as its own entry). That
+            // section is left out for an entry that has none.
+            const catchEntry = POKEMON_BY_NAME[displayName] || POKEMON_BY_NAME[member.name] || null;
+            const catchValue = (catchEntry && typeof catchEntry.catchValue === 'number') ? catchEntry.catchValue : null;
+            html += '<div class="game-catch-breakdown">';
+            if (catchValue !== null) {
+                html += `<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">Catch Value: ${catchValue}</p>`
+                    + `<p class="game-catch-breakdown-note">You need a Catch Total of at least ${catchValue} to Catch this Pok\u00e9mon!</p></div>`;
             }
-            html += '</div>';
+            html += '<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">Catch Bonus</p>';
+            html += lines.map(l => `<div class="game-catch-breakdown-row"><span>${escapeHtml(l.label)}</span><span>+${l.amount}</span></div>`).join('');
+            // Manual adjustment: stands in for Catch Card bonuses the
+            // equation can't factor in yet (remove once cards carry data).
+            html += `<div class="game-catch-breakdown-row game-catch-manual-row"><span>Manual bonus</span>`
+                + `<span class="game-catch-manual-controls"><button class="filter-btn game-catch-manual-minus" type="button" aria-label="Decrease manual bonus"${a.manualBonus <= 0 ? ' disabled' : ''}>\u2212</button>`
+                + `<span class="game-catch-manual-value">${a.manualBonus}</span>`
+                + `<button class="filter-btn game-catch-manual-plus" type="button" aria-label="Increase manual bonus">+</button></span></div>`;
+            html += `<div class="game-catch-breakdown-row total"><span>Total bonus</span><span>+${bonus}</span></div>`;
+            html += '</div></div>';
+            // Outcome -- only once rolled, and only when the entry has a
+            // catchValue to compare against (entries without one are left
+            // to the players to judge, with both buttons available).
+            let caught = false, missed = false;
             if (a.roll !== null) {
-                html += `<div class="game-catch-roll-result">${a.roll}</div>`;
-                html += `<p class="game-catch-total">Roll ${a.roll} + bonus ${bonus} = <strong>${a.roll + bonus}</strong></p>`;
+                const total = a.roll + bonus;
+                // One line: d6 icon + roll, "+ Bonus X =", then the total, larger.
+                html += `<div class="game-catch-roll-line">${battleDieIconMarkup('d6')}<span>${a.roll}</span>`
+                    + `<span>+ Bonus ${bonus} =</span><span class="game-catch-total-big">${total}</span></div>`;
+                if (catchValue !== null) {
+                    const safeName = escapeHtml(displayName);
+                    if (total >= catchValue) {
+                        caught = true;
+                        html += `<div class="game-catch-result"><p class="game-catch-result-main">Gotcha! ${safeName} was Caught!</p></div>`;
+                    } else {
+                        missed = true;
+                        const short = catchValue - total;
+                        const line = short === 1 ? 'Shoot! It was so close, too!'
+                            : short === 2 ? 'Argh! Almost had it!'
+                            : short === 3 ? 'Aww! It appeared to be caught!'
+                            : 'Oh no! The Pok\u00e9mon broke free!';
+                        html += `<div class="game-catch-result"><p class="game-catch-result-main">${line}</p>`
+                            + `<p class="game-catch-result-sub">The wild ${safeName} fled...</p></div>`;
+                    }
+                }
             }
             html += '<div class="game-catch-actions">';
-            html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll d6' : 'Roll Again'}</button>`;
+            html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
             if (!a.cardId) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
-            html += '<button class="filter-btn include game-catch-finish-btn" type="button">Caught \u2014 Add to Team</button>';
-            html += '<button class="filter-btn exclude game-catch-fail-btn" type="button">Failed to Catch</button>';
+            html += `<button class="filter-btn include game-catch-finish-btn" type="button"${missed ? ' disabled' : ''}>Caught \u2014 Add to Team</button>`;
+            html += `<button class="filter-btn exclude game-catch-fail-btn" type="button"${caught ? ' disabled' : ''}>Failed to Catch</button>`;
             html += '<button class="filter-btn game-catch-close-btn" type="button">Close</button>';
             html += '</div>';
             body.innerHTML = html;
@@ -48007,11 +48055,19 @@
                 }
                 return;
             }
+            if (e.target.closest('.game-catch-manual-plus') || e.target.closest('.game-catch-manual-minus')) {
+                if (catchAttempt) {
+                    const delta = e.target.closest('.game-catch-manual-plus') ? 1 : -1;
+                    catchAttempt.manualBonus = Math.max(0, Math.min(99, (catchAttempt.manualBonus || 0) + delta));
+                    renderCatchOverlay();
+                }
+                return;
+            }
             if (e.target.closest('.game-catch-play-card-btn')) { beginCatchCardHandPlay(); return; }
             if (e.target.closest('.game-catch-finish-btn')) { finishCatchAttempt(); return; }
             if (e.target.closest('.game-catch-fail-btn')) { failCatchAttempt(); return; }
             if (e.target.closest('.game-catch-close-btn')) { closeCatchOverlay(); return; }
-            const cardImg = e.target.closest('.game-catch-card-img');
+            const cardImg = e.target.closest('.game-team-cards-photo');
             if (cardImg && catchAttempt && catchAttempt.cardId) {
                 const c = CARDS_BY_ID[catchAttempt.cardId];
                 if (c) openTeamCardImageViewer(c.imageUrl, c.name);
