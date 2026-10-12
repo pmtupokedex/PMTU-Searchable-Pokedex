@@ -44215,6 +44215,8 @@
                 const acts = info.space.actions || [];
                 // Battle actions get a button unless this player already holds that Badge; the rest stay as text for now.
                 const parts = acts.map(a => {
+                    const sv = boardResolveServiceAction(a);
+                    if (sv) { buttons.push({ id: 'sact:' + sv.type, label: sv.name }); return boardActionLabel(a); }
                     const r = boardResolveBattleAction(a);
                     if (!r) return boardActionLabel(a);
                     if (boardBattleActionDefeated(r)) return boardActionLabel(a) + ' \u2713 defeated';
@@ -44243,6 +44245,13 @@
                 else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-encounter', player: 'host' });
             } else if (id === 'battle' && info) {
                 boardStartWildBattle(info);
+            } else if (id.startsWith('sact:')) {
+                boardRunServiceAction(id.slice(5), info);
+            } else if (id.startsWith('pcrev:')) {
+                boardCenterRevive(Number(id.slice(6)));
+                boardCenterContinue();
+            } else if (id === 'pcdone') {
+                boardCenterFinish();
             } else if (id.startsWith('bact:')) {
                 const [, type, leaderId] = id.split(':');
                 boardRunBattleAction(type, leaderId, info);
@@ -44316,7 +44325,9 @@
             if (typeof a === 'string') return a;
             if (a && a.label) return a.label;
             const r = boardResolveBattleAction(a);
-            return r ? r.label : ((a && a.type) || '');
+            if (r) return r.label;
+            const sv = boardResolveServiceAction(a);
+            return sv ? sv.name : ((a && a.type) || '');
         }
         // The cards this action can put in the Arena: the one it names, or every card of its category here.
         function boardBattleChoices(r) {
@@ -44359,6 +44370,95 @@
             buttons.push({ id: 'brand:' + type, label: 'Random' }, { id: 'back', label: 'Back' });
             if (boardCtrl) boardCtrl.showAction({ text: 'Who will you face?', buttons, info });
         }
+        // ---- Poké Mart / Pokémon Center ----
+        // Plain actions with no card or leader: { type: 'poke-mart' } and { type: 'pokemon-center' } (plus an optional
+        // label), or the text "Poké Mart" / "Pokémon Center" (with or without the accents) from older maps.
+        const BOARD_SERVICE_ACTIONS = {
+            'poke-mart':      { name: 'Pok\u00e9 Mart',      legacy: /^\s*Pok[e\u00e9]\s*Mart\s*$/i },
+            'pokemon-center': { name: 'Pok\u00e9mon Center', legacy: /^\s*Pok[e\u00e9]mon\s*Center\s*$/i },
+        };
+        function boardResolveServiceAction(a) {
+            let type = null;
+            if (a && typeof a === 'object') { if (BOARD_SERVICE_ACTIONS[a.type]) type = a.type; }
+            else if (typeof a === 'string') {
+                const text = a.normalize('NFC'); // so "e" + a combining accent still matches
+                type = Object.keys(BOARD_SERVICE_ACTIONS).find(t => BOARD_SERVICE_ACTIONS[t].legacy.test(text)) || null;
+            }
+            return type ? { type, name: BOARD_SERVICE_ACTIONS[type].name } : null;
+        }
+        function boardRunServiceAction(type, info) {
+            if (type === 'poke-mart') boardUsePokeMart();
+            else if (type === 'pokemon-center') boardUsePokemonCenter(info);
+        }
+
+        // Poké Mart: draw one card from the Item deck, the same way Draw Event Card draws from the Event deck.
+        // (Lumiose City will later offer a Donut card as an alternative.)
+        function boardUsePokeMart() {
+            if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Virtual decks are off for this save \u2014 draw from your physical Item deck.'); return; }
+            requestDrawCard('Item Deck');
+            setGameScreen('decks'); // the drawn card shows up in the hand there
+        }
+
+        // Pokémon Center: removes every Status Condition on the team and revives up to boardPokemonCenterRevives()
+        // Fainted Pokémon. A player with no more Fainted Pokémon than that has them all revived at once; with more,
+        // they choose which ones, one at a time.
+        function boardPokemonCenterRevives() {
+            return 2; // a fixed 2 for now; written as a function so a house rule can scale it with Badges later
+        }
+        let boardCenterSession = null; // { left, revived: [names], cleared, info } while the picker is open
+        function boardTeamIndexes(test) {
+            const out = [];
+            (getActiveSaveData().team.members || []).forEach((m, i) => { if (m && test(m)) out.push(i); });
+            return out;
+        }
+        function boardClearTeamStatus(index) {
+            const m = getTeamSlotMember(index);
+            if (!m || !m.status) return false;
+            m.status = null;
+            m.statusCounter = undefined;
+            m.statusCardSide = undefined;
+            persistTeamSlotChange(index);
+            return true;
+        }
+        function boardUsePokemonCenter(info) {
+            if (isActiveSaveReadOnly()) return;
+            if (!boardTeamIndexes(m => m.fainted || m.status).length) { showGameToast('Your team is already in perfect health.'); return; }
+            let cleared = 0;
+            boardTeamIndexes(m => m.status).forEach(i => { if (boardClearTeamStatus(i)) cleared++; });
+            boardCenterSession = { left: boardPokemonCenterRevives(), revived: [], cleared, info };
+            boardCenterContinue();
+        }
+        function boardCenterRevive(index) {
+            const m = getTeamSlotMember(index);
+            if (!m || !m.fainted) return;
+            const name = getBattleMemberDisplay(m).name || 'Pok\u00e9mon';
+            reviveTeamMember(index);
+            boardCenterSession.revived.push(name);
+            boardCenterSession.left--;
+        }
+        function boardCenterContinue() {
+            const ses = boardCenterSession;
+            if (!ses) return;
+            const fainted = boardTeamIndexes(m => m.fainted);
+            if (fainted.length && ses.left > 0 && fainted.length <= ses.left) fainted.forEach(boardCenterRevive); // room for all of them
+            else if (fainted.length && ses.left > 0) {
+                const buttons = fainted.map(i => ({ id: 'pcrev:' + i, label: getBattleMemberDisplay(getTeamSlotMember(i)).name || 'Pok\u00e9mon' }));
+                buttons.push({ id: 'pcdone', label: 'Done' });
+                if (boardCtrl) boardCtrl.showAction({ text: 'Pok\u00e9mon Center \u2014 choose a Pok\u00e9mon to revive (' + ses.left + ' left)', buttons, info: ses.info });
+                return;
+            }
+            boardCenterFinish();
+        }
+        function boardCenterFinish() {
+            const ses = boardCenterSession;
+            boardCenterSession = null;
+            if (!ses) return;
+            const parts = [];
+            if (ses.revived.length) parts.push('revived ' + ses.revived.join(' and '));
+            if (ses.cleared) parts.push('removed ' + (ses.cleared === 1 ? 'a Status Condition' : 'Status Conditions from ' + ses.cleared + ' Pok\u00e9mon'));
+            showGameToast('Pok\u00e9mon Center: ' + (parts.join(', ') || 'nothing needed') + '.');
+        }
+
         // Puts the Gym Leader card in the Arena the same way Choose Gym Leader does (so the Badge, Next Round
         // line-up and Elite Four / Champion stage rule all apply), after the usual replace confirmation.
         function boardStartGymBattle(leaderId) {
