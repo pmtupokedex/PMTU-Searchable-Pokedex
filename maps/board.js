@@ -40,35 +40,56 @@ const root=document.createElement('div');root.className='bm-root';root.innerHTML
 
 const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={},pendingEnc={},CS=1,ES=1;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
 const $=id=>root.querySelector('#'+id),svg=$('b');
-// ---------- the map picture, kept decoded on a canvas ----------
-// A big <image> inside the SVG is decoded lazily and the browser drops the decoded copy after a while, so the first zoom (or
-// the first one after a pause) stalled while it was decoded again, and every zoom re-rasterised the whole picture. Instead the
-// picture is decoded once into an ImageBitmap (which stays decoded) with a few half-size copies, and a canvas behind the SVG
-// paints the right one for the current zoom. Full size is used whenever the screen can show it, so no detail is lost. If the
-// bitmap can't be made (old browser, the picture can't be fetched) the SVG <image> is used exactly as before.
-const bgc=$('bgc'),bctx=bgc.getContext('2d'),canBmp=typeof createImageBitmap==='function';
-let bgL=null,bgTok=0,bgRaf=0,bgOn=false,bgFail=false; // bgL = [{b,w,h}] largest first
-function bgSched(){if(bgOn&&!bgRaf)bgRaf=requestAnimationFrame(bgPaint)}
-function bgPaint(){bgRaf=0;if(!bgOn||!bgL)return;
+// ---------- the map picture: a tiled image pyramid painted on a canvas ----------
+// A big <image> inside the SVG is decoded lazily, dropped again after a while, and re-rasterised whole on every zoom step.
+// A single huge bitmap still has to be uploaded to the GPU in one piece the first time it is drawn at each zoom level, which
+// shows up as a stall. So the picture is cut once into 512px tiles at several zoom levels (level k = tiles covering 2^k times
+// as much of the picture, at the same 512px size). A canvas behind the SVG paints only the tiles on screen, from the level
+// that is just sharp enough for the current zoom (full detail is always used when the screen can show it), over the coarsest
+// level as a backdrop while finer tiles are still being made. Each tile is small, so nothing big is ever (re)uploaded
+// mid-gesture. If tiles can't be made (old browser, picture can't be fetched) the SVG <image> is used exactly as before.
+const bgc=$('bgc'),bctx=bgc.getContext('2d'),canBmp=typeof createImageBitmap==='function',TS=512;
+let bgP=null,bgTok=0,bgRaf=0,bgOn=false,bgFail=false,bgSettle=0; // bgP = {iw,ih,K,lv:[{nx,ny,t:[]}]}, lv[0] = full detail
+function bgSched(){if(bgOn&&!bgRaf)bgRaf=requestAnimationFrame(()=>bgPaint('low'));clearTimeout(bgSettle);if(bgOn)bgSettle=setTimeout(()=>{if(!bgRaf)bgPaint('medium')},200)}
+function bgTiles(k,vis,pad){const P=bgP,L=P.lv[k],ux=W/P.iw,uy=H/P.ih,T=TS<<k;
+ let i0=0,i1=L.nx-1,j0=0,j1=L.ny-1;
+ if(vis){i0=Math.max(0,Math.floor(VX/ux/T));i1=Math.min(L.nx-1,Math.floor((VX+VW())/ux/T));j0=Math.max(0,Math.floor(VY/uy/T));j1=Math.min(L.ny-1,Math.floor((VY+VH())/uy/T))}
+ for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const t=L.t[j*L.nx+i];if(!t)continue;
+  const sx=i*T,sy=j*T,sw=Math.min(T,P.iw-sx),sh=Math.min(T,P.ih-sy);
+  bctx.drawImage(t,sx*ux,sy*uy,sw*ux+pad,sh*uy+pad)}} // pad: each tile runs one device pixel into its neighbour so no seam shows
+function bgPaint(q){bgRaf=0;if(!bgOn||!bgP)return;
  const r=svg.getBoundingClientRect(),m=svg.getScreenCTM();if(!r.width||!r.height||!m)return; // hidden (the gallery is showing): painted when shown again
- const dpr=Math.min(window.devicePixelRatio||1,3),cw=Math.round(r.width*dpr),ch=Math.round(r.height*dpr);
+ let dpr=Math.min(window.devicePixelRatio||1,3);if(r.width*r.height*dpr*dpr>6e6)dpr=Math.sqrt(6e6/(r.width*r.height));
+ const cw=Math.round(r.width*dpr),ch=Math.round(r.height*dpr);
  if(bgc.width!==cw||bgc.height!==ch){bgc.width=cw;bgc.height=ch}
  bgc.style.left=svg.offsetLeft+'px';bgc.style.top=svg.offsetTop+'px';bgc.style.width=svg.offsetWidth+'px';bgc.style.height=svg.offsetHeight+'px';
- const cr=bgc.getBoundingClientRect(),s=m.a*dpr;let L=bgL[0];for(const l of bgL)if(l.w/W>=s)L=l; // the smallest copy still as sharp as the screen
+ const cr=bgc.getBoundingClientRect(),s=m.a*dpr,P=bgP;
+ let k=0;while(k<P.K&&P.iw/W/(2<<k)>=s)k++; // the coarsest level whose tiles are still at least as sharp as the screen
  bctx.setTransform(1,0,0,1,0,0);bctx.clearRect(0,0,cw,ch);
  bctx.setTransform(m.a*dpr,0,0,m.d*dpr,(m.e-cr.left)*dpr,(m.f-cr.top)*dpr);
- bctx.imageSmoothingEnabled=true;bctx.imageSmoothingQuality='medium';bctx.drawImage(L.b,0,0,W,H)}
-function bgClear(){bgTok++;if(bgRaf){cancelAnimationFrame(bgRaf);bgRaf=0}if(bgL)bgL.forEach(l=>{try{l.b.close()}catch(e){}});bgL=null;bgOn=false;bgFail=false;root.classList.remove('bm-bgc')}
+ bctx.imageSmoothingEnabled=true;bctx.imageSmoothingQuality=q||'low';
+ const pad=1/s;bgTiles(P.K,false,pad);if(k<P.K)bgTiles(k,true,pad)}
+function bgClear(){bgTok++;clearTimeout(bgSettle);if(bgRaf){cancelAnimationFrame(bgRaf);bgRaf=0}
+ if(bgP){bgP.lv.forEach(l=>l.t.forEach(b=>{try{b.close()}catch(e){}}));if(bgP.full){try{bgP.full.close()}catch(e){}}}
+ bgP=null;bgOn=false;bgFail=false;root.classList.remove('bm-bgc')}
 async function bgLoad(u){const tok=bgTok;if(!canBmp)return;
  try{const r=await fetch(u);if(!r.ok)throw new Error('picture '+r.status);const full=await createImageBitmap(await r.blob());
   if(tok!==bgTok||gone){full.close();return}
-  bgL=[{b:full,w:full.width,h:full.height}];bgOn=true;root.classList.add('bm-bgc');draw();bgPaint();
-  let prev=full,w=full.width,h=full.height; // half-size copies, built one at a time after the picture is already showing
-  while(w/2>=640){w=Math.round(w/2);h=Math.round(h/2);
-   const mp=await createImageBitmap(prev,{resizeWidth:w,resizeHeight:h,resizeQuality:'high'});
-   if(tok!==bgTok||gone){mp.close();return}
-   bgL.push({b:mp,w,h});prev=mp;bgSched()}
- }catch(e){if(tok===bgTok&&!bgL){bgFail=true;draw()}}}
+  const iw=full.width,ih=full.height;let K=0;while((TS<<K)<Math.max(iw,ih))K++; // the top level is one tile
+  const P=bgP={iw,ih,K,full,lv:Array.from({length:K+1},(_,k)=>({nx:Math.ceil(iw/(TS<<k)),ny:Math.ceil(ih/(TS<<k)),t:[]}))};
+  const mk=(k,i,j)=>{const T=TS<<k,sx=i*T,sy=j*T,sw=Math.min(T,iw-sx),sh=Math.min(T,ih-sy);
+   return k?createImageBitmap(full,sx,sy,sw,sh,{resizeWidth:Math.max(1,Math.round(sw/(1<<k))),resizeHeight:Math.max(1,Math.round(sh/(1<<k))),resizeQuality:'high'}):createImageBitmap(full,sx,sy,sw,sh)};
+  for(let k=K;k>=0;k--){const L=P.lv[k],T=TS<<k,ux=W/iw,uy=H/ih,cx=VX+VW()/2,cy=VY+VH()/2,jobs=[];
+   for(let j=0;j<L.ny;j++)for(let i=0;i<L.nx;i++)jobs.push([i,j,Math.hypot((i+.5)*T*ux-cx,(j+.5)*T*uy-cy)]);
+   jobs.sort((a,b)=>a[2]-b[2]); // tiles nearest the current view first
+   for(let n=0;n<jobs.length;n+=4){
+    const got=await Promise.all(jobs.slice(n,n+4).map(([i,j])=>mk(k,i,j).then(b=>[i,j,b])));
+    if(tok!==bgTok||gone){got.forEach(g=>g[2].close());return}
+    got.forEach(([i,j,b])=>{L.t[j*L.nx+i]=b});
+    if(!bgOn&&k===K){bgOn=true;root.classList.add('bm-bgc');draw()} // the SVG <image> (if any) is no longer needed
+    bgSched()}}
+  full.close();P.full=null;
+ }catch(e){if(tok===bgTok&&!bgOn){bgFail=true;draw()}}}
 function setImg(u){img=u;bgClear();if(u)bgLoad(u);draw()}
 // Tap-a-thumbnail viewer. Lives inside the board root (not the page) so it also shows in the board's fullscreen mode.
 const tkv=document.createElement('div');tkv.className='bm-tkv';tkv.innerHTML='<img alt=""><div class="bm-tkv-n"></div>';root.appendChild(tkv);
