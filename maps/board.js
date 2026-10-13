@@ -31,8 +31,8 @@
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
 (function(global){
-const CSS=".bm-root{position:relative;--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n.bm-root #actbar{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.4)}\n.bm-root #actbar[hidden]{display:none}\n.bm-root #mapctl{position:absolute;top:16px;left:16px;z-index:4;display:flex;gap:4px}\n.bm-root #mapctl button{margin:0;opacity:.92;box-shadow:0 1px 4px rgba(0,0,0,.35)}\n.bm-root.bm-aside-hidden aside{display:none}\n.bm-root.bm-aside-hidden #b{height:100%}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}.bm-root .bm-tkv{display:none;position:absolute;inset:0;z-index:6;background:rgba(0,0,0,.82);align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:24px;box-sizing:border-box;cursor:pointer}.bm-root .bm-tkv.on{display:flex}.bm-root .bm-tkv img{max-width:min(92%,460px);max-height:78%;object-fit:contain}.bm-root .bm-tkv-n{color:#fff;font:600 16px system-ui,sans-serif;text-align:center}";
-const HTML="<svg id=\"b\" viewBox=\"0 0 1000 620\"></svg>\n<aside>\n <div class=\"box\" id=\"bkbox\" hidden><a id=\"bk\" href=\"#\" style=\"color:inherit\">\u2190 Back to the app</a></div>\n <div class=\"box\"><h4>View</h4><button id=\"zi\">+</button><button id=\"zo\">\u2212</button><button id=\"zf\">Fit</button> <small id=\"zl\"></small><br><small>Drag empty map to pan, pinch or scroll to zoom. Dragging a token near the edge scrolls the map.</small></div>\n <div class=\"box\"><h4>Load board</h4><button id=\"imgBtn\">Map image\u2026</button><input id=\"imgF\" type=\"file\" accept=\"image/*\" hidden> <button id=\"sb\">Sample board</button>\n  <textarea id=\"jt\" rows=\"3\" style=\"width:100%;box-sizing:border-box;margin-top:4px\" placeholder=\"Paste editor export JSON\"></textarea><button id=\"jb\">Load JSON</button><small id=\"jm\"></small></div>\n <div class=\"box\"><h4>View as</h4><div id=\"vw\"></div><small id=\"vwn\"></small></div>\n <div class=\"box\"><h4>Players (drag a token on the map)</h4><div id=\"pl\"></div><small>Mock host runs in this page; the log shows the messages that would travel over PeerJS.</small></div>\n <div class=\"box\"><h4>Prompt</h4><div id=\"pr\"><small>Move a token onto a space.</small></div><div style=\"margin-top:6px\"><button id=\"ev\">Draw Event Card (active player)</button><button id=\"lose\">Active player lost a battle</button></div><div id=\"hm\" style=\"margin-top:4px\"></div></div>\n <div class=\"box\" id=\"hostbox\"><h4>Host only: pools &amp; hidden tokens</h4><div id=\"host\"></div></div>\n <div class=\"box\" id=\"netbox\"><h4>What guests receive</h4><div id=\"leak\"></div><details><summary>Last board-state snapshot (JSON)</summary><pre id=\"snapj\" style=\"white-space:pre-wrap;word-break:break-all;font-size:10px;max-height:160px;overflow:auto\"></pre></details></div>\n <div class=\"box\" id=\"logbox\"><h4>Host log</h4><div id=\"log\"></div></div>\n</aside><div id=\"mapctl\"><button id=\"mzi\">+</button><button id=\"mzo\">&minus;</button><button id=\"mzf\">Fit</button><button id=\"mpanel\">Panel</button></div><div id=\"actbar\" hidden></div>";
+const CSS=".bm-root{position:relative;--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #bgc{position:absolute;display:none;pointer-events:none;border-radius:10px;background:var(--bm-map);z-index:0}\n.bm-root.bm-bgc #bgc{display:block}\n.bm-root.bm-bgc #b{background:transparent;position:relative;z-index:1}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n.bm-root #actbar{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.4)}\n.bm-root #actbar[hidden]{display:none}\n.bm-root #mapctl{position:absolute;top:16px;left:16px;z-index:4;display:flex;gap:4px}\n.bm-root #mapctl button{margin:0;opacity:.92;box-shadow:0 1px 4px rgba(0,0,0,.35)}\n.bm-root.bm-aside-hidden aside{display:none}\n.bm-root.bm-aside-hidden #b{height:100%}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}.bm-root .bm-tkv{display:none;position:absolute;inset:0;z-index:6;background:rgba(0,0,0,.82);align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:24px;box-sizing:border-box;cursor:pointer}.bm-root .bm-tkv.on{display:flex}.bm-root .bm-tkv img{max-width:min(92%,460px);max-height:78%;object-fit:contain}.bm-root .bm-tkv-n{color:#fff;font:600 16px system-ui,sans-serif;text-align:center}";
+const HTML="<canvas id=\"bgc\"></canvas><svg id=\"b\" viewBox=\"0 0 1000 620\"></svg>\n<aside>\n <div class=\"box\" id=\"bkbox\" hidden><a id=\"bk\" href=\"#\" style=\"color:inherit\">\u2190 Back to the app</a></div>\n <div class=\"box\"><h4>View</h4><button id=\"zi\">+</button><button id=\"zo\">\u2212</button><button id=\"zf\">Fit</button> <small id=\"zl\"></small><br><small>Drag empty map to pan, pinch or scroll to zoom. Dragging a token near the edge scrolls the map.</small></div>\n <div class=\"box\"><h4>Load board</h4><button id=\"imgBtn\">Map image\u2026</button><input id=\"imgF\" type=\"file\" accept=\"image/*\" hidden> <button id=\"sb\">Sample board</button>\n  <textarea id=\"jt\" rows=\"3\" style=\"width:100%;box-sizing:border-box;margin-top:4px\" placeholder=\"Paste editor export JSON\"></textarea><button id=\"jb\">Load JSON</button><small id=\"jm\"></small></div>\n <div class=\"box\"><h4>View as</h4><div id=\"vw\"></div><small id=\"vwn\"></small></div>\n <div class=\"box\"><h4>Players (drag a token on the map)</h4><div id=\"pl\"></div><small>Mock host runs in this page; the log shows the messages that would travel over PeerJS.</small></div>\n <div class=\"box\"><h4>Prompt</h4><div id=\"pr\"><small>Move a token onto a space.</small></div><div style=\"margin-top:6px\"><button id=\"ev\">Draw Event Card (active player)</button><button id=\"lose\">Active player lost a battle</button></div><div id=\"hm\" style=\"margin-top:4px\"></div></div>\n <div class=\"box\" id=\"hostbox\"><h4>Host only: pools &amp; hidden tokens</h4><div id=\"host\"></div></div>\n <div class=\"box\" id=\"netbox\"><h4>What guests receive</h4><div id=\"leak\"></div><details><summary>Last board-state snapshot (JSON)</summary><pre id=\"snapj\" style=\"white-space:pre-wrap;word-break:break-all;font-size:10px;max-height:160px;overflow:auto\"></pre></details></div>\n <div class=\"box\" id=\"logbox\"><h4>Host log</h4><div id=\"log\"></div></div>\n</aside><div id=\"mapctl\"><button id=\"mzi\">+</button><button id=\"mzo\">&minus;</button><button id=\"mzf\">Fit</button><button id=\"mpanel\">Panel</button></div><div id=\"actbar\" hidden></div>";
 function mount(container,opts){
 opts=opts||{};
 if(!document.getElementById('bm-style')){const st=document.createElement('style');st.id='bm-style';st.textContent=CSS;document.head.appendChild(st)}
@@ -40,6 +40,36 @@ const root=document.createElement('div');root.className='bm-root';root.innerHTML
 
 const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={},pendingEnc={},CS=1,ES=1;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
 const $=id=>root.querySelector('#'+id),svg=$('b');
+// ---------- the map picture, kept decoded on a canvas ----------
+// A big <image> inside the SVG is decoded lazily and the browser drops the decoded copy after a while, so the first zoom (or
+// the first one after a pause) stalled while it was decoded again, and every zoom re-rasterised the whole picture. Instead the
+// picture is decoded once into an ImageBitmap (which stays decoded) with a few half-size copies, and a canvas behind the SVG
+// paints the right one for the current zoom. Full size is used whenever the screen can show it, so no detail is lost. If the
+// bitmap can't be made (old browser, the picture can't be fetched) the SVG <image> is used exactly as before.
+const bgc=$('bgc'),bctx=bgc.getContext('2d'),canBmp=typeof createImageBitmap==='function';
+let bgL=null,bgTok=0,bgRaf=0,bgOn=false,bgFail=false; // bgL = [{b,w,h}] largest first
+function bgSched(){if(bgOn&&!bgRaf)bgRaf=requestAnimationFrame(bgPaint)}
+function bgPaint(){bgRaf=0;if(!bgOn||!bgL)return;
+ const r=svg.getBoundingClientRect(),m=svg.getScreenCTM();if(!r.width||!r.height||!m)return; // hidden (the gallery is showing): painted when shown again
+ const dpr=Math.min(window.devicePixelRatio||1,3),cw=Math.round(r.width*dpr),ch=Math.round(r.height*dpr);
+ if(bgc.width!==cw||bgc.height!==ch){bgc.width=cw;bgc.height=ch}
+ bgc.style.left=svg.offsetLeft+'px';bgc.style.top=svg.offsetTop+'px';bgc.style.width=svg.offsetWidth+'px';bgc.style.height=svg.offsetHeight+'px';
+ const cr=bgc.getBoundingClientRect(),s=m.a*dpr;let L=bgL[0];for(const l of bgL)if(l.w/W>=s)L=l; // the smallest copy still as sharp as the screen
+ bctx.setTransform(1,0,0,1,0,0);bctx.clearRect(0,0,cw,ch);
+ bctx.setTransform(m.a*dpr,0,0,m.d*dpr,(m.e-cr.left)*dpr,(m.f-cr.top)*dpr);
+ bctx.imageSmoothingEnabled=true;bctx.imageSmoothingQuality='medium';bctx.drawImage(L.b,0,0,W,H)}
+function bgClear(){bgTok++;if(bgRaf){cancelAnimationFrame(bgRaf);bgRaf=0}if(bgL)bgL.forEach(l=>{try{l.b.close()}catch(e){}});bgL=null;bgOn=false;bgFail=false;root.classList.remove('bm-bgc')}
+async function bgLoad(u){const tok=bgTok;if(!canBmp)return;
+ try{const r=await fetch(u);if(!r.ok)throw new Error('picture '+r.status);const full=await createImageBitmap(await r.blob());
+  if(tok!==bgTok||gone){full.close();return}
+  bgL=[{b:full,w:full.width,h:full.height}];bgOn=true;root.classList.add('bm-bgc');draw();bgPaint();
+  let prev=full,w=full.width,h=full.height; // half-size copies, built one at a time after the picture is already showing
+  while(w/2>=640){w=Math.round(w/2);h=Math.round(h/2);
+   const mp=await createImageBitmap(prev,{resizeWidth:w,resizeHeight:h,resizeQuality:'high'});
+   if(tok!==bgTok||gone){mp.close();return}
+   bgL.push({b:mp,w,h});prev=mp;bgSched()}
+ }catch(e){if(tok===bgTok&&!bgL){bgFail=true;draw()}}}
+function setImg(u){img=u;bgClear();if(u)bgLoad(u);draw()}
 // Tap-a-thumbnail viewer. Lives inside the board root (not the page) so it also shows in the board's fullscreen mode.
 const tkv=document.createElement('div');tkv.className='bm-tkv';tkv.innerHTML='<img alt=""><div class="bm-tkv-n"></div>';root.appendChild(tkv);
 function tkKey(e){if(e.key==='Escape')closeTok()}
@@ -222,7 +252,7 @@ function tokUrl(n){if(!opts.tokenImage)return null;let t=TKI[n];
  return t.ok?t.l[t.i]:null}
 function tokFailed(n){const t=TKI[n];return !!t&&t.done&&!t.ok}
 function xa(u){return String(u).replace(/&/g,'&amp;').replace(/"/g,'&quot;')}
-function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height="${H}"/>`:'';const fo=img?.72:1,sw=.36*R,sm=opts.showMarkers!==false;
+function draw(){buildModel();let h=(img&&(bgFail||!canBmp))?`<image href="${img}" width="${W}" height="${H}"/>`:'';const fo=img?.72:1,sw=.36*R,sm=opts.showMarkers!==false;
  if(sm)for(const [a,b,g] of LK){const A=get(a),B=get(b);h+=`<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" stroke="${g?'#ffb000':'#222'}" stroke-width="${g?sw*1.3:sw}" opacity="${img?.8:1}"${g?` stroke-dasharray="${R*.9} ${R*.5}"`:''}/>`;
   if(g){const mx=(A.x+B.x)/2,my=(A.y+B.y)/2;h+=`<circle cx="${mx}" cy="${my}" r="${R*.8}" fill="#ffb000" stroke="#000" stroke-width="${R*.1}"/><text x="${mx}" y="${my+R*.35}" text-anchor="middle" font-size="${R*.95}">🔒</text><text x="${mx}" y="${my+R*1.9}" text-anchor="middle" font-size="${R*.8}" fill="#000" stroke="#fff" stroke-width="${R*.2}" paint-order="stroke">${g.note.slice(2)}</text>`}}
  if(sm)for(const s of SP){const o=M.spaces[s.id]||(s.type==='catch'?{revealed:false,empty:false,token:null,boss:false}:undefined),e=dims(s);
@@ -247,7 +277,7 @@ let keepScale=false;
 // keepScale (desktop, side panel docking): the map may never be shorter than the frame, so the minimum zoom is 'cover the frame's height'.
 const zmin=()=>keepScale?W/(H*EA):Math.min(1,W/(H*EA)),VW=()=>W/Z,VH=()=>W/Z/EA,clampZ=z=>Math.min(10,Math.max(zmin(),z));
 function clampView(){const w=VW(),h=VH();VX=w>=W-1e-6?(W-w)/2:Math.max(0,Math.min(W-w,VX));VY=h>=H-1e-6?(H-h)/2:Math.max(0,Math.min(H-h,VY))}
-function applyView(){svg.setAttribute('viewBox',`${VX} ${VY} ${VW()} ${VH()}`);relZoom=Z/zmin();$('zl').textContent=(Z/zmin()).toFixed(1)+'×'}
+function applyView(){svg.setAttribute('viewBox',`${VX} ${VY} ${VW()} ${VH()}`);relZoom=Z/zmin();$('zl').textContent=(Z/zmin()).toFixed(1)+'×';bgSched()}
 function fitView(){updEA();Z=zmin();VX=0;VY=0;clampView();applyView()}
 function centerOn(id){const s=get(id);if(!s)return;VX=s.x-VW()/2;VY=s.y-VH()/2;clampView();applyView()}
 function restoreView(){updEA();Z=clampZ((relZoom||1)*zmin());VX=0;VY=0;const mine=myId&&M.pos&&M.pos[myId];if(mine&&get(mine))centerOn(mine);else{clampView();applyView()}}
@@ -299,8 +329,8 @@ const ro=new ResizeObserver(()=>{const r=svg.getBoundingClientRect(),nw=r.width,
   EA=nw/nh;Z=clampZ(W*s/nw)}
  else updEA();
  lastRW=nw;lastRH=nh;clampView();applyView()});ro.observe(svg);
-$('ev').onclick=()=>drawEvent();$('lose').onclick=()=>{const p=active,n=PL.find(x=>x.id===p).name,h=home[p];if(!h){prompt('No Current Home set.');return}log(`battle lost: ${n} respawns at ${h}`);pos[p]=h;snapshot();prompt(`<b>${n}</b> lost the battle and returns to <b>${get(h).label||h}</b>.`)};$('sb').onclick=()=>{img=null;sampleBoard()};
-$('imgBtn').onclick=()=>$('imgF').click();$('imgF').onchange=e=>{const f=e.target.files[0];if(f){img=URL.createObjectURL(f);draw()}};
+$('ev').onclick=()=>drawEvent();$('lose').onclick=()=>{const p=active,n=PL.find(x=>x.id===p).name,h=home[p];if(!h){prompt('No Current Home set.');return}log(`battle lost: ${n} respawns at ${h}`);pos[p]=h;snapshot();prompt(`<b>${n}</b> lost the battle and returns to <b>${get(h).label||h}</b>.`)};$('sb').onclick=()=>{setImg(null);sampleBoard()};
+$('imgBtn').onclick=()=>$('imgF').click();$('imgF').onchange=e=>{const f=e.target.files[0];if(f)setImg(URL.createObjectURL(f))};
 $('jb').onclick=()=>{try{importBoard(JSON.parse($('jt').value))}catch(err){$('jm').textContent=' Could not read that JSON.'}};
 
 
@@ -314,7 +344,7 @@ if(mode==='guest')setView(view);else renderView();
 if(!opts.noSample&&mode!=='guest')sampleBoard();
 return{
  loadBoard:importBoard,
- setImage:u=>{img=u;draw()},
+ setImage:setImg,
  setStatus:t=>{$('jm').textContent=t},getStatus:()=>$('jm').textContent,
  handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw()}},
  showAction,hideAction,
@@ -330,7 +360,7 @@ return{
  setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>o.cid&&pos[o.id]&&!list.some(n=>n.id===o.id)&&!list.some(n=>n.cid===o.cid)&&!(restoreQ||[]).some(q=>q.cid===o.cid&&!q.done));
   if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!q.done);gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id],from:g.id}))}}
  PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
- destroy(){gone=1;closeTok();ro.disconnect();root.remove()}
+ destroy(){gone=1;bgClear();closeTok();ro.disconnect();root.remove()}
 };
 
 }
