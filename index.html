@@ -8098,7 +8098,8 @@
            have. The read-only card is inert; while cards can still be placed (before the roll) its Cards corner is tappable. */
         .game-catch-slot-card { width: 250px; max-width: 100%; margin: 0 auto 4px; }
         .game-catch-slot-card .game-team-slot { width: 100%; margin-bottom: 0; }
-        .game-catch-slot-card.editable .game-team-slot-cards { pointer-events: auto; cursor: pointer; }
+        .game-catch-slot-card.editable .game-team-slot-cards,
+        .game-catch-slot-card.editable .game-team-slot-level { pointer-events: auto; cursor: pointer; }
         /* The Attach & Nature Cards picker (and its replace confirmation) open on top of the Catch dialog. */
         #game-panel.game-catch-open #game-team-cards-overlay,
         #game-panel.game-catch-open #game-team-attach-confirm-overlay { z-index: 22; }
@@ -27574,7 +27575,7 @@
             // beginWildAttach()) -- getTeamSlotMember() resolves both.
             const member = getTeamSlotMember(memberIndex);
             if (!member) {
-                if (memberIndex === 'wild') exitAttachFromHandMode();
+                if (memberIndex === 'wild' || memberIndex === 'safari') exitAttachFromHandMode();
                 return;
             }
             const slot = getAttachSlotForCard(handAttachPendingCardId);
@@ -27683,7 +27684,7 @@
                 discardUnattachedCard(previousCardId);
             }
             resolveAttachSource(source, cardId, permanentInstanceId);
-            if (memberIndex === 'wild' && member) {
+            if ((memberIndex === 'wild' || memberIndex === 'safari') && member) {
                 const attachedCard = CARDS_BY_ID[cardId];
                 showGameToast(`${attachedCard ? attachedCard.name : 'The card'} was attached to ${member.name || 'the Wild Pok\u00e9mon'}.`);
             }
@@ -27802,6 +27803,7 @@
             if (index === -1) {
                 const wild = getArenaWildDefender();
                 if (wild && wild.uid === memberUid) index = 'wild';
+                else { const sf = getSafariCatchMember(); if (sf && sf.uid === memberUid) index = 'safari'; }
             }
             if (index === -1) {
                 const trainerMon = getArenaTrainerAttacker();
@@ -29548,7 +29550,15 @@
         function getTeamSlotMember(index) {
             if (index === 'wild') return battleWildPokemon;
             if (index === 'trainer') return battleTrainerPokemon;
+            if (index === 'safari') return getSafariCatchMember(); // the Safari Zone token in the Catch dialog (not in the Arena)
             return (getActiveSaveData().team.members || [])[index] || null;
+        }
+
+        // The Safari Zone Pokémon being rolled for in the Catch dialog (index 'safari'), or null. Local-only: it never
+        // enters the Arena, so edits to it are never shared with a Lobby.
+        function getSafariCatchMember() {
+            const a = (typeof catchAttempt !== 'undefined') ? catchAttempt : null;
+            return (a && a.safari && !a.resolved) ? a.safari.member : null;
         }
 
         // The save-and-repaint tail shared by every HP/Status/Level/
@@ -29563,6 +29573,7 @@
         // repaints Battle Arena's Defender slot instead (see
         // renderBattleDefenderSlot()'s own 'wild' branch).
         function persistTeamSlotChange(index) {
+            if (index === 'safari') { refreshCatchOverlayCard(); return; } // nothing to save or share -- just redraw the Catch dialog
             if (index === 'wild') {
                 renderBattleDefenderSlot();
                 refreshCatchOverlayCard(); // the Catch dialog shows this Pok\u00e9mon's card too
@@ -29605,7 +29616,7 @@
         // places a dataset.index string ever needs this conversion at
         // all.
         function parseTeamSlotIndex(raw) {
-            return (raw === 'wild' || raw === 'trainer') ? raw : Number(raw);
+            return (raw === 'wild' || raw === 'trainer' || raw === 'safari') ? raw : Number(raw);
         }
 
         // The one place a member actually becomes fainted, called from
@@ -32094,6 +32105,7 @@
             if (index === -1) {
                 const wild = getArenaWildDefender();
                 if (wild && wild.uid === memberUid) index = 'wild';
+                else { const sf = getSafariCatchMember(); if (sf && sf.uid === memberUid) index = 'safari'; }
             }
             if (index === -1) {
                 const trainerMon = getArenaTrainerAttacker();
@@ -32161,6 +32173,8 @@
             if (index !== -1) return index;
             const wild = getArenaWildDefender();
             if (wild && wild.uid === memberUid) return 'wild';
+            const safariMon = getSafariCatchMember();
+            if (safariMon && safariMon.uid === memberUid) return 'safari';
             const trainerMon = getArenaTrainerAttacker();
             return (trainerMon && trainerMon.uid === memberUid) ? 'trainer' : -1;
         }
@@ -32185,7 +32199,7 @@
                 return;
             }
             // Ownerless Pok\u00e9mon -- the Wild one, or an NPC Trainer's.
-            const forOwnerless = index === 'wild' || index === 'trainer';
+            const forOwnerless = index === 'wild' || index === 'trainer' || index === 'safari';
             const anyEligible = getLocalHandArray().some(isAttachPickHandCardEligible)
                 || (!forOwnerless && getLocalPermanentArray().some(entry => {
                     const card = CARDS_BY_ID[entry.cardId];
@@ -32212,7 +32226,7 @@
             setGameScreen((mode && mode.returnScreen) || 'team');
             const index = mode ? findAttachPickMemberIndex(mode.memberUid) : -1;
             if (index === -1) return;
-            if (mode.origin === 'detail' && index !== 'wild' && index !== 'trainer') openTeamDetailOverlay(index);
+            if (mode.origin === 'detail' && index !== 'wild' && index !== 'trainer' && index !== 'safari') openTeamDetailOverlay(index);
             else openTeamCardsOverlay(index);
         }
 
@@ -48337,20 +48351,36 @@
             clearBattleReadonlyEvolutionTimer('catch');
         }
 
-        // Attach/Nature Cards can be placed on the Wild Pokémon until the die is rolled -- only while it is the Arena's Wild
-        // Defender, which is what the Cards picker (index 'wild') edits. A Safari Zone token isn't in the Arena, so its
-        // card is display-only.
+        // The card's Cards corner and Level counter can be used until the die is rolled. A regular catch edits the Arena's
+        // Wild Defender (index 'wild', shared with the Lobby); a Safari Zone token isn't in the Arena, so it has its own
+        // local index ('safari') -- see getTeamSlotMember().
         function canEditCatchCards(member) {
             const a = catchAttempt;
-            if (!a || a.resolved || a.roll !== null || a.safari || !member || member.gymLeaderId) return false;
+            if (!a || a.resolved || a.roll !== null || !member || member.gymLeaderId) return false;
             if (isActiveSaveReadOnly()) return false;
+            if (a.safari) return !a.safari.settled && a.safari.member === member;
             return getArenaWildDefender() === member;
+        }
+
+        function getCatchSlotIndex() {
+            return (catchAttempt && catchAttempt.safari) ? 'safari' : 'wild';
+        }
+
+        function catchEditBlocked() {
+            return !!(teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId);
         }
 
         function openCatchCardsPicker() {
             if (!canEditCatchCards(getCatchTargetMember())) return;
-            if (teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
-            openTeamCardsOverlay('wild');
+            if (catchEditBlocked()) return;
+            openTeamCardsOverlay(getCatchSlotIndex());
+        }
+
+        // Level corner on the Catch dialog's card: left half -1, right half +1 (same as everywhere else).
+        function adjustCatchLevel(levelBadge, clientX) {
+            if (!canEditCatchCards(getCatchTargetMember()) || catchEditBlocked()) return;
+            const rect = levelBadge.getBoundingClientRect();
+            adjustTeamMemberLevel(getCatchSlotIndex(), (clientX - rect.left) > rect.width / 2 ? 1 : -1);
         }
 
         // Called after the Wild Pokémon's cards change (see persistTeamSlotChange()) so the dialog shows them.
@@ -48452,8 +48482,6 @@
                 if (!sf || a.roll === null) html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
                 // Catch Cards are played BEFORE the die is rolled, and never in the Safari Zone.
                 if (!a.cardId && !sf && a.roll === null) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
-                // Attach/Nature Cards a newly spawned Pokémon carries are placed BEFORE the roll, on its card (or this button).
-                if (editable) html += `<button class="filter-btn game-catch-cards-btn" type="button">${isNaturesEnabledForActiveSave() ? 'Attach &amp; Nature Cards' : 'Attach Card'}</button>`;
                 html += `<button class="filter-btn include game-catch-finish-btn" type="button"${missed ? ' disabled' : ''}>Caught \u2014 Add to Team</button>`;
                 html += `<button class="filter-btn exclude game-catch-fail-btn" type="button"${caught ? ' disabled' : ''}>Failed to Catch</button>`;
                 html += '<button class="filter-btn game-catch-close-btn" type="button">Close</button>';
@@ -48582,7 +48610,11 @@
                 return;
             }
             if (e.target.closest('.game-catch-play-card-btn')) { beginCatchCardHandPlay(); return; }
-            if (e.target.closest('.game-catch-cards-btn') || (e.target.closest('.game-catch-slot-card.editable') && e.target.closest('.game-team-slot-cards'))) { openCatchCardsPicker(); return; }
+            if (e.target.closest('.game-catch-slot-card.editable')) {
+                const lvl = e.target.closest('.game-team-slot-level');
+                if (lvl) { adjustCatchLevel(lvl, e.clientX); return; }
+                if (e.target.closest('.game-team-slot-cards')) { openCatchCardsPicker(); return; }
+            }
             if (e.target.closest('.game-catch-finish-btn')) { finishCatchAttempt(); return; }
             if (e.target.closest('.game-catch-fail-btn')) { failCatchAttempt(); return; }
             if (e.target.closest('.game-catch-close-btn')) { closeCatchOverlay(); return; }
