@@ -8094,6 +8094,14 @@
         }
         .game-safari-token img { width: 250px; max-width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; }
         #game-catch-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
+        /* The Pokémon's full slot card (same one the Battle Arena and Team Tracker show) at the 250px the plain art used to
+           have. The read-only card is inert; while cards can still be placed (before the roll) its Cards corner is tappable. */
+        .game-catch-slot-card { width: 250px; max-width: 100%; margin: 0 auto 4px; }
+        .game-catch-slot-card .game-team-slot { width: 100%; margin-bottom: 0; }
+        .game-catch-slot-card.editable .game-team-slot-cards { pointer-events: auto; cursor: pointer; }
+        /* The Attach & Nature Cards picker (and its replace confirmation) open on top of the Catch dialog. */
+        #game-panel.game-catch-open #game-team-cards-overlay,
+        #game-panel.game-catch-open #game-team-attach-confirm-overlay { z-index: 22; }
         /* Phones: the permanently-open nav panels (12% of --real-vh on top, 13% on the bottom -- the same space #game-scroll
            reserves) are drawn over this overlay, and the card is capped at 100% of the overlay, so its top and bottom edges
            ended up underneath them. Pad the overlay by the same amounts so the card centres in the free space between the
@@ -26336,7 +26344,7 @@
         // below, one per half -- same "clear before ever starting a new
         // one" reasoning as battleWildEvolutionBadgeInterval, so
         // repeated re-renders can't leak an accumulating pile of timers.
-        var battleReadonlyEvolutionIntervals = { attacker: null, defender: null, preview: null };
+        var battleReadonlyEvolutionIntervals = { attacker: null, defender: null, preview: null, catch: null };
 
         function clearBattleReadonlyEvolutionTimer(slotName) {
             if (battleReadonlyEvolutionIntervals[slotName] !== null) {
@@ -29557,6 +29565,7 @@
         function persistTeamSlotChange(index) {
             if (index === 'wild') {
                 renderBattleDefenderSlot();
+                refreshCatchOverlayCard(); // the Catch dialog shows this Pok\u00e9mon's card too
                 // Once a Lobby session exists, battleWildPokemon is the
                 // one Wild Pokémon shared by the whole lobby -- an HP/
                 // Status/Level/Cards edit made here (by ANY connected
@@ -48316,11 +48325,38 @@
             renderCatchOverlay();
             const overlay = document.getElementById('game-catch-overlay');
             if (overlay) overlay.classList.add('visible');
+            const panel = document.getElementById('game-panel');
+            if (panel) panel.classList.add('game-catch-open'); // lifts the Cards picker above this dialog (see the CSS)
         }
 
         function hideCatchOverlay() {
             const overlay = document.getElementById('game-catch-overlay');
             if (overlay) overlay.classList.remove('visible');
+            const panel = document.getElementById('game-panel');
+            if (panel) panel.classList.remove('game-catch-open');
+            clearBattleReadonlyEvolutionTimer('catch');
+        }
+
+        // Attach/Nature Cards can be placed on the Wild Pokémon until the die is rolled -- only while it is the Arena's Wild
+        // Defender, which is what the Cards picker (index 'wild') edits. A Safari Zone token isn't in the Arena, so its
+        // card is display-only.
+        function canEditCatchCards(member) {
+            const a = catchAttempt;
+            if (!a || a.resolved || a.roll !== null || a.safari || !member || member.gymLeaderId) return false;
+            if (isActiveSaveReadOnly()) return false;
+            return getArenaWildDefender() === member;
+        }
+
+        function openCatchCardsPicker() {
+            if (!canEditCatchCards(getCatchTargetMember())) return;
+            if (teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
+            openTeamCardsOverlay('wild');
+        }
+
+        // Called after the Wild Pokémon's cards change (see persistTeamSlotChange()) so the dialog shows them.
+        function refreshCatchOverlayCard() {
+            const overlay = document.getElementById('game-catch-overlay');
+            if (catchAttempt && !catchAttempt.resolved && overlay && overlay.classList.contains('visible')) renderCatchOverlay();
         }
 
         function closeCatchOverlay() {
@@ -48344,7 +48380,9 @@
             const bonus = lines.reduce((n, l) => n + l.amount, 0) + (a.manualBonus || 0);
             const card = a.cardId ? CARDS_BY_ID[a.cardId] : null;
 
-            let html = `<img class="game-team-detail-img" src="${escapeHtml(displaySrc)}" alt="${escapeHtml(displayName)}">`;
+            // The plain art is the fallback if the full slot card can't be built (see below).
+            const editable = canEditCatchCards(member);
+            let html = `<div class="game-catch-slot-card${editable ? ' editable' : ''}" id="game-catch-slot-card"><img class="game-team-detail-img" src="${escapeHtml(displaySrc)}" alt="${escapeHtml(displayName)}"></div>`;
             html += `<p class="game-confirm-title">${escapeHtml(displayName)}</p>`;
             if (card) {
                 // Same dark .game-team-cards-detail box the card art gets in
@@ -48414,12 +48452,24 @@
                 if (!sf || a.roll === null) html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
                 // Catch Cards are played BEFORE the die is rolled, and never in the Safari Zone.
                 if (!a.cardId && !sf && a.roll === null) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
+                // Attach/Nature Cards a newly spawned Pokémon carries are placed BEFORE the roll, on its card (or this button).
+                if (editable) html += `<button class="filter-btn game-catch-cards-btn" type="button">${isNaturesEnabledForActiveSave() ? 'Attach &amp; Nature Cards' : 'Attach Card'}</button>`;
                 html += `<button class="filter-btn include game-catch-finish-btn" type="button"${missed ? ' disabled' : ''}>Caught \u2014 Add to Team</button>`;
                 html += `<button class="filter-btn exclude game-catch-fail-btn" type="button"${caught ? ' disabled' : ''}>Failed to Catch</button>`;
                 html += '<button class="filter-btn game-catch-close-btn" type="button">Close</button>';
             }
             html += '</div>';
             body.innerHTML = html;
+            // Swap the plain art for the Pok\u00e9mon's full slot card (HP, Cards, Status, Level, Evolution corners) -- the same
+            // read-only card the Battle Arena shows. A resolved attempt uses the copy taken before the catch reset the form.
+            const slotHost = document.getElementById('game-catch-slot-card');
+            if (slotHost) {
+                const holder = document.createElement('div');
+                try {
+                    renderReadOnlyBattleSlot(holder, a.snapCard || member, 'catch', { wild: true });
+                    if (holder.firstChild) { slotHost.innerHTML = ''; slotHost.appendChild(holder.firstChild); }
+                } catch (err) { clearBattleReadonlyEvolutionTimer('catch'); }
+            }
         }
 
         function beginCatchCardHandPlay() {
@@ -48501,6 +48551,7 @@
             const member = getCatchTargetMember();
             if (!member) return;
             a.snap = getCatchDisplay(member); // before the catch resets the Pok\u00e9mon's form
+            a.snapCard = Object.assign({}, member); // same, for its slot card (form, cards and HP as they were when it was rolled for)
             a.snapMember = member;            // the arena is cleared by the time the overlay redraws
             if (caught) finishCatchAttempt(true); else failCatchAttempt(true);
             if (catchAttempt !== a) return;
@@ -48531,6 +48582,7 @@
                 return;
             }
             if (e.target.closest('.game-catch-play-card-btn')) { beginCatchCardHandPlay(); return; }
+            if (e.target.closest('.game-catch-cards-btn') || (e.target.closest('.game-catch-slot-card.editable') && e.target.closest('.game-team-slot-cards'))) { openCatchCardsPicker(); return; }
             if (e.target.closest('.game-catch-finish-btn')) { finishCatchAttempt(); return; }
             if (e.target.closest('.game-catch-fail-btn')) { failCatchAttempt(); return; }
             if (e.target.closest('.game-catch-close-btn')) { closeCatchOverlay(); return; }
