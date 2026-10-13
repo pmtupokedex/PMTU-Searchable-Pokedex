@@ -62,7 +62,8 @@ function bgPaint(q){bgRaf=0;if(!bgOn||!bgP)return;
  let dpr=Math.min(window.devicePixelRatio||1,3);if(r.width*r.height*dpr*dpr>6e6)dpr=Math.sqrt(6e6/(r.width*r.height));
  const cw=Math.round(r.width*dpr),ch=Math.round(r.height*dpr);
  if(bgc.width!==cw||bgc.height!==ch){bgc.width=cw;bgc.height=ch}
- bgc.style.left=svg.offsetLeft+'px';bgc.style.top=svg.offsetTop+'px';bgc.style.width=svg.offsetWidth+'px';bgc.style.height=svg.offsetHeight+'px';
+ {const rr=root.getBoundingClientRect(); // SVG elements have no offsetLeft/offsetWidth (those are HTMLElement-only), so size the canvas from the rects: without a CSS size it displays at its backing-store size, dpr times too big
+  bgc.style.left=(r.left-rr.left-root.clientLeft+root.scrollLeft)+'px';bgc.style.top=(r.top-rr.top-root.clientTop+root.scrollTop)+'px';bgc.style.width=r.width+'px';bgc.style.height=r.height+'px'}
  const cr=bgc.getBoundingClientRect(),s=m.a*dpr,P=bgP;
  let k=0;while(k<P.K&&P.iw/W/(2<<k)>=s)k++; // the coarsest level whose tiles are still at least as sharp as the screen
  bctx.setTransform(1,0,0,1,0,0);bctx.clearRect(0,0,cw,ch);
