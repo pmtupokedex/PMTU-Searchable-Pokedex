@@ -22,6 +22,8 @@
    controller: resolveEncounter(spaceId,'caught'|'defeated'|'abandon'), showAction(a), hideAction(),
                loadBoard(editorJson), setImage(url), handleMessage(msg),
                resend(), restoreSnapshot(snapString, [{id,c}]) [host: resume a game from a previous host's last board-state; players matched by color c], fit(), restoreView() [keeps the zoom, centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
+   setKeepScale(on) -- on: when the frame is resized (e.g. a docked side panel opens) the map keeps the same on-screen scale and just
+               shows more/less of itself, and the map is never allowed to get shorter than the frame; off (default): refit as before.
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
    Host only: poolList(color) / takeFromPool(color,name) / settlePoolToken(name,'caught'|'returned') [Safari Zone: pick a token out
    of a pool, then keep it (caught) or put it back], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
@@ -241,7 +243,9 @@ function draw(){buildModel();let h=img?`<image href="${img}" width="${W}" height
 const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
 let Z=1,VX=0,VY=0,relZoom=1;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
 let EA=1.5;const updEA=()=>{const r=svg.getBoundingClientRect();if(r.width&&r.height)EA=r.width/r.height};
-const zmin=()=>Math.min(1,W/(H*EA)),VW=()=>W/Z,VH=()=>W/Z/EA,clampZ=z=>Math.min(10,Math.max(zmin(),z));
+let keepScale=false;
+// keepScale (desktop, side panel docking): the map may never be shorter than the frame, so the minimum zoom is 'cover the frame's height'.
+const zmin=()=>keepScale?W/(H*EA):Math.min(1,W/(H*EA)),VW=()=>W/Z,VH=()=>W/Z/EA,clampZ=z=>Math.min(10,Math.max(zmin(),z));
 function clampView(){const w=VW(),h=VH();VX=w>=W-1e-6?(W-w)/2:Math.max(0,Math.min(W-w,VX));VY=h>=H-1e-6?(H-h)/2:Math.max(0,Math.min(H-h,VY))}
 function applyView(){svg.setAttribute('viewBox',`${VX} ${VY} ${VW()} ${VH()}`);relZoom=Z/zmin();$('zl').textContent=(Z/zmin()).toFixed(1)+'×'}
 function fitView(){updEA();Z=zmin();VX=0;VY=0;clampView();applyView()}
@@ -286,7 +290,15 @@ svg.onpointerup=e=>{if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);if
  if(drag&&drag.id===e.pointerId)dropToken(e)};
 svg.onpointercancel=e=>{tap=null;ptrs.delete(e.pointerId);pinch=null;pan=null;if(drag){drag=null;draw()}};
 svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();zoomAt((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height,Z*Math.exp(-e.deltaY*.0015))},{passive:false});
-$('zi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('zo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('zf').onclick=fitView;$('mzi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('mzo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('mzf').onclick=fitView;$('mpanel').onclick=()=>root.classList.toggle('bm-aside-hidden');if(mode!=='mock')root.classList.add('bm-aside-hidden');const ro=new ResizeObserver(()=>{updEA();clampView();applyView()});ro.observe(svg);
+$('zi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('zo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('zf').onclick=fitView;$('mzi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('mzo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('mzf').onclick=fitView;$('mpanel').onclick=()=>root.classList.toggle('bm-aside-hidden');if(mode!=='mock')root.classList.add('bm-aside-hidden');let lastRW=0,lastRH=0;
+const ro=new ResizeObserver(()=>{const r=svg.getBoundingClientRect(),nw=r.width,nh=r.height;
+ if(keepScale&&lastRW>0&&lastRH>0&&nw>0&&nh>0){
+  // Frame resized (a docked panel opened/closed): keep the on-screen scale (px per map unit), anchored at the view's top-left, so the map
+  // keeps its size and the frame just shows more or less of it. If the map was covering the frame's height it keeps covering it.
+  let s=lastRW/VW();if(H*s>=lastRH-.5&&H*s<nh)s=nh/H;
+  EA=nw/nh;Z=clampZ(W*s/nw)}
+ else updEA();
+ lastRW=nw;lastRH=nh;clampView();applyView()});ro.observe(svg);
 $('ev').onclick=()=>drawEvent();$('lose').onclick=()=>{const p=active,n=PL.find(x=>x.id===p).name,h=home[p];if(!h){prompt('No Current Home set.');return}log(`battle lost: ${n} respawns at ${h}`);pos[p]=h;snapshot();prompt(`<b>${n}</b> lost the battle and returns to <b>${get(h).label||h}</b>.`)};$('sb').onclick=()=>{img=null;sampleBoard()};
 $('imgBtn').onclick=()=>$('imgF').click();$('imgF').onchange=e=>{const f=e.target.files[0];if(f){img=URL.createObjectURL(f);draw()}};
 $('jb').onclick=()=>{try{importBoard(JSON.parse($('jt').value))}catch(err){$('jm').textContent=' Could not read that JSON.'}};
@@ -312,6 +324,7 @@ return{
  setCaught,exportState,restoreState,adoptPlayer,
  poolList,takeFromPool,settlePoolToken,
  fit:()=>fitView(),
+ setKeepScale(on){keepScale=!!on;updEA();Z=clampZ(Z);clampView();applyView()},
  restoreView,
  setView:v=>setView(v),
  setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>o.cid&&pos[o.id]&&!list.some(n=>n.id===o.id)&&!list.some(n=>n.cid===o.cid)&&!(restoreQ||[]).some(q=>q.cid===o.cid&&!q.done));
