@@ -68,7 +68,7 @@ function bgPaint(q){bgRaf=0;if(!bgOn||!bgP)return;
  bctx.setTransform(1,0,0,1,0,0);bctx.clearRect(0,0,cw,ch);
  bctx.setTransform(m.a*dpr,0,0,m.d*dpr,(m.e-cr.left)*dpr,(m.f-cr.top)*dpr);
  bctx.imageSmoothingEnabled=true;bctx.imageSmoothingQuality=q||'low';
- const pad=1/s;bgTiles(P.K,false,pad);if(k<P.K)bgTiles(k,true,pad)}
+ const pad=1/s;bgTiles(P.K,false,pad);for(let j=P.K-1;j>=k;j--)bgTiles(j,true,pad)} // coarse -> fine, visible tiles only: any level not built yet falls back to the next-coarser one, not straight to the 512px backdrop
 function bgClear(){bgTok++;clearTimeout(bgSettle);if(bgRaf){cancelAnimationFrame(bgRaf);bgRaf=0}
  if(bgP){bgP.lv.forEach(l=>l.t.forEach(b=>{try{b.close()}catch(e){}}));if(bgP.full){try{bgP.full.close()}catch(e){}}}
  bgP=null;bgOn=false;bgFail=false;root.classList.remove('bm-bgc')}
@@ -79,7 +79,10 @@ async function bgLoad(u){const tok=bgTok;if(!canBmp)return;
   const P=bgP={iw,ih,K,full,lv:Array.from({length:K+1},(_,k)=>({nx:Math.ceil(iw/(TS<<k)),ny:Math.ceil(ih/(TS<<k)),t:[]}))};
   const mk=(k,i,j)=>{const T=TS<<k,sx=i*T,sy=j*T,sw=Math.min(T,iw-sx),sh=Math.min(T,ih-sy);
    return k?createImageBitmap(full,sx,sy,sw,sh,{resizeWidth:Math.max(1,Math.round(sw/(1<<k))),resizeHeight:Math.max(1,Math.round(sh/(1<<k))),resizeQuality:'high'}):createImageBitmap(full,sx,sy,sw,sh)};
-  for(let k=K;k>=0;k--){const L=P.lv[k],T=TS<<k,ux=W/iw,uy=H/ih,cx=VX+VW()/2,cy=VY+VH()/2,jobs=[];
+  // build order: the top level (backdrop), then the level the current view actually needs (on a phone that is usually level 0 or 1), then the rest
+  const s0=Math.min(window.devicePixelRatio||1,3)*(svg.getBoundingClientRect().width/VW());let k0=0;while(k0<K&&iw/W/(2<<k0)>=s0)k0++;
+  const order=[K];if(k0<K)order.push(k0);for(let k=K-1;k>=0;k--)if(k!==k0)order.push(k);
+  for(const k of order){const L=P.lv[k],T=TS<<k,ux=W/iw,uy=H/ih,cx=VX+VW()/2,cy=VY+VH()/2,jobs=[];
    for(let j=0;j<L.ny;j++)for(let i=0;i<L.nx;i++)jobs.push([i,j,Math.hypot((i+.5)*T*ux-cx,(j+.5)*T*uy-cy)]);
    jobs.sort((a,b)=>a[2]-b[2]); // tiles nearest the current view first
    for(let n=0;n<jobs.length;n+=4){
