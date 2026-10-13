@@ -23,7 +23,8 @@
                loadBoard(editorJson), setImage(url), handleMessage(msg),
                resend(), restoreSnapshot(snapString, [{id,c}]) [host: resume a game from a previous host's last board-state; players matched by color c], fit(), restoreView() [keeps the zoom, centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
-   Host only: setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
+   Host only: poolList(color) / takeFromPool(color,name) / settlePoolToken(name,'caught'|'returned') [Safari Zone: pick a token out
+   of a pool, then keep it (caught) or put it back], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
    for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
@@ -74,7 +75,7 @@ function importBoard(d,o){const cnt=k=>d.spaces.filter(s=>s.pos&&s.pos[k]).lengt
 function applyBoard(o){SP=o.SP;CS=o.cs||1;ES=o.es||1;LK=o.LK;W=o.W;H=o.H;R=o.R;K=R/14;NAMES=o.names;fitView();
  startId=o.start;pos={};home={};PL.forEach(p=>{pos[p.id]=o.start;if(get(o.start)&&get(o.start).type==='city')home[p.id]=o.start});$('log').innerHTML='';if(mode==='guest'){draw()}else{setup();snapshot()}prompt('Move a token onto a space.')}
 // ---------- mock HOST ----------
-function setup(){pools={};for(const c in NAMES)pools[c]=shuf(NAMES[c].slice());st={};
+function setup(){held=new Map();pools={};for(const c in NAMES)pools[c]=shuf(NAMES[c].slice());st={};
  for(const s of SP)if(s.type==='catch'){const o={empty:false,boss:!!s.spawn,cleared:false,home:s.color};
   if(s.spawn){o.token=s.spawn;o.revealed=true;let f=false;for(const c in pools){const i=pools[c].indexOf(s.spawn);if(i>=0){pools[c].splice(i,1);o.home=c;f=true;break}}if(!f){o.dup=true;log(`host: no ${s.spawn} left in the pools — created a duplicate for ${s.id}`)}}
   else{o.token=(pools[s.color]||[]).pop();if(!o.token){o.empty=true;o.revealed=true}else o.revealed=false}st[s.id]=o}
@@ -117,13 +118,25 @@ function setCaught(names){if(mode!=='host')return;const now=new Set(names||[]);
  const onMap=new Set();for(const id in st)if(st[id].token)onMap.add(st[id].token);
  prev.forEach(n=>{if(owned.has(n)||onMap.has(n))return;const c=colorOf(n);if(c&&!pools[c].includes(n)){pools[c].push(n);shuf(pools[c])}});
  snapshot()}
+// ---------- Safari Zone: a player picks a token out of a pool (host only) ----------
+// A token taken is "held" -- in neither its pool nor on the map -- until the app settles it: 'caught' (it leaves the game, held
+// out like any catch made on the board) or 'returned' (back in its pool, reshuffled). A token still held after 10 minutes (a
+// player who left mid-attempt) goes back by itself, and exportState() writes held tokens back into their pools.
+let held=new Map();
+function backToPool(n){const c=colorOf(n);if(c&&!owned.has(n)&&!pools[c].includes(n)){pools[c].push(n);shuf(pools[c])}}
+function releaseStale(){const now=Date.now();held.forEach((t,n)=>{if(now-t>6e5){held.delete(n);backToPool(n);log(`host: ${n} went back to its pool (Safari attempt abandoned)`)}})}
+function poolList(c){if(mode!=='host'||!pools[c])return[];releaseStale();return pools[c].slice()}
+function takeFromPool(c,n){if(mode!=='host'||!pools[c])return false;releaseStale();const i=pools[c].indexOf(n);if(i<0)return false;pools[c].splice(i,1);held.set(n,Date.now());log(`host: ${n} taken from the ${c} pool (Safari Zone)`);return true}
+function settlePoolToken(n,out){if(mode!=='host'||!held.has(n))return false;held.delete(n);
+ if(out==='caught'){boardCaught.add(n);log(`host: ${n} leaves the game (caught in the Safari Zone)`)}else{backToPool(n);log(`host: ${n} returned to its pool`)}return true}
 // The host's COMPLETE state, face-down Pokémon and pools included. Never sent to the table: the app puts it in the
 // host backup so a successor can resume exactly where the old host stopped.
 function exportState(){if(mode!=='host')return null;const j=x=>JSON.parse(JSON.stringify(x));
- return{v:1,seq:sync,spaces:j(st),pools:j(pools),pos:j(pos),home:j(home),players:PL.map(p=>({id:p.id,c:p.c,cid:p.cid||null})),pending:j(restoreQ||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home})),owned:[...owned],boardCaught:[...boardCaught]}}
+ const P=j(pools);held.forEach((t,n)=>{const c=colorOf(n);if(c&&P[c]&&!P[c].includes(n))P[c].push(n)});
+ return{v:1,seq:sync,spaces:j(st),pools:P,pos:j(pos),home:j(home),players:PL.map(p=>({id:p.id,c:p.c,cid:p.cid||null})),pending:j(restoreQ||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home})),owned:[...owned],boardCaught:[...boardCaught]}}
 function restoreState(s){if(mode!=='host'||!s||s.v!==1||!s.spaces||!s.pools)return false;placed=new Set();
  for(const id in s.spaces){if(!st[id])continue;st[id]=Object.assign({},st[id],s.spaces[id])}
- pools=JSON.parse(JSON.stringify(s.pools));owned=new Set(s.owned||[]);boardCaught=new Set(s.boardCaught||[]);
+ pools=JSON.parse(JSON.stringify(s.pools));owned=new Set(s.owned||[]);boardCaught=new Set(s.boardCaught||[]);held=new Map();
  sync=Math.max(sync,s.seq|0);
  restoreQ=(s.players||[]).map(p=>({c:p.c,cid:p.cid||null,pos:s.pos&&s.pos[p.id],home:s.home&&s.home[p.id]})).concat((s.pending||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home})));
  restorePlayers();log('host: restored the full board (face-down Pokémon included) from the previous host');snapshot();return true}
@@ -297,6 +310,7 @@ return{
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
  restoreSnapshot,
  setCaught,exportState,restoreState,adoptPlayer,
+ poolList,takeFromPool,settlePoolToken,
  fit:()=>fitView(),
  restoreView,
  setView:v=>setView(v),
