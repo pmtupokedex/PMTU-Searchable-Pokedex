@@ -14198,7 +14198,8 @@
            permanently-open nav panels on phones and makes room for a docked drawer on desktop, exactly
            as it already does for the gallery. Its height is the viewport minus that same padding
            (0.12 top + 0.12 bottom on phones, 20px + 20px from 664px up), so the page itself never
-           scrolls while the board is showing. Browser fullscreen is requested on #game-board-frame only. */
+           scrolls while the board is showing. Browser fullscreen is requested on #game-board-frame only
+           (its button is added to the board's own control cluster, see boardInstallFsButton()). */
         #board-view { display: none; flex-direction: column; width: 100%; height: calc(var(--real-vh, 100dvh) * 0.76); }
         @media (min-width: 664px) {
             #board-view { height: calc(var(--real-vh, 100dvh) - 40px); }
@@ -14206,12 +14207,14 @@
         body.board-mode { overflow: hidden; }
         body.board-mode #gallery { display: none; }
         body.board-mode #board-view { display: flex; }
-        .game-board-toolbar { display: flex; gap: 8px; justify-content: flex-end; margin: 0 0 8px; flex: 0 0 auto; }
-        .game-board-toolbar[hidden] { display: none; }
-        .game-board-toolbar .filter-btn { margin: 0; }
-        /* Compact: the board's own height is what matters here, and the panel-sized pill would take ~50px of it. */
-        #board-toolbar #board-fs-btn { padding: 3px 14px; font-size: 12px; line-height: 1.3; min-height: 0; height: auto; border-radius: 14px; }
-        .game-board-toolbar [hidden] { display: none; }
+        /* Gallery <-> board is a quick cross-fade, not a jump cut: boardSwapView() adds .view-fade-out (the
+           visible view fades out), swaps which one is displayed while both are at opacity 0, then removes it
+           (the other view fades in). */
+        #gallery, #board-view { transition: opacity 0.18s ease; }
+        body.view-fade-out #gallery, body.view-fade-out #board-view { opacity: 0; pointer-events: none; transition-duration: 0.14s; }
+        @media (prefers-reduced-motion: reduce) {
+            #gallery, #board-view { transition: none; }
+        }
         #game-board-frame { position: relative; flex: 1; min-height: 0; border-radius: 8px; overflow: hidden; background: #101418; }
         #game-board-mount, #game-board-mount .bm-root { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: auto; height: auto; }
         #game-board-frame:fullscreen { border-radius: 0; }
@@ -17244,9 +17247,6 @@
          enterBoardMode()/exitBoardMode() in the script). Hidden unless board mode is on; the board
          itself (board.js) is mounted into #game-board-mount once and stays there between toggles. -->
     <div id="board-view">
-        <div class="game-board-toolbar" id="board-toolbar" hidden>
-            <button class="filter-btn" id="board-fs-btn" type="button" hidden>Fullscreen</button>
-        </div>
         <div id="game-board-frame">
             <div id="game-board-mount"></div>
             <button class="filter-btn" id="board-fs-exit" type="button">Exit fullscreen</button>
@@ -21393,7 +21393,7 @@
         // own CSS comment) so the relevant button(s) can't be tapped
         // back off for as long as this mode stays active.
         function beginTeamAddMode() {
-            if (boardModeActive) exitBoardMode(); // picking happens in the gallery
+            boardNotePickStart(); // picking happens in the gallery; the board is returned to afterwards
             teamAddModeActive = true;
             document.body.classList.add('team-add-mode');
 
@@ -33030,6 +33030,7 @@
                 filterGallery();
             }
 
+            boardResumeAfterPick();
             refreshBackButtonState();
         }
 
@@ -33084,7 +33085,7 @@
         let permanentPickCandidateImg = null;
 
         function beginPermanentPickMode(tag) {
-            if (boardModeActive) exitBoardMode(); // picking happens in the gallery
+            boardNotePickStart(); // picking happens in the gallery; the board is returned to afterwards
             permanentPickModeActive = true;
             permanentPickLockedTag = tag;
             document.body.classList.add('permanent-pick-mode');
@@ -33121,6 +33122,7 @@
                 filterGallery();
             }
             permanentPickLockedTag = null;
+            boardResumeAfterPick();
             refreshBackButtonState();
         }
 
@@ -33208,7 +33210,7 @@
         const BATTLE_WILD_CONFIRM_DEFAULT_TITLE = 'Send This Wild Pok\u00e9mon to the Battle Arena?';
 
         function beginBattleWildPickMode(attachContext, kind) {
-            if (boardModeActive) exitBoardMode(); // picking happens in the gallery
+            boardNotePickStart(); // picking happens in the gallery; the board is returned to afterwards
             // Replacing whatever's already in Defender (another player's
             // Pokémon, or an existing Wild one) is confirmed once the
             // pick is actually made -- see confirmBattleWildSelection().
@@ -33402,6 +33404,7 @@
             const overlay = document.getElementById('gallery-battle-wild-confirm-overlay');
             if (overlay) overlay.classList.remove('visible');
             filterGallery();
+            boardResumeAfterPick();
             refreshBackButtonState();
         }
 
@@ -44110,6 +44113,8 @@
                 boardSaveDirty = false;
                 boardConfig = cfg;
                 boardPlayersSig = JSON.stringify(players);
+                boardInstallFsButton();
+                boardApplyKeepScale();
                 boardCtrl.loadBoard(d, { style: cfg.style });
                 const img = await boardFindImage(d, cfg.style, cfg.region);
                 if (img) boardCtrl.setImage(img);
@@ -44969,11 +44974,12 @@
         // --- the board view (#board-view) ---
         // A second main view next to the gallery (see body.board-mode in the CSS), toggled by the Game panel's
         // "Game Board" tile. The board is built once and stays mounted while the gallery is showing, so switching
-        // back and forth is a class flip plus a restoreView(), not a rebuild. Browser fullscreen applies to just the
+        // back and forth is a fade plus a restoreView(), not a rebuild. Browser fullscreen applies to just the
         // map frame (#game-board-frame), so no panel chrome or navbars show. The nav bar's Back button leaves board
-        // mode when nothing else is open, and anything that needs the gallery (the Add Pokémon / pick modes, the
-        // Search panel) switches back to it first.
-        var boardModeActive = false, boardSavedScrollY = 0;
+        // mode when nothing else is open. Anything that needs the gallery (the Add Pokémon / pick modes, the Search
+        // panel) switches to it first; the pick modes then bring the player back to the board when they finish.
+        var boardModeActive = false, boardSavedScrollY = 0, boardReturnAfterPick = false, boardSwapTimer = 0;
+        var BOARD_FADE_OUT_MS = 140;
         // The phone panels' scroll lock pins <body> and parks the page's scroll offset in body.style.top, so
         // window.scrollY reads 0 while one is open.
         function boardGalleryScrollY() {
@@ -44987,12 +44993,31 @@
             apply();
             setTimeout(apply, 420);
         }
+        // Cross-fade between the two main views. boardModeActive (the logic) flips immediately; this only paces what
+        // is on screen: the visible view fades out, the displayed view is swapped while both are at opacity 0, then
+        // the other fades in. A second toggle mid-fade simply cancels the pending swap and fades back.
+        function boardSwapView(toBoard) {
+            const body = document.body;
+            clearTimeout(boardSwapTimer);
+            const finish = () => {
+                body.classList.toggle('board-mode', toBoard);
+                if (!toBoard) boardRestoreGalleryScroll(); // the gallery has to be displayed again for this to take
+                void body.offsetHeight; // commit the swap at opacity 0 so the fade-in actually animates
+                body.classList.remove('view-fade-out');
+            };
+            const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            if (reduce || body.classList.contains('board-mode') === toBoard) { finish(); return; }
+            body.classList.add('view-fade-out');
+            boardSwapTimer = setTimeout(finish, BOARD_FADE_OUT_MS);
+        }
         function syncBoardToggleUi() {
             const tile = document.getElementById('game-menu-board-tile');
             const label = tile && tile.querySelector('.game-menu-tile-label');
             if (label) label.textContent = boardModeActive ? 'Back to Gallery' : 'Game Board';
         }
-        function enterBoardMode() {
+        // opts.keepPanel: leave the Game panel as it is (used when a pick finishes and the flow is about to show the
+        // panel over the board). The tile path closes it so the board is what you see.
+        function enterBoardMode(opts) {
             if (boardModeActive) return;
             if (!isPlaySessionActive()) { showBattleArenaGateToast(); return; }
             if (!getRegionMapSettingsForActiveSave().enabled) {
@@ -45001,9 +45026,9 @@
             }
             boardSavedScrollY = boardGalleryScrollY();
             boardModeActive = true;
-            document.body.classList.add('board-mode');
+            boardSwapView(true);
             syncBoardToggleUi();
-            closeGamePanel(); // the board is now what's behind it
+            if (!(opts && opts.keepPanel)) closeGamePanel(); // the board is now what's behind it
             initBoardScreen();
             refreshBackButtonState();
         }
@@ -45013,8 +45038,7 @@
             if (!boardModeActive) return;
             boardModeActive = false;
             if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) { /* already out */ } }
-            document.body.classList.remove('board-mode');
-            boardRestoreGalleryScroll();
+            boardSwapView(false);
             syncBoardToggleUi();
             refreshBackButtonState();
         }
@@ -45022,20 +45046,45 @@
             if (boardModeActive) { closeGamePanel(); exitBoardMode(); }
             else enterBoardMode();
         }
-        function boardUpdateFsBtn() {
-            const frame = document.getElementById('game-board-frame'), b = document.getElementById('board-fs-btn');
-            if (!frame || !b) return;
-            b.hidden = !(document.fullscreenEnabled && frame.requestFullscreen); // iPhone Safari has no element fullscreen
-            const bar = document.getElementById('board-toolbar');
-            if (bar) bar.hidden = b.hidden; // an empty toolbar would still take up its margin
+        // Pick modes (Add Pokémon, Battle Arena pickers, ...) run in the gallery. Starting one from the board remembers
+        // that, and finishing or cancelling it brings the player back to the board.
+        function boardNotePickStart() {
+            if (!boardModeActive) return;
+            boardReturnAfterPick = true;
+            exitBoardMode();
         }
+        function boardResumeAfterPick() {
+            if (!boardReturnAfterPick) return;
+            if (teamAddModeActive || permanentPickModeActive || battleWildPickModeActive) return; // another pick is still running
+            boardReturnAfterPick = false;
+            if (!isPlaySessionActive() || !getRegionMapSettingsForActiveSave().enabled) return; // session ended meanwhile: stay in the gallery
+            enterBoardMode({ keepPanel: true });
+        }
+        // The Fullscreen button lives in the board's own control cluster (+ / - / Fit / Panel), i.e. inside the map frame,
+        // so it costs no vertical room. board.js rebuilds that cluster whenever the board is rebuilt, so this runs after each mount.
+        function boardInstallFsButton() {
+            const bar = document.querySelector('#game-board-mount #mapctl'), frame = document.getElementById('game-board-frame');
+            if (!bar || !frame || bar.querySelector('#board-fs-btn')) return;
+            if (!(document.fullscreenEnabled && frame.requestFullscreen)) return; // iPhone Safari has no element fullscreen
+            const b = document.createElement('button');
+            b.id = 'board-fs-btn';
+            b.type = 'button';
+            b.textContent = 'Fullscreen';
+            bar.appendChild(b);
+        }
+        // Desktop: a docked side panel narrows the frame, and the map should keep its on-screen size (and never get
+        // shorter than the frame) instead of shrinking to fit. Phones: the panels cover the board instead, so board.js's
+        // normal refit behaviour stays.
+        function boardApplyKeepScale() {
+            if (boardCtrl && boardCtrl.setKeepScale) boardCtrl.setKeepScale(desktopFilterQuery.matches);
+        }
+        desktopFilterQuery.addEventListener('change', boardApplyKeepScale);
         function initBoardScreen() {
             if (!getRegionMapSettingsForActiveSave().enabled) {
                 showGameToast('The In-App Region Map is turned off for this save.');
                 exitBoardMode();
                 return;
             }
-            boardUpdateFsBtn();
             // A guest builds the board the host says it is running, so it has to hear from the host first.
             if (lobbyState.role === 'guest' && !(boardLastState && boardLastState.region)) {
                 document.getElementById('game-board-mount').innerHTML = '<p style="color:#ccc;padding:16px;">Waiting for the host\u2019s board\u2026</p>';
@@ -52894,6 +52943,7 @@
         // skipping it explicitly is clearer than relying on that being
         // true by accident.
         function closeOpenPanels() {
+            if (boardModeActive) return; // the board is up: the blank strips around it must not close the Game/Search/etc. panels
             if (!desktopFilterQuery.matches) return;
             closeImageViewer();
             closeFilterPanel();
