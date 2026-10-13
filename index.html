@@ -8038,6 +8038,27 @@
             box-sizing: border-box;
         }
         #game-catch-overlay.visible { display: flex; }
+        /* Safari Zone pool chooser -- see boardUseSafariZone(). Same backdrop as the catch overlay. */
+        #game-safari-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 21;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #game-safari-overlay.visible { display: flex; }
+        #game-safari-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
+        .game-safari-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin: 8px 0 12px; }
+        .game-safari-token {
+            display: flex; flex-direction: column; align-items: center; gap: 4px;
+            padding: 6px 4px; border: 1px solid rgba(0,0,0,0.25); border-radius: 8px;
+            background: rgba(255,255,255,0.6); cursor: pointer; font: inherit; font-size: 12px; color: inherit;
+        }
+        .game-safari-token img { width: 64px; height: 64px; object-fit: contain; }
         #game-catch-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
         .game-catch-breakdown-note { font-size: 14px; color: #555; margin: 0 0 8px; text-align: center; }
         .game-catch-breakdown-section + .game-catch-breakdown-section {
@@ -16549,6 +16570,14 @@
             <div class="game-confirm-card">
                 <p class="game-confirm-title">Catch Attempt</p>
                 <div id="game-catch-body"></div>
+            </div>
+        </div>
+
+        <!-- Safari Zone: choose a Yellow Pokémon out of the pool -- see boardUseSafariZone() in the script. -->
+        <div id="game-safari-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Safari Zone</p>
+                <div id="game-safari-body"></div>
             </div>
         </div>
 
@@ -28199,6 +28228,14 @@
                         if (!card || !isBattleCardTagged(card)) pickCls = ' pick-dimmed';
                     } else if (catchCardPickActive) {
                         if (!card || !isCatchCardTagged(card)) pickCls = ' pick-dimmed';
+                    } else if (safariPickActive) {
+                        // Safari Zone: only Item cards can be discarded, each with a single option.
+                        if (isSafariDiscardEligible(cardId)) {
+                            optionsHtml = `<div class="game-hand-card-options-grid game-hand-pick-grid"><button class="filter-btn game-hand-pick-safari-btn" type="button" data-card-id="${escapeHtml(cardId)}">Discard for the Safari Zone</button></div>`;
+                        } else {
+                            pickCls = ' pick-dimmed pick-inert';
+                            optionsHtml = '';
+                        }
                     } else if (attachPickMode) {
                         if (isAttachPickHandCardEligible(cardId)) {
                             optionsHtml = `<div class="game-hand-card-options-grid game-hand-pick-grid"><button class="filter-btn game-hand-pick-attach-btn" type="button" data-card-id="${escapeHtml(cardId)}">Attach to ${escapeHtml(attachPickMode.memberName)}</button></div>`;
@@ -34750,6 +34787,11 @@
         // reach them before they exist.
         let catchAttempt = null;
         let catchCardPickActive = false;
+        // Safari Zone (see boardUseSafariZone()): safariPickActive while Hand & Decks waits for the Item card to discard;
+        // safariPending = { pool, threshold } for the visit in progress. Declared here, next to the catch state, so
+        // setGameScreen() can never reach them before they exist.
+        let safariPickActive = false;
+        let safariPending = null;
 
         let soloBattleCards = { attacker: null, defender: null };
 
@@ -41100,7 +41142,7 @@
             }
             // A Battle Card badge tap remembers which half it came from
             // (see battleCardPlayTarget) only while on Hand & Decks.
-            if (screenId !== 'decks') { battleCardPlayTarget = null; attachPickMode = null; catchCardPickActive = false; }
+            if (screenId !== 'decks') { battleCardPlayTarget = null; attachPickMode = null; catchCardPickActive = false; if (safariPickActive) { safariPickActive = false; safariPending = null; } }
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
                 el.classList.toggle('active', el.id === `game-screen-${screenId}`);
@@ -42791,6 +42833,12 @@
                     boardHandleCaught(conn.peer, data);
                 } else if (data.type === 'board-sethome' && typeof data.city === 'string') {
                     boardHandleSetHome(conn.peer, data);
+                } else if (data.type === 'board-safari-pool') {
+                    boardHandleSafariPool(conn.peer);
+                } else if (data.type === 'board-safari-take' && typeof data.name === 'string') {
+                    boardHandleSafariTake(conn.peer, data);
+                } else if (data.type === 'board-safari-settle' && typeof data.name === 'string') {
+                    boardHandleSafariSettle(conn.peer, data);
                 } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
                     hostApplyDraw(data.deck, conn.peer);
                 } else if (data.type === 'deck-gain-reward' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -44390,6 +44438,8 @@
                 else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-encounter', player: 'host' });
             } else if (id === 'battle' && info) {
                 boardStartWildBattle(info);
+            } else if (id === 'safari-ball' || id === 'safari-item') {
+                boardSafariChoosePokemon(id === 'safari-ball' ? 2 : 4);
             } else if (id === 'rfi' && info) {
                 boardRollForItem(info);
             } else if (id.startsWith('gitem:')) {
@@ -44529,6 +44579,7 @@
             'poke-mart':      { name: 'Pok\u00e9 Mart',      legacy: /^\s*Pok[e\u00e9]\s*Mart\s*$/i },
             'pokemon-center': { name: 'Pok\u00e9mon Center', legacy: /^\s*Pok[e\u00e9]mon\s*Center\s*$/i },
             'department-store': { name: 'Department Store', legacy: /^\s*Dep(?:artmen)?t\.?\s*Store\s*$/i },
+            'safari-zone':    { name: 'Safari Zone',    legacy: /^\s*Safari\s*Zone\s*$/i },
         };
         function boardResolveServiceAction(a) {
             let type = null;
@@ -44543,6 +44594,7 @@
             if (type === 'poke-mart') boardUsePokeMart();
             else if (type === 'pokemon-center') boardUsePokemonCenter(info);
             else if (type === 'department-store') boardUseDepartmentStore();
+            else if (type === 'safari-zone') boardUseSafariZone(info);
         }
 
         // Department Store: look at the top 2 cards of the Item deck, keep one (it goes to the hand) and the other goes
@@ -44740,6 +44792,138 @@
             }
             showGameToast(prefix + out.text);
         }
+
+        // ---- Safari Zone ----
+        // The player discards an Item card from their hand (they may decline), chooses a Yellow Pok\u00e9mon token out of the
+        // board's pool, then rolls in the Catch dialog: caught on a Catch Total of 4 or more -- 2 or more if the discarded
+        // card was a Safari Ball -- whatever the Pok\u00e9mon's own Catch Value is. A caught token leaves the game; one that
+        // gets away goes back into the pool. The pool is host-side state inside board.js, so a guest asks the Host for it.
+        const BOARD_SAFARI_DECKS = ['Item Deck', 'Shop Deck', 'Reward Item Deck', 'Pok\u00e9 Ball Deck'];
+        function isSafariDiscardEligible(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            return !!card && BOARD_SAFARI_DECKS.includes(card.cardDeck);
+        }
+        let boardSafariPoolCb = null;   // a guest's pending "what's in the pool?" request
+        let boardSafariTakeCb = null;   // ... and its pending "take this one" request: { name, cb }
+        function boardSafariRequestPool(cb) {
+            if (lobbyState.role === 'guest') { boardSafariPoolCb = cb; boardSend({ type: 'board-safari-pool' }); return; }
+            boardEnsureBoard().then(c => cb(c.poolList('yellow'))).catch(() => cb([]));
+        }
+        function boardSafariTake(name, cb) {
+            if (lobbyState.role === 'guest') { boardSafariTakeCb = { name, cb }; boardSend({ type: 'board-safari-take', name }); return; }
+            boardEnsureBoard().then(c => cb(c.takeFromPool('yellow', name))).catch(() => cb(false));
+        }
+        function boardSafariSettle(name, outcome) {
+            if (lobbyState.role === 'guest') { boardSend({ type: 'board-safari-settle', name, outcome }); return; }
+            boardEnsureBoard().then(c => c.settlePoolToken(name, outcome)).catch(() => {});
+        }
+        // Host side of a guest's requests (the sender is identified by their connection, never by the message).
+        function boardSendToPeer(peerId, msg) {
+            const entry = lobbyState.connections.get(peerId);
+            if (entry && entry.conn && entry.conn.open) { try { entry.conn.send(msg); } catch (err) { /* gone */ } }
+        }
+        function boardHandleSafariPool(peerId) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            boardEnsureBoard().then(c => boardSendToPeer(peerId, { type: 'board-safari-pool-result', names: c.poolList('yellow') })).catch(() => {});
+        }
+        function boardHandleSafariTake(peerId, data) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            boardEnsureBoard().then(c => boardSendToPeer(peerId, { type: 'board-safari-taken', name: data.name, ok: c.takeFromPool('yellow', data.name) })).catch(() => {});
+        }
+        function boardHandleSafariSettle(peerId, data) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            boardEnsureBoard().then(c => c.settlePoolToken(data.name, data.outcome === 'caught' ? 'caught' : 'returned')).catch(() => {});
+        }
+
+        function boardUseSafariZone(info) {
+            if (isActiveSaveReadOnly()) return;
+            const virtual = isVirtualDecksEnabledForActiveSave();
+            if (virtual && !getLocalHandArray().some(isSafariDiscardEligible)) { showGameToast('You have no Item cards in your hand to discard.'); return; }
+            // The pool is checked first so a player isn't made to discard for an empty Safari Zone.
+            boardSafariRequestPool(names => {
+                if (!names.length) { showGameToast('The Safari Zone is empty \u2014 no Yellow Pok\u00e9mon are left in the pool.'); return; }
+                safariPending = { pool: names, threshold: 4 };
+                if (virtual) {
+                    openGamePanel(); // the board is a main view now, not inside the panel
+                    safariPickActive = true;
+                    setGameScreen('decks');
+                    showDecksNotice('Safari Zone: choose an Item card from your hand to discard.');
+                } else if (boardCtrl) {
+                    // No virtual hand to pick from: the player says what they discarded.
+                    boardCtrl.showAction({ text: 'Safari Zone \u2014 discard an Item card to enter. What did you discard?', buttons: [{ id: 'safari-ball', label: 'A Safari Ball' }, { id: 'safari-item', label: 'Another Item card' }, { id: 'skip', label: 'Not entering' }], info });
+                }
+            });
+        }
+        function boardSafariDiscard(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (!safariPickActive || !safariPending || !isSafariDiscardEligible(cardId)) return;
+            // Discarded = out of the hand and onto its deck's discard pile, as when a Catch Card is played.
+            requestDiscardCard(getEffectiveCardDeck(card) || card.cardDeck, cardId);
+            safariPickActive = false;
+            boardSafariChoosePokemon(boardCardNameKey(card.name) === 'safariball' ? 2 : 4);
+        }
+        function boardSafariChoosePokemon(threshold) {
+            if (!safariPending) return;
+            safariPending.threshold = threshold;
+            openGamePanel();
+            setGameScreen('battle'); // the Catch dialog lives on this screen
+            renderSafariOverlay();
+            const overlay = document.getElementById('game-safari-overlay');
+            if (overlay) overlay.classList.add('visible');
+        }
+        function renderSafariOverlay() {
+            const body = document.getElementById('game-safari-body');
+            if (!body || !safariPending) return;
+            const t = safariPending.threshold;
+            const names = safariPending.pool.slice().sort((a, b) => a.localeCompare(b)); // sorted, so the pool's shuffle order isn't shown
+            let html = `<p class="game-confirm-subtext">Choose a Yellow Pok\u00e9mon from the pool, then roll to catch it. A Catch Total of ${t} or more catches it${t === 2 ? ' (you discarded a Safari Ball)' : ''}.</p><div class="game-safari-grid">`;
+            html += names.map(n => {
+                const e = POKEMON_BY_NAME[n];
+                return `<button class="game-safari-token" type="button" data-name="${escapeHtml(n)}">${e && e.src ? `<img src="${escapeHtml(e.src)}" alt="">` : ''}<span>${escapeHtml(n)}</span></button>`;
+            }).join('');
+            html += '</div><div class="game-catch-actions"><button class="filter-btn game-safari-cancel-btn" type="button">Cancel</button></div>';
+            body.innerHTML = html;
+        }
+        function closeSafariOverlay() {
+            const overlay = document.getElementById('game-safari-overlay');
+            if (overlay) overlay.classList.remove('visible');
+        }
+        function boardSafariPick(name) {
+            if (!safariPending) return;
+            boardSafariTake(name, ok => {
+                if (!safariPending) { if (ok) boardSafariSettle(name, 'returned'); return; }
+                if (!ok) {
+                    // Someone else got it first: show the pool as it is now.
+                    showGameToast(name + ' was just taken \u2014 choose another.');
+                    boardSafariRequestPool(names => {
+                        if (!safariPending) return;
+                        if (!names.length) { safariPending = null; closeSafariOverlay(); showGameToast('The Safari Zone is empty.'); return; }
+                        safariPending.pool = names;
+                        renderSafariOverlay();
+                    });
+                    return;
+                }
+                const threshold = safariPending.threshold;
+                safariPending = null;
+                closeSafariOverlay();
+                boardSafariStartCatch(name, threshold);
+            });
+        }
+        function boardSafariStartCatch(name, threshold) {
+            const entry = POKEMON_BY_NAME[name];
+            if (!entry || isActiveSaveReadOnly()) { boardSafariSettle(name, 'returned'); if (!entry) showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
+            const source = { dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false };
+            catchAttempt = { fainted: false, hadStatus: false, roll: null, cardId: null, manualBonus: 0,
+                safari: { name, member: buildWildPokemonMember(source), threshold, settled: false } };
+            openGamePanel();
+            setGameScreen('battle');
+            showCatchOverlay();
+        }
+        document.getElementById('game-safari-overlay').addEventListener('click', (e) => {
+            const tok = e.target.closest('.game-safari-token');
+            if (tok) { boardSafariPick(tok.dataset.name); return; }
+            if (e.target.closest('.game-safari-cancel-btn')) { safariPending = null; closeSafariOverlay(); }
+        });
 
         // Puts the Gym Leader card in the Arena the same way Choose Gym Leader does (so the Badge, Next Round
         // line-up and Elite Four / Champion stage rule all apply), after the usual replace confirmation.
@@ -45750,6 +45934,14 @@
                     boardReportCaught(true);
                 } else if (data.type === 'board-landing' && data.info) {
                     boardDeliverLanding(data.info);
+                } else if (data.type === 'board-safari-pool-result' && Array.isArray(data.names)) {
+                    const cb = boardSafariPoolCb;
+                    boardSafariPoolCb = null;
+                    if (cb) cb(data.names.filter(n => typeof n === 'string'));
+                } else if (data.type === 'board-safari-taken' && typeof data.name === 'string') {
+                    const waiting = boardSafariTakeCb;
+                    boardSafariTakeCb = null;
+                    if (waiting && waiting.name === data.name) waiting.cb(!!data.ok);
                 } else if (data.type === 'battle-arena-state') {
                     guestBattleArenaCache = data;
                     applyIncomingArenaState(data);
@@ -46415,6 +46607,11 @@
             // own Attach/Nature Cards photo opens (openTeamCardImageViewer()).
             if (e.target.closest('#game-decks-attach-pick-cancel-btn')) {
                 cancelAttachPick();
+                return;
+            }
+            const handPickSafariBtn = e.target.closest('.game-hand-pick-safari-btn');
+            if (handPickSafariBtn) {
+                boardSafariDiscard(handPickSafariBtn.dataset.cardId);
                 return;
             }
             const handPickAttachBtn = e.target.closest('.game-hand-pick-attach-btn');
@@ -47879,6 +48076,7 @@
         }
 
         function getCatchTargetMember() {
+            if (catchAttempt && catchAttempt.safari) return catchAttempt.safari.member; // a Safari Zone catch isn't in the Arena
             const entry = getArenaSlotEntry('defender');
             if (entry && !entry.ownerId && entry.member) return entry.member;
             return battleWildPokemon;
@@ -47916,6 +48114,9 @@
         }
 
         function closeCatchOverlay() {
+            // Closing a Safari Zone attempt without catching puts its token back in the pool.
+            const sf = catchAttempt && catchAttempt.safari;
+            if (sf && !sf.settled) { sf.settled = true; boardSafariSettle(sf.name, 'returned'); }
             catchAttempt = null;
             catchCardPickActive = false;
             hideCatchOverlay();
@@ -47950,11 +48151,13 @@
             // an active Mega/G-Max form counts as its own entry). That
             // section is left out for an entry that has none.
             const catchEntry = POKEMON_BY_NAME[displayName] || POKEMON_BY_NAME[member.name] || null;
-            const catchValue = (catchEntry && typeof catchEntry.catchValue === 'number') ? catchEntry.catchValue : null;
+            const sf = a.safari || null;
+            // A Safari Zone catch ignores the Pok\u00e9mon's own Catch Value: 4, or 2 with a Safari Ball.
+            const catchValue = sf ? sf.threshold : ((catchEntry && typeof catchEntry.catchValue === 'number') ? catchEntry.catchValue : null);
             html += '<div class="game-catch-breakdown">';
             if (catchValue !== null) {
-                html += `<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">Catch Value: ${catchValue}</p>`
-                    + `<p class="game-catch-breakdown-note">You need a Catch Total of at least ${catchValue} to Catch this Pok\u00e9mon!</p></div>`;
+                html += `<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">${sf ? 'Safari Zone \u2014 ' : ''}Catch Value: ${catchValue}</p>`
+                    + `<p class="game-catch-breakdown-note">You need a Catch Total of at least ${catchValue} to Catch this Pok\u00e9mon!${sf && sf.threshold === 2 ? ' (Safari Ball)' : ''}</p></div>`;
             }
             html += '<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">Catch Bonus</p>';
             html += lines.map(l => `<div class="game-catch-breakdown-row"><span>${escapeHtml(l.label)}</span><span>+${l.amount}</span></div>`).join('');
@@ -47993,7 +48196,8 @@
                 }
             }
             html += '<div class="game-catch-actions">';
-            html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
+            // A Safari Zone visit gets one roll.
+            if (!sf || a.roll === null) html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
             if (!a.cardId) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
             html += `<button class="filter-btn include game-catch-finish-btn" type="button"${missed ? ' disabled' : ''}>Caught \u2014 Add to Team</button>`;
             html += `<button class="filter-btn exclude game-catch-fail-btn" type="button"${caught ? ' disabled' : ''}>Failed to Catch</button>`;
@@ -48032,6 +48236,12 @@
         // directly; in a lobby the Host does it (see
         // hostApplyBattlePhase()'s 'end-failed-catch').
         function failCatchAttempt() {
+            if (catchAttempt && catchAttempt.safari) { // gets away: closing returns the token to the pool
+                const n = catchAttempt.safari.member.name;
+                closeCatchOverlay();
+                showGameToast('The wild ' + n + ' got away.');
+                return;
+            }
             closeCatchOverlay();
             if (lobbyState.role !== null) { requestBattlePhase('end-failed-catch'); return; }
             boardNoteWildLeft(battleWildPokemon, 'defeated');
@@ -48039,6 +48249,19 @@
         }
 
         function finishCatchAttempt() {
+            const sf = catchAttempt && catchAttempt.safari;
+            if (sf) {
+                // Safari Zone: the token leaves the game and the Pok\u00e9mon joins the team -- no Arena or battle involved.
+                sf.settled = true;
+                boardSafariSettle(sf.name, 'caught');
+                const member = sf.member;
+                closeCatchOverlay();
+                applyCaughtWildMember(member);
+                openGamePanel();
+                setGameScreen('team');
+                renderTeamGrid();
+                return;
+            }
             closeCatchOverlay();
             // Once a Lobby session exists, the Wild Pok\u00e9mon is shared --
             // the Host arbitrates near-simultaneous catches (see
@@ -48049,7 +48272,7 @@
 
         document.getElementById('game-catch-overlay').addEventListener('click', (e) => {
             if (e.target.closest('.game-catch-roll-btn')) {
-                if (catchAttempt) {
+                if (catchAttempt && !(catchAttempt.safari && catchAttempt.roll !== null)) {
                     catchAttempt.roll = Math.floor(Math.random() * 6) + 1;
                     renderCatchOverlay();
                 }
