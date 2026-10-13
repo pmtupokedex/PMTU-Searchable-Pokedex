@@ -2014,6 +2014,39 @@
         .game-menu-tiles .filter-btn.game-menu-tile-locked {
             opacity: 0.5;
         }
+        /* Return to Pok\u00e9dex while the gallery is showing (there is nothing to return from). */
+        .game-menu-tiles .filter-btn.game-menu-tile:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Explore Actions screen: the icon key for the actions on the board's spaces (see renderBoardActionsScreen()). */
+        .game-board-key-header { margin-top: 4px; }
+        .game-board-key-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 10px 12px;
+            margin: 0 0 8px;
+            background: rgba(255, 255, 255, 0.92);
+            color: #333;
+            border-radius: 10px;
+            text-align: left;
+        }
+        .game-board-key-icon-slot {
+            width: 52px;
+            height: 52px;
+            flex: 0 0 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+        }
+        .game-board-key-icon-slot.is-placeholder { border: 2px dashed currentColor; border-radius: 8px; opacity: 0.3; }
+        .game-board-key-icon { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .game-board-key-text { flex: 1 1 auto; min-width: 0; }
+        .game-board-key-name { font-weight: bold; font-size: 15px; margin: 0 0 2px; }
+        .game-board-key-desc { font-size: 13px; line-height: 1.35; margin: 0; }
 
         /* Dice block (see renderBattleDice()): three counters side by
            side, then the Roll buttons, then whatever was rolled. First
@@ -8051,14 +8084,16 @@
             box-sizing: border-box;
         }
         #game-safari-overlay.visible { display: flex; }
-        #game-safari-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
-        .game-safari-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; margin: 8px 0 12px; }
+        /* Wider than the usual 320px confirm card so the art can be the same 250px the Catch dialog shows it at
+           (.game-team-detail-img); two columns when the screen has room, one on a phone. */
+        #game-safari-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; max-width: 600px; }
+        .game-safari-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 10px; margin: 8px 0 12px; }
         .game-safari-token {
             display: flex; flex-direction: column; align-items: center; gap: 4px;
-            padding: 6px 4px; border: 1px solid rgba(0,0,0,0.25); border-radius: 8px;
-            background: rgba(255,255,255,0.6); cursor: pointer; font: inherit; font-size: 12px; color: inherit;
+            padding: 8px 6px; border: 1px solid rgba(0,0,0,0.25); border-radius: 8px;
+            background: rgba(255,255,255,0.6); cursor: pointer; font: inherit; font-size: 14px; font-weight: bold; color: inherit;
         }
-        .game-safari-token img { width: 64px; height: 64px; object-fit: contain; }
+        .game-safari-token img { width: 250px; max-width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; }
         #game-catch-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
         .game-catch-breakdown-note { font-size: 14px; color: #555; margin: 0 0 8px; text-align: center; }
         .game-catch-breakdown-section + .game-catch-breakdown-section {
@@ -14735,6 +14770,9 @@
                     <button class="filter-btn game-menu-tile" data-target="lobby"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Play a Game</span></button>
                     <button class="filter-btn game-menu-tile" data-target="rulebook-picker"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Rulebooks</span></button>
                     <button class="filter-btn game-menu-tile" id="game-menu-board-tile" data-target="board"><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Game Board</span></button>
+                    <!-- Takes over the job the Game Board tile used to have while the board is up (back to the gallery);
+                         disabled whenever the gallery is showing. See syncBoardToggleUi() in the script. -->
+                    <button class="filter-btn game-menu-tile" id="game-menu-board-return-tile" data-target="board-exit" disabled><span class="game-menu-tile-icon-slot"><img class="game-menu-tile-icon" alt="" hidden></span><span class="game-menu-tile-label">Return to Pok&eacute;dex</span></button>
                 </div>
 
                 <!-- Experimental: opens the virtual game board prototype
@@ -15850,6 +15888,19 @@
                 <p class="game-screen-title">Rulebooks</p>
 
                 <div class="game-menu-tiles" id="game-rulebook-picker-list"></div>
+            </div>
+
+            <!-- Explore Actions: what each action on the Game Board's spaces does. Opened from the Game Board tile while the
+                 board is showing (it is relabelled "[Region] Explore Actions"); filled by renderBoardActionsScreen(). -->
+            <div class="game-screen" id="game-screen-board-actions">
+                <div class="game-screen-header">
+                    <span class="game-screen-back-wrap">
+                        <span class="game-screen-back-decor"></span>
+                        <button class="game-back-btn game-screen-back-btn" data-target="main" aria-label="Back"></button>
+                    </span>
+                </div>
+                <p class="game-screen-title" id="game-board-actions-title">Explore Actions</p>
+                <div id="game-board-actions-list"></div>
             </div>
 
             <!-- The native-viewer/PDF.js comparison this screen started
@@ -41165,13 +41216,14 @@
             if (scrollEl) scrollEl.scrollTop = 0;
             if (screenId === 'main') renderBattleArenaGate();
             if (screenId === 'decks') renderDecksScreen();
-            if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); hideCatchOverlay(); }
+            if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); hideCatchOverlay(); if (catchAttempt && catchAttempt.resolved) catchAttempt = null; }
             if (screenId === 'battle') {
                 renderBattleAttackerSlot();
                 renderBattleDefenderSlot();
                 // Back from Hand & Decks mid-attempt: pick the overlay up again.
                 if (catchAttempt) showCatchOverlay();
             }
+            if (screenId === 'board-actions') renderBoardActionsScreen();
             if (screenId === 'rulebook-picker') renderRulebookPicker();
             if (screenId === 'rulebook') initRulebookScreen();
             // The picker is a sibling of #game-scroll, so it would
@@ -45010,13 +45062,23 @@
             body.classList.add('view-fade-out');
             boardSwapTimer = setTimeout(finish, BOARD_FADE_OUT_MS);
         }
+        // The region the board on screen belongs to, as its display name (the loaded save's region, or the host's for a guest).
+        function boardRegionLabel() {
+            try { return musicRegionLabel(boardWantedConfig().region); } catch (err) { return 'Region'; }
+        }
+        // The two Game panel tiles follow the view: in the gallery, "Game Board" opens the board and "Return to Pok\u00e9dex" is
+        // disabled; with the board up, the first becomes "[Region] Explore Actions" (opens that screen) and the second returns.
         function syncBoardToggleUi() {
             const tile = document.getElementById('game-menu-board-tile');
             const label = tile && tile.querySelector('.game-menu-tile-label');
-            if (label) label.textContent = boardModeActive ? 'Back to Gallery' : 'Game Board';
+            const ret = document.getElementById('game-menu-board-return-tile');
+            if (tile) tile.dataset.target = boardModeActive ? 'board-actions' : 'board';
+            if (label) label.textContent = boardModeActive ? boardRegionLabel() + ' Explore Actions' : 'Game Board';
+            if (ret) ret.disabled = !boardModeActive;
+            try { applyToolMenuIcons(); } catch (err) { /* icons table not defined yet */ }
+            if (currentGameScreen === 'board-actions') renderBoardActionsScreen(); // region may have just changed
         }
-        // opts.keepPanel: leave the Game panel as it is (used when a pick finishes and the flow is about to show the
-        // panel over the board). The tile path closes it so the board is what you see.
+        // The Game panel stays open when the board comes up (opts is kept for the callers that pass keepPanel).
         function enterBoardMode(opts) {
             if (boardModeActive) return;
             if (!isPlaySessionActive()) { showBattleArenaGateToast(); return; }
@@ -45028,7 +45090,6 @@
             boardModeActive = true;
             boardSwapView(true);
             syncBoardToggleUi();
-            if (!(opts && opts.keepPanel)) closeGamePanel(); // the board is now what's behind it
             initBoardScreen();
             refreshBackButtonState();
         }
@@ -45042,11 +45103,76 @@
             syncBoardToggleUi();
             refreshBackButtonState();
         }
-        function toggleBoardMode() {
-            if (boardModeActive) { closeGamePanel(); exitBoardMode(); }
-            else enterBoardMode();
+                // ---- Explore Actions screen: the icon key ----
+        // One entry per kind of action a space can offer (the types the board understands: BOARD_BATTLE_ACTIONS,
+        // BOARD_SERVICE_ACTIONS, Gain Item, Roll For Item), then the spaces that carry their own prompt. Paste an image URL into
+        // BOARD_ACTION_ICONS (keyed by id) to replace a placeholder square. desc may be a function so it can read live rules.
+        const BOARD_ACTION_ICONS = {
+            'gym-battle': '', 'villain-battle': '', 'elite-four-battle': '', 'champion-battle': '',
+            'poke-mart': '', 'pokemon-center': '', 'department-store': '', 'safari-zone': '',
+            'gain-item': '', 'roll-for-item': '',
+            'catch-space': '', 'event-space': '', 'city-space': ''
+        };
+        const BOARD_ACTION_KEY = [
+            { header: 'Space Actions' },
+            { id: 'gym-battle', name: 'Gym Battle', desc: 'Challenge the Gym Leader named on this space. Winning earns their Badge; once you hold it the action shows as defeated. Some Gyms stay locked until you meet a requirement, and the prompt says what.' },
+            { id: 'villain-battle', name: 'Villain Battle', desc: 'Battle the villain team leader named on this space. Like a Gym Battle, it is marked defeated once you have won it.' },
+            { id: 'elite-four-battle', name: 'Battle Elite Four', desc: 'Face one of the region\u2019s Elite Four. You choose which member to battle, or pick Random.' },
+            { id: 'champion-battle', name: 'Battle Champion', desc: 'Take on the region\u2019s Champion, usually the last battle of the journey.' },
+            { id: 'poke-mart', name: 'Pok\u00e9 Mart', desc: 'Draw one card from the Item deck.' },
+            { id: 'pokemon-center', name: 'Pok\u00e9mon Center', desc: () => 'Heals your team: every Status Condition is removed and up to ' + boardPokemonCenterRevives() + ' Fainted Pok\u00e9mon are revived. If more than that are Fainted, you choose which ones.' },
+            { id: 'department-store', name: 'Department Store', desc: 'Look at the top 2 cards of the Item deck and keep one in your hand. The other goes to the bottom of the deck.' },
+            { id: 'safari-zone', name: 'Safari Zone', desc: 'Discard an Item card from your hand to enter, then choose a Yellow Pok\u00e9mon from the pool and roll the Catch Die. A Catch Total of 4 or more catches it (2 or more if you discarded a Safari Ball), whatever the Pok\u00e9mon\u2019s own Catch Value. No Catch Cards can be played. A caught Pok\u00e9mon joins your team and leaves the game; one that gets away goes back to the pool.' },
+            { id: 'gain-item', name: 'Gain Item', desc: 'Take the named Item card into your hand for free. Once you have claimed it the action shows as gained.' },
+            { id: 'roll-for-item', name: 'Roll For Item', desc: 'Roll a d6. Each space has its own table that says which item (if any) that number gives you.' },
+            { header: 'Other Spaces' },
+            { id: 'catch-space', name: 'Catch Space', desc: 'A coloured circle holding a face-down wild Pok\u00e9mon. Land on it and choose Encounter it to reveal the Pok\u00e9mon, then battle and try to catch it, or walk away and leave it face-up for the next visitor.' },
+            { id: 'event-space', name: 'Event Space', desc: 'Land here to draw a card from the Event deck.' },
+            { id: 'city-space', name: 'City', desc: 'Where the actions above are found. Stopping in or passing through a city lets you set it as your Current Home, which is where you return after losing a battle.' }
+        ];
+        function renderBoardActionsScreen() {
+            const list = document.getElementById('game-board-actions-list');
+            const title = document.getElementById('game-board-actions-title');
+            if (!list) return;
+            if (title) title.textContent = boardRegionLabel() + ' Explore Actions';
+            list.innerHTML = '';
+            BOARD_ACTION_KEY.forEach(item => {
+                if (item.header) {
+                    const h = document.createElement('div');
+                    h.className = 'game-section-header game-board-key-header';
+                    h.textContent = item.header;
+                    list.appendChild(h);
+                    return;
+                }
+                const url = BOARD_ACTION_ICONS[item.id] || '';
+                const row = document.createElement('div');
+                row.className = 'game-board-key-row';
+                const slot = document.createElement('span');
+                slot.className = 'game-board-key-icon-slot' + (url ? '' : ' is-placeholder');
+                if (url) {
+                    const img = document.createElement('img');
+                    img.className = 'game-board-key-icon';
+                    img.alt = '';
+                    img.src = url;
+                    img.onerror = () => { img.remove(); slot.classList.add('is-placeholder'); };
+                    slot.appendChild(img);
+                }
+                const text = document.createElement('div');
+                text.className = 'game-board-key-text';
+                const name = document.createElement('p');
+                name.className = 'game-board-key-name';
+                name.textContent = item.name;
+                const desc = document.createElement('p');
+                desc.className = 'game-board-key-desc';
+                desc.textContent = typeof item.desc === 'function' ? item.desc() : item.desc;
+                text.appendChild(name);
+                text.appendChild(desc);
+                row.appendChild(slot);
+                row.appendChild(text);
+                list.appendChild(row);
+            });
         }
-        // Pick modes (Add Pokémon, Battle Arena pickers, ...) run in the gallery. Starting one from the board remembers
+        // Pick modes (Add Pok\u00e9mon, Battle Arena pickers, ...) run in the gallery. Starting one from the board remembers
         // that, and finishing or cancelling it brings the player back to the board.
         function boardNotePickStart() {
             if (!boardModeActive) return;
@@ -45085,6 +45211,7 @@
                 exitBoardMode();
                 return;
             }
+            syncBoardToggleUi(); // the region (and so the tile's label) can change between visits
             // A guest builds the board the host says it is running, so it has to hear from the host first.
             if (lobbyState.role === 'guest' && !(boardLastState && boardLastState.region)) {
                 document.getElementById('game-board-mount').innerHTML = '<p style="color:#ccc;padding:16px;">Waiting for the host\u2019s board\u2026</p>';
@@ -46461,12 +46588,15 @@
 
             const navTarget = e.target.closest('[data-target]');
             if (navTarget) {
+                if (navTarget.disabled) return; // e.g. Return to Pok\u00e9dex while the gallery is showing
                 if (isScreenLockedByGate(navTarget.dataset.target) || isDecksLockedBySetting(navTarget.dataset.target)
                     || isTrainerCardLockedBySetting(navTarget.dataset.target)) {
                     showScreenLockToast(navTarget.dataset.target);
                     return;
                 }
-                if (navTarget.dataset.target === 'board') { toggleBoardMode(); return; } // a main view, not a panel screen
+                // The board and the gallery are main views, not panel screens; the panel stays open for both.
+                if (navTarget.dataset.target === 'board') { enterBoardMode(); return; }
+                if (navTarget.dataset.target === 'board-exit') { exitBoardMode(); return; }
                 setGameScreen(navTarget.dataset.target);
                 return;
             }
@@ -48125,10 +48255,29 @@
         }
 
         function getCatchTargetMember() {
+            if (catchAttempt && catchAttempt.snapMember) return catchAttempt.snapMember; // resolved: the arena may already be cleared
             if (catchAttempt && catchAttempt.safari) return catchAttempt.safari.member; // a Safari Zone catch isn't in the Arena
             const entry = getArenaSlotEntry('defender');
             if (entry && !entry.ownerId && entry.member) return entry.member;
             return battleWildPokemon;
+        }
+
+        // The name/art the overlay shows for a Wild Pok\u00e9mon (a Mega/G-Max form counts as its own entry).
+        function getCatchDisplay(member) {
+            const overrideEntry = member.formOverride ? POKEMON_BY_NAME[member.formOverride] : null;
+            const artSrc = overrideEntry ? overrideEntry.src : member.src;
+            const artShinySrc = overrideEntry ? (overrideEntry.shinysrc || '') : member.shinysrc;
+            return {
+                src: (member.shiny && hasShinyForm(artShinySrc)) ? artShinySrc : (artSrc || ''),
+                name: (overrideEntry ? overrideEntry.name : member.name) || 'Unknown'
+            };
+        }
+
+        // The Catch Value this attempt has to beat, or null when the entry has none (then the players judge the roll).
+        function getCatchValueFor(a, member, displayName) {
+            if (a.safari) return a.safari.threshold; // a Safari Zone catch ignores the Pok\u00e9mon's own Catch Value: 4, or 2 with a Safari Ball
+            const e = POKEMON_BY_NAME[displayName] || POKEMON_BY_NAME[member.name] || null;
+            return (e && typeof e.catchValue === 'number') ? e.catchValue : null;
         }
 
         function getCatchBonusLines(attempt) {
@@ -48176,11 +48325,8 @@
             const member = getCatchTargetMember();
             if (!body || !catchAttempt || !member) return;
             const a = catchAttempt;
-            const overrideEntry = member.formOverride ? POKEMON_BY_NAME[member.formOverride] : null;
-            const artSrc = overrideEntry ? overrideEntry.src : member.src;
-            const artShinySrc = overrideEntry ? (overrideEntry.shinysrc || '') : member.shinysrc;
-            const displaySrc = (member.shiny && hasShinyForm(artShinySrc)) ? artShinySrc : (artSrc || '');
-            const displayName = (overrideEntry ? overrideEntry.name : member.name) || 'Unknown';
+            const disp = a.snap || getCatchDisplay(member); // resolved: taken before the catch reset the form
+            const displaySrc = disp.src, displayName = disp.name;
 
             const lines = getCatchBonusLines(a);
             const bonus = lines.reduce((n, l) => n + l.amount, 0) + (a.manualBonus || 0);
@@ -48199,10 +48345,8 @@
             // member only stores its name, so look the entry up by that;
             // an active Mega/G-Max form counts as its own entry). That
             // section is left out for an entry that has none.
-            const catchEntry = POKEMON_BY_NAME[displayName] || POKEMON_BY_NAME[member.name] || null;
             const sf = a.safari || null;
-            // A Safari Zone catch ignores the Pok\u00e9mon's own Catch Value: 4, or 2 with a Safari Ball.
-            const catchValue = sf ? sf.threshold : ((catchEntry && typeof catchEntry.catchValue === 'number') ? catchEntry.catchValue : null);
+            const catchValue = getCatchValueFor(a, member, displayName);
             html += '<div class="game-catch-breakdown">';
             if (catchValue !== null) {
                 html += `<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">${sf ? 'Safari Zone \u2014 ' : ''}Catch Value: ${catchValue}</p>`
@@ -48212,10 +48356,14 @@
             html += lines.map(l => `<div class="game-catch-breakdown-row"><span>${escapeHtml(l.label)}</span><span>+${l.amount}</span></div>`).join('');
             // Manual adjustment: stands in for Catch Card bonuses the
             // equation can't factor in yet (remove once cards carry data).
+            if (a.resolved) {
+                if (a.manualBonus) html += `<div class="game-catch-breakdown-row"><span>Manual bonus</span><span>+${a.manualBonus}</span></div>`;
+            } else {
             html += `<div class="game-catch-breakdown-row game-catch-manual-row"><span>Manual bonus</span>`
                 + `<span class="game-catch-manual-controls"><button class="filter-btn game-catch-manual-minus" type="button" aria-label="Decrease manual bonus"${a.manualBonus <= 0 ? ' disabled' : ''}>\u2212</button>`
                 + `<span class="game-catch-manual-value">${a.manualBonus}</span>`
                 + `<button class="filter-btn game-catch-manual-plus" type="button" aria-label="Increase manual bonus">+</button></span></div>`;
+            }
             html += `<div class="game-catch-breakdown-row total"><span>Total bonus</span><span>+${bonus}</span></div>`;
             html += '</div></div>';
             // Outcome -- only once rolled, and only when the entry has a
@@ -48231,7 +48379,8 @@
                     const safeName = escapeHtml(displayName);
                     if (total >= catchValue) {
                         caught = true;
-                        html += `<div class="game-catch-result"><p class="game-catch-result-main">Gotcha! ${safeName} was Caught!</p></div>`;
+                        html += `<div class="game-catch-result"><p class="game-catch-result-main">Gotcha! ${safeName} was Caught!</p>`
+                            + (a.resolved ? `<p class="game-catch-result-sub">${safeName} has been added to your team.</p>` : '') + `</div>`;
                     } else {
                         missed = true;
                         const short = catchValue - total;
@@ -48245,18 +48394,24 @@
                 }
             }
             html += '<div class="game-catch-actions">';
-            // A Safari Zone visit gets one roll.
-            if (!sf || a.roll === null) html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
-            if (!a.cardId) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
-            html += `<button class="filter-btn include game-catch-finish-btn" type="button"${missed ? ' disabled' : ''}>Caught \u2014 Add to Team</button>`;
-            html += `<button class="filter-btn exclude game-catch-fail-btn" type="button"${caught ? ' disabled' : ''}>Failed to Catch</button>`;
-            html += '<button class="filter-btn game-catch-close-btn" type="button">Close</button>';
+            if (a.resolved) {
+                // A virtual roll has already caught it / sent it back (see resolveCatchAttempt()); nothing is left to decide.
+                html += '<button class="filter-btn include game-catch-close-btn" type="button">Continue</button>';
+            } else {
+                // A Safari Zone visit gets one roll.
+                if (!sf || a.roll === null) html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
+                // Catch Cards are played BEFORE the die is rolled, and never in the Safari Zone.
+                if (!a.cardId && !sf && a.roll === null) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
+                html += `<button class="filter-btn include game-catch-finish-btn" type="button"${missed ? ' disabled' : ''}>Caught \u2014 Add to Team</button>`;
+                html += `<button class="filter-btn exclude game-catch-fail-btn" type="button"${caught ? ' disabled' : ''}>Failed to Catch</button>`;
+                html += '<button class="filter-btn game-catch-close-btn" type="button">Close</button>';
+            }
             html += '</div>';
             body.innerHTML = html;
         }
 
         function beginCatchCardHandPlay() {
-            if (!catchAttempt) return;
+            if (!catchAttempt || catchAttempt.safari || catchAttempt.roll !== null) return; // none in the Safari Zone, none after the roll
             if (!isVirtualDecksEnabledForActiveSave()) {
                 showBattleArenaNotice('This save doesn\u2019t use virtual decks, so there\u2019s no hand to play a Catch Card from.');
                 return;
@@ -48268,7 +48423,7 @@
         }
 
         function playCatchCardFromHand(cardId) {
-            if (!catchAttempt || catchAttempt.cardId) return;
+            if (!catchAttempt || catchAttempt.cardId || catchAttempt.safari || catchAttempt.roll !== null) return;
             const card = CARDS_BY_ID[cardId];
             if (!isCatchCardTagged(card)) return;
             const deckName = getEffectiveCardDeck(card) || getDeckToolList()[0];
@@ -48284,34 +48439,40 @@
         // outcome a fainted Wild Pok\u00e9mon gets). Solo it ends the battle
         // directly; in a lobby the Host does it (see
         // hostApplyBattlePhase()'s 'end-failed-catch').
-        function failCatchAttempt() {
-            if (catchAttempt && catchAttempt.safari) { // gets away: closing returns the token to the pool
-                const n = catchAttempt.safari.member.name;
-                closeCatchOverlay();
-                showGameToast('The wild ' + n + ' got away.');
+        // keepOverlay: the virtual die decided it -- apply the result now but leave the overlay up to show it
+        // (resolveCatchAttempt() re-shows it afterwards, and Continue closes it).
+        function failCatchAttempt(keepOverlay) {
+            if (catchAttempt && catchAttempt.safari) { // gets away: the token goes back to the pool
+                const sf = catchAttempt.safari;
+                if (keepOverlay) {
+                    if (!sf.settled) { sf.settled = true; boardSafariSettle(sf.name, 'returned'); }
+                } else {
+                    closeCatchOverlay();
+                    showGameToast('The wild ' + sf.member.name + ' got away.');
+                }
                 return;
             }
-            closeCatchOverlay();
+            if (!keepOverlay) closeCatchOverlay();
             if (lobbyState.role !== null) { requestBattlePhase('end-failed-catch'); return; }
             boardNoteWildLeft(battleWildPokemon, 'defeated');
             endBattle();
         }
 
-        function finishCatchAttempt() {
+        function finishCatchAttempt(keepOverlay) {
             const sf = catchAttempt && catchAttempt.safari;
             if (sf) {
                 // Safari Zone: the token leaves the game and the Pok\u00e9mon joins the team -- no Arena or battle involved.
                 sf.settled = true;
                 boardSafariSettle(sf.name, 'caught');
                 const member = sf.member;
-                closeCatchOverlay();
+                if (!keepOverlay) closeCatchOverlay();
                 applyCaughtWildMember(member);
                 openGamePanel();
                 setGameScreen('team');
                 renderTeamGrid();
                 return;
             }
-            closeCatchOverlay();
+            if (!keepOverlay) closeCatchOverlay();
             // Once a Lobby session exists, the Wild Pok\u00e9mon is shared --
             // the Host arbitrates near-simultaneous catches (see
             // hostApplyBattleCatchWild()).
@@ -48319,16 +48480,38 @@
             else catchWildPokemon();
         }
 
+        // The virtual Catch Die decides the attempt the moment it lands: caught -> onto the team, failed -> back to the
+        // pool (Safari Zone: token released). The overlay then shows the result with a single Continue button. Entries
+        // with no Catch Value are never auto-resolved -- the players judge those, as before.
+        function resolveCatchAttempt(caught) {
+            const a = catchAttempt;
+            if (!a || a.resolved) return;
+            const member = getCatchTargetMember();
+            if (!member) return;
+            a.snap = getCatchDisplay(member); // before the catch resets the Pok\u00e9mon's form
+            a.snapMember = member;            // the arena is cleared by the time the overlay redraws
+            if (caught) finishCatchAttempt(true); else failCatchAttempt(true);
+            if (catchAttempt !== a) return;
+            a.resolved = caught ? 'caught' : 'failed'; // set last: setGameScreen() drops resolved attempts when it leaves the battle screen
+            showCatchOverlay(); // finishing a catch moves to the Team screen, which hid the overlay
+        }
+
         document.getElementById('game-catch-overlay').addEventListener('click', (e) => {
             if (e.target.closest('.game-catch-roll-btn')) {
-                if (catchAttempt && !(catchAttempt.safari && catchAttempt.roll !== null)) {
-                    catchAttempt.roll = Math.floor(Math.random() * 6) + 1;
-                    renderCatchOverlay();
+                if (catchAttempt && !catchAttempt.resolved && !(catchAttempt.safari && catchAttempt.roll !== null)) {
+                    const a = catchAttempt;
+                    a.roll = Math.floor(Math.random() * 6) + 1;
+                    const member = getCatchTargetMember();
+                    const lines = getCatchBonusLines(a);
+                    const total = a.roll + lines.reduce((n, l) => n + l.amount, 0) + (a.manualBonus || 0);
+                    const cv = member ? getCatchValueFor(a, member, getCatchDisplay(member).name) : null;
+                    if (cv !== null) resolveCatchAttempt(total >= cv);
+                    else renderCatchOverlay();
                 }
                 return;
             }
             if (e.target.closest('.game-catch-manual-plus') || e.target.closest('.game-catch-manual-minus')) {
-                if (catchAttempt) {
+                if (catchAttempt && !catchAttempt.resolved) {
                     const delta = e.target.closest('.game-catch-manual-plus') ? 1 : -1;
                     catchAttempt.manualBonus = Math.max(0, Math.min(99, (catchAttempt.manualBonus || 0) + delta));
                     renderCatchOverlay();
@@ -49557,6 +49740,9 @@
         // URLs in here, same as MUSIC_CATEGORY_ICONS above.
         const TOOL_MENU_ICONS = {
             'board': 'https://dl.dropboxusercontent.com/scl/fi/45anczqp9930aboupx8kr/tool_map.png?rlkey=qll0nn88rhpy0865crvl6bhcf&st=rpz3abgp&dl=1',
+            // The Game Board tile's second life while the board is showing, and the Return to Pok\u00e9dex tile (empty = placeholder).
+            'board-actions': 'https://dl.dropboxusercontent.com/scl/fi/45anczqp9930aboupx8kr/tool_map.png?rlkey=qll0nn88rhpy0865crvl6bhcf&st=rpz3abgp&dl=1',
+            'board-exit': '',
             'team': 'https://dl.dropboxusercontent.com/scl/fi/ubgcrcq7zmdurvu46nc5b/tool_pokemon.png?rlkey=ns19gvf1oz5kj6lnht2edun1q&st=7rtmhjau&dl=1',
             'decks': 'https://dl.dropboxusercontent.com/scl/fi/5h2iarg98gfki60drva8i/tool_handanddecks.png?rlkey=8sr1rvduyag7gmli6gmkvvzkt&st=5t86q4ks&dl=1',
             'badges': 'https://dl.dropboxusercontent.com/scl/fi/ta0qi6cq4fdrfwtmi2wgz/tool_badges.png?rlkey=0q6uksykj8dxmf02rw2k2vogu&st=cu1iyme2&dl=1',
