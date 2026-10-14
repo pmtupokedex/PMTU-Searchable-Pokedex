@@ -26,7 +26,7 @@
                shows more/less of itself, and the map is never allowed to get shorter than the frame; off (default): refit as before.
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
    Host only: poolList(color) / takeFromPool(color,name) / settlePoolToken(name,'caught'|'returned') [Safari Zone: pick a token out
-   of a pool, then keep it (caught) or put it back], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
+   of a pool, then keep it (caught) or put it back], drawFromPool(color) [Battle Frontier: take a RANDOM token out of a pool, returns its name or null; give it back with settlePoolToken(name,'returned')], movePlayer(playerId, spaceIdOrLabel|'@home') [moves a marker without a landing prompt ('@home' = their Current Home); returns the space's label, or '' if it could not], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
    for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
@@ -184,6 +184,14 @@ function backToPool(n){const c=colorOf(n);if(c&&!owned.has(n)&&!pools[c].include
 function releaseStale(){const now=Date.now();held.forEach((t,n)=>{if(now-t>6e5){held.delete(n);backToPool(n);log(`host: ${n} went back to its pool (Safari attempt abandoned)`)}})}
 function poolList(c){if(mode!=='host'||!pools[c])return[];releaseStale();return pools[c].slice()}
 function takeFromPool(c,n){if(mode!=='host'||!pools[c])return false;releaseStale();const i=pools[c].indexOf(n);if(i<0)return false;pools[c].splice(i,1);held.set(n,Date.now());log(`host: ${n} taken from the ${c} pool (Safari Zone)`);return true}
+// Battle Frontier: a random token of colour c. It is held (out of the pool) for the whole Battle, so its hold is dated two hours
+// ahead -- releaseStale() only gives back tokens held for more than ten minutes, which is right for a Safari attempt but would
+// put a Defender back in the pool while it is still in the Arena.
+function drawFromPool(c){if(mode!=='host'||!pools[c])return null;releaseStale();const a=pools[c];if(!a.length)return null;const n=a.splice(Math.floor(Math.random()*a.length),1)[0];held.set(n,Date.now()+72e5);log(`host: ${n} drawn from the ${c} pool (Battle Frontier)`);return n}
+// Moves a player's marker straight to a space (an id, or its label such as 'Olivine City') with no landing prompt -- a lost Battle
+// sends the player home. Returns the label of the space it landed on, or '' when nothing moved.
+function movePlayer(p,target){if(mode!=='host'||pos[p]===undefined)return '';if(target==='@home')target=home[p]; // '@home' = the player's Current Home (a Black Out)
+ let s=get(target);if(!s){const t=String(target||'').trim().toLowerCase();s=SP.find(x=>(x.label||'').trim().toLowerCase()===t)}if(!s)return '';const pl=PL.find(x=>x.id===p);pos[p]=s.id;pendingEnc[p]=null;pendingHome[p]=[];log(`host: ${pl?pl.name:p} was moved to ${s.label||s.id}`);snapshot();return s.label||s.id}
 function settlePoolToken(n,out){if(mode!=='host'||!held.has(n))return false;held.delete(n);
  if(out==='caught'){boardCaught.add(n);log(`host: ${n} leaves the game (caught in the Safari Zone)`)}else{backToPool(n);log(`host: ${n} returned to its pool`)}return true}
 // The host's COMPLETE state, face-down Pokémon and pools included. Never sent to the table: the app puts it in the
@@ -377,7 +385,7 @@ return{
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
  restoreSnapshot,
  setCaught,exportState,restoreState,adoptPlayer,
- poolList,takeFromPool,settlePoolToken,
+ poolList,takeFromPool,settlePoolToken,drawFromPool,movePlayer,
  fit:()=>fitView(),
  setKeepScale(on){keepScale=!!on;updEA();Z=clampZ(Z);clampView();applyView()},
  restoreView,
