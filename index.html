@@ -42005,6 +42005,7 @@
             applyGamePanelPlayerTheme();
             updateLobbyStartGameButtonUI();
             renderBattleArenaGate();
+            boardSyncPlayers(); // a board already on screen (or restored from the save) picks up this session's color
         }
 
         function renderSoloPlayerRow() {
@@ -42804,17 +42805,34 @@
             document.getElementById('game-lobby').dataset.state = 'host-role';
         }
 
+        // What this save has already settled as the host: its display name (the generic 'Trainer' fallback doesn't count)
+        // and player color. Once set they're not asked for again -- hosting the save just starts.
+        function getRememberedHostIdentity() {
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            return {
+                name: (save && save.hostDisplayName && save.hostDisplayName !== 'Trainer') ? save.hostDisplayName : '',
+                color: (save && PLAYER_COLORS.includes(save.hostPlayerColor)) ? save.hostPlayerColor : null,
+            };
+        }
+
         function chooseHostOnly() {
+            const known = getRememberedHostIdentity();
+            if (known.name) { startHostingLobby(known.name, false, null); return; } // nothing left to ask
             openHostSetup(false);
         }
 
         function chooseHostAsPlayer() {
-            openHostSetup(true);
+            const known = getRememberedHostIdentity();
+            if (known.name && known.color) { startHostingLobby(known.name, true, known.color); return; } // nothing left to ask
+            openHostSetup(true); // first time: name and color; or a save that has only hosted without playing so far: just the color
         }
 
         // The host's counterpart to the guest's naming step: name (and,
-        // when playing, color) on one screen, then Start Hosting. Both
-        // are pre-filled so a returning host just confirms -- name from
+        // when playing, color) on one screen, then Start Hosting. It's
+        // only shown while something is still unset -- once a save has a
+        // name and (if playing) a color, chooseHostOnly()/chooseHostAsPlayer()
+        // skip straight to hosting, and a name that's set is read-only here.
+        // Pre-filled values -- name from
         // what this save last hosted as (the generic 'Trainer' fallback
         // doesn't count, or it would hide the Preferred Name forever),
         // else the Preferred Name; color from this save's remembered
@@ -42827,10 +42845,15 @@
             hostSetupIsPlayer = !!isPlayer;
             const rememberedName = save && save.hostDisplayName && save.hostDisplayName !== 'Trainer' ? save.hostDisplayName : '';
             const nameInput = document.querySelector('.game-lobby-host-setup-name');
-            if (nameInput) nameInput.value = rememberedName || getPreferredName();
-            document.getElementById('game-lobby-host-setup-blurb').textContent = hostSetupIsPlayer
-                ? 'What should other players call you, and which color should they see next to your name while you play?'
-                : 'What should other players call you?';
+            if (nameInput) {
+                nameInput.value = rememberedName || getPreferredName();
+                nameInput.readOnly = !!rememberedName; // a save's host name is fixed once it's been set
+            }
+            document.getElementById('game-lobby-host-setup-blurb').textContent = rememberedName
+                ? 'Which color should other players see next to your name while you play?'
+                : (hostSetupIsPlayer
+                    ? 'What should other players call you, and which color should they see next to your name while you play?'
+                    : 'What should other players call you?');
             const colorWrap = document.querySelector('.game-lobby-host-setup-color');
             if (colorWrap) colorWrap.style.display = hostSetupIsPlayer ? '' : 'none';
             const savedColor = save && save.hostPlayerColor;
@@ -42859,7 +42882,13 @@
                 if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
                 return;
             }
+            // Host Transfer takeover (see completeHostTakeover()): the old host may not have released the room code yet, and
+            // attemptHostPeerCreation() keeps retrying it only while hostTransferGraceUntil is in the future. Stopping the
+            // rejoin attempts zeroes that window, so it's carried across the call -- without this the very first "code is
+            // still taken" reply from the old host was treated as final ("Could not take over the room").
+            const takeoverGraceUntil = forcedHostRoomCode ? hostTransferGraceUntil : 0;
             stopRejoinAttempts(); // backstop: nothing may retry a join over the lobby being created
+            if (takeoverGraceUntil) hostTransferGraceUntil = takeoverGraceUntil;
             endSoloSession();
             resetLobbyState();
             boardPendingRestore = null; // a fresh lobby never inherits a previous game's board
@@ -44507,7 +44536,11 @@
             } catch (err) { return undefined; }
         }
         function boardPlayers() {
-            if (lobbyState.role === null) return [{ id: 'host', name: 'You', c: BOARD_COLOR_HEX.red, cid: boardClientIdFor('host') }];
+            if (lobbyState.role === null) {
+                // Solo: the one player wears the color picked for the solo session (red only if none has been picked yet).
+                const soloColor = soloSession.active ? soloSession.color : null;
+                return [{ id: 'host', name: 'You', c: BOARD_COLOR_HEX[soloColor] || BOARD_COLOR_HEX.red, cid: boardClientIdFor('host') }];
+            }
             return lobbyState.players
                 // hostIsPlayer is host-only state; on a guest the host's roster entry carries a color exactly when the host is playing
                 .filter(p => p.id !== 'host' || (lobbyState.role === 'host' ? lobbyState.hostIsPlayer : !!p.color))
