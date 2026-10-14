@@ -39109,13 +39109,32 @@
 
         // Whether this player already holds the Badge a card would award. A Gym Badge slot is shared by every
         // Gym Leader of that Tier, so beating one also counts as beating the alternatives. Champions have no
-        // Badge, so nothing records a win over them and this is always false for them.
+        // Badge, so this is always false for them (their win is the championDefeated flag -- see recordChampionDefeated()).
         function isGymLeaderDefeated(leaderId) {
             const award = buildGymBadgeAward(leaderId);
             return !!award && getOpenGymAwardOptionIds(award).length === 0;
         }
 
+        // Champions have no Badge, so their win is recorded as a flag on the winner's own save instead (carried along with
+        // the rest of a player's data, including through a host handoff). It's what unlocks the Hall of Fame / Victory
+        // action on the board (see boardServiceActionLock()). Arrives through the same path as a Badge: the Arena's End
+        // Battle for a Champion card knocked out for good, on the Host for every player who took part.
+        function hasDefeatedChampion() {
+            const data = getActiveSaveData();
+            return !!(data && data.championDefeated);
+        }
+        function recordChampionDefeated() {
+            if (isActiveSaveReadOnly()) return;
+            const data = getActiveSaveData();
+            if (!data || data.championDefeated) return;
+            data.championDefeated = true;
+            if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves();
+            showGameToast('You defeated the Champion! The Hall of Fame awaits.');
+        }
+
         function queueGymBadgeAward(leaderId) {
+            const leaderCard = GYM_LEADERS_BY_ID[leaderId];
+            if (leaderCard && leaderCard.category === 'champion') { recordChampionDefeated(); return; }
             const award = resolveGymBadgeAward(leaderId);
             if (!award) return;
             const isPool = award.category && POOL_BASED_EXTRA_CATEGORIES.has(award.category);
@@ -44899,7 +44918,12 @@
                 // Battle actions get a button unless this player already holds that Badge; the rest stay as text for now.
                 const parts = acts.map(a => {
                     const sv = boardResolveServiceAction(a);
-                    if (sv) { buttons.push({ id: 'sact:' + sv.type, label: sv.name }); return boardActionLabel(a); }
+                    if (sv) {
+                        const svLock = boardServiceActionLock(sv.type);
+                        if (svLock) return boardActionLabel(a) + ' \ud83d\udd12 ' + svLock;
+                        buttons.push({ id: 'sact:' + sv.type, label: sv.name });
+                        return boardActionLabel(a);
+                    }
                     const rl = boardResolveRollAction(a);
                     if (rl) {
                         buttons.push({ id: 'rfi', label: 'Roll d6 for Item' });
@@ -45046,7 +45070,7 @@
             return !!first && isGymLeaderDefeated(first.id);
         }
         // Why this action can't be started yet, or null. The Champion can only be challenged by a player who
-        // holds the Elite Four Badge. (Beating the Champion ends the game, so nothing records a Champion win.)
+        // holds the Elite Four Badge. (A Champion win is recorded as a flag, see recordChampionDefeated(); it unlocks Victory.)
         function boardBattleActionLock(r) {
             if (r.category !== 'champion') return null;
             const e4 = boardLeadersOfCategory('elite-four')[0];
@@ -45083,7 +45107,14 @@
             'pokemon-center': { name: 'Pok\u00e9mon Center', legacy: /^\s*Pok[e\u00e9]mon\s*Center\s*$/i },
             'department-store': { name: 'Department Store', legacy: /^\s*Dep(?:artmen)?t\.?\s*Store\s*$/i },
             'safari-zone':    { name: 'Safari Zone',    legacy: /^\s*Safari\s*Zone\s*$/i },
+            // The end of the journey. Older maps wrote it as the text "Enter the Hall of Fame".
+            'victory':        { name: 'Enter the Hall of Fame', legacy: /^\s*Enter the Hall of Fame\s*$/i },
         };
+        // Why a service action can't be used yet, or null. Victory needs the Champion beaten first.
+        function boardServiceActionLock(type) {
+            if (type === 'victory' && !hasDefeatedChampion()) return 'needs the Champion defeated';
+            return null;
+        }
         function boardResolveServiceAction(a) {
             let type = null;
             if (a && typeof a === 'object') { if (BOARD_SERVICE_ACTIONS[a.type]) type = a.type; }
@@ -45098,6 +45129,14 @@
             else if (type === 'pokemon-center') boardUsePokemonCenter(info);
             else if (type === 'department-store') boardUseDepartmentStore();
             else if (type === 'safari-zone') boardUseSafariZone(info);
+            else if (type === 'victory') boardEnterHallOfFame();
+        }
+
+        // Victory: starts the Victory screen for the whole lobby with this player as the winner (see triggerVictory()).
+        function boardEnterHallOfFame() {
+            const lock = boardServiceActionLock('victory');
+            if (lock) { showGameToast('The Hall of Fame ' + lock + '.'); return; } // checked again, in case the prompt on screen is out of date
+            triggerVictory();
         }
 
         // Department Store: look at the top 2 cards of the Item deck, keep one (it goes to the hand) and the other goes
