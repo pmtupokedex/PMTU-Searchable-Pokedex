@@ -8229,7 +8229,12 @@
         }
         #game-frontier-overlay.visible, #game-frontier-pick-overlay.visible { display: flex; }
         #game-frontier-overlay .game-confirm-card, #game-frontier-pick-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
-        .game-frontier-choices { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 8px 0 4px; }
+        .game-frontier-choices { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 8px 0 4px; }
+        /* A level-up choice: the Pok\u00e9mon's read-only slot card above its "Lv N \u2192 N+1" label, the whole thing one button. */
+        .game-frontier-level-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px; font: inherit; color: inherit; background: rgba(255, 255, 255, 0.06); border: 2px solid rgba(255, 255, 255, 0.25); border-radius: 12px; cursor: pointer; }
+        .game-frontier-level-btn:hover, .game-frontier-level-btn:focus-visible { border-color: #fff; background: rgba(255, 255, 255, 0.14); }
+        .game-frontier-level-card { width: 100%; }
+        .game-frontier-level-label { font-weight: bold; }
         .game-frontier-pile { margin-bottom: 14px; }
         .game-frontier-pile-label { margin: 0 0 6px; font-weight: bold; font-size: 15px; text-align: center; }
         #game-catch-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
@@ -45438,10 +45443,11 @@
         // board's pool, then rolls in the Catch dialog: caught on a Catch Total of 4 or more -- 2 or more if the discarded
         // card was a Safari Ball -- whatever the Pok\u00e9mon's own Catch Value is. A caught token leaves the game; one that
         // gets away goes back into the pool. The pool is host-side state inside board.js, so a guest asks the Host for it.
-        const BOARD_SAFARI_DECKS = ['Item Deck', 'Shop Deck', 'Reward Item Deck', 'Pok\u00e9 Ball Deck'];
+        // Any Item card may be discarded -- cards.json's cardType, which covers every Item sub-category (Item, Shop, Reward Item,
+        // Pok\u00e9 Ball, TM, Tera Type, Type-Enhancer and Z-Crystal decks) rather than a list of deck names that has to be kept in step.
         function isSafariDiscardEligible(cardId) {
             const card = CARDS_BY_ID[cardId];
-            return !!card && BOARD_SAFARI_DECKS.includes(card.cardDeck);
+            return !!card && card.cardType === 'Item';
         }
         let boardSafariPoolCb = null;   // a guest's pending "what's in the pool?" request
         let boardSafariTakeCb = null;   // ... and its pending "take this one" request: { name, cb }
@@ -45638,7 +45644,7 @@
             { id: 'yellow', label: 'Yellow' }, { id: 'red', label: 'Red' }, { id: 'orange', label: 'Legendary' },
         ];
         const BOARD_FRONTIER_REWARDS = {
-            pink: 'If one of your Pok\u00e9mon gained a Level from this Battle, it gains an additional Level. Raise its Level counter yourself, then tap OK.',
+            pink: 'If one of your Pok\u00e9mon gained a Level from this Battle, it gains an additional Level. Tap OK to open your Team Tracker and raise its Level counter yourself.',
             green: 'Draw a card from the Item deck.',
             blue: 'Look at the top 2 cards of the Item deck. Keep one in your hand; the other goes to the bottom of the deck.',
             yellow: 'Draw 3 random Yellow Pok\u00e9mon tokens and choose one. You may try to Catch it, with a +2 bonus on your Catch roll. Any token you don\u2019t catch goes back to the pool.',
@@ -45675,6 +45681,7 @@
 
         // ---- the prompts: a result / reward text with an OK button, and the level-up chooser ----
         function boardFrontierShow(title, text, actionsHtml) {
+            boardFrontierClearSlotTimers();
             document.getElementById('game-frontier-title').textContent = title;
             document.getElementById('game-frontier-text').textContent = text;
             document.getElementById('game-frontier-actions').innerHTML = actionsHtml;
@@ -45685,7 +45692,13 @@
             boardFrontierAfter = after || null;
             boardFrontierShow(title, text, '<button class="filter-btn include game-frontier-ok-btn" type="button">OK</button>');
         }
+        let boardFrontierSlotNames = []; // read-only slot cards on the level chooser's buttons (each may cycle its Evolution icons on a timer)
+        function boardFrontierClearSlotTimers() {
+            boardFrontierSlotNames.forEach(clearBattleReadonlyEvolutionTimer);
+            boardFrontierSlotNames = [];
+        }
         function closeFrontierOverlay() {
+            boardFrontierClearSlotTimers();
             document.getElementById('game-frontier-overlay').classList.remove('visible');
         }
         function boardFrontierTotalLevel(m) { return getTeamMemberBaseLevel(m) + (m.level || 0); } // base level + the Level counter
@@ -45694,12 +45707,28 @@
             if (isActiveSaveReadOnly()) return;
             const eligible = boardTeamIndexes(m => boardFrontierTotalLevel(m) < 5);
             if (!eligible.length) { boardFrontierAck('Battle Frontier', 'None of your Pok\u00e9mon are below Level 5, so no Pok\u00e9mon gains a Level.', null); return; }
-            const rows = eligible.map(i => {
+            boardFrontierShow('Battle Frontier', 'Choose a Pok\u00e9mon on your team below Level 5. It gains a Level.', '<div class="game-frontier-choices"></div>');
+            const wrap = document.querySelector('#game-frontier-actions .game-frontier-choices');
+            eligible.forEach(i => {
                 const m = getTeamSlotMember(i), lv = boardFrontierTotalLevel(m);
-                const name = getBattleMemberDisplay(m).name || 'Pok\u00e9mon';
-                return `<button class="filter-btn game-frontier-level-btn" type="button" data-index="${i}">${escapeHtml(name)} \u2014 Lv ${lv} \u2192 ${lv + 1}</button>`;
-            }).join('');
-            boardFrontierShow('Battle Frontier', 'Choose a Pok\u00e9mon on your team below Level 5. It gains a Level.', '<div class="game-frontier-choices">' + rows + '</div>');
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'game-frontier-level-btn';
+                btn.dataset.index = String(i);
+                // The same read-only card the Battle Arena shows for another player's Pok\u00e9mon (its HP, Cards, Status, Level, Evolution and
+                // Overlay corners), so evolution progress is visible when choosing. Its pointer-events: none lets the tap reach the button.
+                const card = document.createElement('div');
+                card.className = 'game-frontier-level-card';
+                const slotName = 'frontier-' + i;
+                renderReadOnlyBattleSlot(card, m, slotName);
+                boardFrontierSlotNames.push(slotName);
+                const label = document.createElement('span');
+                label.className = 'game-frontier-level-label';
+                label.textContent = (getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' \u2014 Lv ' + lv + ' \u2192 ' + (lv + 1);
+                btn.appendChild(card);
+                btn.appendChild(label);
+                wrap.appendChild(btn);
+            });
         }
         document.getElementById('game-frontier-overlay').addEventListener('click', (e) => {
             if (e.target.closest('.game-frontier-ok-btn')) {
@@ -45803,10 +45832,14 @@
                 return;
             }
             boardFrontierAck('Battle Frontier \u2014 ' + boardFrontierColorLabel(r.color) + ' reward', 'You defeated ' + name + '! ' + BOARD_FRONTIER_REWARDS[r.color],
-                r.color === 'pink' ? null : () => boardFrontierRunReward(r.color));
+                () => boardFrontierRunReward(r.color));
         }
         function boardFrontierRunReward(color) {
-            if (color === 'green') boardUsePokeMart(); // the same draw from the Item deck as a Poké Mart
+            if (color === 'pink') { // nothing is applied for them: take them to the Team Tracker and remind them what the reward is
+                openGamePanel();
+                setGameScreen('team');
+                showGameToast('Battle Frontier \u2014 Pink reward: if one of your Pok\u00e9mon gained a Level from this Battle, it gains an additional Level. Raise its Level counter now.');
+            } else if (color === 'green') boardUsePokeMart(); // the same draw from the Item deck as a Poké Mart
             else if (color === 'blue') boardFrontierLookKeepOne(2, null);
             else if (color === 'yellow') boardFrontierYellow();
             else if (color === 'red') boardFrontierLookKeepOne(3, boardFrontierLevelUp);
