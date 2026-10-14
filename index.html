@@ -8215,6 +8215,23 @@
             background: rgba(255,255,255,0.6); cursor: pointer; font: inherit; font-size: 14px; font-weight: bold; color: inherit;
         }
         .game-safari-token img { width: 250px; max-width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; }
+        /* Battle Frontier prompts and the Legendary item chooser -- see boardFrontierShow()/boardFrontierOpenItemPicker(). */
+        #game-frontier-overlay, #game-frontier-pick-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            align-items: center;
+            justify-content: center;
+            z-index: 22;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #game-frontier-overlay.visible, #game-frontier-pick-overlay.visible { display: flex; }
+        #game-frontier-overlay .game-confirm-card, #game-frontier-pick-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
+        .game-frontier-choices { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 8px 0 4px; }
+        .game-frontier-pile { margin-bottom: 14px; }
+        .game-frontier-pile-label { margin: 0 0 6px; font-weight: bold; font-size: 15px; text-align: center; }
         #game-catch-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
         /* The Pokémon's full slot card (same one the Battle Arena and Team Tracker show) at the 250px the plain art used to
            have. The read-only card is inert; while cards can still be placed (before the roll) its Cards corner is tappable. */
@@ -16787,6 +16804,28 @@
             <div class="game-confirm-card">
                 <p class="game-confirm-title">Safari Zone</p>
                 <div id="game-safari-body"></div>
+            </div>
+        </div>
+
+        <!-- Battle Frontier prompts: the result / reward text with an OK button, and the level-up chooser -- see boardFrontierShow() in the script. -->
+        <div id="game-frontier-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-frontier-title">Battle Frontier</p>
+                <p class="game-confirm-subtext" id="game-frontier-text"></p>
+                <div class="game-catch-actions" id="game-frontier-actions"></div>
+            </div>
+        </div>
+
+        <!-- Battle Frontier, Legendary reward: one Item card from the Item discard pile or the Item deck, as two stacked piles
+             (discard first) -- see boardFrontierOpenItemPicker() in the script. -->
+        <div id="game-frontier-pick-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title">Battle Frontier &mdash; Legendary reward</p>
+                <p class="game-confirm-subtext">Choose one Item card from the Item discard pile or the Item deck. Tap a card, then Add to Hand.</p>
+                <div id="game-frontier-pick-body"></div>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-frontier-skip-btn" type="button">Skip the item</button>
+                </div>
             </div>
         </div>
 
@@ -25844,6 +25883,10 @@
                 sendBattleCatchFailure(peerKey, 'Too late \u2014 there\u2019s nothing to catch anymore.');
                 return;
             }
+            if (entry.member && entry.member.noCatch) { // backstop for the Catch button being hidden
+                sendBattleCatchFailure(peerKey, 'The Battle Frontier\u2019s Defender can\u2019t be caught.');
+                return;
+            }
             const attackerEntry = hostBattleArenaState.attacker;
             if (!attackerEntry || attackerEntry.ownerId !== peerKey) {
                 sendBattleCatchFailure(peerKey, 'Only the player battling this Pok\u00e9mon can catch it.');
@@ -26313,6 +26356,8 @@
         // player who encountered it -- may catch it.
         function canCatchWildDefender() {
             if (isGymLeaderInSlot('defender')) return false;
+            const wildEntry = getArenaSlotEntry('defender');
+            if (wildEntry && !wildEntry.ownerId && wildEntry.member && wildEntry.member.noCatch) return false; // the Battle Frontier's Defender
             if (lobbyState.role === null) return true;
             const attackerEntry = getArenaSlotEntry('attacker');
             return !!(attackerEntry && attackerEntry.ownerId && attackerEntry.ownerId === getMyLobbyPlayerId());
@@ -29095,6 +29140,9 @@
         // never gets answered can't turn a later manual look into one of these.
         let deckLookViewerMode = null;
         let deckLookPendingMode = null;
+        // Set along with 'keep-one' by other rewards (the Battle Frontier): the name shown in the title and toast, whether the viewer
+        // can be closed without choosing (required: it can't), how many cards go to the bottom, and what happens once a card is kept.
+        let deckLookViewerLabel = 'Department Store', deckLookViewerRequired = false, deckLookViewerOthers = 1, deckLookViewerDone = null;
 
         // Opens the viewer with exactly the cards hostApplyLookRequest()
         // sent -- either called directly (Host/solo, see
@@ -29102,8 +29150,19 @@
         // result' network message (guest, see the wireHostConnection()
         // listener).
         function openDeckLookViewer(deckName, cards) {
-            deckLookViewerMode = (deckLookPendingMode && deckLookPendingMode.deck === deckName && Date.now() - deckLookPendingMode.at < 60000) ? deckLookPendingMode.mode : null;
+            const pend = (deckLookPendingMode && deckLookPendingMode.deck === deckName && Date.now() - deckLookPendingMode.at < 60000) ? deckLookPendingMode : null;
             deckLookPendingMode = null;
+            if (pend && pend.mode === 'frontier-pick') { boardFrontierOpenItemPicker(deckName, cards, pend); return; } // the Battle Frontier's Legendary reward has its own two-pile view
+            if (pend && pend.required && !cards.length) { // nothing to look at: the reward's next step still happens
+                showGameToast('The Item deck is empty \u2014 there is nothing to look at.');
+                if (pend.onDone) pend.onDone();
+                return;
+            }
+            deckLookViewerMode = pend ? pend.mode : null;
+            deckLookViewerLabel = (pend && pend.label) || 'Department Store';
+            deckLookViewerRequired = !!(pend && pend.required);
+            deckLookViewerOthers = Math.max(1, cards.length - 1);
+            deckLookViewerDone = (pend && pend.onDone) || null;
             deckLookViewerDeckName = deckName;
             deckLookViewerCards = cards.slice();
             renderDeckLookViewer();
@@ -29118,6 +29177,9 @@
         function closeDeckLookViewer() {
             deckLookViewerDeckName = null;
             deckLookViewerMode = null;
+            deckLookViewerLabel = 'Department Store';
+            deckLookViewerRequired = false;
+            deckLookViewerDone = null;
             deckLookViewerCards = [];
             document.getElementById('game-deck-look-viewer-overlay').classList.remove('visible');
         }
@@ -29139,7 +29201,9 @@
             if (!overlay || !titleEl || !stackEl || !deckLookViewerDeckName) return;
 
             const deckName = deckLookViewerDeckName;
-            titleEl.textContent = deckLookViewerMode === 'keep-one' ? 'Department Store \u2014 keep one, the other goes to the bottom' : `Top of ${deckName}`;
+            titleEl.textContent = deckLookViewerMode === 'keep-one' ? deckLookViewerLabel + ' \u2014 keep one, ' + (deckLookViewerOthers > 1 ? 'the others go' : 'the other goes') + ' to the bottom' : `Top of ${deckName}`;
+            const lookCloseBtn = overlay.querySelector('.game-deck-look-viewer-close-btn');
+            if (lookCloseBtn) lookCloseBtn.style.display = (deckLookViewerRequired && deckLookViewerCards.length) ? 'none' : ''; // a required choice can't be skipped
 
             if (!deckLookViewerCards.length) {
                 stackEl.style.height = '';
@@ -29193,8 +29257,10 @@
                 requestLookAddToHand(deckName, cardId);
                 others.forEach(id => requestLookMoveToBottom(deckName, id));
                 const kept = CARDS_BY_ID[cardId];
+                const label = deckLookViewerLabel, done = deckLookViewerDone;
                 closeDeckLookViewer();
-                showGameToast('Department Store: kept ' + (kept ? kept.name : 'the card') + (others.length ? '; the other went to the bottom of the deck.' : '.'));
+                showGameToast(label + ': kept ' + (kept ? kept.name : 'the card') + (others.length ? (others.length > 1 ? '; the others went to the bottom of the deck.' : '; the other went to the bottom of the deck.') : '.'));
+                if (done) done();
                 return;
             }
             const idx = deckLookViewerCards.indexOf(cardId);
@@ -43379,6 +43445,8 @@
                     boardHandleSafariTake(conn.peer, data);
                 } else if (data.type === 'board-safari-settle' && typeof data.name === 'string') {
                     boardHandleSafariSettle(conn.peer, data);
+                } else if (data.type === 'board-frontier-draw' && typeof data.color === 'string') {
+                    boardHandleFrontierDraw(conn.peer, data);
                 } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
                     hostApplyDraw(data.deck, conn.peer);
                 } else if (data.type === 'deck-gain-reward' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -44644,6 +44712,7 @@
                 if (!Object.keys(POKEMON_BY_NAME).length) throw new Error('the Pokémon data is still loading, try again in a moment');
                 await boardEnsureScript();
                 const d = await boardFetchData(cfg.region);
+                boardFrontierReturnTo = boardFrontierFindReturn(d);
                 if (boardCtrl) { boardSaveNow(true); boardCtrl.destroy(); boardCtrl = null; } // keep what the old board had reached
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
@@ -45013,6 +45082,8 @@
                 if (choices.length) boardStartGymBattle(choices[Math.floor(Math.random() * choices.length)].id);
             } else if (id === 'back' && info) {
                 boardDeliverLanding(info);
+            } else if (id.startsWith('bf-color:')) {
+                boardFrontierChooseColor(id.slice(9), info);
             } else if (id.startsWith('home:')) {
                 const city = id.slice(5);
                 if (lobbyState.role === 'guest') boardSend({ type: 'board-sethome', city });
@@ -45133,6 +45204,8 @@
             'safari-zone':    { name: 'Safari Zone',    legacy: /^\s*Safari\s*Zone\s*$/i },
             // The end of the journey. Older maps wrote it as the text "Enter the Hall of Fame".
             'victory':        { name: 'Enter the Hall of Fame', legacy: /^\s*Enter the Hall of Fame\s*$/i },
+            // Johto: draw a Defender by token color, win for that color's reward (see boardUseBattleFrontier()).
+            'battle-frontier': { name: 'Battle Frontier', legacy: /^\s*Battle Frontier\s*$/i },
         };
         // Why a service action can't be used yet, or null. Victory needs the Champion beaten first.
         function boardServiceActionLock(type) {
@@ -45154,6 +45227,7 @@
             else if (type === 'department-store') boardUseDepartmentStore();
             else if (type === 'safari-zone') boardUseSafariZone(info);
             else if (type === 'victory') boardEnterHallOfFame();
+            else if (type === 'battle-frontier') boardUseBattleFrontier(info);
         }
 
         // Victory: starts the Victory screen for the whole lobby with this player as the winner (see triggerVictory()).
@@ -45440,14 +45514,18 @@
         function renderSafariOverlay() {
             const body = document.getElementById('game-safari-body');
             if (!body || !safariPending) return;
-            const t = safariPending.threshold;
+            const t = safariPending.threshold, fr = !!safariPending.frontier;
             const names = safariPending.pool.slice().sort((a, b) => a.localeCompare(b)); // sorted, so the pool's shuffle order isn't shown
-            let html = `<p class="game-confirm-subtext">Choose a Yellow Pok\u00e9mon from the pool, then roll to catch it. A Catch Total of ${t} or more catches it${t === 2 ? ' (you discarded a Safari Ball)' : ''}.</p><div class="game-safari-grid">`;
+            const ttl = document.querySelector('#game-safari-overlay .game-confirm-title');
+            if (ttl) ttl.textContent = fr ? 'Battle Frontier' : 'Safari Zone';
+            let html = fr
+                ? `<p class="game-confirm-subtext">These Yellow Pok\u00e9mon were drawn from the pool. Choose one, then roll to catch it \u2014 you get +2 on the Catch roll. The others stay in the pool.</p><div class="game-safari-grid">`
+                : `<p class="game-confirm-subtext">Choose a Yellow Pok\u00e9mon from the pool, then roll to catch it. A Catch Total of ${t} or more catches it${t === 2 ? ' (you discarded a Safari Ball)' : ''}.</p><div class="game-safari-grid">`;
             html += names.map(n => {
                 const e = POKEMON_BY_NAME[n];
                 return `<button class="game-safari-token" type="button" data-name="${escapeHtml(n)}">${e && e.src ? `<img src="${escapeHtml(e.src)}" alt="">` : ''}<span>${escapeHtml(n)}</span></button>`;
             }).join('');
-            html += '</div><div class="game-catch-actions"><button class="filter-btn game-safari-cancel-btn" type="button">Cancel</button></div>';
+            html += '</div>' + (fr ? '' : '<div class="game-catch-actions"><button class="filter-btn game-safari-cancel-btn" type="button">Cancel</button></div>'); // (a Frontier reward can't be cancelled away)
             body.innerHTML = html;
         }
         function closeSafariOverlay() {
@@ -45461,6 +45539,11 @@
                 if (!ok) {
                     // Someone else got it first: show the pool as it is now.
                     showGameToast(name + ' was just taken \u2014 choose another.');
+                    if (safariPending.frontier) { // only the drawn three are on offer
+                        safariPending.pool = safariPending.pool.filter(n => n !== name);
+                        if (!safariPending.pool.length) { safariPending = null; closeSafariOverlay(); showGameToast('None of the drawn Pok\u00e9mon are left.'); } else renderSafariOverlay();
+                        return;
+                    }
                     boardSafariRequestPool(names => {
                         if (!safariPending) return;
                         if (!names.length) { safariPending = null; closeSafariOverlay(); showGameToast('The Safari Zone is empty.'); return; }
@@ -45469,18 +45552,18 @@
                     });
                     return;
                 }
-                const threshold = safariPending.threshold;
+                const threshold = safariPending.threshold, frontier = !!safariPending.frontier;
                 safariPending = null;
                 closeSafariOverlay();
-                boardSafariStartCatch(name, threshold);
+                boardSafariStartCatch(name, threshold, frontier);
             });
         }
-        function boardSafariStartCatch(name, threshold) {
+        function boardSafariStartCatch(name, threshold, frontier) {
             const entry = POKEMON_BY_NAME[name];
             if (!entry || isActiveSaveReadOnly()) { boardSafariSettle(name, 'returned'); if (!entry) showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
             const source = { dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false };
             catchAttempt = { fainted: false, hadStatus: false, roll: null, cardId: null, manualBonus: 0,
-                safari: { name, member: buildWildPokemonMember(source), threshold, settled: false } };
+                safari: { name, member: buildWildPokemonMember(source), threshold, settled: false, frontier: !!frontier } };
             openGamePanel();
             setGameScreen('battle');
             showCatchOverlay();
@@ -45512,7 +45595,9 @@
             openGamePanel(); // the board is a main view now, not inside the panel
             setGameScreen('battle');
             confirmBattleSlotReplace('defender', () => {
-                setBattleDefenderWild(buildWildPokemonMember(source));
+                const wild = buildWildPokemonMember(source);
+                if (info.noCatch) wild.noCatch = true; // Battle Frontier: this Defender can't be Caught
+                setBattleDefenderWild(wild);
                 renderBattleDefenderSlot();
                 renderBattleAttackerSlot();
             });
@@ -45520,8 +45605,15 @@
         // --- encounter bookkeeping (host / solo device): which Arena Pok\u00e9mon is this landing's token, and how did it leave? ---
         function boardBindEncounter(peerKey, member) {
             if (boardEncounter && !boardEncounter.uid && member && boardEncounter.playerId === peerKey && member.name === boardEncounter.name) boardEncounter.uid = member.uid;
+            // Battle Frontier: the token this player drew has just entered the Arena (only the Frontier's Defender is flagged noCatch).
+            const fr = boardFrontiers[peerKey];
+            if (fr && !fr.uid && member && member.noCatch && member.name === fr.name) fr.uid = member.uid;
         }
         function boardNoteWildLeft(member, forced) {
+            if (member && member.uid) { // Battle Frontier: the Defender left the Arena -- defeated, or walked away from
+                const frontierPlayer = Object.keys(boardFrontiers).find(k => boardFrontiers[k].uid === member.uid);
+                if (frontierPlayer) { boardFrontierBattleEnded(frontierPlayer, member, forced); return; }
+            }
             if (!boardEncounter || !boardEncounter.uid || !member || member.uid !== boardEncounter.uid) return;
             const enc = boardEncounter;
             boardEncounter = null;
@@ -45531,6 +45623,313 @@
         function boardHandleSetHome(peerId, data) {
             boardEnsureBoard().then(c => c.handleMessage({ type: 'board-sethome', player: peerId, city: data.city })).catch(() => {});
         }
+
+        // ---- Battle Frontier (Johto) ----
+        // A special-space action: { type: 'battle-frontier', label: 'Battle Frontier', returnTo: '<space id or name>' }.
+        // The player chooses one of the six token colors (Legendary = the orange spaces); a random token of that color is
+        // drawn out of the board's pool and becomes the Defender of a Battle that can't be Caught. Defeat it and the color's
+        // reward is claimed. Lose, or end the Battle without defeating it, and the player's marker goes to the returnTo space
+        // (Olivine City) instead. The drawn token goes back into its pool once the Battle is over, either way.
+        // The pool and the markers live on the Host (board.js), so a guest asks the Host to draw ('board-frontier-draw') and the
+        // Host tells the guest how the Battle ended ('board-frontier-result'). Everything a reward does -- the decks, the
+        // levels, the Catch -- runs on the player's own device.
+        const BOARD_FRONTIER_COLORS = [
+            { id: 'pink', label: 'Pink' }, { id: 'green', label: 'Green' }, { id: 'blue', label: 'Blue' },
+            { id: 'yellow', label: 'Yellow' }, { id: 'red', label: 'Red' }, { id: 'orange', label: 'Legendary' },
+        ];
+        const BOARD_FRONTIER_REWARDS = {
+            pink: 'If one of your Pok\u00e9mon gained a Level from this Battle, it gains an additional Level. Raise its Level counter yourself, then tap OK.',
+            green: 'Draw a card from the Item deck.',
+            blue: 'Look at the top 2 cards of the Item deck. Keep one in your hand; the other goes to the bottom of the deck.',
+            yellow: 'Draw 3 random Yellow Pok\u00e9mon tokens and choose one. You may try to Catch it, with a +2 bonus on your Catch roll. Any token you don\u2019t catch goes back to the pool.',
+            red: 'Look at the top 3 cards of the Item deck. Keep one in your hand; the others go to the bottom of the deck. Then choose a Pok\u00e9mon on your team below Level 5; it gains a Level.',
+            orange: 'Choose one Item card from the Item deck or the Item discard pile and add it to your hand. Then choose a Pok\u00e9mon on your team below Level 5; it gains a Level. This reward can be claimed only once per player.',
+        };
+        const boardFrontierColorLabel = id => (BOARD_FRONTIER_COLORS.find(c => c.id === id) || { label: id }).label;
+        let boardFrontiers = {};                    // Host/solo: { [playerId]: { name, color, uid } } -- a token drawn for a Frontier Battle
+        let boardFrontierReturnTo = 'Olivine City'; // Host/solo: where a lost Battle sends the marker (read from the map data)
+        let boardFrontierDrawCb = null;             // a guest's pending draw request
+        let boardFrontierAfter = null;              // what the OK button of the prompt on screen does next
+        let boardFrontierPick = null;               // the Legendary reward's item chooser: { deck, deckCards, onDone }
+
+        function boardFrontierFindReturn(d) {
+            let to = null;
+            ((d && d.spaces) || []).some(s => (s.actions || []).some(a => {
+                if (a && typeof a === 'object' && a.type === 'battle-frontier' && a.returnTo) { to = String(a.returnTo); return true; }
+                return false;
+            }));
+            return to || 'Olivine City';
+        }
+        // The Legendary reward may be claimed once per player: the flag lives in the player's own save, like championDefeated.
+        function boardFrontierLegendaryClaimed() {
+            const data = getActiveSaveData();
+            return !!(data && data.frontierLegendaryClaimed);
+        }
+        function boardFrontierMarkLegendaryClaimed() {
+            if (isActiveSaveReadOnly()) return;
+            const data = getActiveSaveData();
+            if (!data || data.frontierLegendaryClaimed) return;
+            data.frontierLegendaryClaimed = true;
+            if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves();
+        }
+
+        // ---- the prompts: a result / reward text with an OK button, and the level-up chooser ----
+        function boardFrontierShow(title, text, actionsHtml) {
+            document.getElementById('game-frontier-title').textContent = title;
+            document.getElementById('game-frontier-text').textContent = text;
+            document.getElementById('game-frontier-actions').innerHTML = actionsHtml;
+            openGamePanel(); // the board is a main view now, not inside the panel
+            document.getElementById('game-frontier-overlay').classList.add('visible');
+        }
+        function boardFrontierAck(title, text, after) {
+            boardFrontierAfter = after || null;
+            boardFrontierShow(title, text, '<button class="filter-btn include game-frontier-ok-btn" type="button">OK</button>');
+        }
+        function closeFrontierOverlay() {
+            document.getElementById('game-frontier-overlay').classList.remove('visible');
+        }
+        function boardFrontierTotalLevel(m) { return getTeamMemberBaseLevel(m) + (m.level || 0); } // base level + the Level counter
+        // Red and Legendary: a Pokémon on the team below Level 5 gains a Level (its Level counter goes up by one).
+        function boardFrontierLevelUp() {
+            if (isActiveSaveReadOnly()) return;
+            const eligible = boardTeamIndexes(m => boardFrontierTotalLevel(m) < 5);
+            if (!eligible.length) { boardFrontierAck('Battle Frontier', 'None of your Pok\u00e9mon are below Level 5, so no Pok\u00e9mon gains a Level.', null); return; }
+            const rows = eligible.map(i => {
+                const m = getTeamSlotMember(i), lv = boardFrontierTotalLevel(m);
+                const name = getBattleMemberDisplay(m).name || 'Pok\u00e9mon';
+                return `<button class="filter-btn game-frontier-level-btn" type="button" data-index="${i}">${escapeHtml(name)} \u2014 Lv ${lv} \u2192 ${lv + 1}</button>`;
+            }).join('');
+            boardFrontierShow('Battle Frontier', 'Choose a Pok\u00e9mon on your team below Level 5. It gains a Level.', '<div class="game-frontier-choices">' + rows + '</div>');
+        }
+        document.getElementById('game-frontier-overlay').addEventListener('click', (e) => {
+            if (e.target.closest('.game-frontier-ok-btn')) {
+                closeFrontierOverlay();
+                const next = boardFrontierAfter;
+                boardFrontierAfter = null;
+                if (next) next();
+                return;
+            }
+            const lvBtn = e.target.closest('.game-frontier-level-btn');
+            if (lvBtn) {
+                if (isActiveSaveReadOnly()) return;
+                const i = Number(lvBtn.dataset.index), m = getTeamSlotMember(i);
+                if (!m) return;
+                const before = boardFrontierTotalLevel(m), name = getBattleMemberDisplay(m).name || 'Pok\u00e9mon';
+                adjustTeamMemberLevel(i, 1);
+                closeFrontierOverlay();
+                showGameToast('Battle Frontier: ' + name + ' gained a Level (Lv ' + before + ' \u2192 ' + boardFrontierTotalLevel(m) + ').');
+            }
+        });
+
+        // ---- starting: pick a color, draw the Defender ----
+        function boardFrontierArenaBusy() {
+            if (isArenaSlotReplaceBlockedForMe('defender') || getBattleSlotReplaceDescription('defender')) {
+                showGameToast('The Battle Arena is in use \u2014 finish that battle first, then try the Battle Frontier.');
+                return true;
+            }
+            return false;
+        }
+        function boardUseBattleFrontier(info) {
+            if (isActiveSaveReadOnly() || !boardCtrl) return;
+            if (boardFrontierArenaBusy()) return;
+            const claimed = boardFrontierLegendaryClaimed();
+            const buttons = BOARD_FRONTIER_COLORS.map(c => ({ id: 'bf-color:' + c.id, label: c.label + (c.id === 'orange' && claimed ? ' (reward already claimed)' : '') }));
+            buttons.push({ id: 'skip', label: 'Not now' });
+            boardCtrl.showAction({ text: 'Battle Frontier \u2014 choose a token color. A random Pok\u00e9mon of that color is drawn as the Defender (it can\u2019t be caught). Defeat it for that color\u2019s reward; lose or walk away and you return to Olivine City.', buttons, info });
+        }
+        function boardFrontierChooseColor(color, info) {
+            if (isActiveSaveReadOnly() || !BOARD_FRONTIER_COLORS.some(c => c.id === color)) return;
+            if (boardFrontierArenaBusy()) return;
+            boardFrontierRequestDraw(color, name => {
+                if (!name) {
+                    showGameToast('No ' + boardFrontierColorLabel(color) + ' Pok\u00e9mon are left in the pool \u2014 choose another color.');
+                    boardUseBattleFrontier(info);
+                    return;
+                }
+                if (!POKEMON_BY_NAME[name]) { // can't be fought: give the token straight back
+                    boardSafariSettle(name, 'returned');
+                    showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.');
+                    return;
+                }
+                showGameToast('Battle Frontier: a wild ' + name + ' steps up as the Defender!');
+                boardStartWildBattle({ token: name, noCatch: true }); // puts it in the Defender slot; the Attacker is chosen as usual
+            });
+        }
+        function boardFrontierRequestDraw(color, cb) {
+            if (lobbyState.role === 'guest') { boardFrontierDrawCb = cb; boardSend({ type: 'board-frontier-draw', color }); return; }
+            boardEnsureBoard().then(() => cb(boardFrontierHostDraw('host', color))).catch(() => cb(null));
+        }
+        // Host / solo: draws the token and remembers it for this player (bound to its Arena Pokémon in boardBindEncounter()).
+        function boardFrontierHostDraw(playerId, color) {
+            if (!boardCtrl || !BOARD_FRONTIER_COLORS.some(c => c.id === color)) return null;
+            const old = boardFrontiers[playerId];
+            if (old && !old.uid) { boardCtrl.settlePoolToken(old.name, 'returned'); delete boardFrontiers[playerId]; } // an earlier draw that never reached the Arena
+            const name = boardCtrl.drawFromPool(color);
+            if (!name) return null;
+            boardFrontiers[playerId] = { name, color, uid: null };
+            return name;
+        }
+        function boardHandleFrontierDraw(peerId, data) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            const color = String(data.color || '');
+            const reply = name => boardSendToPeer(peerId, { type: 'board-frontier-drawn', color, name });
+            boardEnsureBoard().then(() => reply(boardFrontierHostDraw(peerId, color))).catch(() => reply(null));
+        }
+
+        // ---- the Battle's end (Host / solo, called from boardNoteWildLeft()) ----
+        function boardFrontierBattleEnded(playerId, member, forced) {
+            const f = boardFrontiers[playerId];
+            delete boardFrontiers[playerId];
+            if (!f) return;
+            if (boardCtrl) boardCtrl.settlePoolToken(f.name, 'returned'); // the token goes back to its pool either way
+            const won = !!member.fainted && forced !== 'caught';
+            const moved = (!won && boardCtrl) ? boardCtrl.movePlayer(playerId, boardFrontierReturnTo) : '';
+            const result = { type: 'board-frontier-result', won, color: f.color, name: f.name, moved };
+            if (playerId === 'host' || playerId === getMyLobbyPlayerId()) boardFrontierDeliverResult(result);
+            else boardSendToPeer(playerId, result);
+        }
+
+        // ---- the player's device: the result, then the reward ----
+        function boardFrontierDeliverResult(r) {
+            if (!r || typeof r !== 'object') return;
+            const name = String(r.name || 'Pok\u00e9mon');
+            if (!r.won) {
+                boardFrontierAck('Battle Frontier', 'The ' + name + ' wasn\u2019t defeated.' + (r.moved ? ' Your marker has been moved to ' + r.moved + '.' : ''), null);
+                return;
+            }
+            if (!BOARD_FRONTIER_REWARDS[r.color]) return;
+            if (r.color === 'orange' && boardFrontierLegendaryClaimed()) {
+                boardFrontierAck('Battle Frontier', 'You defeated ' + name + '! The Legendary reward can only be claimed once per player, and you\u2019ve already claimed yours.', null);
+                return;
+            }
+            boardFrontierAck('Battle Frontier \u2014 ' + boardFrontierColorLabel(r.color) + ' reward', 'You defeated ' + name + '! ' + BOARD_FRONTIER_REWARDS[r.color],
+                r.color === 'pink' ? null : () => boardFrontierRunReward(r.color));
+        }
+        function boardFrontierRunReward(color) {
+            if (color === 'green') boardUsePokeMart(); // the same draw from the Item deck as a Poké Mart
+            else if (color === 'blue') boardFrontierLookKeepOne(2, null);
+            else if (color === 'yellow') boardFrontierYellow();
+            else if (color === 'red') boardFrontierLookKeepOne(3, boardFrontierLevelUp);
+            else if (color === 'orange') boardFrontierPickItem(boardFrontierLevelUp);
+        }
+        // Look at the top `count` cards of the Item deck, keep one, the rest to the bottom -- the Department Store's own viewer in
+        // its keep-one mode. The viewer can't be closed without choosing (the reward would be lost), and onDone runs once a card is kept.
+        function boardFrontierLookKeepOne(count, onDone) {
+            if (isActiveSaveReadOnly()) return;
+            if (!isVirtualDecksEnabledForActiveSave()) {
+                boardFrontierAck('Battle Frontier', 'Virtual decks are off for this save \u2014 look at the top ' + count + ' cards of your physical Item deck, keep one, and put the rest on the bottom.', onDone);
+                return;
+            }
+            openGamePanel();
+            setGameScreen('decks');
+            deckLookPendingMode = { mode: 'keep-one', deck: 'Item Deck', at: Date.now(), label: 'Battle Frontier', required: true, onDone };
+            requestLookAtTopCards('Item Deck', count);
+        }
+
+        // Yellow: 3 random Yellow tokens, choose one, try to Catch it with +2. The Safari Zone's chooser and its out-of-the-Arena
+        // Catch dialog do the work (catchAttempt.safari.frontier: the Pokémon's own Catch Value applies instead of the Safari threshold).
+        function boardFrontierYellow() {
+            if (isActiveSaveReadOnly()) return;
+            boardSafariRequestPool(names => {
+                if (!names.length) { boardFrontierAck('Battle Frontier', 'No Yellow Pok\u00e9mon are left in the pool, so there is nothing to draw.', null); return; }
+                const three = shuf3(names.slice());
+                safariPending = { pool: three, threshold: null, frontier: true };
+                boardSafariChoosePokemon(null);
+            });
+        }
+        function shuf3(a) {
+            for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+            return a.slice(0, 3);
+        }
+
+        // Legendary: one Item card from the Item deck OR the Item discard pile, shown as two Archidekt-style piles (discard first).
+        // The deck is private, so its contents come from a Look at Top of the whole deck (sent only to this player); they're listed
+        // alphabetically so the order isn't revealed, and the deck is shuffled afterwards.
+        function boardFrontierPickItem(onDone) {
+            if (isActiveSaveReadOnly()) return;
+            if (!isVirtualDecksEnabledForActiveSave()) {
+                boardFrontierMarkLegendaryClaimed();
+                boardFrontierAck('Battle Frontier', 'Virtual decks are off for this save \u2014 choose one Item card from your physical Item deck or Item discard pile and add it to your hand (shuffle the deck afterwards).', onDone);
+                return;
+            }
+            openGamePanel();
+            setGameScreen('decks');
+            deckLookPendingMode = { mode: 'frontier-pick', deck: 'Item Deck', at: Date.now(), onDone };
+            requestLookAtTopCards('Item Deck', 100000); // clamped to the deck's size Host-side
+        }
+        function boardFrontierOpenItemPicker(deckName, deckCards, pend) {
+            const info = getDeckInfoMap()[deckName];
+            if (!deckCards.length && !((info && info.discardPile) || []).length) {
+                boardFrontierAck('Battle Frontier', 'The Item deck and the Item discard pile are both empty, so there is no card to take.', pend.onDone || null);
+                return;
+            }
+            boardFrontierPick = { deck: deckName, deckCards: deckCards.slice(), onDone: pend.onDone || null };
+            renderFrontierPicker();
+            document.getElementById('game-frontier-pick-overlay').classList.add('visible');
+        }
+        function closeFrontierPicker() {
+            boardFrontierPick = null;
+            document.getElementById('game-frontier-pick-overlay').classList.remove('visible');
+        }
+        function frontierPileHtml(label, source, cards) {
+            if (!cards.length) return `<div class="game-frontier-pile"><p class="game-frontier-pile-label">${label} (0)</p><p class="game-deck-look-empty">This pile is empty.</p></div>`;
+            const readOnly = isActiveSaveReadOnly();
+            const height = HAND_CARD_OVERLAP * (cards.length - 1) + HAND_CARD_HEIGHT + DISCARD_OPTIONS_EXPAND_ROOM + STACK_TOP_GAP;
+            const items = cards.map((cardId, i) => {
+                const card = CARDS_BY_ID[cardId];
+                const name = card ? card.name : cardId;
+                const options = (source === 'discard' && cardIsKeyItem(card))
+                    ? `<div class="game-deck-look-card-options-grid game-deck-look-card-options-grid--single"><span class="game-discard-key-item-note">Key Items can't be reclaimed from the discard pile.</span></div>`
+                    : `<div class="game-deck-look-card-options-grid game-deck-look-card-options-grid--single"><button class="filter-btn exclude game-frontier-take-btn" type="button" data-source="${source}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Add to Hand</button></div>`;
+                return `<div class="game-deck-look-card" style="top: ${i * HAND_CARD_OVERLAP + STACK_TOP_GAP}px; z-index: ${i + 1};" tabindex="0">`
+                    + `<div class="game-deck-look-card-face">${card && card.imageUrl ? `<img class="game-deck-look-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}</div>`
+                    + `<div class="game-deck-look-card-options">${options}</div></div>`;
+            }).join('');
+            return `<div class="game-frontier-pile"><p class="game-frontier-pile-label">${label} (${cards.length})</p><div class="game-deck-look-stack" style="height: ${height}px;">${items}</div></div>`;
+        }
+        function renderFrontierPicker() {
+            const st = boardFrontierPick, body = document.getElementById('game-frontier-pick-body');
+            if (!st || !body) return;
+            const info = getDeckInfoMap()[st.deck];
+            const discard = (info && info.discardPile) || [];
+            const nameOf = id => { const c = CARDS_BY_ID[id]; return c ? c.name : String(id); };
+            const deck = st.deckCards.slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b))); // sorted, so the deck's order isn't shown
+            body.innerHTML = frontierPileHtml('Item Discard Pile', 'discard', discard) + frontierPileHtml('Item Deck', 'deck', deck);
+        }
+        function boardFrontierTakeItem(source, cardId) {
+            const st = boardFrontierPick;
+            if (!st || isActiveSaveReadOnly()) return;
+            if (source === 'discard') requestReturnDiscardToHand(st.deck, cardId);
+            else { requestLookAddToHand(st.deck, cardId); requestShuffleDeck(st.deck); }
+            const card = CARDS_BY_ID[cardId], done = st.onDone;
+            closeFrontierPicker();
+            boardFrontierMarkLegendaryClaimed();
+            showGameToast('Battle Frontier: added ' + (card ? card.name : 'the card') + ' to your hand' + (source === 'deck' ? ' (the Item deck was shuffled).' : '.'));
+            if (done) done();
+        }
+        document.getElementById('game-frontier-pick-overlay').addEventListener('click', (e) => {
+            const take = e.target.closest('.game-frontier-take-btn');
+            if (take) { boardFrontierTakeItem(take.dataset.source, take.dataset.cardId); return; }
+            if (e.target.closest('.game-frontier-skip-btn')) { // an escape hatch (e.g. a dropped connection): the reward isn't claimed, the Level still is
+                const done = boardFrontierPick && boardFrontierPick.onDone;
+                closeFrontierPicker();
+                if (done) done();
+                return;
+            }
+            const stackCard = e.target.closest('.game-deck-look-card');
+            const expanded = document.querySelectorAll('#game-frontier-pick-overlay .game-deck-look-card.is-expanded');
+            if (stackCard) {
+                if (stackCard.classList.contains('is-expanded')) {
+                    const img = stackCard.querySelector('.game-deck-look-card-img');
+                    if (img) openTeamCardImageViewer(img.src, img.alt);
+                    return;
+                }
+                expanded.forEach(el => el.classList.remove('is-expanded'));
+                stackCard.classList.add('is-expanded');
+                return;
+            }
+            expanded.forEach(el => el.classList.remove('is-expanded'));
+        });
 
         // --- the board view (#board-view) ---
         // A second main view next to the gallery (see body.board-mode in the CSS), toggled by the Game panel's
@@ -46630,6 +47029,12 @@
                     boardReportCaught(true);
                 } else if (data.type === 'board-landing' && data.info) {
                     boardDeliverLanding(data.info);
+                } else if (data.type === 'board-frontier-drawn' && typeof data.color === 'string') {
+                    const cb = boardFrontierDrawCb;
+                    boardFrontierDrawCb = null;
+                    if (cb) cb(typeof data.name === 'string' ? data.name : null);
+                } else if (data.type === 'board-frontier-result' && typeof data.name === 'string') {
+                    boardFrontierDeliverResult(data);
                 } else if (data.type === 'board-safari-pool-result' && Array.isArray(data.names)) {
                     const cb = boardSafariPoolCb;
                     boardSafariPoolCb = null;
@@ -48797,7 +49202,7 @@
 
         // The Catch Value this attempt has to beat, or null when the entry has none (then the players judge the roll).
         function getCatchValueFor(a, member, displayName) {
-            if (a.safari) return a.safari.threshold; // a Safari Zone catch ignores the Pok\u00e9mon's own Catch Value: 4, or 2 with a Safari Ball
+            if (a.safari && !a.safari.frontier) return a.safari.threshold; // (the Battle Frontier's Yellow reward uses the Pok\u00e9mon's own Catch Value, below) a Safari Zone catch ignores the Pok\u00e9mon's own Catch Value: 4, or 2 with a Safari Ball
             const e = POKEMON_BY_NAME[displayName] || POKEMON_BY_NAME[member.name] || null;
             return (e && typeof e.catchValue === 'number') ? e.catchValue : null;
         }
@@ -48806,12 +49211,14 @@
             const lines = [];
             if (attempt.fainted) lines.push({ label: 'Fainted before the attempt', amount: 2 });
             if (attempt.fainted && attempt.hadStatus) lines.push({ label: 'Had a Status Condition when it fainted', amount: 1 });
+            if (attempt.safari && attempt.safari.frontier) lines.push({ label: 'Battle Frontier (Yellow reward)', amount: 2 });
             return lines;
         }
 
         function openCatchOverlay() {
             const member = getCatchTargetMember();
             if (!member || isActiveSaveReadOnly()) return;
+            if (member.noCatch) { showGameToast('The Battle Frontier\u2019s Defender can\u2019t be caught.'); return; }
             catchAttempt = {
                 fainted: !!member.fainted,
                 hadStatus: !!member.fainted && !!member.faintedWithStatus,
@@ -48916,7 +49323,7 @@
             const catchValue = getCatchValueFor(a, member, displayName);
             html += '<div class="game-catch-breakdown">';
             if (catchValue !== null) {
-                html += `<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">${sf ? 'Safari Zone \u2014 ' : ''}Catch Value: ${catchValue}</p>`
+                html += `<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">${sf ? (sf.frontier ? 'Battle Frontier \u2014 ' : 'Safari Zone \u2014 ') : ''}Catch Value: ${catchValue}</p>`
                     + `<p class="game-catch-breakdown-note">You need a Catch Total of at least ${catchValue} to Catch this Pok\u00e9mon!${sf && sf.threshold === 2 ? ' (Safari Ball)' : ''}</p></div>`;
             }
             html += '<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">Catch Bonus</p>';
@@ -49474,6 +49881,7 @@
         // function's own comment).
         document.getElementById('game-deck-look-viewer-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'game-deck-look-viewer-overlay' || e.target.closest('.game-deck-look-viewer-close-btn')) {
+                if (deckLookViewerRequired && deckLookViewerCards.length) return; // a required choice (Battle Frontier) has to be made
                 closeDeckLookViewer();
                 return;
             }
