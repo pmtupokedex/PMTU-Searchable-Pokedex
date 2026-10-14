@@ -2029,6 +2029,7 @@
 
         /* Explore Actions screen: the icon key for the actions on the board's spaces (see renderBoardActionsScreen()). */
         .game-board-key-header { margin-top: 4px; }
+        .game-board-key-status { margin: 12px 0; text-align: center; opacity: 0.8; }
         .game-board-key-row {
             display: flex;
             align-items: flex-start;
@@ -2053,7 +2054,7 @@
         .game-board-key-icon { max-width: 100%; max-height: 100%; object-fit: contain; }
         .game-board-key-text { flex: 1 1 auto; min-width: 0; }
         .game-board-key-name { font-weight: bold; font-size: 15px; margin: 0 0 2px; }
-        .game-board-key-desc { font-size: 13px; line-height: 1.35; margin: 0; }
+        .game-board-key-desc { font-size: 13px; line-height: 1.35; margin: 0; white-space: pre-line; } /* a \n in the text is a line break */
 
         /* Dice block (see renderBattleDice()): three counters side by
            side, then the Roll buttons, then whatever was rolled. First
@@ -46044,74 +46045,119 @@
             syncBoardToggleUi();
             refreshBackButtonState();
         }
-                // ---- Explore Actions screen: the icon key ----
-        // One entry per kind of action a space can offer (the types the board understands: BOARD_BATTLE_ACTIONS,
-        // BOARD_SERVICE_ACTIONS, Gain Item, Roll For Item), then the spaces that carry their own prompt. Paste an image URL into
-        // BOARD_ACTION_ICONS (keyed by id) to replace a placeholder square. desc may be a function so it can read live rules.
-        const BOARD_ACTION_ICONS = {
-            'gym-battle': '', 'villain-battle': '', 'elite-four-battle': '', 'champion-battle': '',
-            'poke-mart': '', 'pokemon-center': '', 'department-store': '', 'safari-zone': '',
-            'gain-item': '', 'roll-for-item': '',
-            'catch-space': '', 'event-space': '', 'city-space': ''
-        };
-        const BOARD_ACTION_KEY = [
-            { header: 'Space Actions' },
-            { id: 'gym-battle', name: 'Gym Battle', desc: 'Challenge the Gym Leader named on this space. Winning earns their Badge; once you hold it the action shows as defeated. Some Gyms stay locked until you meet a requirement, and the prompt says what.' },
-            { id: 'villain-battle', name: 'Villain Battle', desc: 'Battle the villain team leader named on this space. Like a Gym Battle, it is marked defeated once you have won it.' },
-            { id: 'elite-four-battle', name: 'Battle Elite Four', desc: 'Face one of the region\u2019s Elite Four. You choose which member to battle, or pick Random.' },
-            { id: 'champion-battle', name: 'Battle Champion', desc: 'Take on the region\u2019s Champion, usually the last battle of the journey.' },
-            { id: 'poke-mart', name: 'Pok\u00e9 Mart', desc: 'Draw one card from the Item deck.' },
-            { id: 'pokemon-center', name: 'Pok\u00e9mon Center', desc: () => 'Heals your team: every Status Condition is removed and up to ' + boardPokemonCenterRevives() + ' Fainted Pok\u00e9mon are revived. If more than that are Fainted, you choose which ones.' },
-            { id: 'department-store', name: 'Department Store', desc: 'Look at the top 2 cards of the Item deck and keep one in your hand. The other goes to the bottom of the deck.' },
-            { id: 'safari-zone', name: 'Safari Zone', desc: 'Discard an Item card from your hand to enter, then choose a Yellow Pok\u00e9mon from the pool and roll the Catch Die. A Catch Total of 4 or more catches it (2 or more if you discarded a Safari Ball), whatever the Pok\u00e9mon\u2019s own Catch Value. No Catch Cards can be played. A caught Pok\u00e9mon joins your team and leaves the game; one that gets away goes back to the pool.' },
-            { id: 'gain-item', name: 'Gain Item', desc: 'Take the named Item card into your hand for free. Once you have claimed it the action shows as gained.' },
-            { id: 'roll-for-item', name: 'Roll For Item', desc: 'Roll a d6. Each space has its own table that says which item (if any) that number gives you.' },
-            { header: 'Other Spaces' },
-            { id: 'catch-space', name: 'Catch Space', desc: 'A coloured circle holding a face-down wild Pok\u00e9mon. Land on it and choose Encounter it to reveal the Pok\u00e9mon, then battle and try to catch it, or walk away and leave it face-up for the next visitor.' },
-            { id: 'event-space', name: 'Event Space', desc: 'Land here to draw a card from the Event deck.' },
-            { id: 'city-space', name: 'City', desc: 'Where the actions above are found. Stopping in or passing through a city lets you set it as your Current Home, which is where you return after losing a battle.' }
-        ];
+        // ---- Explore Actions screen: what each action on this board's spaces does ----
+        // The text, order and icons live in <BOARD_DIR>board-actions.json (its "_about" line explains the shape), not in this page:
+        // one entry per kind of action or space, a per-region override block for map-specific icons and wording, and only the
+        // actions this region's board really has are listed.
+        var boardActionsDocPromise = null;
+        function boardFetchActionsDoc() {
+            if (!boardActionsDocPromise) {
+                boardActionsDocPromise = fetch(BOARD_DIR + 'board-actions.json', { cache: 'no-store' }).then(r => {
+                    if (!r.ok) throw new Error(BOARD_DIR + 'board-actions.json returned ' + r.status);
+                    return r.json();
+                }).catch(err => { boardActionsDocPromise = null; throw err; }); // a failed load can be retried next time
+            }
+            return boardActionsDocPromise;
+        }
+        // The id (a key of board-actions.json's "actions") of one entry of a space's actions list, or null: the same typed and
+        // older text shapes the board runs, recognised by their pattern alone so it works before any leader data has loaded.
+        function boardActionIdOf(a) {
+            if (a && typeof a === 'object') {
+                const t = a.type;
+                return (BOARD_BATTLE_ACTIONS[t] || BOARD_SERVICE_ACTIONS[t] || t === 'gain-item' || t === 'roll-for-item') ? t : null;
+            }
+            if (typeof a !== 'string') return null;
+            const text = a.normalize('NFC');
+            for (const [t, def] of Object.entries(BOARD_BATTLE_ACTIONS)) if (def.legacy.test(text)) return t;
+            for (const [t, def] of Object.entries(BOARD_SERVICE_ACTIONS)) if (def.legacy.test(text)) return t;
+            return /^\s*Gain Item\s*\(.+\)\s*$/i.test(text) ? 'gain-item' : null;
+        }
+        // Every action id and kind of space (catch / event / city) a board's data contains.
+        function boardActionsOnBoard(d) {
+            const ids = new Set();
+            ((d && d.spaces) || []).forEach(sp => {
+                if (sp.type === 'catch') ids.add('catch-space');
+                else if (sp.type === 'event') ids.add('event-space');
+                else if (sp.type === 'city') ids.add('city-space');
+                (sp.actions || []).forEach(a => { const id = boardActionIdOf(a); if (id) ids.add(id); });
+            });
+            return ids;
+        }
+        // The {tokens} board-actions.json text may use: live rules, and values read from this board's own data.
+        function boardActionTokens(d) {
+            let returnTo = '';
+            ((d && d.spaces) || []).forEach(sp => (sp.actions || []).forEach(a => {
+                if (returnTo || !a || typeof a !== 'object' || a.type !== 'battle-frontier' || !a.returnTo) return;
+                const target = d.spaces.find(x => x.id === a.returnTo);
+                returnTo = (target && target.label) || String(a.returnTo);
+            }));
+            return { revives: boardPokemonCenterRevives(), returnTo: returnTo || 'a set city' };
+        }
+        var boardActionsRenderSeq = 0; // the region can change (or the screen be left) while a file is still loading
         function renderBoardActionsScreen() {
             const list = document.getElementById('game-board-actions-list');
             const title = document.getElementById('game-board-actions-title');
             if (!list) return;
             if (title) title.textContent = boardRegionLabel() + ' Explore Actions';
-            list.innerHTML = '';
-            BOARD_ACTION_KEY.forEach(item => {
-                if (item.header) {
-                    const h = document.createElement('div');
-                    h.className = 'game-section-header game-board-key-header';
-                    h.textContent = item.header;
-                    list.appendChild(h);
-                    return;
-                }
-                const url = BOARD_ACTION_ICONS[item.id] || '';
-                const row = document.createElement('div');
-                row.className = 'game-board-key-row';
-                const slot = document.createElement('span');
-                slot.className = 'game-board-key-icon-slot' + (url ? '' : ' is-placeholder');
-                if (url) {
-                    const img = document.createElement('img');
-                    img.className = 'game-board-key-icon';
-                    img.alt = '';
-                    img.src = url;
-                    img.onerror = () => { img.remove(); slot.classList.add('is-placeholder'); };
-                    slot.appendChild(img);
-                }
-                const text = document.createElement('div');
-                text.className = 'game-board-key-text';
-                const name = document.createElement('p');
-                name.className = 'game-board-key-name';
-                name.textContent = item.name;
-                const desc = document.createElement('p');
-                desc.className = 'game-board-key-desc';
-                desc.textContent = typeof item.desc === 'function' ? item.desc() : item.desc;
-                text.appendChild(name);
-                text.appendChild(desc);
-                row.appendChild(slot);
-                row.appendChild(text);
-                list.appendChild(row);
+            const region = boardWantedConfig().region;
+            const seq = ++boardActionsRenderSeq;
+            const say = msg => { list.innerHTML = ''; const p = document.createElement('p'); p.className = 'game-board-key-status'; p.textContent = msg; list.appendChild(p); };
+            say('Loading\u2026');
+            Promise.all([boardFetchActionsDoc(), boardFetchData(region)]).then(([doc, data]) => {
+                if (seq === boardActionsRenderSeq) renderBoardActionsList(list, doc, data, region);
+            }).catch(err => {
+                if (seq === boardActionsRenderSeq) say('Could not load the action list: ' + err.message);
             });
+        }
+        function renderBoardActionsList(list, doc, data, region) {
+            const present = boardActionsOnBoard(data), tokens = boardActionTokens(data);
+            const overrides = (doc.regions && doc.regions[region]) || {};
+            const fill = text => String(text == null ? '' : text).replace(/\{(\w+)\}/g, (m, k) => (k in tokens ? tokens[k] : m));
+            list.innerHTML = '';
+            (doc.sections || []).forEach(sec => {
+                const items = Object.entries(doc.actions || {}).filter(([id, a]) => a && a.section === sec.id && present.has(id));
+                if (!items.length) return;
+                const h = document.createElement('div');
+                h.className = 'game-section-header game-board-key-header';
+                h.textContent = sec.header || '';
+                list.appendChild(h);
+                items.forEach(([id, base]) => {
+                    const a = Object.assign({}, base);
+                    Object.entries(overrides[id] || {}).forEach(([k, v]) => { if (v) a[k] = v; }); // blank override values are left-in templates, not overrides
+                    const url = a.icon || '';
+                    const row = document.createElement('div');
+                    row.className = 'game-board-key-row';
+                    const slot = document.createElement('span');
+                    slot.className = 'game-board-key-icon-slot' + (url ? '' : ' is-placeholder');
+                    if (url) {
+                        const img = document.createElement('img');
+                        img.className = 'game-board-key-icon';
+                        img.alt = '';
+                        img.src = url;
+                        img.onerror = () => { img.remove(); slot.classList.add('is-placeholder'); };
+                        slot.appendChild(img);
+                    }
+                    const text = document.createElement('div');
+                    text.className = 'game-board-key-text';
+                    const name = document.createElement('p');
+                    name.className = 'game-board-key-name';
+                    name.textContent = fill(a.name);
+                    const desc = document.createElement('p');
+                    desc.className = 'game-board-key-desc';
+                    desc.textContent = fill(a.desc);
+                    text.appendChild(name);
+                    text.appendChild(desc);
+                    row.appendChild(slot);
+                    row.appendChild(text);
+                    list.appendChild(row);
+                });
+            });
+            if (!list.children.length) {
+                const p = document.createElement('p');
+                p.className = 'game-board-key-status';
+                p.textContent = 'There are no actions to show for this board yet.';
+                list.appendChild(p);
+            }
         }
         // Pick modes (Add Pok\u00e9mon, Battle Arena pickers, ...) run in the gallery. Starting one from the board remembers
         // that, and finishing or cancelling it brings the player back to the board.
