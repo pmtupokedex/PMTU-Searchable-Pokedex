@@ -26159,6 +26159,9 @@
                     const c = lobbyState.connections && lobbyState.connections.get(ownerId);
                     if (c && c.conn && c.conn.open) c.conn.send({ type: 'gym-badge-earned', leaderId: gymBadgeDelivery.leaderId });
                 });
+                maybeStartChampionVictory(gymBadgeDelivery.leaderId, (lobbyState.players || [])
+                    .filter(pl => gymBadgeDelivery.owners.includes(pl.id))
+                    .map(pl => ({ id: pl.id, name: pl.name || 'Trainer', color: pl.color || null })));
             }
         }
 
@@ -35877,7 +35880,10 @@
             recallBattleAttacker();
             recallBattleDefender();
             renderBattleControls();
-            if (earnedLeaderId) queueGymBadgeAward(earnedLeaderId);
+            if (earnedLeaderId) {
+                queueGymBadgeAward(earnedLeaderId);
+                maybeStartChampionVictory(earnedLeaderId, [{ id: 'solo', name: getOwnLobbyDisplayName(), color: getMyLobbyThemeColor() }]);
+            }
         }
 
         // ---- One save, one arena -------------------------------------
@@ -38856,10 +38862,18 @@
             const token = ++victoryShowToken;
             const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-            const mine = info.winnerId === (getMyLobbyPlayerId() || 'solo');
-            const who = mine ? 'you' : (String(info.winnerName || '').trim() || 'Trainer');
-            overlay.querySelector('.gv-text').textContent = `${who} ${mine ? 'are' : 'is'} a Pok\u00e9mon Master!`;
-            if (info.winnerColor && PLAYER_COLORS.includes(info.winnerColor)) overlay.dataset.playerTheme = info.winnerColor;
+            // Usually one winner; a Champion battle won with several players' Pok\u00e9mon on the field has them all.
+            const myId = getMyLobbyPlayerId() || 'solo';
+            const winners = (Array.isArray(info.winners) && info.winners.length)
+                ? info.winners
+                : [{ id: info.winnerId, name: info.winnerName, color: info.winnerColor }];
+            const names = winners.map(w => (w.id === myId) ? 'you' : (String(w.name || '').trim() || 'Trainer'));
+            if (names.includes('you')) names.splice(0, names.length, 'you', ...names.filter(n => n !== 'you')); // "you" first
+            const who = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
+            const plural = names.length > 1 || names[0] === 'you';
+            overlay.querySelector('.gv-text').textContent = `${who} ${plural ? 'are' : 'is'} ${names.length > 1 ? 'Pok\u00e9mon Masters' : 'a Pok\u00e9mon Master'}!`;
+            const themeColor = winners[0] && winners[0].color;
+            if (themeColor && PLAYER_COLORS.includes(themeColor)) overlay.dataset.playerTheme = themeColor;
             else delete overlay.dataset.playerTheme; // no color: the plain default art
 
             const btn = document.getElementById('game-victory-confirm-btn');
@@ -38901,10 +38915,10 @@
         // Host (or solo): the one place a victory actually starts.
         function hostStartVictory(info) {
             if (lobbyState.role === 'guest') return;
-            setActiveMusicCategory('victory'); // the Sounds panel's playlist -> Victory (guests follow the Host's music broadcast)
+            setActiveMusicCategory('victory', { thenCategory: 'intro' }); // the Sounds panel's playlist -> Victory, played through once and then Intro (guests follow the Host's music broadcast)
             if (lobbyState.connections) {
                 lobbyState.connections.forEach(({ conn }) => {
-                    if (conn.open) conn.send({ type: 'victory', winnerId: info.winnerId, winnerName: info.winnerName, winnerColor: info.winnerColor || null });
+                    if (conn.open) conn.send({ type: 'victory', winnerId: info.winnerId, winnerName: info.winnerName, winnerColor: info.winnerColor || null, winners: info.winners || null });
                 });
             }
             showVictoryOverlay(info);
@@ -39123,13 +39137,23 @@
             const data = getActiveSaveData();
             return !!(data && data.championDefeated);
         }
+        // No Virtual Game Board for this save: there's no Hall of Fame space to walk to, so beating the Champion IS the
+        // victory. Runs where the battle ends -- the solo device, or the Host for a lobby -- with everyone who took part
+        // as the winners. (With the map on, the Victory action on the board is what starts it instead.)
+        function maybeStartChampionVictory(leaderId, winners) {
+            const leaderCard = GYM_LEADERS_BY_ID[leaderId];
+            if (!leaderCard || leaderCard.category !== 'champion') return;
+            if (getRegionMapSettingsForActiveSave().enabled) return;
+            if (!Array.isArray(winners) || !winners.length) return;
+            hostStartVictory({ winnerId: winners[0].id, winnerName: winners[0].name, winnerColor: winners[0].color || null, winners });
+        }
         function recordChampionDefeated() {
             if (isActiveSaveReadOnly()) return;
             const data = getActiveSaveData();
             if (!data || data.championDefeated) return;
             data.championDefeated = true;
             if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves();
-            showGameToast('You defeated the Champion! The Hall of Fame awaits.');
+            if (getRegionMapSettingsForActiveSave().enabled) showGameToast('You defeated the Champion! The Hall of Fame awaits.'); // (without the map, the Victory screen itself is the announcement)
         }
 
         function queueGymBadgeAward(leaderId) {
@@ -46396,7 +46420,12 @@
                     showVictoryOverlay({
                         winnerId: String(data.winnerId || ''),
                         winnerName: String(data.winnerName || ''),
-                        winnerColor: typeof data.winnerColor === 'string' ? data.winnerColor : null
+                        winnerColor: typeof data.winnerColor === 'string' ? data.winnerColor : null,
+                        winners: Array.isArray(data.winners) ? data.winners.slice(0, 8).map(w => ({
+                            id: String((w && w.id) || ''),
+                            name: String((w && w.name) || ''),
+                            color: (w && typeof w.color === 'string') ? w.color : null
+                        })) : null
                     });
                 } else if (data.type === 'roster' && Array.isArray(data.players)) {
                     lobbyState.players = data.players;
@@ -50422,6 +50451,12 @@
         // ordinary playlist change. Session-only, never saved.
         let musicGenericOnly = false;
 
+        // While set, the playlist plays each of its tracks once and then switches to `thenCategory` instead of looping
+        // (see setActiveMusicCategory()'s `thenCategory` option and the 'ended' listener). Used by the Victory screen:
+        // Victory plays through once, then the music falls over to Intro. `remaining` = ids of the queue's tracks not yet
+        // played, filled in as the first track loads. Cleared by any other playlist change. Session-only, never saved.
+        let musicPlayOnce = null;
+
         // Generic = not reserved for anything: no "pokemon" list (a
         // Pokémon's own track) and no "battleType" (a track for a kind
         // of battle with its own rules, e.g. "max-raid", "alpha" --
@@ -50523,9 +50558,11 @@
             rebuildMusicQueue({ keepCurrentTrack: true });
         }
 
-        function setActiveMusicCategory(category) {
+        function setActiveMusicCategory(category, options) {
             musicPinnedTrackIds = [];
             musicGenericOnly = false;
+            // Play through once, then continue on to options.thenCategory -- any other playlist change cancels it.
+            musicPlayOnce = (options && options.thenCategory) ? { category, thenCategory: options.thenCategory, remaining: null } : null;
             musicState.activeCategory = category;
             saveMusicPlayerState();
             rebuildMusicQueue({ keepCurrentTrack: false });
@@ -50572,6 +50609,7 @@
                 if (ids.length === musicPinnedTrackIds.length && ids.every(id => musicPinnedTrackIds.includes(id))) return true;
                 musicPinnedTrackIds = ids;
                 musicGenericOnly = false;
+                musicPlayOnce = null;
                 musicState.activeCategory = cue.tracks[0].category;
                 saveMusicPlayerState();
                 rebuildMusicQueue({ keepCurrentTrack: false });
@@ -50583,6 +50621,7 @@
             if (!musicPinnedTrackIds.length && musicState.activeCategory === category && musicGenericOnly === genericOnly) return true; // already there
             musicPinnedTrackIds = [];
             musicGenericOnly = genericOnly;
+            musicPlayOnce = null;
             musicState.activeCategory = category;
             saveMusicPlayerState();
             rebuildMusicQueue({ keepCurrentTrack: false });
@@ -50744,7 +50783,9 @@
                 battleMusicCueApplied = applyMusicCue(resolveBattleMusicCue(buildBattleMusicContext(ctxSource)));
             } else if (battleMusicCueApplied) {
                 battleMusicCueApplied = false;
-                applyMusicCue(BATTLE_MUSIC_END_CUE);
+                // The Victory playlist is never replaced by the Route one a battle's end would otherwise go back to (the
+                // Champion battle that triggers Victory ends in exactly this call, whichever order things run in).
+                if (musicState.activeCategory !== 'victory') applyMusicCue(BATTLE_MUSIC_END_CUE);
             }
         }
 
@@ -51062,6 +51103,10 @@
                 return;
             }
             musicLastTrackIdByCategory[musicState.activeCategory] = track.id;
+            if (musicPlayOnce && musicPlayOnce.category === musicState.activeCategory) {
+                if (!musicPlayOnce.remaining) musicPlayOnce.remaining = new Set(musicQueue.map(t => t.id));
+                musicPlayOnce.remaining.delete(track.id);
+            }
             musicAudio.src = track.url;
             musicAudio.currentTime = 0;
             musicAudio.volume = getCategoryVolume('music');
@@ -51179,6 +51224,31 @@
             if (musicState.repeat === 'one') {
                 musicAudio.currentTime = 0;
                 musicAudio.play().catch(() => { /* autoplay blocked or file missing — silently skip */ });
+                return;
+            }
+
+            // A playlist set to play through once (the Victory screen's): every track gets one turn, then on to the next playlist.
+            // Repeat-one above still wins, as an explicit choice.
+            if (musicPlayOnce && musicPlayOnce.category === musicState.activeCategory) {
+                const once = musicPlayOnce;
+                const left = once.remaining ? musicQueue.map((t, i) => i).filter(i => once.remaining.has(musicQueue[i].id)) : [];
+                if (!left.length) {
+                    musicPlayOnce = null;
+                    setActiveMusicCategory(once.thenCategory);
+                    // The track that just ended left the audio element paused, so the switch alone wouldn't start playing.
+                    if (isCategoryAudible('music')) {
+                        musicAudio.volume = getCategoryVolume('music');
+                        musicAudio.play().catch(() => { /* autoplay blocked or file missing -- silently skip */ });
+                    }
+                    return;
+                }
+                if (musicState.shuffle) {
+                    shuffleHistory.push(musicQueueIndex);
+                    musicQueueIndex = left[Math.floor(Math.random() * left.length)];
+                } else {
+                    musicQueueIndex = left.find(i => i > musicQueueIndex) !== undefined ? left.find(i => i > musicQueueIndex) : left[0];
+                }
+                loadCurrentTrack({ autoplay: true });
                 return;
             }
 
