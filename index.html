@@ -2041,9 +2041,11 @@
             border-radius: 10px;
             text-align: left;
         }
+        /* The slot is a fixed 52px wide but as tall as its icon needs (at least 52px, so a square or wide icon, or the
+           placeholder, still sits centered in a 52px box); the card grows with a tall icon instead of shrinking it. */
         .game-board-key-icon-slot {
             width: 52px;
-            height: 52px;
+            min-height: 52px;
             flex: 0 0 52px;
             display: flex;
             align-items: center;
@@ -2051,7 +2053,7 @@
             box-sizing: border-box;
         }
         .game-board-key-icon-slot.is-placeholder { border: 2px dashed currentColor; border-radius: 8px; opacity: 0.3; }
-        .game-board-key-icon { max-width: 100%; max-height: 100%; object-fit: contain; }
+        .game-board-key-icon { display: block; width: auto; height: auto; max-width: 100%; max-height: 160px; object-fit: contain; } /* never upscaled; wider than 52px shrinks to fit, keeping its proportions */
         .game-board-key-text { flex: 1 1 auto; min-width: 0; }
         .game-board-key-name { font-weight: bold; font-size: 15px; margin: 0 0 2px; }
         .game-board-key-desc { font-size: 13px; line-height: 1.35; margin: 0; white-space: pre-line; } /* a \n in the text is a line break */
@@ -34708,6 +34710,7 @@
         // aria-disabled. Taps on them still explain why (see the
         // data-target click handler).
         function syncMenuTileLocks() {
+            try { syncBoardToggleUi(); } catch (err) { /* the board's own state isn't set up yet */ } // the Game Board tile depends on the active save too
             document.querySelectorAll('.game-menu-tiles .game-menu-tile').forEach(tile => {
                 const locked = isMenuTileLocked(tile);
                 tile.classList.toggle('game-menu-tile-locked', locked);
@@ -46010,15 +46013,19 @@
         }
         // The two Game panel tiles follow the view: in the gallery, "Game Board" opens the board and "Return to Pok\u00e9dex" is
         // disabled; with the board up, the first becomes "[Region] Explore Actions" (opens that screen) and the second returns.
+        // A save that doesn't use the in-app region map (a physical board) never has the board up, so its first tile is the
+        // Explore Actions one from the start: the icon key is still handy beside a real board.
         function syncBoardToggleUi() {
             const tile = document.getElementById('game-menu-board-tile');
             const label = tile && tile.querySelector('.game-menu-tile-label');
             const ret = document.getElementById('game-menu-board-return-tile');
-            if (tile) tile.dataset.target = boardModeActive ? 'board-actions' : 'board';
-            if (label) label.textContent = boardModeActive ? boardRegionLabel() + ' Explore Actions' : 'Game Board';
+            const exploreOnly = boardModeActive || !getRegionMapSettingsForActiveSave().enabled;
+            if (tile) tile.dataset.target = exploreOnly ? 'board-actions' : 'board';
+            if (label) label.textContent = exploreOnly ? boardRegionLabel() + ' Explore Actions' : 'Game Board';
             if (ret) ret.disabled = !boardModeActive;
             try { applyToolMenuIcons(); } catch (err) { /* icons table not defined yet */ }
-            if (currentGameScreen === 'board-actions') renderBoardActionsScreen(); // region may have just changed
+            // the region may have just changed (not re-drawn otherwise: this also runs on every menu-tile refresh)
+            if (currentGameScreen === 'board-actions' && boardActionsRegionShown !== boardWantedConfig().region) renderBoardActionsScreen();
         }
         // enterBoardMode() never closes the Game panel itself; the Game Board tile closes it on a phone (see the tile click handler).
         function enterBoardMode(opts) {
@@ -46091,12 +46098,14 @@
             return { revives: boardPokemonCenterRevives(), returnTo: returnTo || 'a set city' };
         }
         var boardActionsRenderSeq = 0; // the region can change (or the screen be left) while a file is still loading
+        var boardActionsRegionShown = null; // the region the Explore Actions screen was last drawn for
         function renderBoardActionsScreen() {
             const list = document.getElementById('game-board-actions-list');
             const title = document.getElementById('game-board-actions-title');
             if (!list) return;
             if (title) title.textContent = boardRegionLabel() + ' Explore Actions';
             const region = boardWantedConfig().region;
+            boardActionsRegionShown = region;
             const seq = ++boardActionsRenderSeq;
             const say = msg => { list.innerHTML = ''; const p = document.createElement('p'); p.className = 'game-board-key-status'; p.textContent = msg; list.appendChild(p); };
             say('Loading\u2026');
@@ -46106,41 +46115,61 @@
                 if (seq === boardActionsRenderSeq) say('Could not load the action list: ' + err.message);
             });
         }
+        // One white card: the icon on the left (it keeps its own proportions, so a tall one makes the card taller), name and text on the right.
+        function boardKeyCard(entry, fill) {
+            const url = entry.icon || '';
+            const row = document.createElement('div');
+            row.className = 'game-board-key-row';
+            const slot = document.createElement('span');
+            slot.className = 'game-board-key-icon-slot' + (url ? '' : ' is-placeholder');
+            if (url) {
+                const img = document.createElement('img');
+                img.className = 'game-board-key-icon';
+                img.alt = '';
+                img.src = url;
+                img.onerror = () => { img.remove(); slot.classList.add('is-placeholder'); };
+                slot.appendChild(img);
+            }
+            const text = document.createElement('div');
+            text.className = 'game-board-key-text';
+            const name = document.createElement('p');
+            name.className = 'game-board-key-name';
+            name.textContent = fill(entry.name);
+            const desc = document.createElement('p');
+            desc.className = 'game-board-key-desc';
+            desc.textContent = fill(entry.desc);
+            text.appendChild(name);
+            text.appendChild(desc);
+            row.appendChild(slot);
+            row.appendChild(text);
+            return row;
+        }
         function renderBoardActionsList(list, doc, data, region) {
             const present = boardActionsOnBoard(data), tokens = boardActionTokens(data);
             const overrides = (doc.regions && doc.regions[region]) || {};
             const fill = text => String(text == null ? '' : text).replace(/\{(\w+)\}/g, (m, k) => (k in tokens ? tokens[k] : m));
+            // base entry + this region's non-blank overrides (a blank value is a left-in template, not an override)
+            const resolve = (id, base) => {
+                const merged = Object.assign({}, base);
+                Object.entries(overrides[id] || {}).forEach(([k, v]) => { if (v) merged[k] = v; });
+                return merged;
+            };
             list.innerHTML = '';
+            // The actions this board's spaces have, one list in the file's order (no header).
             Object.entries(doc.actions || {}).filter(([id, a]) => a && present.has(id)).forEach(([id, base]) => {
-                const a = Object.assign({}, base);
-                Object.entries(overrides[id] || {}).forEach(([k, v]) => { if (v) a[k] = v; }); // blank override values are left-in templates, not overrides
-                const url = a.icon || '';
-                const row = document.createElement('div');
-                row.className = 'game-board-key-row';
-                const slot = document.createElement('span');
-                slot.className = 'game-board-key-icon-slot' + (url ? '' : ' is-placeholder');
-                if (url) {
-                    const img = document.createElement('img');
-                    img.className = 'game-board-key-icon';
-                    img.alt = '';
-                    img.src = url;
-                    img.onerror = () => { img.remove(); slot.classList.add('is-placeholder'); };
-                    slot.appendChild(img);
-                }
-                const text = document.createElement('div');
-                text.className = 'game-board-key-text';
-                const name = document.createElement('p');
-                name.className = 'game-board-key-name';
-                name.textContent = fill(a.name);
-                const desc = document.createElement('p');
-                desc.className = 'game-board-key-desc';
-                desc.textContent = fill(a.desc);
-                text.appendChild(name);
-                text.appendChild(desc);
-                row.appendChild(slot);
-                row.appendChild(text);
-                list.appendChild(row);
+                list.appendChild(boardKeyCard(resolve(id, base), fill));
             });
+            // Gate Markers: a second list with its own header, laid out the same way. There is nothing in a board's data to say
+            // which ones a map has, so an entry that is only for some maps names them ("regions": ["kanto"]); no list = every map.
+            const gates = doc.gateMarkers || {};
+            const gateEntries = Object.entries(gates.entries || {}).filter(([id, g]) => g && (!Array.isArray(g.regions) || g.regions.includes(region)));
+            if (gateEntries.length) {
+                const h = document.createElement('div');
+                h.className = 'game-section-header game-board-key-header';
+                h.textContent = gates.header || 'Gate Markers';
+                list.appendChild(h);
+                gateEntries.forEach(([id, base]) => list.appendChild(boardKeyCard(resolve(id, base), fill)));
+            }
             if (!list.children.length) {
                 const p = document.createElement('p');
                 p.className = 'game-board-key-status';
