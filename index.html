@@ -8219,7 +8219,7 @@
         }
         .game-safari-token img { width: 250px; max-width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; }
         /* Battle Frontier prompts and the Legendary item chooser -- see boardFrontierShow()/boardFrontierOpenItemPicker(). */
-        #game-frontier-overlay, #game-frontier-pick-overlay {
+        #game-frontier-overlay, #game-frontier-pick-overlay, #game-pvp-overlay {
             display: none;
             position: absolute;
             inset: 0;
@@ -8230,8 +8230,8 @@
             padding: 20px;
             box-sizing: border-box;
         }
-        #game-frontier-overlay.visible, #game-frontier-pick-overlay.visible { display: flex; }
-        #game-frontier-overlay .game-confirm-card, #game-frontier-pick-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
+        #game-frontier-overlay.visible, #game-frontier-pick-overlay.visible, #game-pvp-overlay.visible { display: flex; }
+        #game-frontier-overlay .game-confirm-card, #game-frontier-pick-overlay .game-confirm-card, #game-pvp-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
         .game-frontier-choices { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 8px 0 4px; }
         /* A level-up choice: the Pok\u00e9mon's read-only slot card above its "Lv N \u2192 N+1" label, the whole thing one button. */
         .game-frontier-level-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px; font: inherit; color: inherit; background: rgba(255, 255, 255, 0.06); border: 2px solid rgba(255, 255, 255, 0.25); border-radius: 12px; cursor: pointer; }
@@ -16834,6 +16834,16 @@
                 <div class="game-save-slot-actions">
                     <button class="filter-btn exclude game-frontier-skip-btn" type="button">Skip the item</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Battle a Player: the challenge, as the other player sees it (Accept / Decline) and as the challenger sees it
+             (Cancel) -- see boardPvpRender() in the script. -->
+        <div id="game-pvp-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-pvp-title">Battle</p>
+                <p class="game-confirm-subtext" id="game-pvp-text"></p>
+                <div class="game-catch-actions" id="game-pvp-actions"></div>
             </div>
         </div>
 
@@ -43456,6 +43466,8 @@
                     boardHandleSafariSettle(conn.peer, data);
                 } else if (data.type === 'board-frontier-draw' && typeof data.color === 'string') {
                     boardHandleFrontierDraw(conn.peer, data);
+                } else if (typeof data.type === 'string' && data.type.indexOf('board-pvp-') === 0 && typeof data.to === 'string') {
+                    boardPvpRoute(Object.assign({}, data, { from: conn.peer })); // `from` comes from the connection, never from the message
                 } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
                     hostApplyDraw(data.deck, conn.peer);
                 } else if (data.type === 'deck-gain-reward' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -44366,6 +44378,7 @@
             delete lobbyState.starterChosen[peerId];
             releaseMusicDuck(peerId); // a guest who drops mid-jingle shouldn't leave the music ducked
             clearBattleArenaPlacementFor(peerId);
+            try { boardPvpPeerDropped(peerId); } catch (err) { /* the board code isn't set up */ } // a pending battle challenge with them is cancelled
             // Trade a Pok\u00e9mon -- if this peer was mid-trade with anyone
             // (see tradePairs' own comment for why the Host tracks this
             // at all), that partner has no other way to find out this
@@ -45002,7 +45015,7 @@
         function boardDeliverLanding(info) {
             if (!boardCtrl || !info || !info.space) return;
             const buttons = [];
-            let text;
+            let text, plainSpace = false;
             if (info.kind === 'event') {
                 text = 'Event space \u2014 draw an Event card?';
                 buttons.push({ id: 'draw', label: 'Draw Event Card' }, { id: 'skip', label: 'Not now' });
@@ -45048,9 +45061,14 @@
                 });
                 text = (info.space.label || 'This location') + (parts.length ? ' \u2014 ' + parts.join(' \u00b7 ') : '');
             } else {
-                return;
+                // A plain space has no prompt of its own, but another player's marker here still offers Battle / Trade.
+                if (!boardPlayerActionButtons(info).length) return;
+                plainSpace = true;
+                text = (info.space.label || 'This space') + '.';
             }
             if (info.alsoHere && info.alsoHere.length) text += ' Also here: ' + info.alsoHere.join(', ') + '.';
+            boardPlayerActionButtons(info).forEach(b => buttons.push(b)); // Battle / Trade with another player on this space
+            if (plainSpace) buttons.push({ id: 'skip', label: 'Not now' });
             (info.homeOptions || []).forEach(o => buttons.push({ id: 'home:' + o.id, label: 'Set Current Home: ' + o.label + (o.how ? ' (' + o.how + ')' : '') }));
             if (!buttons.length) buttons.push({ id: 'skip', label: 'OK' });
             boardCtrl.showAction({ text, buttons, info });
@@ -45093,6 +45111,11 @@
                 boardDeliverLanding(info);
             } else if (id.startsWith('bf-color:')) {
                 boardFrontierChooseColor(id.slice(9), info);
+            } else if (id === 'pvp:battle' || id === 'pvp:trade') {
+                boardPlayerAction(id.slice(4), info);
+            } else if (id.startsWith('pvp-with:')) { // 'pvp-with:<battle|trade>:<player id>'
+                const rest = id.slice(9), cut = rest.indexOf(':');
+                boardPlayerActionStart(rest.slice(0, cut), rest.slice(cut + 1));
             } else if (id.startsWith('home:')) {
                 const city = id.slice(5);
                 if (lobbyState.role === 'guest') boardSend({ type: 'board-sethome', city });
@@ -45968,6 +45991,183 @@
             expanded.forEach(el => el.classList.remove('is-expanded'));
         });
 
+        // ---- Player actions: Battle a Player / Trade with a Player ----
+        // Universal actions, offered on any space where another player's marker is also standing (the landing info's alsoHereIds).
+        // Either one is an invitation the other player may accept or decline; with three or more players on the space the
+        // initiating player first chooses who.
+        //   Trade: hands straight to the Team Tracker's own trade (startTradeInvite()), flagged as coming from the board so both
+        //     devices are taken to the Team screen, where that trade's prompts live.
+        //   Battle: a board-pvp-* invitation, relayed through the Host the way trade-* messages are (the Host also checks the two
+        //     markers really share a space). Once accepted, the challenger is taken to the Battle Arena's Attacker picker and the
+        //     other player to its Defender picker -- the Arena already runs a battle between two players' own Pok\u00e9mon.
+        let boardPvp = null;           // this device's one pending challenge: { partnerId, partnerName, incoming }
+        let boardPvpPairs = new Map(); // Host only: player id <-> the id they have a challenge pending with (so a drop can cancel it)
+
+        function boardPlayerName(id) {
+            const p = lobbyState.players.find(q => q.id === id);
+            return (p && p.name) || 'Trainer';
+        }
+        // The other players on this space who are still in the game.
+        function boardPlayerOthersHere(info) {
+            const myId = getMyLobbyPlayerId() || 'host';
+            return ((info && info.alsoHereIds) || [])
+                .filter(o => o && o.id !== myId && lobbyState.players.some(p => p.id === o.id))
+                .map(o => ({ id: o.id, name: boardPlayerName(o.id) }));
+        }
+        // The two buttons added to a landing prompt (none when playing solo or alone on the space).
+        function boardPlayerActionButtons(info) {
+            if (lobbyState.role === null || !info || info.kind === 'encounter') return [];
+            const others = boardPlayerOthersHere(info);
+            if (!others.length) return [];
+            const one = others.length === 1 ? others[0].name : null;
+            return [
+                { id: 'pvp:battle', label: one ? 'Battle ' + one : 'Battle a Player' },
+                { id: 'pvp:trade', label: one ? 'Trade with ' + one : 'Trade with a Player' },
+            ];
+        }
+        // A button was pressed: one other player is chosen automatically, several are asked.
+        function boardPlayerAction(kind, info) {
+            if (isActiveSaveReadOnly() || !boardCtrl) return;
+            const others = boardPlayerOthersHere(info);
+            if (!others.length) { showGameToast('No other player is on this space any more.'); return; }
+            if (others.length === 1) { boardPlayerActionStart(kind, others[0].id); return; }
+            boardCtrl.showAction({
+                text: kind === 'battle' ? 'Who do you want to battle?' : 'Who do you want to trade with?',
+                buttons: others.map(o => ({ id: 'pvp-with:' + kind + ':' + o.id, label: o.name })).concat([{ id: 'skip', label: 'Never mind' }]),
+                info,
+            });
+        }
+        function boardPlayerArenaBusy() {
+            const taken = ['attacker', 'defender'].some(slot => isArenaSlotReplaceBlockedForMe(slot) || getBattleSlotReplaceDescription(slot));
+            if (taken) showGameToast('The Battle Arena is in use \u2014 wait for that battle to finish first.');
+            return taken;
+        }
+        function boardPlayerActionStart(kind, partnerId) {
+            if (isActiveSaveReadOnly() || (kind !== 'battle' && kind !== 'trade')) return;
+            if (!lobbyState.players.some(p => p.id === partnerId)) { showGameToast('That player is no longer in the game.'); return; }
+            const name = boardPlayerName(partnerId);
+            if (kind === 'trade') {
+                // The same conditions as the Team Tracker's own Trade button.
+                if (!isGameOfficiallyStarted()) { showGameToast(PREGAME_TEAM_MESSAGE); return; }
+                if (lobbyState.tradeSession) { showGameToast('You already have a trade in progress.'); return; }
+                openGamePanel();
+                setGameScreen('team');
+                startTradeInvite(partnerId, name, true);
+                return;
+            }
+            if (boardPvp) { showGameToast('You already have a battle challenge waiting for an answer.'); return; }
+            if (lobbyState.tradeSession) { showGameToast('Finish or cancel your trade first.'); return; }
+            if (boardPlayerArenaBusy()) return;
+            boardPvp = { partnerId, partnerName: name, incoming: false };
+            boardPvpSend(partnerId, { type: 'board-pvp-invite', fromName: getOwnLobbyDisplayName() });
+            boardPvpRender();
+        }
+
+        // ---- the challenge messages ----
+        function boardPvpSend(toId, payload) {
+            const msg = Object.assign({ to: toId, from: getMyLobbyPlayerId() || 'host' }, payload);
+            if (lobbyState.role === 'host') boardPvpRoute(msg, null);
+            else if (lobbyState.role === 'guest' && lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send(msg);
+        }
+        // Host: hands a message to whoever it is for (itself, or a Guest's connection). False when they are gone.
+        function boardPvpDeliver(msg) {
+            if (msg.to === 'host') { boardPvpReceive(msg); return true; }
+            const entry = lobbyState.connections.get(msg.to);
+            if (entry && entry.conn && entry.conn.open) { entry.conn.send(msg); return true; }
+            return false;
+        }
+        function boardPvpBounce(invite, reason) { // tells the challenger no, on the other player's behalf
+            boardPvpDeliver({ type: 'board-pvp-response', to: invite.from, from: invite.to, accepted: false, reason });
+        }
+        // Host: every board-pvp-* message passes through here, from a Guest (with `from` set from its connection, never trusted
+        // from the message) or from the Host's own player.
+        function boardPvpRoute(msg) {
+            if (msg.type === 'board-pvp-invite') {
+                const a = boardCtrl && boardCtrl.where(msg.from), b = boardCtrl && boardCtrl.where(msg.to);
+                if (a && b && a !== b) { boardPvpBounce(msg, 'is no longer on your space'); return; }
+                if (boardPvpPairs.has(msg.from) || boardPvpPairs.has(msg.to)) { boardPvpBounce(msg, 'is busy right now'); return; }
+                boardPvpPairs.set(msg.from, msg.to);
+                boardPvpPairs.set(msg.to, msg.from);
+                if (!boardPvpDeliver(msg)) {
+                    boardPvpPairs.delete(msg.from);
+                    boardPvpPairs.delete(msg.to);
+                    boardPvpBounce(msg, 'is no longer connected');
+                }
+                return;
+            }
+            // a response or a cancel ends the pairing (only if it is the pairing they are in)
+            if (boardPvpPairs.get(msg.from) === msg.to) { boardPvpPairs.delete(msg.from); boardPvpPairs.delete(msg.to); }
+            boardPvpDeliver(msg);
+        }
+        function boardPvpPeerDropped(peerId) { // Host: a player left mid-challenge
+            const partner = boardPvpPairs.get(peerId);
+            boardPvpPairs.delete(peerId);
+            if (!partner) return;
+            boardPvpPairs.delete(partner);
+            boardPvpDeliver({ type: 'board-pvp-cancel', to: partner, from: peerId, reason: 'disconnected' });
+        }
+        // A message addressed to this device.
+        function boardPvpReceive(msg) {
+            if (msg.type === 'board-pvp-invite') {
+                if (isActiveSaveReadOnly() || boardPvp || lobbyState.tradeSession) {
+                    boardPvpSend(msg.from, { type: 'board-pvp-response', accepted: false, reason: 'is busy right now' });
+                    return;
+                }
+                boardPvp = { partnerId: msg.from, partnerName: msg.fromName || boardPlayerName(msg.from), incoming: true };
+                boardPvpRender();
+            } else if (msg.type === 'board-pvp-response') {
+                if (!boardPvp || boardPvp.incoming || boardPvp.partnerId !== msg.from) return;
+                const p = boardPvp;
+                boardPvp = null;
+                boardPvpRender();
+                if (msg.accepted) boardPvpBegin('attacker', p.partnerName);
+                else showGameToast(p.partnerName + ' ' + (msg.reason || 'declined your battle challenge') + '.');
+            } else if (msg.type === 'board-pvp-cancel') {
+                if (!boardPvp || boardPvp.partnerId !== msg.from) return;
+                const p = boardPvp;
+                boardPvp = null;
+                boardPvpRender();
+                showGameToast(p.partnerName + ' ' + (msg.reason || 'withdrew the battle challenge') + '.');
+            }
+        }
+        // Accepted: both players go to the Battle Arena to choose their Pok\u00e9mon -- the challenger the Attacker, the other the Defender.
+        function boardPvpBegin(role, partnerName) {
+            openGamePanel();
+            setGameScreen('battle');
+            if (role === 'attacker') { showGameToast(partnerName + ' accepted! Choose your Attacker.'); openBattleAttackerPicker(); }
+            else { showGameToast('You accepted ' + partnerName + '\u2019s challenge! Choose your Defender.'); openBattleDefenderPicker(); }
+        }
+        function boardPvpRender() {
+            const overlay = document.getElementById('game-pvp-overlay');
+            if (!boardPvp) { overlay.classList.remove('visible'); return; }
+            const p = boardPvp;
+            document.getElementById('game-pvp-title').textContent = 'Battle ' + p.partnerName;
+            document.getElementById('game-pvp-text').textContent = p.incoming ? p.partnerName + ' challenges you to a Battle!' : 'Waiting for ' + p.partnerName + ' to accept\u2026';
+            document.getElementById('game-pvp-actions').innerHTML = p.incoming
+                ? '<button class="filter-btn include game-pvp-accept-btn" type="button">Accept</button><button class="filter-btn exclude game-pvp-decline-btn" type="button">Decline</button>'
+                : '<button class="filter-btn exclude game-pvp-cancel-btn" type="button">Cancel</button>';
+            openGamePanel(); // the board is a main view now, not inside the panel
+            overlay.classList.add('visible');
+        }
+        document.getElementById('game-pvp-overlay').addEventListener('click', (e) => {
+            const p = boardPvp;
+            if (!p) return;
+            if (p.incoming && e.target.closest('.game-pvp-accept-btn')) {
+                boardPvpSend(p.partnerId, { type: 'board-pvp-response', accepted: true });
+                boardPvp = null;
+                boardPvpRender();
+                boardPvpBegin('defender', p.partnerName);
+            } else if (p.incoming && e.target.closest('.game-pvp-decline-btn')) {
+                boardPvpSend(p.partnerId, { type: 'board-pvp-response', accepted: false });
+                boardPvp = null;
+                boardPvpRender();
+            } else if (!p.incoming && e.target.closest('.game-pvp-cancel-btn')) {
+                boardPvpSend(p.partnerId, { type: 'board-pvp-cancel' });
+                boardPvp = null;
+                boardPvpRender();
+            }
+        });
+
         // --- the board view (#board-view) ---
         // A second main view next to the gallery (see body.board-mode in the CSS), toggled by the Game panel's
         // "Game Board" tile. The board is built once and stays mounted while the gallery is showing, so switching
@@ -46156,7 +46356,7 @@
             };
             list.innerHTML = '';
             // The actions this board's spaces have, one list in the file's order (no header).
-            Object.entries(doc.actions || {}).filter(([id, a]) => a && present.has(id)).forEach(([id, base]) => {
+            Object.entries(doc.actions || {}).filter(([id, a]) => a && (a.universal === true || present.has(id))).forEach(([id, base]) => {
                 list.appendChild(boardKeyCard(resolve(id, base), fill));
             });
             // Gate Markers: a second list with its own header, laid out the same way. There is nothing in a board's data to say
@@ -46340,14 +46540,14 @@
         // at a time (enforced by the button/overlay never offering this
         // while tradeSession is already set), so no queuing to worry
         // about.
-        function startTradeInvite(partnerId, partnerName) {
+        function startTradeInvite(partnerId, partnerName, fromBoard) {
             if (lobbyState.tradeSession) return;
             lobbyState.tradeSession = {
                 partnerId, partnerName, incoming: false, accepted: false,
                 mySelection: null, partnerSelection: null,
                 myConfirmed: false, partnerConfirmed: false,
             };
-            sendTradeMessage(partnerId, { type: 'trade-invite', fromName: getOwnLobbyDisplayName() });
+            sendTradeMessage(partnerId, { type: 'trade-invite', fromName: getOwnLobbyDisplayName(), board: !!fromBoard }); // board: started from the game board (see boardPlayerActionStart())
             renderTradeOverlay();
         }
 
@@ -46369,6 +46569,9 @@
                 myConfirmed: false, partnerConfirmed: false,
             };
             renderTradeOverlay();
+            // An invite made from the game board arrives while this player may be looking at the board, with the Game panel
+            // closed -- bring up the Team screen, where the invite's Accept/Decline and the rest of the trade live.
+            if (data.board) { openGamePanel(); setGameScreen('team'); }
         }
 
         // #game-team-trade-invite-overlay's own Accept/Decline buttons.
@@ -47126,6 +47329,8 @@
                     boardReportCaught(true);
                 } else if (data.type === 'board-landing' && data.info) {
                     boardDeliverLanding(data.info);
+                } else if (typeof data.type === 'string' && data.type.indexOf('board-pvp-') === 0) {
+                    boardPvpReceive(data);
                 } else if (data.type === 'board-frontier-drawn' && typeof data.color === 'string') {
                     const cb = boardFrontierDrawCb;
                     boardFrontierDrawCb = null;
