@@ -46047,8 +46047,8 @@
         }
         // ---- Explore Actions screen: what each action on this board's spaces does ----
         // The text, order and icons live in <BOARD_DIR>board-actions.json (its "_about" line explains the shape), not in this page:
-        // one entry per kind of action or space, a per-region override block for map-specific icons and wording, and only the
-        // actions this region's board really has are listed.
+        // one entry per kind of action (listed in the file's order, no sections), a per-region override block for map-specific
+        // icons and wording, and only the actions this region's board really has are listed.
         var boardActionsDocPromise = null;
         function boardFetchActionsDoc() {
             if (!boardActionsDocPromise) {
@@ -46072,13 +46072,10 @@
             for (const [t, def] of Object.entries(BOARD_SERVICE_ACTIONS)) if (def.legacy.test(text)) return t;
             return /^\s*Gain Item\s*\(.+\)\s*$/i.test(text) ? 'gain-item' : null;
         }
-        // Every action id and kind of space (catch / event / city) a board's data contains.
+        // Every action id a board's data contains.
         function boardActionsOnBoard(d) {
             const ids = new Set();
             ((d && d.spaces) || []).forEach(sp => {
-                if (sp.type === 'catch') ids.add('catch-space');
-                else if (sp.type === 'event') ids.add('event-space');
-                else if (sp.type === 'city') ids.add('city-space');
                 (sp.actions || []).forEach(a => { const id = boardActionIdOf(a); if (id) ids.add(id); });
             });
             return ids;
@@ -46114,43 +46111,35 @@
             const overrides = (doc.regions && doc.regions[region]) || {};
             const fill = text => String(text == null ? '' : text).replace(/\{(\w+)\}/g, (m, k) => (k in tokens ? tokens[k] : m));
             list.innerHTML = '';
-            (doc.sections || []).forEach(sec => {
-                const items = Object.entries(doc.actions || {}).filter(([id, a]) => a && a.section === sec.id && present.has(id));
-                if (!items.length) return;
-                const h = document.createElement('div');
-                h.className = 'game-section-header game-board-key-header';
-                h.textContent = sec.header || '';
-                list.appendChild(h);
-                items.forEach(([id, base]) => {
-                    const a = Object.assign({}, base);
-                    Object.entries(overrides[id] || {}).forEach(([k, v]) => { if (v) a[k] = v; }); // blank override values are left-in templates, not overrides
-                    const url = a.icon || '';
-                    const row = document.createElement('div');
-                    row.className = 'game-board-key-row';
-                    const slot = document.createElement('span');
-                    slot.className = 'game-board-key-icon-slot' + (url ? '' : ' is-placeholder');
-                    if (url) {
-                        const img = document.createElement('img');
-                        img.className = 'game-board-key-icon';
-                        img.alt = '';
-                        img.src = url;
-                        img.onerror = () => { img.remove(); slot.classList.add('is-placeholder'); };
-                        slot.appendChild(img);
-                    }
-                    const text = document.createElement('div');
-                    text.className = 'game-board-key-text';
-                    const name = document.createElement('p');
-                    name.className = 'game-board-key-name';
-                    name.textContent = fill(a.name);
-                    const desc = document.createElement('p');
-                    desc.className = 'game-board-key-desc';
-                    desc.textContent = fill(a.desc);
-                    text.appendChild(name);
-                    text.appendChild(desc);
-                    row.appendChild(slot);
-                    row.appendChild(text);
-                    list.appendChild(row);
-                });
+            Object.entries(doc.actions || {}).filter(([id, a]) => a && present.has(id)).forEach(([id, base]) => {
+                const a = Object.assign({}, base);
+                Object.entries(overrides[id] || {}).forEach(([k, v]) => { if (v) a[k] = v; }); // blank override values are left-in templates, not overrides
+                const url = a.icon || '';
+                const row = document.createElement('div');
+                row.className = 'game-board-key-row';
+                const slot = document.createElement('span');
+                slot.className = 'game-board-key-icon-slot' + (url ? '' : ' is-placeholder');
+                if (url) {
+                    const img = document.createElement('img');
+                    img.className = 'game-board-key-icon';
+                    img.alt = '';
+                    img.src = url;
+                    img.onerror = () => { img.remove(); slot.classList.add('is-placeholder'); };
+                    slot.appendChild(img);
+                }
+                const text = document.createElement('div');
+                text.className = 'game-board-key-text';
+                const name = document.createElement('p');
+                name.className = 'game-board-key-name';
+                name.textContent = fill(a.name);
+                const desc = document.createElement('p');
+                desc.className = 'game-board-key-desc';
+                desc.textContent = fill(a.desc);
+                text.appendChild(name);
+                text.appendChild(desc);
+                row.appendChild(slot);
+                row.appendChild(text);
+                list.appendChild(row);
             });
             if (!list.children.length) {
                 const p = document.createElement('p');
