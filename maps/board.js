@@ -11,7 +11,7 @@
                                     list of URLs to try (the first that loads is used); if none load, the name is written instead
             showMarkers          -- default true; false draws no space shapes, labels, text, paths or lock icons (the map art
                                     carries them) -- only player tokens, home markers and the yellow drop highlight
-            onLanding(info)      -- host/solo: a player's move ended; info = {player,space,kind,token,boss,alsoHere,homeOptions}
+            onLanding(info)      -- host/solo: a player's move ended; info = {player,space,kind,token,boss,alsoHere [names of the other players on the space],alsoHereIds [the same players as {id,name}],homeOptions}
                                     kind 'catch' = a wild Pokémon is here and NOT yet revealed (token is null unless it was
                                     already face-up); the player answers with message {type:'board-encounter'} to reveal it,
                                     which comes back as kind 'encounter' (token revealed)
@@ -26,7 +26,7 @@
                shows more/less of itself, and the map is never allowed to get shorter than the frame; off (default): refit as before.
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
    Host only: poolList(color) / takeFromPool(color,name) / settlePoolToken(name,'caught'|'returned') [Safari Zone: pick a token out
-   of a pool, then keep it (caught) or put it back], drawFromPool(color) [Battle Frontier: take a RANDOM token out of a pool, returns its name or null; give it back with settlePoolToken(name,'returned')], movePlayer(playerId, spaceIdOrLabel|'@home') [moves a marker without a landing prompt ('@home' = their Current Home); returns the space's label, or '' if it could not], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
+   of a pool, then keep it (caught) or put it back], where(playerId) [the id of the space a player's marker is on, or null -- the Host uses it to check two players really share a space], drawFromPool(color) [Battle Frontier: take a RANDOM token out of a pool, returns its name or null; give it back with settlePoolToken(name,'returned')], movePlayer(playerId, spaceIdOrLabel|'@home') [moves a marker without a landing prompt ('@home' = their Current Home); returns the space's label, or '' if it could not], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
    for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
@@ -187,6 +187,7 @@ function takeFromPool(c,n){if(mode!=='host'||!pools[c])return false;releaseStale
 // Battle Frontier: a random token of colour c. It is held (out of the pool) for the whole Battle, so its hold is dated two hours
 // ahead -- releaseStale() only gives back tokens held for more than ten minutes, which is right for a Safari attempt but would
 // put a Defender back in the pool while it is still in the Arena.
+function where(p){return mode==='host'&&pos[p]!==undefined?pos[p]:null}
 function drawFromPool(c){if(mode!=='host'||!pools[c])return null;releaseStale();const a=pools[c];if(!a.length)return null;const n=a.splice(Math.floor(Math.random()*a.length),1)[0];held.set(n,Date.now()+72e5);log(`host: ${n} drawn from the ${c} pool (Battle Frontier)`);return n}
 // Moves a player's marker straight to a space (an id, or its label such as 'Olivine City') with no landing prompt -- a lost Battle
 // sends the player home. Returns the label of the space it landed on, or '' when nothing moved.
@@ -228,7 +229,7 @@ function hostMove(p,to){const prev=pos[p];log(`${PL.find(x=>x.id===p).name} → 
 function landEvent(p,id,passed,here){const s=get(id),homeOpts=[...passed.map(c=>({id:c,label:get(c).label||c,how:'passed through'})),...(s.type==='city'?[{id,label:s.label||id,how:''}]:[])].filter(o=>home[p]!==o.id);
  pendingHome[p]=homeOpts.map(o=>o.id);pendingEnc[p]=null;let kind=(s.type==='city'||s.type==='special')?s.type:s.type==='event'?'event':'none';const o=st[id];
  if(s.type==='catch'&&o){if(o.empty)kind='empty';else{kind='catch';pendingEnc[p]=id}} // nothing is revealed until the player chooses to encounter it
- opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind,token:(kind==='catch'&&o.revealed)?o.token:null,boss:kind==='catch'&&o.revealed&&!!o.boss,alsoHere:here,homeOptions:homeOpts})}
+ opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind,token:(kind==='catch'&&o.revealed)?o.token:null,boss:kind==='catch'&&o.revealed&&!!o.boss,alsoHere:here,alsoHereIds:PL.filter(q=>q.id!==p&&pos[q.id]===id).map(q=>({id:q.id,name:q.name})),homeOptions:homeOpts})}
 // The player chose to encounter the wild Pokémon on the space they are standing on: only now is it revealed.
 function acceptEncounter(p){const id=pendingEnc[p];if(!id||pos[p]!==id)return false;const o=st[id];if(!o||o.empty||!o.token)return false;pendingEnc[p]=null;
  if(!o.revealed){o.revealed=true;log(`host: reveal ${id} (${o.token}) to everyone`);snapshot()}
@@ -385,7 +386,7 @@ return{
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
  restoreSnapshot,
  setCaught,exportState,restoreState,adoptPlayer,
- poolList,takeFromPool,settlePoolToken,drawFromPool,movePlayer,
+ poolList,takeFromPool,settlePoolToken,drawFromPool,movePlayer,where,
  fit:()=>fitView(),
  setKeepScale(on){keepScale=!!on;updEA();Z=clampZ(Z);clampView();applyView()},
  restoreView,
