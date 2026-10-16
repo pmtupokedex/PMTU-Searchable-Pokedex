@@ -21321,7 +21321,7 @@
             const sendToBattleBannerText = document.getElementById('game-team-send-to-battle-banner-text');
             if (sendToBattleBannerText) {
                 const targetLabel = teamSendToBattleTargetSlot === 'attacker' ? 'Attacker' : teamSendToBattleTargetSlot === 'defender' ? 'Defender' : '';
-                sendToBattleBannerText.textContent = (teamSendToBattleFaintSlot
+                sendToBattleBannerText.textContent = (teamSendToBattleNote ? teamSendToBattleNote : teamSendToBattleFaintSlot
                     ? `Your Pok\u00e9mon fainted! Tap a Pok\u00e9mon on your team to send in as your new ${targetLabel}.`
                     : targetLabel
                     ? `Tap a Pok\u00e9mon on your team to send it to the Battle Arena as the ${targetLabel}.`
@@ -21961,6 +21961,10 @@
         // ends the mode, same as teamSendToBattleTargetSlot.
         let teamSendToBattleFaintSlot = null;
 
+        // Set (alongside teamSendToBattleTargetSlot) by a Battle a Player challenge -- see boardPvpChoose()/boardPvpDefend() -- to
+        // replace the banner's wording; cleared by every path that ends the mode, same as teamSendToBattleFaintSlot.
+        let teamSendToBattleNote = null;
+
         // Which roster index the slot-choice overlay above is currently
         // asking about -- set the moment a slot tap opens it, read (and
         // cleared) the moment Attacker or Defender is actually chosen.
@@ -22192,10 +22196,14 @@
         // answering Attacker/Defender/Cancel on it) -- same "one place
         // unwinds everything" shape as exitTeamReleaseMode().
         function exitTeamSendToBattleMode() {
-            const cameFromArena = teamSendToBattleTargetSlot !== null;
+            // Cancelling while setting up a Battle a Player challenge calls it off; that mode started from the Team Tracker's own
+            // flow, not the Arena, so the player stays here rather than being sent back to the Arena.
+            const calledOffChallenge = boardPvpChooserClosed();
+            const cameFromArena = teamSendToBattleTargetSlot !== null && !calledOffChallenge;
             teamSendToBattleModeActive = false;
             teamSendToBattleTargetSlot = null;
             teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
             closeBattleSlotChoiceOverlay();
             renderTeamGrid();
             // Cancel after starting from the arena's Choose button goes
@@ -22301,6 +22309,7 @@
                 closeBattleSlotChoiceOverlay();
                 if (slot === 'attacker') setBattleAttackerIndex(index);
                 else setBattleDefenderIndex(index);
+                boardPvpSentOut(slot); // a Battle a Player challenger's Attacker is what the other player was waiting for
                 setGameScreen('battle');
             });
         }
@@ -41695,9 +41704,11 @@
                     // been made -- either way, this mode only makes
                     // sense while still looking at Team Tracker, same
                     // reasoning as teamReleaseModeActive just above.
+                    boardPvpChooserClosed(); // leaving mid-pick calls a Battle a Player challenge off (a completed send has already cleared it)
                     teamSendToBattleModeActive = false;
                     teamSendToBattleTargetSlot = null;
                     teamSendToBattleFaintSlot = null;
+                    teamSendToBattleNote = null;
                     renderTeamGrid();
                 }
                 // Belt-and-suspenders alongside
@@ -45998,9 +46009,17 @@
         //   Trade: hands straight to the Team Tracker's own trade (startTradeInvite()), flagged as coming from the board so both
         //     devices are taken to the Team screen, where that trade's prompts live.
         //   Battle: a board-pvp-* invitation, relayed through the Host the way trade-* messages are (the Host also checks the two
-        //     markers really share a space). Once accepted, the challenger is taken to the Battle Arena's Attacker picker and the
-        //     other player to its Defender picker -- the Arena already runs a battle between two players' own Pok\u00e9mon.
-        let boardPvp = null;           // this device's one pending challenge: { partnerId, partnerName, incoming }
+        //     markers really share a space). The challenge goes in three steps:
+        //       1. the other player accepts (or declines);
+        //       2. the CHALLENGER is taken to their Team Tracker to send out a Pok\u00e9mon first, as the Arena's Attacker, while the other
+        //          player's window stays up, saying they are waiting (the Team Tracker's own send-to-battle mode does the choosing, the same
+        //          one the Arena's Choose Pok\u00e9mon button and a fainted Pok\u00e9mon's replacement use);
+        //       3. once the challenger has sent one out they land on the Battle Arena, and the other player is taken to THEIR Team Tracker
+        //          to choose a Defender, with the challenger's Pok\u00e9mon in the opponent preview at the bottom.
+        //     Backing out at any point (or a disconnect) calls the challenge off for the other player.
+        let boardPvp = null;           // this device's one pending challenge: { partnerId, partnerName, incoming, phase } -- phase: 'invited' (an invite is
+                                       // out / in, unanswered), 'choosing' (the challenger is picking a Pok\u00e9mon), 'waiting' (the other player has accepted
+                                       // and is waiting for the challenger's Pok\u00e9mon)
         let boardPvpPairs = new Map(); // Host only: player id <-> the id they have a challenge pending with (so a drop can cancel it)
 
         function boardPlayerName(id) {
@@ -46057,8 +46076,11 @@
             }
             if (boardPvp) { showGameToast('You already have a battle challenge waiting for an answer.'); return; }
             if (lobbyState.tradeSession) { showGameToast('Finish or cancel your trade first.'); return; }
+            // The challenger sends a Pok\u00e9mon out first, so don't issue a challenge they couldn't follow through on.
+            if (!isGameOfficiallyStarted()) { showGameToast('The Battle Arena unlocks once the host starts the game.'); return; }
+            if (!(((getActiveSaveData().team && getActiveSaveData().team.members) || []).length)) { showGameToast('You have no Pok\u00e9mon on your team to Battle with.'); return; }
             if (boardPlayerArenaBusy()) return;
-            boardPvp = { partnerId, partnerName: name, incoming: false };
+            boardPvp = { partnerId, partnerName: name, incoming: false, phase: 'invited' };
             boardPvpSend(partnerId, { type: 'board-pvp-invite', fromName: getOwnLobbyDisplayName() });
             boardPvpRender();
         }
@@ -46095,7 +46117,10 @@
                 }
                 return;
             }
-            // a response or a cancel ends the pairing (only if it is the pairing they are in)
+            // An acceptance keeps the pairing: it lasts until the challenger has sent a Pok\u00e9mon out ('board-pvp-sent') or someone backs
+            // out, so a disconnect in between can still call the challenge off for the other player.
+            if (msg.type === 'board-pvp-response' && msg.accepted) { boardPvpDeliver(msg); return; }
+            // anything else (a decline, a cancel, the challenger's Pok\u00e9mon being out) ends it (only if it is the pairing they are in)
             if (boardPvpPairs.get(msg.from) === msg.to) { boardPvpPairs.delete(msg.from); boardPvpPairs.delete(msg.to); }
             boardPvpDeliver(msg);
         }
@@ -46113,56 +46138,134 @@
                     boardPvpSend(msg.from, { type: 'board-pvp-response', accepted: false, reason: 'is busy right now' });
                     return;
                 }
-                boardPvp = { partnerId: msg.from, partnerName: msg.fromName || boardPlayerName(msg.from), incoming: true };
+                boardPvp = { partnerId: msg.from, partnerName: msg.fromName || boardPlayerName(msg.from), incoming: true, phase: 'invited' };
                 boardPvpRender();
             } else if (msg.type === 'board-pvp-response') {
-                if (!boardPvp || boardPvp.incoming || boardPvp.partnerId !== msg.from) return;
+                if (!boardPvp || boardPvp.incoming || boardPvp.phase !== 'invited' || boardPvp.partnerId !== msg.from) return;
+                if (msg.accepted) { // step 2: the challenger goes to their Team Tracker to send a Pok\u00e9mon out first
+                    boardPvp.phase = 'choosing';
+                    boardPvpRender();
+                    boardPvpChoose();
+                    return;
+                }
                 const p = boardPvp;
                 boardPvp = null;
                 boardPvpRender();
-                if (msg.accepted) boardPvpBegin('attacker', p.partnerName);
-                else showGameToast(p.partnerName + ' ' + (msg.reason || 'declined your battle challenge') + '.');
+                showGameToast(p.partnerName + ' ' + (msg.reason || 'declined your battle challenge') + '.');
+            } else if (msg.type === 'board-pvp-sent') {
+                // step 3 (the other player's side): the challenger's Pok\u00e9mon is in the Arena, so they choose theirs
+                if (!boardPvp || !boardPvp.incoming || boardPvp.phase !== 'waiting' || boardPvp.partnerId !== msg.from) return;
+                const p = boardPvp;
+                boardPvp = null;
+                boardPvpRender();
+                boardPvpDefend(p.partnerName);
             } else if (msg.type === 'board-pvp-cancel') {
                 if (!boardPvp || boardPvp.partnerId !== msg.from) return;
                 const p = boardPvp;
+                if (p.phase === 'choosing') boardPvpEndSendMode(); // they were mid-pick in the Team Tracker
                 boardPvp = null;
                 boardPvpRender();
                 showGameToast(p.partnerName + ' ' + (msg.reason || 'withdrew the battle challenge') + '.');
             }
         }
-        // Accepted: both players go to the Battle Arena to choose their Pok\u00e9mon -- the challenger the Attacker, the other the Defender.
-        function boardPvpBegin(role, partnerName) {
+        // The challenger, challenge accepted: the Team Tracker's send-to-battle mode aimed at the Attacker half (the same flow as the
+        // Arena's Choose Pok\u00e9mon button). If it can't open -- no Pok\u00e9mon, a read-only save, another Team Tracker mode busy -- there is
+        // nothing to wait for, so the challenge is called off rather than leaving the other player waiting.
+        function boardPvpChoose() {
+            const p = boardPvp;
+            if (!p) return;
             openGamePanel();
-            setGameScreen('battle');
-            if (role === 'attacker') { showGameToast(partnerName + ' accepted! Choose your Attacker.'); openBattleAttackerPicker(); }
-            else { showGameToast('You accepted ' + partnerName + '\u2019s challenge! Choose your Defender.'); openBattleDefenderPicker(); }
+            teamSendToBattleNote = p.partnerName + ' accepted your challenge! Tap a Pok\u00e9mon on your team to send out as your Attacker. Cancelling calls the battle off.';
+            requestBattleChoosePokemon('attacker');
+            if (!teamSendToBattleModeActive) {
+                teamSendToBattleNote = null;
+                boardPvpSend(p.partnerId, { type: 'board-pvp-cancel', reason: 'couldn\u2019t send out a Pok\u00e9mon' });
+                boardPvp = null;
+                boardPvpRender();
+                showGameToast('You couldn\u2019t send out a Pok\u00e9mon, so the battle with ' + p.partnerName + ' was called off.');
+            }
+        }
+        // Called by sendTeamMemberToBattleSlot() the moment a Pok\u00e9mon is sent to an Arena half. The challenger's own Attacker is what
+        // the challenge was waiting for: tell the other player (after the Arena change itself, on the same connection, so the Arena
+        // already shows it when they arrive at their Team Tracker). The send then carries the challenger on to the Battle Arena.
+        function boardPvpSentOut(slot) {
+            const p = boardPvp;
+            if (!p || p.incoming || p.phase !== 'choosing' || slot !== 'attacker') return;
+            boardPvpSend(p.partnerId, { type: 'board-pvp-sent' });
+            boardPvp = null;
+            teamSendToBattleNote = null;
+            boardPvpRender();
+        }
+        // The challenger left the send-to-battle mode without sending anyone (Cancel, or navigating away): the challenge is off.
+        // Returns true when it called one off.
+        function boardPvpChooserClosed() {
+            const p = boardPvp;
+            if (!p || p.incoming || p.phase !== 'choosing') return false;
+            boardPvpSend(p.partnerId, { type: 'board-pvp-cancel', reason: 'called off the battle' });
+            boardPvp = null;
+            boardPvpRender();
+            showGameToast('You called off the battle with ' + p.partnerName + '.');
+            return true;
+        }
+        // The other player backed out while the challenger was still picking: leave the send-to-battle mode where it is (the
+        // Team Tracker), without the trip to the Arena that the mode's own Cancel makes.
+        function boardPvpEndSendMode() {
+            teamSendToBattleModeActive = false;
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            closeBattleSlotChoiceOverlay();
+            renderTeamGrid();
+        }
+        // The other player, the challenger's Pok\u00e9mon now in the Arena: their own Team Tracker, aimed at the Defender half, so the
+        // challenger's Pok\u00e9mon shows in the opponent preview under the banner.
+        function boardPvpDefend(partnerName) {
+            openGamePanel();
+            const sent = getBattleSlotMember('attacker');
+            const sentName = sent ? getBattleMemberDisplay(sent).name : '';
+            teamSendToBattleNote = partnerName + (sentName ? ' sent out ' + sentName + '!' : ' sent out a Pok\u00e9mon!') + ' Tap a Pok\u00e9mon on your team to send in as your Defender.';
+            requestBattleChoosePokemon('defender');
+            if (!teamSendToBattleModeActive) { // it couldn't open: the Arena's own Choose Pok\u00e9mon button is still there
+                teamSendToBattleNote = null;
+                setGameScreen('battle');
+                showGameToast(partnerName + ' sent out a Pok\u00e9mon. Choose your Defender in the Battle Arena.');
+            }
         }
         function boardPvpRender() {
             const overlay = document.getElementById('game-pvp-overlay');
-            if (!boardPvp) { overlay.classList.remove('visible'); return; }
             const p = boardPvp;
+            // the challenger is on the Team Tracker while choosing: no window then
+            if (!p || p.phase === 'choosing') { overlay.classList.remove('visible'); return; }
+            let text, buttons;
+            if (p.incoming && p.phase === 'invited') {
+                text = p.partnerName + ' challenges you to a Battle!';
+                buttons = '<button class="filter-btn include game-pvp-accept-btn" type="button">Accept</button><button class="filter-btn exclude game-pvp-decline-btn" type="button">Decline</button>';
+            } else if (p.incoming) { // accepted: the window stays up until the challenger has sent a Pok\u00e9mon out
+                text = 'Waiting for challenger to send out a Pok\u00e9mon.';
+                buttons = '<button class="filter-btn exclude game-pvp-cancel-btn" type="button">Cancel</button>';
+            } else {
+                text = 'Waiting for ' + p.partnerName + ' to accept\u2026';
+                buttons = '<button class="filter-btn exclude game-pvp-cancel-btn" type="button">Cancel</button>';
+            }
             document.getElementById('game-pvp-title').textContent = 'Battle ' + p.partnerName;
-            document.getElementById('game-pvp-text').textContent = p.incoming ? p.partnerName + ' challenges you to a Battle!' : 'Waiting for ' + p.partnerName + ' to accept\u2026';
-            document.getElementById('game-pvp-actions').innerHTML = p.incoming
-                ? '<button class="filter-btn include game-pvp-accept-btn" type="button">Accept</button><button class="filter-btn exclude game-pvp-decline-btn" type="button">Decline</button>'
-                : '<button class="filter-btn exclude game-pvp-cancel-btn" type="button">Cancel</button>';
+            document.getElementById('game-pvp-text').textContent = text;
+            document.getElementById('game-pvp-actions').innerHTML = buttons;
             openGamePanel(); // the board is a main view now, not inside the panel
             overlay.classList.add('visible');
         }
         document.getElementById('game-pvp-overlay').addEventListener('click', (e) => {
             const p = boardPvp;
             if (!p) return;
-            if (p.incoming && e.target.closest('.game-pvp-accept-btn')) {
+            if (p.incoming && p.phase === 'invited' && e.target.closest('.game-pvp-accept-btn')) {
                 boardPvpSend(p.partnerId, { type: 'board-pvp-response', accepted: true });
-                boardPvp = null;
+                p.phase = 'waiting';
                 boardPvpRender();
-                boardPvpBegin('defender', p.partnerName);
-            } else if (p.incoming && e.target.closest('.game-pvp-decline-btn')) {
+            } else if (p.incoming && p.phase === 'invited' && e.target.closest('.game-pvp-decline-btn')) {
                 boardPvpSend(p.partnerId, { type: 'board-pvp-response', accepted: false });
                 boardPvp = null;
                 boardPvpRender();
-            } else if (!p.incoming && e.target.closest('.game-pvp-cancel-btn')) {
-                boardPvpSend(p.partnerId, { type: 'board-pvp-cancel' });
+            } else if (e.target.closest('.game-pvp-cancel-btn')) { // the challenger before an answer, or the other player while waiting
+                boardPvpSend(p.partnerId, { type: 'board-pvp-cancel', reason: p.incoming ? 'called off the battle' : undefined });
                 boardPvp = null;
                 boardPvpRender();
             }
