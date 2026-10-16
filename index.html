@@ -13246,6 +13246,46 @@
             background: #777;
         }
 
+        /* In the stacked layout (moves column dropped below the info
+           column) the info column would leave its whole right side
+           empty, so Height/Weight pop over into a second column beside
+           the type rows, with Abilities spanning the full width below.
+           A container query on .poke-info-top does the switch because
+           "stacked" is decided by the panel's own width, not the
+           window's: .poke-info-top-left (210px) + 20px gap +
+           .poke-info-top-right (300px) is 530px, so any narrower than
+           that and the flex row wraps. Keep these numbers in step with
+           those flex-basis values. Below ~300px there isn't room for
+           two columns and everything simply stays in one. */
+        .poke-info-top {
+            container: pokeinfo / inline-size;
+        }
+
+        @container pokeinfo (min-width: 300px) and (max-width: 529.98px) {
+            .poke-info-fields {
+                display: grid;
+                grid-template-columns: max-content minmax(0, 1fr);
+                column-gap: 24px;
+                align-items: start;
+            }
+
+            .poke-info-fields-size {
+                grid-column: 2;
+                grid-row: 1;
+            }
+
+            .poke-info-fields-abilities {
+                grid-column: 1 / -1;
+                grid-row: 2;
+            }
+
+            /* "Height"/"Weight" are short, so they don't need the
+               100px the longest type label ("Secondary Type") does. */
+            .poke-info-fields-size .poke-info-label {
+                min-width: 0;
+            }
+        }
+
         /* Two-column top of the General Information tab -- the name/
            types/height/weight/abilities text on the left, the move
            cards (with tappable effect icons) on the right. The right
@@ -13297,7 +13337,7 @@
         }
 
         .pim-move {
-            flex: 1 1 140px;
+            flex: 1 1 135px;
             min-width: 0;
             box-sizing: border-box;
             padding: 6px 8px;
@@ -13402,6 +13442,8 @@
             box-sizing: border-box;
             width: max-content;
             max-width: min(86vw, 520px);
+            max-height: calc(100vh - 6% - 1.75in - 16px);
+            overflow-y: auto;
             padding: 0.7em 1.3em;
             background: rgba(0, 0, 0, 0.85);
             border-radius: 18px;
@@ -13434,6 +13476,20 @@
 
         #effect-toast .eft-desc + .eft-desc {
             margin-top: 0.45em;
+        }
+
+        /* Field Move Effect card shown under the description of a
+           "side": "field" effect. Same rounder corner as every other
+           Field card (.game-team-cards-photo-field). Capped so a tall
+           card can't push the toast off a short screen. */
+        #effect-toast .eft-card {
+            display: block;
+            width: min(240px, 70vw);
+            height: auto;
+            max-height: 45vh;
+            object-fit: contain;
+            margin: 0.6em auto 0;
+            border-radius: 24px;
         }
 
         .poke-info-flavor-section {
@@ -53791,10 +53847,16 @@
                             <span class="poke-info-dex">${escapeHtml(dexRaw)}</span>
                         </div>
                         ${custom.genus ? `<div class="poke-info-genus">${escapeHtml(custom.genus)}</div>` : ''}
-                        ${buildJsonTypeRowsHtml(name)}
+                        <div class="poke-info-fields">
+                        <div class="poke-info-fields-types">${buildJsonTypeRowsHtml(name)}</div>
+                        <div class="poke-info-fields-size">
                         ${heightStr ? `<div class="poke-info-row"><span class="poke-info-label">Height</span>${heightStr}</div>` : ''}
                         ${weightStr ? `<div class="poke-info-row"><span class="poke-info-label">Weight</span>${weightStr}</div>` : ''}
+                        </div>
+                        <div class="poke-info-fields-abilities">
                         ${abilitiesStr ? `<div class="poke-info-row"><span class="poke-info-label">Abilities</span>${abilitiesStr}</div>` : ''}
+                        </div>
+                        </div>
                         </div><div class="poke-info-top-right" data-move-validation="${escapeHtml(name)}"></div></div>
                         ${flavorSectionHtml}
                     `;
@@ -53904,10 +53966,16 @@
                     <span class="poke-info-dex">#${String(dex).padStart(3, '0')}</span>
                 </div>
                 ${genus ? `<div class="poke-info-genus">${escapeHtml(genus)}</div>` : ''}
-                ${buildJsonTypeRowsHtml(name)}
+                <div class="poke-info-fields">
+                <div class="poke-info-fields-types">${buildJsonTypeRowsHtml(name)}</div>
+                <div class="poke-info-fields-size">
                 ${heightStr ? `<div class="poke-info-row"><span class="poke-info-label">Height</span>${heightStr}</div>` : ''}
                 ${weightStr ? `<div class="poke-info-row"><span class="poke-info-label">Weight</span>${weightStr}</div>` : ''}
+                </div>
+                <div class="poke-info-fields-abilities">
                 ${abilitiesStr ? `<div class="poke-info-row"><span class="poke-info-label">Abilities</span>${abilitiesStr}</div>` : ''}
+                </div>
+                </div>
                 </div><div class="poke-info-top-right" data-move-validation="${escapeHtml(name)}"></div></div>
                 ${flavorSectionHtml}
             `;
@@ -54074,9 +54142,20 @@
         // none) and is shown on its own first line; `descs` is one entry
         // per effect, labelled with the effect's name only when a code
         // carries more than one (advdis6).
+        //
+        // `cards` holds the Field Move Effect card image(s) for any
+        // effect whose side is "field": cards.json's card id is the
+        // effect id behind a "field_" prefix (electric_terrain ->
+        // field_electric_terrain). An effect with no such card (Field
+        // Clear) just contributes none.
         function getEffectToastParts(code, effectId) {
             if (!EFFECTS_DATA) return null;
             const effects = EFFECTS_DATA.effects;
+            const fieldCards = ids => ids
+                .filter(id => effects[id] && effects[id].side === 'field')
+                .map(id => CARDS_BY_ID['field_' + id])
+                .filter(card => card && card.imageUrl && card.imageUrl !== 'placeholder')
+                .map(card => ({ url: card.imageUrl, name: card.name }));
             if (code) {
                 const def = EFFECTS_DATA.codes[code];
                 if (!def) return null;
@@ -54090,11 +54169,11 @@
                 const threshold = (def.requiresRoll && def.threshold)
                     ? `You must roll a ${def.threshold} or higher on the Effect Die to gain this Move Effect.`
                     : '';
-                return { threshold, descs };
+                return { threshold, descs, cards: fieldCards(ids) };
             }
             const ef = effects[effectId];
             if (!ef) return null;
-            return { threshold: '', descs: [ef.description || '(no description yet)'] };
+            return { threshold: '', descs: [ef.description || '(no description yet)'], cards: fieldCards([effectId]) };
         }
 
         const effectToast = document.getElementById('effect-toast');
@@ -54108,11 +54187,14 @@
             if (!parts) return;
             effectToast.innerHTML =
                 (parts.threshold ? `<div class="eft-threshold">${escapeHtml(parts.threshold)}</div>` : '')
-                + parts.descs.map(d => `<div class="eft-desc">${escapeHtmlWithLineBreaks(d)}</div>`).join('');
+                + parts.descs.map(d => `<div class="eft-desc">${escapeHtmlWithLineBreaks(d)}</div>`).join('')
+                + (parts.cards || []).map(c => `<img class="eft-card" src="${escapeHtml(c.url)}" alt="${escapeHtml(c.name)}">`).join('');
             effectToast.classList.add('visible');
             // Longer rules text stays up longer (about 3.5s + 40ms per
             // character, capped at 14s); tapping the toast closes it.
-            const chars = parts.threshold.length + parts.descs.reduce((n, d) => n + d.length, 0);
+            // A card image is worth about 3 more seconds of looking.
+            const chars = parts.threshold.length + parts.descs.reduce((n, d) => n + d.length, 0)
+                + (parts.cards || []).length * 75;
             clearTimeout(effectToastTimeout);
             effectToastTimeout = setTimeout(hideEffectToast, Math.min(14000, 3500 + chars * 40));
         }
