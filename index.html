@@ -14765,6 +14765,29 @@
         #game-board-frame:fullscreen { border-radius: 0; }
         #board-fs-exit { display: none; position: absolute; top: 8px; right: 8px; z-index: 5; margin: 0; }
         #game-board-frame:fullscreen #board-fs-exit { display: block; }
+
+        /* Movement roll: the number a player just rolled with the map's Roll button, shown to the whole table in the
+           roller's color. Top-right corner of the map frame (below the Exit fullscreen button when that is showing). White
+           outline-free glyphs would vanish on the map art, so it gets the app's usual black outline: the 8-shadow version
+           here, swapped for a real text-stroke on high-DPI screens in the @media block below (same threshold as the shared list). */
+        #board-roll-display { position: absolute; top: 12px; right: 12px; z-index: 6; display: none; flex-direction: column; align-items: flex-end; pointer-events: none; }
+        #game-board-frame:fullscreen #board-roll-display { top: 56px; }
+        #board-roll-display.visible { display: flex; animation: board-roll-pop 0.28s ease-out; }
+        #board-roll-display.fading { opacity: 0; transition: opacity 0.4s ease; }
+        @keyframes board-roll-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) { #board-roll-display.visible { animation: none; } }
+        #board-roll-num { font-weight: bold; font-size: 72px; line-height: 1; color: #fff;
+            text-shadow: -2px -2px 0 black, 0 -2px 0 black, 2px -2px 0 black, -2px 0 0 black, 2px 0 0 black, -2px 2px 0 black, 0 2px 0 black, 2px 2px 0 black; }
+        #board-roll-note { font-weight: bold; font-size: 16px; color: #fff;
+            text-shadow: -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black, -1px 0 0 black, 1px 0 0 black, -1px 1px 0 black, 0 1px 0 black, 1px 1px 0 black; }
+        #board-roll-note:empty { display: none; }
+        #board-roll-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+        @media (min-resolution: 1.25dppx), (-webkit-min-device-pixel-ratio: 1.25) {
+        @supports (-webkit-text-stroke: 1px black) or (text-stroke: 1px black) {
+            #board-roll-num { text-shadow: none; -webkit-text-stroke: 6px black; text-stroke: 6px black; paint-order: stroke fill; }
+            #board-roll-note { text-shadow: none; -webkit-text-stroke: 3px black; text-stroke: 3px black; paint-order: stroke fill; }
+        }
+        }
     </style>
 </head>
 <body>
@@ -17857,6 +17880,7 @@
         <div id="game-board-frame">
             <div id="game-board-mount"></div>
             <button class="filter-btn" id="board-fs-exit" type="button">Exit fullscreen</button>
+            <div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div>
         </div>
     </div>
 
@@ -28858,6 +28882,8 @@
                         if (!card || !isBattleCardTagged(card)) pickCls = ' pick-dimmed';
                     } else if (catchCardPickActive) {
                         if (!card || !isCatchCardTagged(card)) pickCls = ' pick-dimmed';
+                    } else if (contestDiscardLeft > 0) {
+                        optionsHtml = `<div class="game-hand-card-options-grid game-hand-pick-grid"><button class="filter-btn game-hand-pick-contest-btn" type="button" data-card-id="${escapeHtml(cardId)}">Discard (Contest Hall)</button></div>`;
                     } else if (safariPickActive) {
                         // Safari Zone: only Item cards can be discarded, each with a single option.
                         if (isSafariDiscardEligible(cardId)) {
@@ -35490,6 +35516,7 @@
         // safariPending = { pool, threshold } for the visit in progress. Declared here, next to the catch state, so
         // setGameScreen() can never reach them before they exist.
         let safariPickActive = false;
+        let contestDiscardLeft = 0; // Contest Hall loss penalty: cards still to discard from the hand
         let safariPending = null;
 
         let soloBattleCards = { attacker: null, defender: null };
@@ -43850,6 +43877,12 @@
                     boardHandleSafariSettle(conn.peer, data);
                 } else if (data.type === 'board-frontier-draw' && typeof data.color === 'string') {
                     boardHandleFrontierDraw(conn.peer, data);
+                } else if (data.type === 'board-contest-counts') {
+                    boardHandleContestCounts(conn.peer);
+                } else if (data.type === 'board-contest-draw' && typeof data.color === 'string') {
+                    boardHandleContestDraw(conn.peer, data);
+                } else if (data.type === 'board-roll') {
+                    boardHandleRollFromGuest(conn.peer, data);
                 } else if (typeof data.type === 'string' && data.type.indexOf('board-pvp-') === 0 && typeof data.to === 'string') {
                     boardPvpRoute(Object.assign({}, data, { from: conn.peer })); // `from` comes from the connection, never from the message
                 } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
@@ -45130,6 +45163,7 @@
                 boardConfig = cfg;
                 boardPlayersSig = JSON.stringify(players);
                 boardInstallFsButton();
+                boardInstallRollButton();
                 boardApplyKeepScale();
                 boardCtrl.loadBoard(d, { style: cfg.style });
                 const img = await boardFindImage(d, cfg.style, cfg.region);
@@ -45477,6 +45511,8 @@
                 boardGainItem(decodeURIComponent(id.slice(6)));
             } else if (id.startsWith('sact:')) {
                 boardRunServiceAction(id.slice(5), info);
+            } else if (id.startsWith('cth:')) {
+                boardContestStart(Number(id.slice(4)));
             } else if (id.startsWith('mtd:')) {
                 boardMoveTutorDraw(decodeURIComponent(id.slice(4)));
             } else if (id.startsWith('pcrev:')) {
@@ -45620,6 +45656,7 @@
             'pokemon-center': { name: 'Pok\u00e9mon Center', legacy: /^\s*Pok[e\u00e9]mon\s*Center\s*$/i },
             'department-store': { name: 'Department Store', legacy: /^\s*Dep(?:artmen)?t\.?\s*Store\s*$/i },
             'move-tutor':     { name: 'Move Tutor',     legacy: /^\s*Move\s*Tutor\s*$/i },
+            'contest-hall':   { name: 'Contest Hall',   legacy: /^\s*Contest\s*Hall\s*$/i },
             'safari-zone':    { name: 'Safari Zone',    legacy: /^\s*Safari\s*Zone\s*$/i },
             // The end of the journey. Older maps wrote it as the text "Enter the Hall of Fame".
             'victory':        { name: 'Enter the Hall of Fame', legacy: /^\s*Enter the Hall of Fame\s*$/i },
@@ -45648,6 +45685,7 @@
             else if (type === 'victory') boardEnterHallOfFame();
             else if (type === 'battle-frontier') boardUseBattleFrontier(info);
             else if (type === 'move-tutor') boardUseMoveTutor(info);
+            else if (type === 'contest-hall') boardUseContestHall(info);
         }
 
         // Opens Hand & Decks scrolled to Your Hand -- for every action that puts a card in the player's hand.
@@ -45680,6 +45718,149 @@
             requestDrawCard(deckName);
             boardShowHand();
             showGameToast('Move Tutor: drew a card from the ' + deckName + '.');
+        }
+
+        // ---- Contest Hall: pick a Pokémon on the team, draw a token of its color from the pool, compare d6 + Move strengths ----
+        // Moves come from known_moves only (no Attach cards). A Move with 0 strength, or a manual / derived one (the "*" ones), gains +2.
+        let contestState = null;          // { color, token, mine: {...}, theirs: {...} } for the visit in progress
+        let contestCountsCb = null;       // a guest's pending "how many tokens are in each pool?" request
+        let contestDrawCb = null;         // a guest's pending draw request
+        function boardContestColorOf(name) {
+            const e = POKEMON_BY_NAME[name];
+            const tags = (e && e.tags) || [];
+            if (tags.includes('legendary')) return 'orange';
+            const hits = ['pink', 'green', 'blue', 'yellow', 'red'].filter(c => tags.includes(c));
+            return hits.length === 1 ? hits[0] : null;
+        }
+        function boardContestMoveStrength(moveName) {
+            const e = getBattleMoveEntry(moveName);
+            const a = e && e.attack_strength;
+            if (a && a.mode === 'fixed' && typeof a.value === 'number' && a.value !== 0) return { value: a.value, bonus: false };
+            return { value: 2, bonus: true }; // 0, manual, half-level and derived strengths all count as +2
+        }
+        function boardContestMoves(name) {
+            const e = POKEMON_BY_NAME[name];
+            return (e && Array.isArray(e.known_moves)) ? e.known_moves.slice() : [];
+        }
+        function boardContestScore(name) {
+            const roll = 1 + Math.floor(Math.random() * 6);
+            const moves = boardContestMoves(name).map(m => Object.assign({ name: m }, boardContestMoveStrength(m)));
+            return { name, roll, moves, total: roll + moves.reduce((s, m) => s + m.value, 0) };
+        }
+        function boardContestLine(s) {
+            const parts = s.moves.map(m => m.name + ' ' + m.value + (m.bonus ? '*' : ''));
+            return s.name + ': ' + s.roll + (parts.length ? ' + ' + parts.join(' + ') : '') + ' = ' + s.total;
+        }
+        function boardContestRequestCounts(cb) {
+            if (lobbyState.role === 'guest') { contestCountsCb = cb; boardSend({ type: 'board-contest-counts' }); return; }
+            boardEnsureBoard().then(c => { const o = {}; BOARD_FRONTIER_COLORS.forEach(k => { o[k.id] = c.poolList(k.id).length; }); cb(o); }).catch(() => cb({}));
+        }
+        function boardContestRequestDraw(color, cb) {
+            if (lobbyState.role === 'guest') { contestDrawCb = cb; boardSend({ type: 'board-contest-draw', color }); return; }
+            boardEnsureBoard().then(c => cb(c.drawFromPool(color) || null)).catch(() => cb(null));
+        }
+        function boardHandleContestCounts(peerId) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            boardEnsureBoard().then(c => { const o = {}; BOARD_FRONTIER_COLORS.forEach(k => { o[k.id] = c.poolList(k.id).length; }); boardSendToPeer(peerId, { type: 'board-contest-counts-result', counts: o }); }).catch(() => {});
+        }
+        function boardHandleContestDraw(peerId, data) {
+            const color = String(data.color || '');
+            const reply = name => boardSendToPeer(peerId, { type: 'board-contest-drawn', color, name });
+            if (!getRegionMapSettingsForActiveSave().enabled || !BOARD_FRONTIER_COLORS.some(c => c.id === color)) { reply(null); return; }
+            boardEnsureBoard().then(c => reply(c.drawFromPool(color) || null)).catch(() => reply(null));
+        }
+
+        function boardUseContestHall(info) {
+            if (isActiveSaveReadOnly()) return;
+            if (!boardCtrl) return;
+            if (!Object.keys(MOVES_BY_NAME || {}).length) { showGameToast('Move data has not loaded yet — try again in a moment.'); return; }
+            const members = getActiveSaveData().team.members || [];
+            if (!members.some(m => m)) { showGameToast('You need a Pokémon on your team to enter a Contest.'); return; }
+            boardContestRequestCounts(counts => {
+                const buttons = [];
+                members.forEach((m, i) => {
+                    if (!m) return;
+                    const name = getBattleMemberDisplay(m).name || m.name;
+                    const color = boardContestColorOf(name);
+                    if (!color || !(counts[color] > 0)) return; // no token of its color left to face
+                    buttons.push({ id: 'cth:' + i, label: name + ' (' + boardFrontierColorLabel(color) + ')' });
+                });
+                if (!buttons.length) { showGameToast('No Pokémon on your team can enter — the pool for each of their colors is empty.'); return; }
+                buttons.push({ id: 'back', label: 'Back' });
+                boardCtrl.showAction({ text: 'Contest Hall — choose a Pokémon from your team. It will face a random token of its color.', buttons, info });
+            });
+        }
+        function boardContestStart(index) {
+            if (isActiveSaveReadOnly()) return;
+            const m = getTeamSlotMember(index);
+            if (!m) return;
+            const myName = getBattleMemberDisplay(m).name || m.name;
+            const color = boardContestColorOf(myName);
+            if (!color) { showGameToast(myName + ' has no color in the Pokémon data.'); return; }
+            boardContestRequestDraw(color, token => {
+                if (!token) { showGameToast('No ' + boardFrontierColorLabel(color) + ' Pokémon are left in the pool.'); return; }
+                let mine, theirs, rerolls = -1;
+                do { mine = boardContestScore(myName); theirs = boardContestScore(token); rerolls++; } while (mine.total === theirs.total && rerolls < 100);
+                contestState = { color, token, mine, theirs, won: mine.total > theirs.total };
+                boardContestShowResult(rerolls);
+            });
+        }
+        function boardContestShowResult(rerolls) {
+            const s = contestState;
+            if (!s) return;
+            const head = (s.won ? 'You won the Contest!' : 'You lost the Contest.');
+            let text = boardContestLine(s.mine) + '\n' + boardContestLine(s.theirs) + '\n(* = +2 bonus)' + (rerolls > 0 ? '\nTied ' + rerolls + (rerolls === 1 ? ' time' : ' times') + ' — rolled again.' : '');
+            const btn = (act, label) => `<button class="filter-btn include game-contest-btn" type="button" data-act="${act}">${label}</button>`;
+            if (s.won) {
+                const rib = boardGrantItem('Ribbon');
+                text += '\n\n' + (rib ? rib.text : '') + '\nChoose your reward:';
+                boardFrontierShow('Contest Hall — ' + head, text, btn('item', 'Draw an Item card') + btn('catch', 'Try to Catch ' + s.token + ' (+2)'));
+            } else {
+                text += '\n\nChoose your penalty:';
+                boardSafariSettle(s.token, 'returned');
+                boardFrontierShow('Contest Hall — ' + head, text, btn('discard', 'Discard 2 cards') + btn('penalty', '−2 to next Movement Roll'));
+            }
+            document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
+        }
+        function boardContestChoose(act) {
+            const s = contestState;
+            if (!s) return;
+            closeFrontierOverlay();
+            contestState = null;
+            if (act === 'item') {
+                boardSafariSettle(s.token, 'returned');
+                if (isVirtualDecksEnabledForActiveSave()) { requestDrawCard('Item Deck'); boardShowHand(); showGameToast('Contest Hall: drew a card from the Item Deck.'); }
+                else showGameToast('Contest Hall: draw a card from your physical Item deck.');
+            } else if (act === 'catch') {
+                boardSafariStartCatch(s.token, 0, true, 'Contest Hall');
+            } else if (act === 'penalty') {
+                boardAddMovePenalty(2);
+                showGameToast('Contest Hall: −2 on your next Movement Roll.');
+            } else if (act === 'discard') {
+                if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Contest Hall: discard 2 cards from your physical hand.'); return; }
+                const hand = getLocalHandArray();
+                if (hand.length <= 2) {
+                    hand.slice().forEach(id => { const c = CARDS_BY_ID[id]; if (c) requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, id); });
+                    showGameToast(hand.length ? 'Contest Hall: discarded your hand.' : 'Contest Hall: your hand is empty — nothing to discard.');
+                    if (hand.length) boardShowHand();
+                    return;
+                }
+                contestDiscardLeft = 2;
+                boardShowHand();
+                showDecksNotice('Contest Hall: choose 2 cards from your hand to discard.');
+            }
+        }
+        let contestDiscardBusy = false;
+        function boardContestDiscard(cardId) {
+            const c = CARDS_BY_ID[cardId];
+            if (!contestDiscardLeft || !c || contestDiscardBusy) return;
+            contestDiscardBusy = true;
+            setTimeout(() => { contestDiscardBusy = false; }, 400);
+            requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, cardId);
+            contestDiscardLeft--;
+            if (contestDiscardLeft > 0) showDecksNotice('Contest Hall: choose 1 more card to discard.');
+            else showDecksNotice('Contest Hall: penalty paid.');
+            if (typeof renderDecksScreen === 'function') setTimeout(renderDecksScreen, 450);
         }
 
         // Victory: starts the Victory screen for the whole lobby with this player as the winner (see triggerVictory()).
@@ -46003,12 +46184,12 @@
                 boardSafariStartCatch(name, threshold, frontier);
             });
         }
-        function boardSafariStartCatch(name, threshold, frontier) {
+        function boardSafariStartCatch(name, threshold, frontier, label) {
             const entry = POKEMON_BY_NAME[name];
             if (!entry || isActiveSaveReadOnly()) { boardSafariSettle(name, 'returned'); if (!entry) showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
             const source = { dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false };
             catchAttempt = { fainted: false, hadStatus: false, roll: null, cardId: null, manualBonus: 0,
-                safari: { name, member: buildWildPokemonMember(source), threshold, settled: false, frontier: !!frontier } };
+                safari: { name, member: buildWildPokemonMember(source), threshold, settled: false, frontier: !!frontier, label: label || '' } };
             openGamePanel();
             setGameScreen('battle');
             showCatchOverlay();
@@ -46123,6 +46304,7 @@
             boardFrontierClearSlotTimers();
             document.getElementById('game-frontier-title').textContent = title;
             document.getElementById('game-frontier-text').textContent = text;
+            document.getElementById('game-frontier-text').style.whiteSpace = '';
             document.getElementById('game-frontier-actions').innerHTML = actionsHtml;
             openGamePanel(); // the board is a main view now, not inside the panel
             document.getElementById('game-frontier-overlay').classList.add('visible');
@@ -46170,6 +46352,8 @@
             });
         }
         document.getElementById('game-frontier-overlay').addEventListener('click', (e) => {
+            const cBtn = e.target.closest('.game-contest-btn');
+            if (cBtn) { boardContestChoose(cBtn.dataset.act); return; }
             if (e.target.closest('.game-frontier-ok-btn')) {
                 closeFrontierOverlay();
                 const next = boardFrontierAfter;
@@ -46905,6 +47089,79 @@
             b.textContent = 'Fullscreen';
             bar.appendChild(b);
         }
+
+        // ---- Movement roll ----
+        // The map's "Roll d6" button: rolls a d6 for this player's movement and shows the number to the whole table, in the
+        // roller's color, in a corner of the map. The roll is informational (players still move their own marker). A pending
+        // movement penalty (Contest Hall's Loss Penalty: -2) is taken off the NEXT roll once, and a roll never goes below 0.
+        // The penalty lives in the player's own save (like frontierLegendaryClaimed), so it survives a reload.
+        function boardMovePenalty() {
+            const data = getActiveSaveData();
+            return Math.max(0, parseInt(data && data.movePenalty, 10) || 0);
+        }
+        function boardSetMovePenalty(n) {
+            if (isActiveSaveReadOnly()) return;
+            const data = getActiveSaveData();
+            if (!data) return;
+            const v = Math.max(0, Math.trunc(n) || 0);
+            if ((data.movePenalty || 0) === v) return;
+            if (v) data.movePenalty = v; else delete data.movePenalty;
+            if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves();
+        }
+        function boardAddMovePenalty(n) { boardSetMovePenalty(boardMovePenalty() + n); }
+        function boardInstallRollButton() {
+            const bar = document.querySelector('#game-board-mount #mapctl');
+            if (!bar || bar.querySelector('#board-roll-btn')) return;
+            const b = document.createElement('button');
+            b.id = 'board-roll-btn';
+            b.type = 'button';
+            b.textContent = 'Roll d6';
+            bar.appendChild(b);
+        }
+        function boardRollMovement() {
+            if (isActiveSaveReadOnly()) return;
+            const me = boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host'));
+            if (!me) { showGameToast('Only players can roll for movement.'); return; } // e.g. a host who isn't playing
+            const raw = 1 + Math.floor(Math.random() * 6), penalty = boardMovePenalty();
+            const value = Math.max(0, raw - penalty);
+            if (penalty) boardSetMovePenalty(0); // taken off this roll, whatever is left over is dropped
+            const shown = { type: 'board-roll-shown', c: me.c, name: me.name, value, raw, penalty };
+            boardShowRoll(shown);
+            if (lobbyState.role === 'guest') boardSend({ type: 'board-roll', value, raw, penalty }); // the Host fills in who rolled
+            else if (lobbyState.role === 'host') boardSend(shown);
+        }
+        // Host: a guest rolled. Who it was comes from the connection, never from the message.
+        function boardHandleRollFromGuest(peerId, data) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            const raw = Math.trunc(Number(data.raw)), value = Math.trunc(Number(data.value)), penalty = Math.trunc(Number(data.penalty) || 0);
+            if (!(raw >= 1 && raw <= 6) || !(value >= 0 && value <= 6) || !(penalty >= 0 && penalty <= 99)) return;
+            const me = boardPlayers().find(p => p.id === peerId);
+            if (!me) return;
+            const shown = { type: 'board-roll-shown', c: me.c, name: me.name, value, raw, penalty };
+            boardShowRoll(shown);
+            lobbyState.connections.forEach((entry, id) => { if (id !== peerId && entry && entry.conn && entry.conn.open) entry.conn.send(shown); });
+        }
+        var boardRollFadeTimer = null, boardRollHideTimer = null;
+        function boardShowRoll(m) {
+            const box = document.getElementById('board-roll-display');
+            if (!box || !m) return;
+            const num = document.getElementById('board-roll-num'), note = document.getElementById('board-roll-note'), sr = document.getElementById('board-roll-sr');
+            const value = Math.trunc(Number(m.value)), raw = Math.trunc(Number(m.raw)), penalty = Math.trunc(Number(m.penalty) || 0);
+            if (!(value >= 0 && value <= 6)) return;
+            const color = (typeof m.c === 'string' && /^#[0-9a-f]{3,8}$/i.test(m.c)) ? m.c : '#ffffff';
+            const name = typeof m.name === 'string' ? m.name.slice(0, 40) : 'A player';
+            num.textContent = String(value);
+            num.style.color = color;
+            note.textContent = penalty > 0 ? 'rolled ' + raw + ', \u2212' + penalty : '';
+            note.style.color = color;
+            if (sr) sr.textContent = name + ' rolled ' + value + (penalty > 0 ? ' (' + raw + ' minus ' + penalty + ')' : '') + '. ';
+            clearTimeout(boardRollFadeTimer); clearTimeout(boardRollHideTimer);
+            box.classList.remove('visible', 'fading');
+            void box.offsetWidth; // restart the pop animation for a quick second roll
+            box.classList.add('visible');
+            boardRollFadeTimer = setTimeout(() => box.classList.add('fading'), 4500);
+            boardRollHideTimer = setTimeout(() => box.classList.remove('visible', 'fading'), 4900);
+        }
         // Desktop: a docked side panel narrows the frame, and the map should keep its on-screen size (and never get
         // shorter than the frame) instead of shrinking to fit. Phones: the panels cover the board instead, so board.js's
         // normal refit behaviour stays.
@@ -46943,6 +47200,7 @@
                 if (frame && frame.requestFullscreen) frame.requestFullscreen().catch(() => {});
             }
             else if (t.closest('#board-fs-exit')) { if (document.fullscreenElement) document.exitFullscreen(); }
+            else if (t.closest('#board-roll-btn')) boardRollMovement();
         });
         document.addEventListener('fullscreenchange', () => { if (boardCtrl) requestAnimationFrame(() => boardCtrl.restoreView()); });
 
@@ -47839,6 +48097,16 @@
                     if (cb) cb(typeof data.name === 'string' ? data.name : null);
                 } else if (data.type === 'board-frontier-result' && typeof data.name === 'string') {
                     boardFrontierDeliverResult(data);
+                } else if (data.type === 'board-contest-counts-result' && data.counts && typeof data.counts === 'object') {
+                    const cb = contestCountsCb;
+                    contestCountsCb = null;
+                    if (cb) cb(data.counts);
+                } else if (data.type === 'board-contest-drawn' && typeof data.color === 'string') {
+                    const cb = contestDrawCb;
+                    contestDrawCb = null;
+                    if (cb) cb(typeof data.name === 'string' ? data.name : null);
+                } else if (data.type === 'board-roll-shown') {
+                    boardShowRoll(data);
                 } else if (data.type === 'board-safari-pool-result' && Array.isArray(data.names)) {
                     const cb = boardSafariPoolCb;
                     boardSafariPoolCb = null;
@@ -48517,6 +48785,11 @@
             // own Attach/Nature Cards photo opens (openTeamCardImageViewer()).
             if (e.target.closest('#game-decks-attach-pick-cancel-btn')) {
                 cancelAttachPick();
+                return;
+            }
+            const handPickContestBtn = e.target.closest('.game-hand-pick-contest-btn');
+            if (handPickContestBtn) {
+                boardContestDiscard(handPickContestBtn.dataset.cardId);
                 return;
             }
             const handPickSafariBtn = e.target.closest('.game-hand-pick-safari-btn');
@@ -50015,7 +50288,7 @@
             const lines = [];
             if (attempt.fainted) lines.push({ label: 'Fainted before the attempt', amount: 2 });
             if (attempt.fainted && attempt.hadStatus) lines.push({ label: 'Had a Status Condition when it fainted', amount: 1 });
-            if (attempt.safari && attempt.safari.frontier) lines.push({ label: 'Battle Frontier (Yellow reward)', amount: 2 });
+            if (attempt.safari && attempt.safari.frontier) lines.push({ label: attempt.safari.label ? attempt.safari.label + ' (victory reward)' : 'Battle Frontier (Yellow reward)', amount: 2 });
             return lines;
         }
 
@@ -50127,7 +50400,7 @@
             const catchValue = getCatchValueFor(a, member, displayName);
             html += '<div class="game-catch-breakdown">';
             if (catchValue !== null) {
-                html += `<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">${sf ? (sf.frontier ? 'Battle Frontier \u2014 ' : 'Safari Zone \u2014 ') : ''}Catch Value: ${catchValue}</p>`
+                html += `<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">${sf ? ((sf.label ? sf.label : (sf.frontier ? 'Battle Frontier' : 'Safari Zone')) + ' \u2014 ') : ''}Catch Value: ${catchValue}</p>`
                     + `<p class="game-catch-breakdown-note">You need a Catch Total of at least ${catchValue} to Catch this Pok\u00e9mon!${sf && sf.threshold === 2 ? ' (Safari Ball)' : ''}</p></div>`;
             }
             html += '<div class="game-catch-breakdown-section"><p class="game-catch-breakdown-title">Catch Bonus</p>';
