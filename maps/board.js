@@ -26,7 +26,7 @@
                shows more/less of itself, and the map is never allowed to get shorter than the frame; off (default): refit as before.
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
    Host only: poolList(color) / takeFromPool(color,name) / settlePoolToken(name,'caught'|'returned') [Safari Zone: pick a token out
-   of a pool, then keep it (caught) or put it back], where(playerId) [the id of the space a player's marker is on, or null -- the Host uses it to check two players really share a space], drawFromPool(color) [Battle Frontier: take a RANDOM token out of a pool, returns its name or null; give it back with settlePoolToken(name,'returned')], movePlayer(playerId, spaceIdOrLabel|'@home') [moves a marker without a landing prompt ('@home' = their Current Home); returns the space's label, or '' if it could not], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
+   of a pool, then keep it (caught) or put it back], where(playerId) [the id of the space a player's marker is on, or null -- the Host uses it to check two players really share a space], drawLegendary() [Roaming Legend: a random Legendary token from the orange pool, or off a random orange space when the pool is empty; settle it like drawFromPool()], drawFromPool(color) [Battle Frontier: take a RANDOM token out of a pool, returns its name or null; give it back with settlePoolToken(name,'returned')], movePlayer(playerId, spaceIdOrLabel|'@home') [moves a marker without a landing prompt ('@home' = their Current Home); returns the space's label, or '' if it could not], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
    for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
    Messages: guest -> host {type:'board-move',player,to}
              host -> guests {type:'board-state',snap:<JSON string>} */
@@ -189,6 +189,17 @@ function takeFromPool(c,n){if(mode!=='host'||!pools[c])return false;releaseStale
 // put a Defender back in the pool while it is still in the Arena.
 function where(p){return mode==='host'&&pos[p]!==undefined?pos[p]:null}
 function drawFromPool(c){if(mode!=='host'||!pools[c])return null;releaseStale();const a=pools[c];if(!a.length)return null;const n=a.splice(Math.floor(Math.random()*a.length),1)[0];held.set(n,Date.now()+72e5);log(`host: ${n} drawn from the ${c} pool (Battle Frontier)`);return n}
+// Roaming Legend: a random token of the orange (Legendary) pool. When that pool is empty, one is taken off a random orange space
+// instead (not one a player is standing on to encounter); that space is left empty, like a defeated Legendary's. Held like
+// drawFromPool() until the app gives it back with settlePoolToken(name,'returned'|'caught'). Returns its name, or null.
+function drawLegendary(){if(mode!=='host')return null;releaseStale();
+ let n=drawFromPool('orange');if(n)return n;
+ const busy=new Set(Object.values(pendingEnc).filter(Boolean));
+ const c=SP.filter(s=>s.type==='catch'&&s.color==='orange'&&st[s.id]&&st[s.id].token&&!st[s.id].empty&&!busy.has(s.id));
+ if(!c.length)return null;
+ const s=c[Math.floor(Math.random()*c.length)],o=st[s.id];n=o.token;
+ if(o.boss){o.boss=false;o.cleared=true}o.dup=false;o.token=null;o.empty=true;o.revealed=false;
+ held.set(n,Date.now()+72e5);log(`host: ${n} taken off the orange space ${s.id} (Roaming Legend)`);snapshot();return n}
 // Moves a player's marker straight to a space (an id, or its label such as 'Olivine City') with no landing prompt -- a lost Battle
 // sends the player home. Returns the label of the space it landed on, or '' when nothing moved.
 function movePlayer(p,target){if(mode!=='host'||pos[p]===undefined)return '';if(target==='@home')target=home[p]; // '@home' = the player's Current Home (a Black Out)
@@ -386,7 +397,7 @@ return{
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
  restoreSnapshot,
  setCaught,exportState,restoreState,adoptPlayer,
- poolList,takeFromPool,settlePoolToken,drawFromPool,movePlayer,where,
+ poolList,takeFromPool,settlePoolToken,drawFromPool,drawLegendary,movePlayer,where,
  fit:()=>fitView(),
  setKeepScale(on){keepScale=!!on;updEA();Z=clampZ(Z);clampView();applyView()},
  restoreView,
