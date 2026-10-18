@@ -3576,10 +3576,9 @@
         /* The card sits in a wrapper that is allowed to shrink below the
            card's own 240px while the <img> keeps its full size and simply
            overflows the wrapper's right edge. On a narrow screen the
-           buttons column (which never shrinks below its widest button, and
-           is painted above) therefore slides over the card's right side
-           instead of the buttons getting squeezed with their text
-           spilling out. */
+           buttons column (painted above) therefore slides over the card's
+           right side -- but only once the column is down to its minimum
+           width and its button text has already wrapped as far as it can. */
         .game-active-card-imgwrap {
             flex: 0 1 240px;
             min-width: 0;
@@ -3592,7 +3591,12 @@
             display: flex;
             flex-direction: column;
             gap: 8px;
-            flex: 1 0 auto;
+            /* Takes whatever room the card leaves, but no less than 120px:
+               button text wraps onto extra lines first, and only once the
+               column is down to that minimum does the card's wrapper
+               shrink so the buttons overlap the image. */
+            flex: 1 1 0;
+            min-width: 120px;
             align-self: stretch;
             position: relative;
             z-index: 1;
@@ -3612,12 +3616,13 @@
             width: 100%;
             box-sizing: border-box;
             margin: 0;
-            white-space: nowrap;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            line-height: 1.25;
         }
 
-        /* Pinned to the bottom of the box, under the buttons. width: 0 +
-           min-width: 100% keeps the sentence from widening the column
-           (the buttons set that); it wraps to a second line instead. */
+        /* Pinned to the bottom of the box, under the buttons; wraps onto
+           a second line when the column is narrow. */
         .game-active-card-queue-note {
             margin: 0;
             width: 0;
@@ -29270,6 +29275,7 @@
                     <div class="game-active-card-view actor"${themeAttr}>
                         ${imgTag}
                         <div class="game-active-card-actions"><div class="game-active-card-buttons">
+                            ${(!readOnly && cardStartsPlayerBattle(card)) ? `<button class="filter-btn game-active-card-pvp-btn" type="button">Battle a Player</button>` : ''}
                             ${(!readOnly && cardStartsContest(card)) ? `<button class="filter-btn game-active-card-contest-btn" type="button">Begin Contest</button>` : ''}
                             ${canAttach ? `<button class="filter-btn game-active-card-attach-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Attach</button>` : ''}
                             ${canPermanent ? `<button class="filter-btn game-active-card-permanent-btn" type="button">Permanent</button>` : ''}
@@ -34327,6 +34333,10 @@
         // Event cards whose text starts a Pok\u00e9mon Contest (cards.json contestStart: "yes") get a Begin Contest
         // button at the top of the Active Card zone, which runs the same boardUseContestHall() the Contest Hall
         // space action does. The card stays in the zone afterwards; the player Discards it when done.
+        // cards.json playerBattle: "yes" (Let's Fight!): a Begin-Battle button that runs the board's Battle a Player challenge.
+        function cardStartsPlayerBattle(card) {
+            return !!card && card.playerBattle === 'yes';
+        }
         function cardStartsContest(card) {
             return !!card && card.contestStart === 'yes';
         }
@@ -46954,6 +46964,12 @@
         document.getElementById('game-frontier-overlay').addEventListener('click', (e) => {
             const cBtn = e.target.closest('.game-contest-btn');
             if (cBtn) { boardContestChoose(cBtn.dataset.act); return; }
+            const pvpBtn = e.target.closest('.game-pvpcard-btn');
+            if (pvpBtn) {
+                closeFrontierOverlay();
+                if (pvpBtn.dataset.id) boardPlayerActionStart('battle', pvpBtn.dataset.id, true);
+                return;
+            }
             if (e.target.closest('.game-frontier-ok-btn')) {
                 closeFrontierOverlay();
                 const next = boardFrontierAfter;
@@ -47244,7 +47260,7 @@
             if (taken) showGameToast('The Battle Arena is in use \u2014 wait for that battle to finish first.');
             return taken;
         }
-        function boardPlayerActionStart(kind, partnerId) {
+        function boardPlayerActionStart(kind, partnerId, fromCard) {
             if (isActiveSaveReadOnly() || (kind !== 'battle' && kind !== 'trade')) return;
             if (!lobbyState.players.some(p => p.id === partnerId)) { showGameToast('That player is no longer in the game.'); return; }
             const name = boardPlayerName(partnerId);
@@ -47264,8 +47280,23 @@
             if (!(((getActiveSaveData().team && getActiveSaveData().team.members) || []).length)) { showGameToast('You have no Pok\u00e9mon on your team to Battle with.'); return; }
             if (boardPlayerArenaBusy()) return;
             boardPvp = { partnerId, partnerName: name, incoming: false, phase: 'invited' };
-            boardPvpSend(partnerId, { type: 'board-pvp-invite', fromName: getOwnLobbyDisplayName() });
+            boardPvpSend(partnerId, { type: 'board-pvp-invite', fromName: getOwnLobbyDisplayName(), anySpace: !!fromCard });
             boardPvpRender();
+        }
+
+        // Let's Fight! (cards.json playerBattle: "yes"): the same Battle a Player challenge, started from the Active Card zone. The
+        // card isn't tied to a space, so any other player in the lobby can be challenged (the Host skips its same-space check
+        // for these invites -- see 'anySpace' in boardPvpRoute()). One other player is chosen automatically, several are asked.
+        function beginPlayerBattleFromCard() {
+            if (isActiveSaveReadOnly()) return;
+            if (lobbyState.role === null) { showGameToast('Battle a Player needs other players in a lobby.'); return; }
+            const myId = getMyLobbyPlayerId() || 'host';
+            const others = lobbyState.players.filter(p => p && p.id !== myId).map(p => ({ id: p.id, name: boardPlayerName(p.id) }));
+            if (!others.length) { showGameToast('There is no other player to battle.'); return; }
+            if (others.length === 1) { boardPlayerActionStart('battle', others[0].id, true); return; }
+            boardFrontierShow('Battle a Player', 'Who do you want to battle?',
+                others.map(o => `<button class="filter-btn include game-pvpcard-btn" type="button" data-id="${escapeHtml(o.id)}">${escapeHtml(o.name)}</button>`).join('')
+                + `<button class="filter-btn exclude game-pvpcard-btn" type="button" data-id="">Never mind</button>`);
         }
 
         // ---- the challenge messages ----
@@ -47289,7 +47320,7 @@
         function boardPvpRoute(msg) {
             if (msg.type === 'board-pvp-invite') {
                 const a = boardCtrl && boardCtrl.where(msg.from), b = boardCtrl && boardCtrl.where(msg.to);
-                if (a && b && a !== b) { boardPvpBounce(msg, 'is no longer on your space'); return; }
+                if (!msg.anySpace && a && b && a !== b) { boardPvpBounce(msg, 'is no longer on your space'); return; } // anySpace: a Let's Fight! card, which isn't tied to a space
                 if (boardPvpPairs.has(msg.from) || boardPvpPairs.has(msg.to)) { boardPvpBounce(msg, 'is busy right now'); return; }
                 boardPvpPairs.set(msg.from, msg.to);
                 boardPvpPairs.set(msg.to, msg.from);
@@ -49345,6 +49376,12 @@
             const activeCardOverlayBtn = e.target.closest('.game-active-card-overlay-btn');
             if (activeCardOverlayBtn) {
                 requestOverlayFromActiveCard(activeCardOverlayBtn.dataset.cardId);
+                return;
+            }
+
+            const activeCardPvpBtn = e.target.closest('.game-active-card-pvp-btn');
+            if (activeCardPvpBtn) {
+                beginPlayerBattleFromCard();
                 return;
             }
 
