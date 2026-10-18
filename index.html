@@ -1958,6 +1958,47 @@
             padding-bottom: 10px;
         }
 
+        /* Contest Hall screen -- the Battle Arena's halves (same classes), minus the battle machinery. The slot cards are
+           built by contestBuildSlot() and are markers only (HP badge, nothing tappable), so pointer events are off. */
+        #game-contest-mine-slot .game-team-slot,
+        #game-contest-opp-slot .game-team-slot {
+            width: 250px;
+            max-width: 100%;
+            margin: 0 auto;
+        }
+        #game-contest-opp-slot { padding-top: 10px; padding-bottom: 25px; }
+        #game-contest-mine-slot { padding-top: 12px; padding-bottom: 25px; }
+        .game-contest-slot, .game-contest-slot * { pointer-events: none; }
+        .game-contest-move {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin: 0;
+            pointer-events: none;
+            cursor: default;
+        }
+        .game-contest-move b { font-weight: 800; }
+        .game-contest-footnote {
+            flex-basis: 100%;
+            margin: 0;
+            font-size: 12px;
+            font-weight: 600;
+            text-align: center;
+            color: white;
+            text-shadow: -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black;
+        }
+        .game-contest-status {
+            flex-basis: 100%;
+            margin: 0;
+            text-align: center;
+            font-size: 18px;
+            font-weight: 800;
+            color: white;
+            text-shadow: -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black;
+        }
+        .game-contest-status:empty { display: none; }
+        #game-contest-roll-btn .game-battle-dice-result-icon { vertical-align: middle; margin-left: 4px; }
+
         /* One button per move the Pokémon in a half knows -- see
            renderBattleMoves(). Empty (no Pokémon, or its data hasn't
            loaded yet) collapses entirely. */
@@ -15555,6 +15596,46 @@
                 </div>
             </div>
 
+            <!-- Contest Hall -- opened only by the Contest Hall action (see boardUseContestHall() in the script). Laid out like the
+                 Battle Arena (same half / slot / readout / controls classes), but with no Options, dice counters, Battle Cards or
+                 zone badges. Opponent on top, your Contestant below. There is no Back button on purpose: the Contest is left with
+                 Leave Contest (a loss) or by finishing it. -->
+            <div class="game-screen" id="game-screen-contest">
+                <div class="game-screen-header"></div>
+                <p class="game-screen-title">Contest Hall</p>
+                <div class="game-battle-arena">
+                    <div class="game-battle-half game-battle-defender" id="game-contest-opp-half">
+                        <p class="game-battle-half-label">Contest Opponent</p>
+                        <div class="game-battle-moves" id="game-contest-opp-moves"></div>
+                        <div class="game-battle-slot-row">
+                            <div class="game-battle-slot-wrap">
+                                <div class="game-battle-slot" id="game-contest-opp-slot"></div>
+                                <p class="game-battle-calc-readout" id="game-contest-opp-readout"></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="game-battle-controls" id="game-contest-controls">
+                        <p class="game-contest-status" id="game-contest-status"></p>
+                        <button class="filter-btn include" id="game-contest-roll-btn" type="button">Roll Contest Dice</button>
+                        <button class="filter-btn include" id="game-contest-reward-btn" type="button" style="display: none;">Gain Contest Rewards</button>
+                        <button class="filter-btn include" id="game-contest-penalty-btn" type="button" style="display: none;">Take Loss Penalty</button>
+                        <button class="filter-btn exclude" id="game-contest-leave-btn" type="button">Leave Contest</button>
+                    </div>
+
+                    <div class="game-battle-half game-battle-attacker" id="game-contest-mine-half">
+                        <div class="game-battle-slot-row">
+                            <div class="game-battle-slot-wrap">
+                                <div class="game-battle-slot" id="game-contest-mine-slot"></div>
+                                <p class="game-battle-calc-readout" id="game-contest-mine-readout"></p>
+                            </div>
+                        </div>
+                        <div class="game-battle-moves" id="game-contest-mine-moves"></div>
+                        <p class="game-battle-half-label">Your Contestant</p>
+                    </div>
+                </div>
+            </div>
+
             <div class="game-screen" id="game-screen-matchup">
                 <div class="game-screen-header">
                     <span class="game-screen-back-wrap">
@@ -19315,12 +19396,15 @@
                 // color, whatever the filter panel's own buttons say.
                 const battleTrainerColorMismatch =
                     battleWildPickModeActive && !!battleTrainerPickColor && !tags.includes(battleTrainerPickColor);
+                // Contest Hall's orange (Legendary) pool: the gallery only offers Legendary tokens.
+                const contestTagMismatch =
+                    battleWildPickModeActive && !!contestPickTag && !tags.includes(contestPickTag);
 
                 card.classList.toggle(
                     'show',
                     sectionsMatch && includeMatch && explicitOrMatch && explicitAndMatch &&
                         hideNoAbilityMatch && shinyFilterMatch &&
-                        !(excludeMatch || explicitAndExcludeMatch || teamAddForcedExcludeMatch || permanentPickForcedExcludeMatch || battleWildForcedExcludeMatch || battleTrainerColorMismatch)
+                        !(excludeMatch || explicitAndExcludeMatch || teamAddForcedExcludeMatch || permanentPickForcedExcludeMatch || battleWildForcedExcludeMatch || battleTrainerColorMismatch || contestTagMismatch)
                 );
             });
         }
@@ -21689,6 +21773,9 @@
             const sendToBattleBannerText = document.getElementById('game-team-send-to-battle-banner-text');
             if (sendToBattleBannerText) {
                 const targetLabel = teamSendToBattleTargetSlot === 'attacker' ? 'Attacker' : teamSendToBattleTargetSlot === 'defender' ? 'Defender' : '';
+                if (teamContestPick) {
+                    sendToBattleBannerText.textContent = 'Contest Hall \u2014 tap a Pok\u00e9mon on your team to enter it as your Contestant.';
+                } else
                 sendToBattleBannerText.textContent = (teamSendToBattleNote ? teamSendToBattleNote : teamSendToBattleFaintSlot
                     ? `Your Pok\u00e9mon fainted! Tap a Pok\u00e9mon on your team to send in as your new ${targetLabel}.`
                     : targetLabel
@@ -22564,6 +22651,7 @@
         // answering Attacker/Defender/Cancel on it) -- same "one place
         // unwinds everything" shape as exitTeamReleaseMode().
         function exitTeamSendToBattleMode() {
+            if (teamContestPick) { contestAbort(); return; } // Cancel on the Contest Hall's Contestant pick
             // Cancelling while setting up a Battle a Player challenge calls it off; that mode started from the Team Tracker's own
             // flow, not the Arena, so the player stays here rather than being sent back to the Arena.
             const calledOffChallenge = boardPvpChooserClosed();
@@ -33935,13 +34023,15 @@
             // Replacing whatever's already in Defender (another player's
             // Pokémon, or an existing Wild one) is confirmed once the
             // pick is actually made -- see confirmBattleWildSelection().
-            battlePickKind = kind === 'trainer' ? 'trainer' : 'wild';
-            // A Trainer's Pok\u00e9mon never carries an attach context.
-            battleWildPickAttach = battlePickKind === 'trainer' ? null : (attachContext || null);
+            battlePickKind = kind === 'trainer' ? 'trainer' : (kind === 'contest' ? 'contest' : 'wild');
+            // A Trainer's (or a Contest) Pok\u00e9mon never carries an attach context.
+            battleWildPickAttach = battlePickKind === 'wild' ? (attachContext || null) : null;
             const attachCardForBanner = battleWildPickAttach ? CARDS_BY_ID[battleWildPickAttach.cardId] : null;
             const bannerText = document.getElementById('battle-wild-pick-mode-banner-text');
             if (bannerText) {
-                bannerText.textContent = battlePickKind === 'trainer'
+                bannerText.textContent = battlePickKind === 'contest'
+                    ? `Tap a ${contestSession && contestSession.color ? (contestSession.color === 'orange' ? 'Legendary' : contestSession.color) + ' ' : ''}Pok\u00e9mon to choose it as your Contest Opponent.`
+                    : battlePickKind === 'trainer'
                     ? BATTLE_TRAINER_BANNER_TEXT
                     : attachCardForBanner
                     ? `Tap a Pok\u00e9mon to send it to the Battle Arena as a Wild Pok\u00e9mon with ${attachCardForBanner.name} attached.`
@@ -34114,6 +34204,7 @@
         // exitPermanentPickMode().
         function exitBattleWildPickMode() {
             if (!battleWildPickModeActive) return;
+            const wasContestPick = battlePickKind === 'contest';
             battleWildPickModeActive = false;
             battleWildCandidateImg = null;
             battleWildPickAttach = null;
@@ -34124,8 +34215,10 @@
             document.body.classList.remove('battle-wild-pick-mode');
             const overlay = document.getElementById('gallery-battle-wild-confirm-overlay');
             if (overlay) overlay.classList.remove('visible');
+            contestPickTag = null;
             filterGallery();
             boardResumeAfterPick();
+            if (wasContestPick && !contestPickResolving) contestAbort(); // left the opponent pick without choosing: the Contest is off
             refreshBackButtonState();
         }
 
@@ -34150,6 +34243,7 @@
             const hasShiny = hasShinyForm(img.dataset.shinysrc);
             const forceShiny = cardForcesShiny(attachCard);
             const isTrainerPick = battlePickKind === 'trainer';
+            const isContestPick = battlePickKind === 'contest';
             if (titleEl) {
                 titleEl.textContent = isTrainerPick
                     ? BATTLE_TRAINER_CONFIRM_TITLE
@@ -34164,6 +34258,12 @@
             if (sendBtn) sendBtn.textContent = `Send This ${noun} Pok\u00e9mon to the Battle Arena.`;
             if (keepBtn) keepBtn.textContent = `Keep Searching for a ${noun} Pok\u00e9mon.`;
             if (cancelBtn) cancelBtn.textContent = `Don\u2019t Send a ${noun} Pok\u00e9mon.`;
+            if (isContestPick) {
+                if (titleEl) titleEl.textContent = 'Choose This Pok\u00e9mon as Your Contest Opponent?';
+                if (sendBtn) sendBtn.textContent = 'Choose This Pok\u00e9mon.';
+                if (keepBtn) keepBtn.textContent = 'Keep Searching.';
+                if (cancelBtn) cancelBtn.textContent = 'Cancel the Contest.';
+            }
             if (shinyCheckbox) {
                 // A forced-Shiny card pre-checks the box and locks it
                 // (the player has no say in it); otherwise it's the
@@ -34189,6 +34289,7 @@
                 noteEl.style.display = noShinyFallback ? '' : 'none';
             }
             if (sendBtn) sendBtn.disabled = false;
+            if (isContestPick && shinyCheckbox) { shinyCheckbox.checked = false; shinyCheckbox.disabled = true; } // a Contest token is never shiny
             const overlay = document.getElementById('gallery-battle-wild-confirm-overlay');
             if (overlay) overlay.classList.add('visible');
         }
@@ -34267,6 +34368,14 @@
                 shinysrc: img.dataset.shinysrc || '',
                 shiny,
             };
+            // Contest Hall: the pick is the Contest Opponent -- no Arena involved (see contestOpponentChosen()).
+            if (pickKind === 'contest') {
+                contestPickResolving = true;
+                exitBattleWildPickMode();
+                contestPickResolving = false;
+                contestOpponentChosen(Object.assign({}, memberSource, { shiny: false }));
+                return;
+            }
             // The Permanent card this pick is for has to still be
             // attachable (it could have been Discarded from another
             // device while the gallery was open) -- checked up front, and
@@ -42037,6 +42146,8 @@
         }
 
         function setGameScreen(screenId) {
+            // A running Contest can't be walked away from (see contestScreenLocked()).
+            if (screenId !== 'contest' && contestScreenLocked()) { showGameToast('Use Leave Contest to leave the Contest.'); return; }
             if (screenId !== 'badges') flushGymBadgeAwards(); // leaving the Badge Tracker places any earned Badge
             // Backstop for anything that navigates here directly: the
             // Arena never opens without a hosted save or a lobby (the
@@ -42104,6 +42215,7 @@
                     // been made -- either way, this mode only makes
                     // sense while still looking at Team Tracker, same
                     // reasoning as teamReleaseModeActive just above.
+                    if (teamContestPick) contestAbort(); // leaving Team Tracker mid-pick backs out of the Contest Hall
                     boardPvpChooserClosed(); // leaving mid-pick calls a Battle a Player challenge off (a completed send has already cleared it)
                     teamSendToBattleModeActive = false;
                     teamSendToBattleTargetSlot = null;
@@ -42164,13 +42276,14 @@
             if (scrollEl) scrollEl.scrollTop = 0;
             if (screenId === 'main') renderBattleArenaGate();
             if (screenId === 'decks') renderDecksScreen();
-            if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); hideCatchOverlay(); if (catchAttempt && catchAttempt.resolved) catchAttempt = null; }
+            if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); hideCatchOverlay(); if (catchAttempt && catchAttempt.resolved) { if (catchAttempt.safari && catchAttempt.safari.contest) contestMusicSet(false); catchAttempt = null; } }
             if (screenId === 'battle') {
                 renderBattleAttackerSlot();
                 renderBattleDefenderSlot();
                 // Back from Hand & Decks mid-attempt: pick the overlay up again.
                 if (catchAttempt) showCatchOverlay();
             }
+            if (screenId === 'contest') renderContest();
             if (screenId === 'board-actions') renderBoardActionsScreen();
             if (screenId === 'rulebook-picker') renderRulebookPicker();
             if (screenId === 'rulebook') initRulebookScreen();
@@ -43881,6 +43994,10 @@
                     boardHandleContestCounts(conn.peer);
                 } else if (data.type === 'board-contest-draw' && typeof data.color === 'string') {
                     boardHandleContestDraw(conn.peer, data);
+                } else if (data.type === 'board-contest-take' && typeof data.color === 'string' && typeof data.name === 'string') {
+                    boardHandleContestTake(conn.peer, data);
+                } else if (data.type === 'board-contest-music') {
+                    boardHandleContestMusic(conn.peer, data);
                 } else if (data.type === 'board-roll') {
                     boardHandleRollFromGuest(conn.peer, data);
                 } else if (typeof data.type === 'string' && data.type.indexOf('board-pvp-') === 0 && typeof data.to === 'string') {
@@ -44791,6 +44908,7 @@
         function handleHostConnectionDrop(peerId, conn) {
             if (!lobbyState.connections.has(peerId)) return; // already handled by another of the three paths above
             lobbyState.connections.delete(peerId);
+            if (contestMusicHolders.has(peerId)) contestMusicHolderSet(peerId, false); // its Contest music request goes with it
             delete lobbyState.playerProgress[peerId];
             delete lobbyState.starterChosen[peerId];
             releaseMusicDuck(peerId); // a guest who drops mid-jingle shouldn't leave the music ducked
@@ -45511,8 +45629,6 @@
                 boardGainItem(decodeURIComponent(id.slice(6)));
             } else if (id.startsWith('sact:')) {
                 boardRunServiceAction(id.slice(5), info);
-            } else if (id.startsWith('cth:')) {
-                boardContestStart(Number(id.slice(4)));
             } else if (id.startsWith('mtd:')) {
                 boardMoveTutorDraw(decodeURIComponent(id.slice(4)));
             } else if (id.startsWith('pcrev:')) {
@@ -45720,11 +45836,27 @@
             showGameToast('Move Tutor: drew a card from the ' + deckName + '.');
         }
 
-        // ---- Contest Hall: pick a Pokémon on the team, draw a token of its color from the pool, compare d6 + Move strengths ----
-        // Moves come from known_moves only (no Attach cards). A Move with 0 strength, or a manual / derived one (the "*" ones), gains +2.
-        let contestState = null;          // { color, token, mine: {...}, theirs: {...} } for the visit in progress
+        // ---- Contest Hall ----
+        // The Contest runs on its own screen (#game-screen-contest), laid out like the Battle Arena but without any of its
+        // battle machinery. The flow: choose a Contestant from the Team Tracker (its send-to-battle mode, see teamContestPick),
+        // choose the opponent (a random token of the same color from the board's pool, or one picked by hand in the gallery,
+        // for players using physical tokens), roll the Contest dice, then take the Victory Rewards or the Loss Penalty.
+        // Moves come from known_moves only (no Attach cards). A Move with 0 strength, or a manual / derived one (the "*" ones),
+        // gains +2. The Hoenn Contest track plays from the moment the action starts until it is entirely resolved.
+        //
+        // contestSession = { phase, info, color, mineIndex, mine: {name, member}, opp: {name, source, member, tracked},
+        //                    mineScore, oppScore, winner, ties, left, ribbonGranted }
+        // phase: 'pick-mine' (Team Tracker) -> 'choose-opp' (random / choose prompt) -> 'pick-opp' (gallery)
+        //        -> 'ready' | 'tie' (on the screen, waiting for a roll) -> 'won' | 'lost' (waiting for the reward / penalty)
+        let contestSession = null;
+        let teamContestPick = false;      // Team Tracker's send-to-battle mode is borrowed to choose the Contestant
+        let contestPickTag = null;        // the gallery tag the opponent pick is limited to ('legendary' for the orange pool)
+        let contestPickResolving = false; // the gallery pick was confirmed (so leaving pick mode isn't a cancel)
+        let contestMusicOn = false;       // this device has asked for the Contest music
+        const contestMusicHolders = new Set(); // host / solo: whose Contest is holding the music ('self' or a guest's peer id)
         let contestCountsCb = null;       // a guest's pending "how many tokens are in each pool?" request
         let contestDrawCb = null;         // a guest's pending draw request
+        let contestTakeCb = null;         // a guest's pending "take this one out of the pool, if it's there" request
         function boardContestColorOf(name) {
             const e = POKEMON_BY_NAME[name];
             const tags = (e && e.tags) || [];
@@ -45742,14 +45874,14 @@
             const e = POKEMON_BY_NAME[name];
             return (e && Array.isArray(e.known_moves)) ? e.known_moves.slice() : [];
         }
+        function boardContestMoveList(name) {
+            return boardContestMoves(name).map(m => Object.assign({ name: m }, boardContestMoveStrength(m)));
+        }
         function boardContestScore(name) {
             const roll = 1 + Math.floor(Math.random() * 6);
-            const moves = boardContestMoves(name).map(m => Object.assign({ name: m }, boardContestMoveStrength(m)));
-            return { name, roll, moves, total: roll + moves.reduce((s, m) => s + m.value, 0) };
-        }
-        function boardContestLine(s) {
-            const parts = s.moves.map(m => m.name + ' ' + m.value + (m.bonus ? '*' : ''));
-            return s.name + ': ' + s.roll + (parts.length ? ' + ' + parts.join(' + ') : '') + ' = ' + s.total;
+            const moves = boardContestMoveList(name);
+            const movesTotal = moves.reduce((s, m) => s + m.value, 0);
+            return { name, roll, moves, movesTotal, total: roll + movesTotal };
         }
         function boardContestRequestCounts(cb) {
             if (lobbyState.role === 'guest') { contestCountsCb = cb; boardSend({ type: 'board-contest-counts' }); return; }
@@ -45758,6 +45890,13 @@
         function boardContestRequestDraw(color, cb) {
             if (lobbyState.role === 'guest') { contestDrawCb = cb; boardSend({ type: 'board-contest-draw', color }); return; }
             boardEnsureBoard().then(c => cb(c.drawFromPool(color) || null)).catch(() => cb(null));
+        }
+        // A hand-picked opponent: if that token is in the app's pool it is taken out (held) like a drawn one, so it can be
+        // settled afterwards (back into the pool, or gone if caught). If it isn't in the pool -- the player is using a physical
+        // token -- cb(false) and nothing about the pool is touched or shown.
+        function boardContestRequestTake(color, name, cb) {
+            if (lobbyState.role === 'guest') { contestTakeCb = cb; boardSend({ type: 'board-contest-take', color, name }); return; }
+            boardEnsureBoard().then(c => cb(!!c.takeFromPool(color, name))).catch(() => cb(false));
         }
         function boardHandleContestCounts(peerId) {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
@@ -45769,87 +45908,347 @@
             if (!getRegionMapSettingsForActiveSave().enabled || !BOARD_FRONTIER_COLORS.some(c => c.id === color)) { reply(null); return; }
             boardEnsureBoard().then(c => reply(c.drawFromPool(color) || null)).catch(() => reply(null));
         }
+        function boardHandleContestTake(peerId, data) {
+            const color = String(data.color || ''), name = String(data.name || '');
+            const reply = ok => boardSendToPeer(peerId, { type: 'board-contest-taken', name, ok: !!ok });
+            if (!getRegionMapSettingsForActiveSave().enabled || !BOARD_FRONTIER_COLORS.some(c => c.id === color)) { reply(false); return; }
+            boardEnsureBoard().then(c => reply(c.takeFromPool(color, name))).catch(() => reply(false));
+        }
+        // Puts a tracked opponent token back (or removes it for good when caught). An untracked one (a physical token that
+        // was never in the app's pool) is left alone -- the app has nothing to settle.
+        function contestSettleOpp(opp, outcome) {
+            if (opp && opp.tracked) boardSafariSettle(opp.name, outcome);
+        }
 
+        // ---- the Contest music ----
+        // The Hoenn Contest track ("hoenn-contest" in music-tracks.json) is pinned for the whole action and the music then goes
+        // back to the Route playlist. Only the Host (or a solo device) really plays music, so a guest asks the Host, and the
+        // Host keeps a set of who is holding the track so two Contests at once don't cut each other off.
+        function contestMusicHolderSet(holder, on) {
+            if (on) contestMusicHolders.add(holder); else contestMusicHolders.delete(holder);
+            if (on) {
+                const track = musicTracks.find(t => t.id === 'hoenn-contest');
+                if (track) applyMusicCue({ tracks: [track] });
+            } else if (!contestMusicHolders.size && musicState.activeCategory !== 'victory') {
+                applyMusicCue(BATTLE_MUSIC_END_CUE);
+            }
+        }
+        function contestMusicSet(on) {
+            on = !!on;
+            if (contestMusicOn === on) return;
+            contestMusicOn = on;
+            if (lobbyState.role === 'guest') { boardSend({ type: 'board-contest-music', on }); return; }
+            contestMusicHolderSet('self', on);
+        }
+        function boardHandleContestMusic(peerId, data) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            contestMusicHolderSet(peerId, !!data.on);
+        }
+
+        // ---- starting: choose the Contestant on the Team Tracker ----
         function boardUseContestHall(info) {
             if (isActiveSaveReadOnly()) return;
-            if (!boardCtrl) return;
+            if (contestSession) { contestResume(); return; } // already in one: pick it back up
             if (!Object.keys(MOVES_BY_NAME || {}).length) { showGameToast('Move data has not loaded yet — try again in a moment.'); return; }
             const members = getActiveSaveData().team.members || [];
             if (!members.some(m => m)) { showGameToast('You need a Pokémon on your team to enter a Contest.'); return; }
-            boardContestRequestCounts(counts => {
-                const buttons = [];
-                members.forEach((m, i) => {
-                    if (!m) return;
-                    const name = getBattleMemberDisplay(m).name || m.name;
-                    const color = boardContestColorOf(name);
-                    if (!color || !(counts[color] > 0)) return; // no token of its color left to face
-                    buttons.push({ id: 'cth:' + i, label: name + ' (' + boardFrontierColorLabel(color) + ')' });
-                });
-                if (!buttons.length) { showGameToast('No Pokémon on your team can enter — the pool for each of their colors is empty.'); return; }
-                buttons.push({ id: 'back', label: 'Back' });
-                boardCtrl.showAction({ text: 'Contest Hall — choose a Pokémon from your team. It will face a random token of its color.', buttons, info });
-            });
-        }
-        function boardContestStart(index) {
-            if (isActiveSaveReadOnly()) return;
-            const m = getTeamSlotMember(index);
-            if (!m) return;
-            const myName = getBattleMemberDisplay(m).name || m.name;
-            const color = boardContestColorOf(myName);
-            if (!color) { showGameToast(myName + ' has no color in the Pokémon data.'); return; }
-            boardContestRequestDraw(color, token => {
-                if (!token) { showGameToast('No ' + boardFrontierColorLabel(color) + ' Pokémon are left in the pool.'); return; }
-                let mine, theirs, rerolls = -1;
-                do { mine = boardContestScore(myName); theirs = boardContestScore(token); rerolls++; } while (mine.total === theirs.total && rerolls < 100);
-                contestState = { color, token, mine, theirs, won: mine.total > theirs.total };
-                boardContestShowResult(rerolls);
-            });
-        }
-        function boardContestShowResult(rerolls) {
-            const s = contestState;
-            if (!s) return;
-            const head = (s.won ? 'You won the Contest!' : 'You lost the Contest.');
-            let text = boardContestLine(s.mine) + '\n' + boardContestLine(s.theirs) + '\n(* = +2 bonus)' + (rerolls > 0 ? '\nTied ' + rerolls + (rerolls === 1 ? ' time' : ' times') + ' — rolled again.' : '');
-            const btn = (act, label) => `<button class="filter-btn include game-contest-btn" type="button" data-act="${act}">${label}</button>`;
-            if (s.won) {
-                const rib = boardGrantItem('Ribbon');
-                text += '\n\n' + (rib ? rib.text : '') + '\nChoose your reward:';
-                boardFrontierShow('Contest Hall — ' + head, text, btn('item', 'Draw an Item card') + btn('catch', 'Try to Catch ' + s.token + ' (+2)'));
-            } else {
-                text += '\n\nChoose your penalty:';
-                boardSafariSettle(s.token, 'returned');
-                boardFrontierShow('Contest Hall — ' + head, text, btn('discard', 'Discard 2 cards') + btn('penalty', '−2 to next Movement Roll'));
+            if (teamReplacePendingMember || teamReleaseModeActive || teamSendToBattleModeActive || handAttachPendingCardId || isTradeNegotiationActive()) {
+                showGameToast('Finish what you are doing in Team Tracker first, then enter the Contest.');
+                return;
             }
+            contestSession = { phase: 'pick-mine', info: info || null, ties: 0 };
+            contestMusicSet(true);
+            openGamePanel(); // the board is a main view now, not inside the panel
+            setGameScreen('team');
+            teamContestPick = true;
+            teamSendToBattleModeActive = true;
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        // The Contest is already running (the action was tapped again, or the panel was reopened): show where it is.
+        function contestResume() {
+            const s = contestSession;
+            if (!s) return;
+            openGamePanel();
+            if (s.phase === 'pick-mine') setGameScreen('team');
+            else if (s.phase === 'choose-opp') contestShowOpponentChoice();
+            else if (s.phase === 'ready' || s.phase === 'tie' || s.phase === 'won' || s.phase === 'lost') setGameScreen('contest');
+        }
+        // Ends the send-to-battle mode borrowed for the Contestant pick (it was never an Arena send).
+        function contestClearTeamPick() {
+            if (!teamContestPick) return;
+            teamContestPick = false;
+            teamSendToBattleModeActive = false;
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        // Backing out before the Contest starts (Cancel on the banner, the opponent prompt or the gallery pick, or leaving
+        // Team Tracker): nothing is lost, the music goes back and a token already drawn returns to the pool.
+        function contestAbort() {
+            const s = contestSession;
+            contestSession = null;
+            contestClearTeamPick();
+            if (s && s.opp) contestSettleOpp(s.opp, 'returned');
+            closeFrontierOverlay();
+            contestMusicSet(false);
+        }
+        function contestPickMine(index) {
+            const s = contestSession;
+            const m = getTeamSlotMember(index);
+            if (!s || !m || isActiveSaveReadOnly()) return;
+            const name = getBattleMemberDisplay(m).name || m.name;
+            const color = boardContestColorOf(name);
+            if (!color) { showGameToast(name + ' has no color in the Pokémon data, so it can’t enter a Contest.'); return; }
+            contestClearTeamPick();
+            s.mineIndex = index;
+            s.color = color;
+            s.mine = { name, member: Object.assign({}, m) }; // a copy: the arena marks the loser Fainted without touching the team
+            s.phase = 'choose-opp';
+            contestShowOpponentChoice();
+        }
+
+        // ---- choosing the opponent: random token from the app, or one picked by hand ----
+        function contestBtn(act, label, cls) {
+            return `<button class="filter-btn ${cls || 'include'} game-contest-btn" type="button" data-act="${act}">${label}</button>`;
+        }
+        function contestShowOpponentChoice() {
+            const s = contestSession;
+            if (!s) return;
+            boardFrontierShow('Contest Hall — Choose Your Opponent',
+                s.mine.name + ' (' + boardFrontierColorLabel(s.color) + ') will be your Contestant.\n\nWho will it face?',
+                contestBtn('opp-random', 'Random In-App Pokémon') + contestBtn('opp-choose', 'Choose a Pokémon') + contestBtn('opp-cancel', 'Cancel Contest', 'exclude'));
             document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
         }
-        function boardContestChoose(act) {
-            const s = contestState;
+        function contestOpponentRandom() {
+            const s = contestSession;
+            if (!s) return;
+            boardContestRequestDraw(s.color, token => {
+                if (!contestSession) { if (token) boardSafariSettle(token, 'returned'); return; }
+                if (!token) {
+                    showGameToast('No ' + boardFrontierColorLabel(s.color) + ' Pokémon are left in the pool — choose one instead.');
+                    return;
+                }
+                const entry = POKEMON_BY_NAME[token];
+                if (!entry) { boardSafariSettle(token, 'returned'); showGameToast('Could not find ' + token + ' in the Pokémon data.'); return; }
+                closeFrontierOverlay();
+                s.opp = { name: token, tracked: true, source: { dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false } };
+                contestEnter();
+            });
+        }
+        // The gallery pick mode the Trainer Battle cards use, limited to the Contestant's color.
+        function contestOpponentChoose() {
+            const s = contestSession;
             if (!s) return;
             closeFrontierOverlay();
-            contestState = null;
-            if (act === 'item') {
-                boardSafariSettle(s.token, 'returned');
-                if (isVirtualDecksEnabledForActiveSave()) { requestDrawCard('Item Deck'); boardShowHand(); showGameToast('Contest Hall: drew a card from the Item Deck.'); }
-                else showGameToast('Contest Hall: draw a card from your physical Item deck.');
-            } else if (act === 'catch') {
-                boardSafariStartCatch(s.token, 0, true, 'Contest Hall');
-            } else if (act === 'penalty') {
+            s.phase = 'pick-opp';
+            contestPickTag = s.color === 'orange' ? 'legendary' : null;
+            closeGamePanel();
+            beginBattleWildPickMode(null, 'contest');
+            if (s.color !== 'orange') lockBattleTrainerPickColor(s.color);
+        }
+        function contestOpponentChosen(source) {
+            const s = contestSession;
+            if (!s) return;
+            const color = boardContestColorOf(source.name) || s.color;
+            boardContestRequestTake(color, source.name, ok => {
+                if (!contestSession) { if (ok) boardSafariSettle(source.name, 'returned'); return; }
+                s.opp = { name: source.name, tracked: !!ok, source: Object.assign({}, source, { shiny: false }) };
+                contestEnter();
+            });
+        }
+
+        // ---- the Contest screen ----
+        function contestEnter() {
+            const s = contestSession;
+            if (!s || !s.mine || !s.opp) return;
+            s.opp.member = buildWildPokemonMember(s.opp.source);
+            s.phase = 'ready';
+            s.mineScore = null; s.oppScore = null; s.winner = null; s.ties = 0; s.left = false;
+            openGamePanel();
+            setGameScreen('contest');
+            renderContest();
+        }
+        function contestBuildSlot(container, member, fainted) {
+            if (!container) return;
+            const view = Object.assign({}, member, { fainted: !!fainted });
+            const slot = document.createElement('div');
+            slot.className = 'game-team-slot game-contest-slot';
+            slot.dataset.filled = 'true';
+            const img = document.createElement('img');
+            img.className = 'game-team-slot-img';
+            const overrideEntry = view.formOverride ? POKEMON_BY_NAME[view.formOverride] : null;
+            const artSrc = overrideEntry ? overrideEntry.src : view.src;
+            const artShinySrc = overrideEntry ? (overrideEntry.shinysrc || '') : view.shinysrc;
+            img.src = (view.shiny && hasShinyForm(artShinySrc)) ? artShinySrc : artSrc;
+            img.alt = (overrideEntry ? overrideEntry.name : view.name) || '';
+            img.classList.toggle('fainted', !!view.fainted);
+            img.onerror = () => { img.style.display = 'none'; };
+            slot.appendChild(img);
+            // Only the HP badge, and it is purely a marker here: Fainted shows who lost. (Contest-specific HP art can swap in
+            // at this one call.)
+            slot.appendChild(buildHpBadge(view, 'contest', getHpRule(getActiveSaveData())));
+            container.innerHTML = '';
+            container.appendChild(slot);
+        }
+        function contestRenderMoves(container, name) {
+            if (!container) return;
+            const moves = boardContestMoveList(name);
+            if (!moves.length) { container.innerHTML = '<span class="game-contest-footnote">No Moves — the d6 is all it has.</span>'; return; }
+            container.innerHTML = moves.map(m => {
+                const type = getBattleMoveType(m.name);
+                return `<span class="filter-btn game-contest-move${type ? ` game-battle-move-typed poke-type-${type}` : ''}">${escapeHtml(m.name)} <b>+${m.value}${m.bonus ? '*' : ''}</b></span>`;
+            }).join('') + (moves.some(m => m.bonus) ? '<span class="game-contest-footnote">* Moves with 0, *, or 0* Attack Strength gain a +2 bonus.</span>' : '');
+        }
+        function contestReadoutHtml(score) {
+            if (!score) return '';
+            const parts = ['Roll ' + score.roll];
+            if (score.moves.length) parts.push('Moves ' + score.movesTotal);
+            return `${score.total}<span class="game-battle-calc-detail">${escapeHtml(parts.join(' + '))}</span>`;
+        }
+        function renderContest() {
+            const s = contestSession;
+            if (!s || !s.mine || !s.opp || !s.opp.member) return;
+            const decided = s.phase === 'won' || s.phase === 'lost';
+            contestBuildSlot(document.getElementById('game-contest-opp-slot'), s.opp.member, decided && s.winner === 'mine');
+            contestBuildSlot(document.getElementById('game-contest-mine-slot'), s.mine.member, decided && s.winner === 'opp');
+            contestRenderMoves(document.getElementById('game-contest-opp-moves'), s.opp.name);
+            contestRenderMoves(document.getElementById('game-contest-mine-moves'), s.mine.name);
+            document.getElementById('game-contest-opp-readout').innerHTML = contestReadoutHtml(s.oppScore);
+            document.getElementById('game-contest-mine-readout').innerHTML = contestReadoutHtml(s.mineScore);
+            const mineHalf = document.getElementById('game-contest-mine-half');
+            const themeColor = getMyLobbyThemeColor();
+            if (mineHalf) { if (themeColor) mineHalf.dataset.playerTheme = themeColor; else delete mineHalf.dataset.playerTheme; }
+            const rollBtn = document.getElementById('game-contest-roll-btn');
+            rollBtn.innerHTML = 'Roll Contest Dice ' + battleDieIconMarkup('d6');
+            rollBtn.style.display = (s.phase === 'ready' || s.phase === 'tie') ? '' : 'none';
+            document.getElementById('game-contest-leave-btn').style.display = (s.phase === 'ready' || s.phase === 'tie') ? '' : 'none';
+            document.getElementById('game-contest-reward-btn').style.display = s.phase === 'won' ? '' : 'none';
+            document.getElementById('game-contest-penalty-btn').style.display = s.phase === 'lost' ? '' : 'none';
+            const status = document.getElementById('game-contest-status');
+            status.textContent = s.phase === 'won' ? 'You won the Contest!'
+                : s.phase === 'lost' ? (s.left ? 'You left the Contest — it counts as a loss.' : 'You lost the Contest.')
+                : s.phase === 'tie' ? 'Tied at ' + s.mineScore.total + '! Roll again.'
+                : '';
+        }
+        function contestRoll() {
+            const s = contestSession;
+            if (!s || (s.phase !== 'ready' && s.phase !== 'tie')) return;
+            s.mineScore = boardContestScore(s.mine.name);
+            s.oppScore = boardContestScore(s.opp.name);
+            if (s.mineScore.total === s.oppScore.total) {
+                s.phase = 'tie';
+                s.ties++;
+            } else {
+                s.winner = s.mineScore.total > s.oppScore.total ? 'mine' : 'opp';
+                s.phase = s.winner === 'mine' ? 'won' : 'lost';
+                if (s.phase === 'lost') contestSettleOpp(s.opp, 'returned');
+            }
+            renderContest();
+        }
+        function contestAskLeave() {
+            const s = contestSession;
+            if (!s || (s.phase !== 'ready' && s.phase !== 'tie')) return;
+            boardFrontierShow('Leave the Contest?', 'Leaving counts as a loss, and you will take the Loss Penalty.',
+                contestBtn('leave-yes', 'Leave Contest', 'exclude') + contestBtn('leave-no', 'Keep Competing'));
+        }
+        function contestLeave() {
+            const s = contestSession;
+            if (!s || (s.phase !== 'ready' && s.phase !== 'tie')) return;
+            closeFrontierOverlay();
+            s.phase = 'lost'; s.winner = 'opp'; s.left = true;
+            contestSettleOpp(s.opp, 'returned');
+            renderContest();
+            contestShowPenalty();
+        }
+
+        // ---- the outcome: Victory Rewards / Loss Penalty ----
+        function contestShowRewards() {
+            const s = contestSession;
+            if (!s || s.phase !== 'won') return;
+            let ribbonText = '';
+            let art = '';
+            if (!s.ribbonGranted) {
+                s.ribbonGranted = true;
+                const rib = boardGrantItem('Ribbon');
+                s.ribbonText = rib ? rib.text : '';
+            }
+            ribbonText = s.ribbonText || '';
+            const found = boardFindItemCard('Ribbon');
+            if (found && found.card.imageUrl && found.card.imageUrl !== 'placeholder') {
+                art = `<div class="game-team-cards-detail"><img class="game-team-cards-photo" src="${escapeHtml(found.card.imageUrl)}" alt="${escapeHtml(found.card.name)}"></div>`;
+            }
+            boardFrontierShow('Contest Hall — Victory Rewards', (ribbonText ? ribbonText + '\n\n' : '') + 'Choose your reward:',
+                art + contestBtn('item', 'Draw an Item card') + contestBtn('catch', 'Try to Catch ' + s.opp.name + ' (+2)'));
+            document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
+        }
+        function contestShowPenalty() {
+            const s = contestSession;
+            if (!s || s.phase !== 'lost') return;
+            boardFrontierShow('Contest Hall — Loss Penalty', 'Choose your penalty:',
+                contestBtn('discard', 'Discard 2 cards') + contestBtn('penalty', '−2 to next Movement Roll'));
+        }
+        function boardContestChoose(act) {
+            const s = contestSession;
+            if (act === 'opp-random') { contestOpponentRandom(); return; }
+            if (act === 'opp-choose') { contestOpponentChoose(); return; }
+            if (act === 'opp-cancel') { contestAbort(); return; }
+            if (act === 'leave-yes') { contestLeave(); return; }
+            if (act === 'leave-no') { closeFrontierOverlay(); return; }
+            if (!s) return;
+            if (act === 'item' || act === 'catch') {
+                if (s.phase !== 'won') return;
+                closeFrontierOverlay();
+                const opp = s.opp;
+                contestSession = null; // resolved: nothing locks the Contest screen any more
+                if (act === 'item') {
+                    contestSettleOpp(opp, 'returned');
+                    contestMusicSet(false);
+                    if (isVirtualDecksEnabledForActiveSave()) { requestDrawCard('Item Deck'); boardShowHand(); showGameToast('Contest Hall: drew a card from the Item Deck.'); }
+                    else showGameToast('Contest Hall: draw a card from your physical Item deck.');
+                } else {
+                    // The Catch dialog ends the action: the music stays until it is closed (see closeCatchOverlay()).
+                    boardSafariStartCatch(opp.name, 0, true, 'Contest Hall', { untracked: !opp.tracked, contest: true });
+                }
+                return;
+            }
+            if (s.phase !== 'lost') return;
+            closeFrontierOverlay();
+            contestSession = null;
+            if (act === 'penalty') {
+                contestMusicSet(false);
                 boardAddMovePenalty(2);
                 showGameToast('Contest Hall: −2 on your next Movement Roll.');
             } else if (act === 'discard') {
-                if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Contest Hall: discard 2 cards from your physical hand.'); return; }
+                if (!isVirtualDecksEnabledForActiveSave()) { contestMusicSet(false); showGameToast('Contest Hall: discard 2 cards from your physical hand.'); closeGamePanel(); return; }
                 const hand = getLocalHandArray();
                 if (hand.length <= 2) {
+                    contestMusicSet(false);
                     hand.slice().forEach(id => { const c = CARDS_BY_ID[id]; if (c) requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, id); });
                     showGameToast(hand.length ? 'Contest Hall: discarded your hand.' : 'Contest Hall: your hand is empty — nothing to discard.');
-                    if (hand.length) boardShowHand();
+                    if (hand.length) boardShowHand(); else closeGamePanel();
                     return;
                 }
-                contestDiscardLeft = 2;
+                contestDiscardLeft = 2; // the music plays on until both cards are chosen (see boardContestDiscard())
                 boardShowHand();
                 showDecksNotice('Contest Hall: choose 2 cards from your hand to discard.');
+                return;
             }
+            closeGamePanel();
         }
+        // While a Contest is on its screen the screen can't be left any other way than Leave Contest (a Back press, closing the
+        // panel...), so the result and its reward or penalty can't be skipped.
+        function contestScreenLocked() {
+            const s = contestSession;
+            return !!s && currentGameScreen === 'contest' && (s.phase === 'ready' || s.phase === 'tie' || s.phase === 'won' || s.phase === 'lost');
+        }
+        document.getElementById('game-contest-roll-btn').addEventListener('click', contestRoll);
+        document.getElementById('game-contest-leave-btn').addEventListener('click', contestAskLeave);
+        document.getElementById('game-contest-reward-btn').addEventListener('click', contestShowRewards);
+        document.getElementById('game-contest-penalty-btn').addEventListener('click', contestShowPenalty);
+
         let contestDiscardBusy = false;
         function boardContestDiscard(cardId) {
             const c = CARDS_BY_ID[cardId];
@@ -45859,7 +46258,7 @@
             requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, cardId);
             contestDiscardLeft--;
             if (contestDiscardLeft > 0) showDecksNotice('Contest Hall: choose 1 more card to discard.');
-            else showDecksNotice('Contest Hall: penalty paid.');
+            else { showDecksNotice('Contest Hall: penalty paid.'); contestMusicSet(false); }
             if (typeof renderDecksScreen === 'function') setTimeout(renderDecksScreen, 450);
         }
 
@@ -46184,12 +46583,13 @@
                 boardSafariStartCatch(name, threshold, frontier);
             });
         }
-        function boardSafariStartCatch(name, threshold, frontier, label) {
+        function boardSafariStartCatch(name, threshold, frontier, label, opts) {
             const entry = POKEMON_BY_NAME[name];
-            if (!entry || isActiveSaveReadOnly()) { boardSafariSettle(name, 'returned'); if (!entry) showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
+            if (!entry || isActiveSaveReadOnly()) { if (!(opts && opts.untracked)) boardSafariSettle(name, 'returned'); if (opts && opts.contest) contestMusicSet(false); if (!entry) showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
             const source = { dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false };
             catchAttempt = { fainted: false, hadStatus: false, roll: null, cardId: null, manualBonus: 0,
-                safari: { name, member: buildWildPokemonMember(source), threshold, settled: false, frontier: !!frontier, label: label || '' } };
+                safari: { name, member: buildWildPokemonMember(source), threshold, settled: false, frontier: !!frontier, label: label || '',
+                    untracked: !!(opts && opts.untracked), contest: !!(opts && opts.contest) } }; // untracked: a physical token the app's pool never held -- nothing to settle
             openGamePanel();
             setGameScreen('battle');
             showCatchOverlay();
@@ -48105,6 +48505,10 @@
                     const cb = contestDrawCb;
                     contestDrawCb = null;
                     if (cb) cb(typeof data.name === 'string' ? data.name : null);
+                } else if (data.type === 'board-contest-taken' && typeof data.name === 'string') {
+                    const cb = contestTakeCb;
+                    contestTakeCb = null;
+                    if (cb) cb(!!data.ok);
                 } else if (data.type === 'board-roll-shown') {
                     boardShowRoll(data);
                 } else if (data.type === 'board-safari-pool-result' && Array.isArray(data.names)) {
@@ -49421,6 +49825,13 @@
                     openTeamReleaseConfirmOverlay(Number(teamSlot.dataset.index));
                     return;
                 }
+                if (teamContestPick) {
+                    // Contest Hall: the tapped Pok\u00e9mon is the Contestant (see contestPickMine()).
+                    if (isActiveSaveReadOnly()) return;
+                    if (teamSlot.dataset.filled !== 'true') return;
+                    contestPickMine(Number(teamSlot.dataset.index));
+                    return;
+                }
                 if (teamSendToBattleModeActive) {
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
@@ -50363,7 +50774,8 @@
         function closeCatchOverlay() {
             // Closing a Safari Zone attempt without catching puts its token back in the pool.
             const sf = catchAttempt && catchAttempt.safari;
-            if (sf && !sf.settled) { sf.settled = true; discardMemberEquippedCards(sf.member); boardSafariSettle(sf.name, 'returned'); }
+            if (sf && !sf.settled) { sf.settled = true; discardMemberEquippedCards(sf.member); if (!sf.untracked) boardSafariSettle(sf.name, 'returned'); }
+            if (sf && sf.contest) contestMusicSet(false); // the Contest's catch screen is the last step of the action
             catchAttempt = null;
             catchCardPickActive = false;
             hideCatchOverlay();
@@ -50506,7 +50918,7 @@
             if (catchAttempt && catchAttempt.safari) { // gets away: the token goes back to the pool
                 const sf = catchAttempt.safari;
                 if (keepOverlay) {
-                    if (!sf.settled) { sf.settled = true; discardMemberEquippedCards(sf.member); boardSafariSettle(sf.name, 'returned'); }
+                    if (!sf.settled) { sf.settled = true; discardMemberEquippedCards(sf.member); if (!sf.untracked) boardSafariSettle(sf.name, 'returned'); }
                 } else {
                     closeCatchOverlay(); // also discards its cards
                     showGameToast('The wild ' + sf.member.name + ' got away.');
@@ -50524,7 +50936,7 @@
             if (sf) {
                 // Safari Zone: the token leaves the game and the Pok\u00e9mon joins the team -- no Arena or battle involved.
                 sf.settled = true;
-                boardSafariSettle(sf.name, 'caught');
+                if (!sf.untracked) boardSafariSettle(sf.name, 'caught');
                 const member = sf.member;
                 if (!keepOverlay) closeCatchOverlay();
                 applyCaughtWildMember(member);
