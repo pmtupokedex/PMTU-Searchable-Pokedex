@@ -322,7 +322,7 @@ function draw(){buildModel();let h=(img&&(bgFail||!canBmp))?`<image href="${img}
   h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" pointer-events="none"/>`}
  svg.innerHTML=h;renderPl();if(opts.onDraw){try{opts.onDraw()}catch(e){}}}
 const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
-let Z=1,VX=0,VY=0,relZoom=1,autoFill=true,initCentered=false; // autoFill: until the player zooms by hand, the view is 'fill the frame's height, centered on my marker'const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
+/* autoFill: until the player zooms by hand, the view is 'fill the frame's height, centered on my marker' */let Z=1,VX=0,VY=0,relZoom=1,autoFill=true,initCentered=false;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
 let EA=1.5;const updEA=()=>{const r=svg.getBoundingClientRect();if(r.width&&r.height)EA=r.width/r.height};
 let keepScale=false;
 // keepScale (desktop, side panel docking) only changes how a resize is handled (the on-screen scale is kept); the minimum zoom is always 'the whole map fits', so a narrow window can still show the entire map.
