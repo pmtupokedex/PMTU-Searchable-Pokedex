@@ -29370,6 +29370,7 @@
                     <div class="game-active-card-view actor"${themeAttr}>
                         ${imgTag}
                         <div class="game-active-card-actions"><div class="game-active-card-buttons">
+                            ${(!readOnly && cardIsLegendaryEncounter(card)) ? `<button class="filter-btn game-active-card-legend-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Find the Legendary</button><button class="filter-btn game-active-card-legend-decline-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Don&rsquo;t Find It</button>` : ''}
                             ${(!readOnly && cardStartsPlayerBattle(card)) ? `<button class="filter-btn game-active-card-pvp-btn" type="button">Battle a Player</button>` : ''}
                             ${(!readOnly && cardStartsContest(card)) ? `<button class="filter-btn game-active-card-contest-btn" type="button">Begin Contest</button>` : ''}
                             ${canAttach ? `<button class="filter-btn game-active-card-attach-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Attach</button>` : ''}
@@ -34574,6 +34575,56 @@
         // Event cards whose text starts a Pok\u00e9mon Contest (cards.json contestStart: "yes") get a Begin Contest
         // button at the top of the Active Card zone, which runs the same boardUseContestHall() the Contest Hall
         // space action does. The card stays in the zone afterwards; the player Discards it when done.
+        // ---- Roaming Legend (cards.json) ----
+        //   "legendaryEncounter": "yes"   adds the two choices below to the card in the Active Card zone
+        //   "declineDraw": N              (+ optional "declineDrawDeck", default "Item Deck") cards drawn if the player declines
+        //   "declineShuffleBack": "yes"   a declined card is shuffled back into its own deck rather than discarded
+        // Find the Legendary: a random Legendary token (the pool, or a random orange space when it is empty) is drawn and fought as an
+        // ordinary wild encounter -- it can be Caught -- and the card is discarded when that battle ends. Decline: draw the cards and
+        // shuffle the card back.
+        function cardIsLegendaryEncounter(card) {
+            return !!card && card.legendaryEncounter === 'yes';
+        }
+        function beginLegendaryEncounterFromCard(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (isActiveSaveReadOnly() || !cardIsLegendaryEncounter(card)) return;
+            if (!getRegionMapSettingsForActiveSave().enabled) {
+                showGameToast('The app\u2019s game board is off for this save \u2014 take a Legendary token from your physical pool and start the encounter in the Battle Arena.');
+                return;
+            }
+            if (!canUseBattleArena()) { showBattleArenaGateToast(); return; }
+            if (boardFrontierArenaBusy()) return;
+            boardFrontierRequestDraw('orange', name => {
+                if (!name) {
+                    showGameToast('There are no Legendary Pok\u00e9mon left in the pool or on the map.');
+                    return;
+                }
+                if (!POKEMON_BY_NAME[name]) { // can't be fought: give the token straight back
+                    boardSafariSettle(name, 'returned');
+                    showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.');
+                    return;
+                }
+                showGameToast('A wild ' + name + ' appears!');
+                boardStartWildBattle({ token: name, onPlaced: () => beginCardBattleResolution({ cardId }) }); // the Attacker is chosen as usual
+            }, true);
+        }
+        function declineLegendaryEncounterFromCard(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (isActiveSaveReadOnly() || !cardIsLegendaryEncounter(card)) return;
+            const draw = Math.max(0, parseInt(card.declineDraw, 10) || 0);
+            const deck = card.declineDrawDeck || 'Item Deck';
+            if (draw) {
+                if (isVirtualDecksEnabledForActiveSave()) {
+                    for (let i = 0; i < draw; i++) requestDrawCard(deck);
+                    boardShowHand();
+                    showGameToast(card.name + ': drew ' + draw + ' card' + (draw === 1 ? '' : 's') + ' from the ' + deck + '.');
+                } else {
+                    showGameToast(card.name + ': draw ' + draw + ' card' + (draw === 1 ? '' : 's') + ' from your physical ' + deck + '.');
+                }
+            }
+            if (card.declineShuffleBack === 'yes') requestActiveCardShuffle(); else requestActiveCardDiscard();
+        }
+
         // cards.json playerBattle: "yes" (Let's Fight!): a Begin-Battle button that runs the board's Battle a Player challenge.
         function cardStartsPlayerBattle(card) {
             return !!card && card.playerBattle === 'yes';
@@ -47099,6 +47150,7 @@
                 setBattleDefenderWild(wild);
                 renderBattleDefenderSlot();
                 renderBattleAttackerSlot();
+                if (info.onPlaced) info.onPlaced();
             });
         }
         // --- encounter bookkeeping (host / solo device): which Arena Pok\u00e9mon is this landing's token, and how did it leave? ---
@@ -47106,7 +47158,7 @@
             if (boardEncounter && !boardEncounter.uid && member && boardEncounter.playerId === peerKey && member.name === boardEncounter.name) boardEncounter.uid = member.uid;
             // Battle Frontier: the token this player drew has just entered the Arena (only the Frontier's Defender is flagged noCatch).
             const fr = boardFrontiers[peerKey];
-            if (fr && !fr.uid && member && member.noCatch && member.name === fr.name) fr.uid = member.uid;
+            if (fr && !fr.uid && member && (member.noCatch || fr.roaming) && member.name === fr.name) fr.uid = member.uid;
         }
         function boardNoteWildLeft(member, forced) {
             if (member && member.uid) { // Battle Frontier: the Defender left the Arena -- defeated, or walked away from
@@ -47304,25 +47356,26 @@
                 boardStartWildBattle({ token: name, noCatch: true }); // puts it in the Defender slot; the Attacker is chosen as usual
             });
         }
-        function boardFrontierRequestDraw(color, cb) {
-            if (lobbyState.role === 'guest') { boardFrontierDrawCb = cb; boardSend({ type: 'board-frontier-draw', color }); return; }
-            boardEnsureBoard().then(() => cb(boardFrontierHostDraw('host', color))).catch(() => cb(null));
+        function boardFrontierRequestDraw(color, cb, roaming) {
+            if (lobbyState.role === 'guest') { boardFrontierDrawCb = cb; boardSend({ type: 'board-frontier-draw', color, roaming: !!roaming }); return; }
+            boardEnsureBoard().then(() => cb(boardFrontierHostDraw('host', color, roaming))).catch(() => cb(null));
         }
         // Host / solo: draws the token and remembers it for this player (bound to its Arena Pokémon in boardBindEncounter()).
-        function boardFrontierHostDraw(playerId, color) {
+        function boardFrontierHostDraw(playerId, color, roaming) {
             if (!boardCtrl || !BOARD_FRONTIER_COLORS.some(c => c.id === color)) return null;
             const old = boardFrontiers[playerId];
             if (old && !old.uid) { boardCtrl.settlePoolToken(old.name, 'returned'); delete boardFrontiers[playerId]; } // an earlier draw that never reached the Arena
-            const name = boardCtrl.drawFromPool(color);
+            // Roaming Legend: the Legendary pool, or a random orange space when that pool is empty (board.js drawLegendary()).
+            const name = roaming ? boardCtrl.drawLegendary() : boardCtrl.drawFromPool(color);
             if (!name) return null;
-            boardFrontiers[playerId] = { name, color, uid: null };
+            boardFrontiers[playerId] = { name, color, uid: null, roaming: !!roaming };
             return name;
         }
         function boardHandleFrontierDraw(peerId, data) {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
             const color = String(data.color || '');
             const reply = name => boardSendToPeer(peerId, { type: 'board-frontier-drawn', color, name });
-            boardEnsureBoard().then(() => reply(boardFrontierHostDraw(peerId, color))).catch(() => reply(null));
+            boardEnsureBoard().then(() => reply(boardFrontierHostDraw(peerId, color, !!data.roaming))).catch(() => reply(null));
         }
 
         // ---- the Battle's end (Host / solo, called from boardNoteWildLeft()) ----
@@ -47330,6 +47383,9 @@
             const f = boardFrontiers[playerId];
             delete boardFrontiers[playerId];
             if (!f) return;
+            // Roaming Legend: an ordinary wild battle (it can be Caught). A caught token leaves the game; any other ending puts it back
+            // in the Legendary pool. No result prompt and no marker move.
+            if (f.roaming) { if (boardCtrl) boardCtrl.settlePoolToken(f.name, forced === 'caught' ? 'caught' : 'returned'); return; }
             if (boardCtrl) boardCtrl.settlePoolToken(f.name, 'returned'); // the token goes back to its pool either way
             const won = !!member.fainted && forced !== 'caught';
             const moved = (!won && boardCtrl) ? boardCtrl.movePlayer(playerId, boardFrontierReturnTo) : '';
@@ -49670,6 +49726,17 @@
             const activeCardOverlayBtn = e.target.closest('.game-active-card-overlay-btn');
             if (activeCardOverlayBtn) {
                 requestOverlayFromActiveCard(activeCardOverlayBtn.dataset.cardId);
+                return;
+            }
+
+            const activeCardLegendBtn = e.target.closest('.game-active-card-legend-btn');
+            if (activeCardLegendBtn) {
+                beginLegendaryEncounterFromCard(activeCardLegendBtn.dataset.cardId);
+                return;
+            }
+            const activeCardLegendDeclineBtn = e.target.closest('.game-active-card-legend-decline-btn');
+            if (activeCardLegendDeclineBtn) {
+                declineLegendaryEncounterFromCard(activeCardLegendDeclineBtn.dataset.cardId);
                 return;
             }
 
