@@ -26317,6 +26317,7 @@
             return !inThisBattle && !!(prev.ownerId || other);
         }
         const BATTLE_SPECTATOR_ZONES_MESSAGE = 'Only the two players in this battle can use its Battle Card and Field Effect zones.';
+        const BATTLE_NON_OWNER_END_MESSAGE = 'Only a player with a Pok\u00e9mon of their own in the Battle Arena can end the battle.';
         const BATTLE_SPECTATOR_END_MESSAGE = 'Only the two players in this battle can end it.';
         const BATTLE_SPECTATOR_BEGIN_MESSAGE = 'Only the two players in this battle can begin it.';
         const BATTLE_SPECTATOR_NEXT_MESSAGE = 'Only the two players in this battle can start its next round.';
@@ -26685,6 +26686,17 @@
                 action = 'end';
                 failedCatch = true;
             }
+            // Only a player who owns a Pok\u00e9mon in the Arena may end the battle -- otherwise whoever controls the wild /
+            // Trainer half could end it before the right player has caught it or gained the level.
+            if (action === 'end' && !failedCatch) {
+                const ownsOne = !!(st.attacker && st.attacker.ownerId === peerKey) || !!(st.defender && st.defender.ownerId === peerKey);
+                const anyOwned = !!(st.attacker && st.attacker.ownerId) || !!(st.defender && st.defender.ownerId);
+                if (anyOwned && !ownsOne) {
+                    sendBattleNotice(peerKey, BATTLE_NON_OWNER_END_MESSAGE);
+                    broadcastBattleArenaState();
+                    return;
+                }
+            }
             // Two other players' battle isn't the spectators' to begin, advance, end, or flip the Battle Cards of.
             if (BATTLE_SPECTATOR_BLOCKED_PHASES.includes(action) && isSpectatorOfPlayerBattle(peerKey)) {
                 sendBattleNotice(peerKey, getBattleSpectatorPhaseMessage(action));
@@ -26968,6 +26980,14 @@
             return a.ownerId !== me && d.ownerId !== me;
         }
         // Mirror of the host's isBattleSlotReplaceBlocked(), from this device's copy of the Arena.
+        // True when this device's player may press End Battle: solo, or they own a Pok\u00e9mon in the Arena (or nobody does).
+        function canIEndArenaBattle() {
+            if (lobbyState.role === null) return true;
+            const me = getMyLobbyPlayerId();
+            const a = getArenaSlotEntry('attacker'), d = getArenaSlotEntry('defender');
+            const anyOwned = !!((a && a.ownerId) || (d && d.ownerId));
+            return !anyOwned || !!((a && a.ownerId === me) || (d && d.ownerId === me));
+        }
         function isArenaSlotReplaceBlockedForMe(slot) {
             if (lobbyState.role === null) return false;
             const me = getMyLobbyPlayerId();
@@ -36831,7 +36851,7 @@
             });
             nextBtn.classList.toggle('battle-next-round-hint', nextRoundShowing && anyFainted);
             endBtn.style.display = battleInProgress ? '' : 'none';
-            endBtn.disabled = spectating;
+            endBtn.disabled = spectating || !canIEndArenaBattle();
             // Battle over (Next Round is gone because nobody is left to
             // send out on one side): End Battle takes over the same
             // glow/pulse as the nudge.
@@ -36959,6 +36979,7 @@
         // confirming forfeits the battle, which counts as a loss for the player who pressed it (see hostPvpOutcome() for what
         // that changes in a player-vs-player battle). With a clear winner it ends straight away, as before.
         function endBattleFromButton() {
+            if (!canIEndArenaBattle()) { showBattleArenaNotice(BATTLE_NON_OWNER_END_MESSAGE); return; }
             if (battleInProgress && !isArenaSpectatorOfPlayerBattle() && !isBattleNextRoundBlocked()) {
                 boardFrontierShow('Forfeit the Battle?', 'Neither side has run out of Pok\u00e9mon. If you end the battle now it counts as a loss for you.',
                     `<button class="filter-btn exclude game-forfeit-btn" type="button" data-act="forfeit">Forfeit</button>`
@@ -38320,7 +38341,7 @@
             const entry = getBattleMoveEntry(moveName);
             if (!entry) return null;
             const strength = entry.attack_strength;
-            if (strength && strength.mode === 'fixed' && strength.value === 0) {
+            if (strength && strength.mode === 'fixed' && typeof strength.value === 'number' && strength.value <= 0) {
                 return getBattleMoveEntry(MAX_GUARD_MOVE_NAME) ? MAX_GUARD_MOVE_NAME : null;
             }
             const type = getBattleMoveType(moveName);
@@ -46370,8 +46391,8 @@
         function boardContestMoveStrength(moveName) {
             const e = getBattleMoveEntry(moveName);
             const a = e && e.attack_strength;
-            if (a && a.mode === 'fixed' && typeof a.value === 'number' && a.value !== 0) return { value: a.value, bonus: false };
-            return { value: 2, bonus: true }; // 0, manual, half-level and derived strengths all count as +2
+            if (a && a.mode === 'fixed' && typeof a.value === 'number' && a.value > 0) return { value: a.value, bonus: false };
+            return { value: 2, bonus: true }; // 0, negative (Triple Kick), manual, half-level and derived strengths all count as +2
         }
         function boardContestMoves(name) {
             const e = POKEMON_BY_NAME[name];
@@ -46708,7 +46729,7 @@
             const s = contestSession;
             if (!s || s.phase !== 'lost') return;
             boardFrontierShow('Contest Hall — Loss Penalty', 'Choose your penalty:',
-                contestBtn('discard', 'Discard 2 cards') + contestBtn('penalty', '−2 to next Movement Roll'));
+                ((!isVirtualDecksEnabledForActiveSave() || getLocalHandArray().length >= 2) ? contestBtn('discard', 'Discard 2 cards') : '') + contestBtn('penalty', '−2 to next Movement Roll'));
         }
         function boardContestChoose(act) {
             const s = contestSession;
@@ -51475,8 +51496,8 @@
             } else {
                 // A Safari Zone visit gets one roll.
                 if (!sf || a.roll === null) html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
-                // Catch Cards are played BEFORE the die is rolled, and never in the Safari Zone.
-                if (!a.cardId && !sf && a.roll === null) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
+                // Catch Cards are played BEFORE the die is rolled, and never in the Safari Zone proper (Frontier and Contest catches allow them).
+                if (!a.cardId && !(sf && !sf.frontier) && a.roll === null) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
                 html += `<button class="filter-btn include game-catch-finish-btn" type="button"${missed ? ' disabled' : ''}>Caught \u2014 Add to Team</button>`;
                 html += `<button class="filter-btn exclude game-catch-fail-btn" type="button"${caught ? ' disabled' : ''}>Failed to Catch</button>`;
                 html += '<button class="filter-btn game-catch-close-btn" type="button">Close</button>';
@@ -51496,7 +51517,7 @@
         }
 
         function beginCatchCardHandPlay() {
-            if (!catchAttempt || catchAttempt.safari || catchAttempt.roll !== null) return; // none in the Safari Zone, none after the roll
+            if (!catchAttempt || (catchAttempt.safari && !catchAttempt.safari.frontier) || catchAttempt.roll !== null) return; // none in the Safari Zone proper, none after the roll
             if (!isVirtualDecksEnabledForActiveSave()) {
                 showBattleArenaNotice('This save doesn\u2019t use virtual decks, so there\u2019s no hand to play a Catch Card from.');
                 return;
@@ -51508,7 +51529,7 @@
         }
 
         function playCatchCardFromHand(cardId) {
-            if (!catchAttempt || catchAttempt.cardId || catchAttempt.safari || catchAttempt.roll !== null) return;
+            if (!catchAttempt || catchAttempt.cardId || (catchAttempt.safari && !catchAttempt.safari.frontier) || catchAttempt.roll !== null) return;
             const card = CARDS_BY_ID[cardId];
             if (!isCatchCardTagged(card)) return;
             const deckName = getEffectiveCardDeck(card) || getDeckToolList()[0];
