@@ -29280,7 +29280,7 @@
                             ${canAttach ? `<button class="filter-btn game-active-card-attach-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Attach</button>` : ''}
                             ${canPermanent ? `<button class="filter-btn game-active-card-permanent-btn" type="button">Permanent</button>` : ''}
                             ${canOverlay ? `<button class="filter-btn game-active-card-overlay-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Overlay</button>` : ''}
-                            ${trainerCount ? `<button class="filter-btn game-active-card-trainer-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Choose ${trainerCount} Trainer Pok&eacute;mon</button>` : ''}
+                            ${trainerCount ? `<button class="filter-btn game-active-card-trainer-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Battle Trainer</button>` : ''}
                             ${(!readOnly && cardIsRivalBattle(card)) ? `<button class="filter-btn game-active-card-rival-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Battle</button>` : ''}
                             <button class="filter-btn game-active-card-discard-btn" type="button" ${readOnly ? 'disabled' : ''}>Discard</button>
                             <button class="filter-btn game-active-card-shuffle-btn" type="button" ${readOnly ? 'disabled' : ''}>Shuffle</button>
@@ -34242,6 +34242,7 @@
         // {dex,name,src,shinysrc,shiny} sources, not members yet).
         let battleTrainerPickTarget = 0;
         let battleTrainerPicks = [];
+        let battleTrainerPickCardId = null; // the Trainer Battle card the gallery pick is for
 
         // The color a Trainer Battle card with `"noteColor": "yes"` has the
         // gallery locked to while its pick runs (one of NOTE_COLORS), or
@@ -34296,7 +34297,22 @@
         // A card with `"noteColor": "yes"` first asks for the color of the
         // space the player is on (the same swatch picker the Permanent
         // button uses), then starts the pick locked to that color.
+        // The Battle Trainer button asks first how the Trainer's Pok\u00e9mon are chosen: picked by hand in the gallery
+        // (for a physical or projected board, where the tokens aren't tracked in the app), or drawn at random from
+        // the board's token pool (a fully virtual game).
         function beginTrainerBattleCardPick(cardId) {
+            const count = getTrainerBattleCardPokemonCount(cardId);
+            if (!count || isActiveSaveReadOnly()) return;
+            const poolOk = !!getRegionMapSettingsForActiveSave().enabled;
+            boardFrontierShow('Battle Trainer', 'How should the Trainer\u2019s ' + (count === 1 ? 'Pok\u00e9mon' : count + ' Pok\u00e9mon') + ' be chosen?'
+                + (poolOk ? '' : '\n\n(Drawing from the pool needs the app\u2019s game board turned on.)'),
+                `<button class="filter-btn include game-trainermode-btn" type="button" data-mode="pool" data-card-id="${escapeHtml(cardId)}" ${poolOk ? '' : 'disabled'}>Draw Randomly from the Pool</button>`
+                + `<button class="filter-btn include game-trainermode-btn" type="button" data-mode="gallery" data-card-id="${escapeHtml(cardId)}">Choose from the Gallery</button>`
+                + `<button class="filter-btn exclude game-trainermode-btn" type="button" data-mode="cancel">Cancel</button>`);
+            document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
+        }
+
+        function beginTrainerBattleGalleryPick(cardId) {
             const count = getTrainerBattleCardPokemonCount(cardId);
             if (!count || isActiveSaveReadOnly()) return;
             if (cardNeedsNoteColor(CARDS_BY_ID[cardId])) {
@@ -34306,9 +34322,84 @@
             startTrainerBattleCardPick(cardId, null);
         }
 
+        // Pool mode: the card's color is the color of the space the player is on, so it always asks for it.
+        function beginTrainerBattlePoolDraw(cardId) {
+            const count = getTrainerBattleCardPokemonCount(cardId);
+            if (!count || isActiveSaveReadOnly()) return;
+            openNoteColorPicker({ trainerPoolCardId: cardId });
+        }
+
+        function startTrainerBattleFromPool(cardId, color) {
+            const count = getTrainerBattleCardPokemonCount(cardId);
+            if (!count || isActiveSaveReadOnly() || !NOTE_COLORS.includes(color)) return;
+            // Land on the Battle Arena and confirm any replacement BEFORE drawing, so no token is ever drawn and then dropped.
+            openGamePanel();
+            setGameScreen('battle');
+            confirmBattleSlotReplace('attacker', () => {
+                const drawn = [];
+                const place = () => {
+                    const members = [];
+                    const tokens = [];
+                    drawn.forEach(name => {
+                        const entry = POKEMON_BY_NAME[name];
+                        if (!entry) { boardSafariSettle(name, 'returned'); return; }
+                        tokens.push(name);
+                        members.push(buildWildPokemonMember({ dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false }));
+                    });
+                    if (!members.length) {
+                        showGameToast('No ' + boardFrontierColorLabel(color) + ' Pok\u00e9mon are left in the pool \u2014 choose them from the gallery instead.');
+                        return;
+                    }
+                    if (members.length < count) showGameToast('Only ' + members.length + ' ' + boardFrontierColorLabel(color) + ' Pok\u00e9mon were left in the pool.');
+                    setBattleAttackerTrainer(members[0], members.slice(1));
+                    renderBattleAttackerSlot();
+                    renderBattleDefenderSlot();
+                    beginCardBattleResolution({ cardId, tokens });
+                };
+                const drawNext = () => {
+                    if (drawn.length >= count) { place(); return; }
+                    boardContestRequestDraw(color, token => {
+                        if (!token) { place(); return; }
+                        drawn.push(token);
+                        drawNext();
+                    });
+                };
+                drawNext();
+            });
+        }
+
+        // ---- Discarding a battle card once its battle is over ----
+        // Rival Battle, Trainer Battle and Let's Fight! each hand the player a battle to play out in the Arena. Once that
+        // battle has started and then ended, the card is discarded for them (if it is still theirs in the Active Card zone)
+        // and any tokens drawn from the pool for it go back. Watched from renderBattleControls(), which runs on every
+        // Arena change on every device.
+        let cardBattlePending = null; // { cardId, tokens: [pool token names], pvp?, sent?, started }
+        function beginCardBattleResolution(opts) {
+            finishCardBattle(false);
+            cardBattlePending = Object.assign({ tokens: [], started: false }, opts);
+        }
+        function finishCardBattle(discard) {
+            const p = cardBattlePending;
+            if (!p) return;
+            cardBattlePending = null;
+            (p.tokens || []).forEach(name => boardSafariSettle(name, 'returned'));
+            if (!discard) return;
+            const info = getActiveCardInfo();
+            if (info && info.cardId === p.cardId && activeCardIsMine(info) && !info.committed) requestActiveCardDiscard();
+        }
+        function watchCardBattle() {
+            const p = cardBattlePending;
+            if (!p) return;
+            if (battleInProgress) { p.started = true; return; }
+            if (p.started) { finishCardBattle(true); return; }
+            // A Let's Fight! challenge that ended (declined, cancelled) without a Pok\u00e9mon ever being sent out.
+            if (p.pvp && !p.sent && !boardPvp) finishCardBattle(false);
+        }
+
         function startTrainerBattleCardPick(cardId, color) {
             const count = getTrainerBattleCardPokemonCount(cardId);
             if (!count || isActiveSaveReadOnly()) return;
+            battleTrainerPickCardId = cardId;
             closeGamePanel();
             beginBattleWildPickMode(null, 'trainer');
             battleTrainerPickTarget = count;
@@ -34384,7 +34475,7 @@
             // show itself in. Cancelling just leaves the Arena as it was.
             openGamePanel();
             setGameScreen('battle');
-            confirmBattleSlotReplace('attacker', () => { sendGymLeaderCardToArena(rival.id); });
+            confirmBattleSlotReplace('attacker', () => { sendGymLeaderCardToArena(rival.id); beginCardBattleResolution({ cardId }); });
         }
 
         // The one authoritative way out of this mode short of actually
@@ -34581,6 +34672,7 @@
             }
             // Trainer Battle card: collect picks until it has them all.
             let trainerPicks = null;
+            const trainerCardId = battleTrainerPickCardId;
             if (pickKind === 'trainer' && battleTrainerPickTarget > 0) {
                 battleTrainerPicks.push(memberSource);
                 if (battleTrainerPicks.length < battleTrainerPickTarget) {
@@ -34609,6 +34701,7 @@
                     }
                     renderBattleAttackerSlot();
                     renderBattleDefenderSlot();
+                    if (trainerCardId) beginCardBattleResolution({ cardId: trainerCardId });
                 });
                 return;
             }
@@ -36518,6 +36611,7 @@
             const attackerIn = !!getBattleSlotMember('attacker');
             const defenderIn = !!getBattleSlotMember('defender');
             if (battleInProgress && !attackerIn && !defenderIn) battleInProgress = false;
+            watchCardBattle();
             beginBtn.style.display = battleInProgress ? 'none' : '';
             const spectating = isArenaSpectatorOfPlayerBattle(); // two other players' battle: Begin / Next Round / End aren't mine
             beginBtn.disabled = !(attackerIn && defenderIn) || spectating;
@@ -46964,10 +47058,17 @@
         document.getElementById('game-frontier-overlay').addEventListener('click', (e) => {
             const cBtn = e.target.closest('.game-contest-btn');
             if (cBtn) { boardContestChoose(cBtn.dataset.act); return; }
+            const modeBtn = e.target.closest('.game-trainermode-btn');
+            if (modeBtn) {
+                closeFrontierOverlay();
+                if (modeBtn.dataset.mode === 'pool') beginTrainerBattlePoolDraw(modeBtn.dataset.cardId);
+                else if (modeBtn.dataset.mode === 'gallery') beginTrainerBattleGalleryPick(modeBtn.dataset.cardId);
+                return;
+            }
             const pvpBtn = e.target.closest('.game-pvpcard-btn');
             if (pvpBtn) {
                 closeFrontierOverlay();
-                if (pvpBtn.dataset.id) boardPlayerActionStart('battle', pvpBtn.dataset.id, true);
+                if (pvpBtn.dataset.id) { boardPlayerActionStart('battle', pvpBtn.dataset.id, true); trackPlayerBattleCard(); }
                 return;
             }
             if (e.target.closest('.game-frontier-ok-btn')) {
@@ -47293,10 +47394,16 @@
             const myId = getMyLobbyPlayerId() || 'host';
             const others = lobbyState.players.filter(p => p && p.id !== myId).map(p => ({ id: p.id, name: boardPlayerName(p.id) }));
             if (!others.length) { showGameToast('There is no other player to battle.'); return; }
-            if (others.length === 1) { boardPlayerActionStart('battle', others[0].id, true); return; }
+            if (others.length === 1) { boardPlayerActionStart('battle', others[0].id, true); trackPlayerBattleCard(); return; }
             boardFrontierShow('Battle a Player', 'Who do you want to battle?',
                 others.map(o => `<button class="filter-btn include game-pvpcard-btn" type="button" data-id="${escapeHtml(o.id)}">${escapeHtml(o.name)}</button>`).join('')
                 + `<button class="filter-btn exclude game-pvpcard-btn" type="button" data-id="">Never mind</button>`);
+        }
+
+        // Once the challenge is actually out, the Let's Fight! card is discarded when that battle ends (see watchCardBattle()).
+        function trackPlayerBattleCard() {
+            const info = getActiveCardInfo();
+            if (boardPvp && info && cardStartsPlayerBattle(CARDS_BY_ID[info.cardId])) beginCardBattleResolution({ cardId: info.cardId, pvp: true, sent: false });
         }
 
         // ---- the challenge messages ----
@@ -47406,6 +47513,7 @@
             const p = boardPvp;
             if (!p || p.incoming || p.phase !== 'choosing' || slot !== 'attacker') return;
             boardPvpSend(p.partnerId, { type: 'board-pvp-sent' });
+            if (cardBattlePending && cardBattlePending.pvp) cardBattlePending.sent = true;
             boardPvp = null;
             teamSendToBattleNote = null;
             boardPvpRender();
@@ -47446,6 +47554,7 @@
             }
         }
         function boardPvpRender() {
+            watchCardBattle(); // a challenge that ended unanswered releases its Let's Fight! card
             const overlay = document.getElementById('game-pvp-overlay');
             const p = boardPvp;
             // the challenger is on the Team Tracker while choosing: no window then
@@ -51529,7 +51638,9 @@
                 const purpose = noteColorPickerPurpose;
                 const color = swatchBtn.dataset.color;
                 closeNoteColorPicker();
-                if (purpose && purpose.trainerCardId) {
+                if (purpose && purpose.trainerPoolCardId) {
+                    startTrainerBattleFromPool(purpose.trainerPoolCardId, color);
+                } else if (purpose && purpose.trainerCardId) {
                     startTrainerBattleCardPick(purpose.trainerCardId, color);
                 } else if (purpose && purpose.rivalCardId) {
                     startRivalBattleFromCard(purpose.rivalCardId, color);
