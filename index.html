@@ -22080,7 +22080,9 @@
             const sendToBattleBannerText = document.getElementById('game-team-send-to-battle-banner-text');
             if (sendToBattleBannerText) {
                 const targetLabel = teamSendToBattleTargetSlot === 'attacker' ? 'Attacker' : teamSendToBattleTargetSlot === 'defender' ? 'Defender' : '';
-                if (teamContestPick) {
+                if (teamLevelPick) {
+                    sendToBattleBannerText.textContent = 'Tap a Pok\u00e9mon on your team to give it a Level.';
+                } else if (teamContestPick) {
                     sendToBattleBannerText.textContent = 'Contest Hall \u2014 tap a Pok\u00e9mon on your team to enter it as your Contestant.';
                 } else
                 sendToBattleBannerText.textContent = (teamSendToBattleNote ? teamSendToBattleNote : teamSendToBattleFaintSlot
@@ -22958,6 +22960,7 @@
         // answering Attacker/Defender/Cancel on it) -- same "one place
         // unwinds everything" shape as exitTeamReleaseMode().
         function exitTeamSendToBattleMode() {
+            if (teamLevelPick) { clearTeamLevelPick(); return; } // Cancel on a card's Level pick
             if (teamContestPick) { contestAbort(); return; } // Cancel on the Contest Hall's Contestant pick
             // Cancelling while setting up a Battle a Player challenge calls it off; that mode started from the Team Tracker's own
             // flow, not the Arena, so the player stays here rather than being sent back to the Arena.
@@ -34960,6 +34963,7 @@
             if (!card) return '';
             const n = parseInt(card.drawCards, 10) || 0;
             if (card.healTeam === 'yes') return 'Heal Team';
+            if (card.poolGain && card.levelGain) return 'Choose Reward';
             if (n && parseInt(card.shuffleToDraw, 10)) return 'Shop';
             if (n) return 'Draw ' + n + ' ' + String(card.drawCardsDeck || 'Item Deck').replace(/ Deck$/, '') + ' Card' + (n === 1 ? '' : 's');
             return '';
@@ -34981,6 +34985,19 @@
         function useCardEffect(cardId) {
             const card = CARDS_BY_ID[cardId];
             if (isActiveSaveReadOnly() || !card || !cardEffectLabel(card)) return;
+            if (card.poolGain && card.levelGain) {
+                const poolOk = !!getRegionMapSettingsForActiveSave().enabled;
+                const col = String(card.poolGain);
+                const colLabel = col.charAt(0).toUpperCase() + col.slice(1);
+                const lv = parseInt(card.levelGain, 10) || 1;
+                boardFrontierShow(card.name, 'Draw a random ' + colLabel + ' Pok\u00e9mon from the pool to join your team, or have a Pok\u00e9mon on your team gain ' + (lv === 1 ? 'a Level' : lv + ' Levels') + '?'
+                    + (poolOk ? '' : '\n\n(Drawing from the pool needs the app\u2019s game board turned on.)'),
+                    `<button class="filter-btn include game-cardfx-btn" type="button" data-act="pool" data-card-id="${escapeHtml(cardId)}" ${poolOk ? '' : 'disabled'}>Draw a ${colLabel} Pok\u00e9mon</button>`
+                    + `<button class="filter-btn include game-cardfx-btn" type="button" data-act="level" data-card-id="${escapeHtml(cardId)}">Gain a Level</button>`
+                    + `<button class="filter-btn exclude game-cardfx-btn" type="button" data-act="cancel" data-card-id="${escapeHtml(cardId)}">Cancel</button>`);
+                document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
+                return;
+            }
             if (card.healTeam === 'yes') {
                 let cleared = 0, revived = 0;
                 boardTeamIndexes(m => m.status).forEach(i => { if (boardClearTeamStatus(i)) cleared++; });
@@ -35008,6 +35025,9 @@
             const card = CARDS_BY_ID[cardId];
             if (!card) return;
             if (act === 'done') { cardEffectDone(cardId); return; }
+            if (act === 'pool') { cardPoolGain(cardId); return; }
+            if (act === 'level') { cardLevelGainPick(cardId); return; }
+            if (act === 'cancel') return;
             if (act === 'skip') { cardEffectDrawCards(card, parseInt(card.drawCards, 10) || 0); cardEffectDone(cardId); return; }
             if (act === 'shuffle') {
                 cardShufflePick = { cardId };
@@ -35015,6 +35035,64 @@
                 showDecksNotice(card.name + ': choose a card from your hand to shuffle back into its deck.');
                 renderDecksScreen();
             }
+        }
+        // poolGain: "pink" -- draw a random token of that color from the board's pool; it joins the team (a full team gets the
+        // usual replace prompt). levelGain: N -- the Team Tracker opens to choose which Pok\u00e9mon gains the Level(s).
+        function cardPoolGain(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (!card || isActiveSaveReadOnly()) return;
+            boardContestRequestDraw(String(card.poolGain), name => {
+                if (!name) { showGameToast('There are no ' + card.poolGain + ' Pok\u00e9mon left in the pool.'); return; }
+                const entry = POKEMON_BY_NAME[name];
+                if (!entry) { boardSafariSettle(name, 'returned'); showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
+                const member = buildWildPokemonMember({ dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false });
+                boardSafariSettle(name, 'caught'); // the token leaves the pool and joins the team
+                applyCaughtWildMember(member);
+                openGamePanel();
+                setGameScreen('team');
+                renderTeamGrid();
+                showGameToast(card.name + ': ' + entry.name + ' joined your team!');
+                cardEffectDone(cardId);
+            });
+        }
+        let teamLevelPick = null; // { cardId } while the Team Tracker is choosing which Pok\u00e9mon gains a card's Level
+        function cardLevelGainPick(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (!card || isActiveSaveReadOnly()) return;
+            if (!boardTeamIndexes(m => !m.gymLeaderId && (m.level || 0) < 6).length) { showGameToast('None of your Pok\u00e9mon can gain another Level.'); return; }
+            if (teamReplacePendingMember || teamReleaseModeActive || teamSendToBattleModeActive || handAttachPendingCardId || isTradeNegotiationActive()) {
+                showGameToast('Finish what you are doing in Team Tracker first.');
+                return;
+            }
+            openGamePanel();
+            setGameScreen('team');
+            teamLevelPick = { cardId };
+            teamSendToBattleModeActive = true; // borrows the send-to-battle mode and its banner, like the Contest Hall's pick
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        function clearTeamLevelPick() {
+            if (!teamLevelPick) return;
+            teamLevelPick = null;
+            teamSendToBattleModeActive = false;
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        function cardLevelGainChoose(index) {
+            const pick = teamLevelPick;
+            const card = pick && CARDS_BY_ID[pick.cardId];
+            const m = getTeamSlotMember(index);
+            if (!pick || !card || !m) return;
+            if (m.gymLeaderId || (m.level || 0) >= 6) { showGameToast('That Pok\u00e9mon can\u2019t gain another Level \u2014 choose another.'); return; }
+            const before = boardFrontierTotalLevel(m), name = getBattleMemberDisplay(m).name || 'Pok\u00e9mon';
+            const n = Math.max(1, parseInt(card.levelGain, 10) || 1);
+            for (let i = 0; i < n; i++) adjustTeamMemberLevel(index, 1);
+            clearTeamLevelPick();
+            showGameToast(card.name + ': ' + name + ' gained a Level (Lv ' + before + ' \u2192 ' + boardFrontierTotalLevel(m) + ').');
+            cardEffectDone(pick.cardId);
         }
         function cardShufflePickChoose(handCardId) {
             const pick = cardShufflePick;
@@ -43136,6 +43214,7 @@
                     // been made -- either way, this mode only makes
                     // sense while still looking at Team Tracker, same
                     // reasoning as teamReleaseModeActive just above.
+                    if (teamLevelPick) teamLevelPick = null; // leaving Team Tracker mid-pick calls off a card's Level pick (the card stays in the zone)
                     if (teamContestPick) contestAbort(); // leaving Team Tracker mid-pick backs out of the Contest Hall
                     boardPvpChooserClosed(); // leaving mid-pick calls a Battle a Player challenge off (a completed send has already cleared it)
                     teamSendToBattleModeActive = false;
@@ -51029,6 +51108,12 @@
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
                     openTeamReleaseConfirmOverlay(Number(teamSlot.dataset.index));
+                    return;
+                }
+                if (teamLevelPick) {
+                    if (isActiveSaveReadOnly()) return;
+                    if (teamSlot.dataset.filled !== 'true') return;
+                    cardLevelGainChoose(Number(teamSlot.dataset.index));
                     return;
                 }
                 if (teamContestPick) {
