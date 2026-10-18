@@ -1982,12 +1982,12 @@
             left: 50%;
             bottom: 0;
             transform: translate(-50%, 45%);
-            width: 60%;
+            width: 25%;
             z-index: 3;
             line-height: 0;
         }
         .game-contest-perf img { display: block; width: 100%; height: auto; }
-        @media (min-width: 664px) { .game-contest-perf { transform: translate(-50%, 50%); } }
+        @media (min-width: 664px) { .game-contest-perf { transform: translate(-50%, 29%); } }
         /* Winner's confetti: stays inside the half, never blocks taps, one pass. */
         .game-contest-confetti {
             position: absolute;
@@ -14911,7 +14911,9 @@
         #game-board-frame { position: relative; flex: 1; min-height: 0; border-radius: 8px; overflow: hidden; background: #101418; }
         #game-board-mount, #game-board-mount .bm-root { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: auto; height: auto; }
         #game-board-frame:fullscreen { border-radius: 0; }
-        #board-roll-btn { position: absolute; top: 8px; right: 8px; z-index: 5; margin: 0; }
+        #board-roll-controls { position: absolute; top: 8px; right: 8px; z-index: 5; display: flex; gap: 6px; align-items: flex-start; }
+        #board-roll-controls .filter-btn { margin: 0; }
+        #board-stay-btn[hidden] { display: none; }
 
         /* Movement roll: the number a player just rolled with the map's Roll button, shown to the whole table in the
            roller's color. Top-right corner of the map frame (below the Roll Movement Die button). White
@@ -18069,7 +18071,10 @@
     <div id="board-view">
         <div id="game-board-frame">
             <div id="game-board-mount"></div>
-            <button class="filter-btn" id="board-roll-btn" type="button">Roll Movement Die</button>
+            <div id="board-roll-controls">
+                <button class="filter-btn" id="board-stay-btn" type="button" hidden>Stay on City Space</button>
+                <button class="filter-btn" id="board-roll-btn" type="button">Roll Movement Die</button>
+            </div>
             <div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div>
         </div>
     </div>
@@ -44540,6 +44545,10 @@
                     boardHandleHello();
                 } else if (data.type === 'board-encounter') {
                     boardHandleEncounter(conn.peer);
+                } else if (data.type === 'board-stay') {
+                    boardHandleStay(conn.peer);
+                } else if (data.type === 'board-roll-placed') {
+                    boardHandleRollPlacedFromGuest(conn.peer);
                 } else if (data.type === 'board-caught' && Array.isArray(data.names)) {
                     boardHandleCaught(conn.peer, data);
                 } else if (data.type === 'board-sethome' && typeof data.city === 'string') {
@@ -45838,7 +45847,7 @@
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onDraw: boardUpdateStayButton, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
                 boardSig = sig;
                 boardSaveKey = saveKey;
                 boardSaveDirty = false;
@@ -45846,6 +45855,7 @@
                 boardPlayersSig = JSON.stringify(players);
                 boardInstallFsButton();
                 boardInstallRollButton();
+                boardUpdateStayButton();
                 boardApplyKeepScale();
                 boardCtrl.loadBoard(d, { style: cfg.style });
                 const img = await boardFindImage(d, cfg.style, cfg.region);
@@ -45891,6 +45901,11 @@
             boardEnsureBoard().then(c => { boardSyncPlayers(); c.resend(); }).catch(() => {});
         }
         // The player (identified by their connection, never by anything in the message) chose to encounter the wild Pokémon here.
+        // The player (identified by their connection) stays on the space they are on: show them that space's prompt again.
+        function boardHandleStay(peerId) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            boardEnsureBoard().then(c => c.handleMessage({ type: 'board-stay', player: peerId })).catch(() => {});
+        }
         function boardHandleEncounter(peerId) {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
             boardEnsureBoard().then(c => c.handleMessage({ type: 'board-encounter', player: peerId })).catch(() => {});
@@ -48230,6 +48245,31 @@
             const panelBtn = document.querySelector('#game-board-mount #mpanel');
             if (panelBtn) panelBtn.remove();
         }
+        function boardMyPlayer() { return boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host')) || null; }
+        // "Stay on City Space" is only offered while this player's marker is on a City space. board.js calls this after every redraw.
+        function boardUpdateStayButton() {
+            const b = document.getElementById('board-stay-btn');
+            if (!b) return;
+            let show = false;
+            if (boardCtrl && boardCtrl.spaceOf && !isActiveSaveReadOnly()) {
+                const me = boardMyPlayer(), sp = me && boardCtrl.spaceOf(me.id);
+                show = !!(sp && sp.type === 'city');
+            }
+            if (b.hidden === show) b.hidden = !show;
+        }
+        // Asks the Host to run the landing prompt for the space this player is already standing on.
+        function boardRequestLanding() {
+            const myId = getMyLobbyPlayerId() || 'host';
+            if (lobbyState.role === 'guest') boardSend({ type: 'board-stay' });
+            else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-stay', player: myId });
+        }
+        function boardStayOnSpace() {
+            if (isActiveSaveReadOnly()) return;
+            const me = boardMyPlayer();
+            if (!me) return;
+            boardAnnounceRollSettled(me); // the move is decided, so any roll still on screen can wind down
+            boardRequestLanding();
+        }
         function boardRollMovement() {
             if (isActiveSaveReadOnly()) return;
             const me = boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host'));
@@ -48241,6 +48281,7 @@
             boardShowRoll(shown);
             if (lobbyState.role === 'guest') boardSend({ type: 'board-roll', value, raw, penalty }); // the Host fills in who rolled
             else if (lobbyState.role === 'host') boardSend(shown);
+            if (value === 0) boardRequestLanding(); // no movement: the space they are on counts as just landed on
         }
         // Host: a guest rolled. Who it was comes from the connection, never from the message.
         function boardHandleRollFromGuest(peerId, data) {
@@ -48253,7 +48294,42 @@
             boardShowRoll(shown);
             lobbyState.connections.forEach((entry, id) => { if (id !== peerId && entry && entry.conn && entry.conn.open) entry.conn.send(shown); });
         }
-        var boardRollFadeTimer = null, boardRollHideTimer = null;
+        var boardRollFadeTimer = null, boardRollHideTimer = null, boardRollOwner = '';
+        // A roll above 0 stays up until its roller has picked their marker up and put it down, then a moment longer. The long
+        // cap only matters if they never move (it keeps a stale number from sitting there all game).
+        var BOARD_ROLL_WAIT_MS = 45000, BOARD_ROLL_AFTER_PLACE_MS = 1500, BOARD_ROLL_NO_MOVE_MS = 4500;
+        function boardRollSchedule(fadeAfterMs) {
+            const box = document.getElementById('board-roll-display');
+            if (!box) return;
+            clearTimeout(boardRollFadeTimer); clearTimeout(boardRollHideTimer);
+            boardRollFadeTimer = setTimeout(() => box.classList.add('fading'), fadeAfterMs);
+            boardRollHideTimer = setTimeout(() => box.classList.remove('visible', 'fading'), fadeAfterMs + 400);
+        }
+        function boardRollShowingFor(c) {
+            const box = document.getElementById('board-roll-display');
+            return !!(box && box.classList.contains('visible') && typeof c === 'string' && c.toLowerCase() === boardRollOwner);
+        }
+        // Someone put their marker down (or chose to stay): if the number on screen is theirs, let it fade shortly.
+        function boardRollPlaced(c) {
+            if (boardRollShowingFor(c)) boardRollSchedule(BOARD_ROLL_AFTER_PLACE_MS);
+        }
+        // Tells this device and the table that this player's move is done.
+        function boardAnnounceRollSettled(me) {
+            if (!me || !boardRollShowingFor(me.c)) return;
+            boardRollPlaced(me.c);
+            if (lobbyState.role === 'guest') boardSend({ type: 'board-roll-placed' }); // the Host fills in who it was
+            else if (lobbyState.role === 'host') boardSend({ type: 'board-roll-placed', c: me.c });
+        }
+        function boardOnPlace(playerId) {
+            boardAnnounceRollSettled(boardPlayers().find(p => p.id === playerId));
+        }
+        function boardHandleRollPlacedFromGuest(peerId) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            const me = boardPlayers().find(p => p.id === peerId);
+            if (!me) return;
+            boardRollPlaced(me.c);
+            lobbyState.connections.forEach((entry, id) => { if (id !== peerId && entry && entry.conn && entry.conn.open) entry.conn.send({ type: 'board-roll-placed', c: me.c }); });
+        }
         function boardShowRoll(m) {
             const box = document.getElementById('board-roll-display');
             if (!box || !m) return;
@@ -48267,12 +48343,11 @@
             note.textContent = penalty > 0 ? 'rolled ' + raw + ', \u2212' + penalty : '';
             note.style.color = color;
             if (sr) sr.textContent = name + ' rolled ' + value + (penalty > 0 ? ' (' + raw + ' minus ' + penalty + ')' : '') + '. ';
-            clearTimeout(boardRollFadeTimer); clearTimeout(boardRollHideTimer);
+            boardRollOwner = color.toLowerCase();
             box.classList.remove('visible', 'fading');
             void box.offsetWidth; // restart the pop animation for a quick second roll
             box.classList.add('visible');
-            boardRollFadeTimer = setTimeout(() => box.classList.add('fading'), 4500);
-            boardRollHideTimer = setTimeout(() => box.classList.remove('visible', 'fading'), 4900);
+            boardRollSchedule(value > 0 ? BOARD_ROLL_WAIT_MS : BOARD_ROLL_NO_MOVE_MS); // a 0 means no marker move is coming
         }
         // Desktop: a docked side panel narrows the frame, and the map should keep its on-screen size (and never get
         // shorter than the frame) instead of shrinking to fit. Phones: the panels cover the board instead, so board.js's
@@ -48314,6 +48389,7 @@
                 else if (frame && frame.requestFullscreen) frame.requestFullscreen().catch(() => {});
             }
             else if (t.closest('#board-roll-btn')) boardRollMovement();
+            else if (t.closest('#board-stay-btn')) boardStayOnSpace();
         });
         document.addEventListener('fullscreenchange', () => {
             const fsBtn = document.getElementById('board-fs-btn');
@@ -49228,6 +49304,8 @@
                     if (cb) cb(!!data.ok);
                 } else if (data.type === 'board-roll-shown') {
                     boardShowRoll(data);
+                } else if (data.type === 'board-roll-placed') {
+                    boardRollPlaced(data.c);
                 } else if (data.type === 'board-safari-pool-result' && Array.isArray(data.names)) {
                     const cb = boardSafariPoolCb;
                     boardSafariPoolCb = null;
