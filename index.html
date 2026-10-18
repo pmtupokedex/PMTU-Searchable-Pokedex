@@ -26584,15 +26584,15 @@
         // ---- Battle phase (Begin / Next Round / End) and move choice.
         // Same request -> Host applies -> full-state broadcast shape as
         // the slot functions above. ----
-        function requestBattlePhase(action) {
+        function requestBattlePhase(action, opts) {
             if (BATTLE_SPECTATOR_BLOCKED_PHASES.includes(action) && isArenaSpectatorOfPlayerBattle()) {
                 showBattleArenaNotice(getBattleSpectatorPhaseMessage(action)); // the host would refuse it anyway
                 return;
             }
             if (lobbyState.role === 'guest') {
-                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-phase', action });
+                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-phase', action, forfeit: !!(opts && opts.forfeit) });
             } else if (lobbyState.role === 'host') {
-                hostApplyBattlePhase('host', action);
+                hostApplyBattlePhase('host', action, opts);
             }
         }
 
@@ -26668,7 +26668,7 @@
             if (lobbyState.connections) lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send({ type: 'battle-notice', reason: message }); });
         }
 
-        function hostApplyBattlePhase(peerKey, action) {
+        function hostApplyBattlePhase(peerKey, action, opts) {
             const st = hostBattleArenaState;
             // 'end-failed-catch' (Catch overlay's Failed to Catch): a normal
             // End Battle, except the Wild Pok\u00e9mon goes back to the Virtual
@@ -26692,6 +26692,7 @@
                 return;
             }
             let gymBadgeDelivery = null;
+            let pvpOutcome = null; // player-vs-player result of an ended battle: { winnerId, loserId }
             if (action === 'begin') {
                 if (!st.inProgress) {
                     if (!st.attacker || !st.defender) {
@@ -26744,6 +26745,7 @@
                 // A Gym Leader card knocked out for good earns its Badge
                 // for every player who had a Pok\u00e9mon in this battle
                 // (read before the arena is cleared below).
+                pvpOutcome = hostPvpOutcome(st, opts && opts.forfeit ? peerKey : null); // read before the halves are cleared below
                 const gd = st.defender;
                 if (st.inProgress && !isHostAttackerSideSpent(st) && gd && !gd.ownerId && gd.member && gd.member.gymLeaderId && gd.member.fainted
                     && !(gd.member.gymLeaderQueue && gd.member.gymLeaderQueue.length)) {
@@ -26777,6 +26779,7 @@
                 return;
             }
             broadcastBattleArenaState();
+            if (pvpOutcome) hostDeliverPvpReward(pvpOutcome);
             if (gymBadgeDelivery) {
                 gymBadgeDelivery.owners.forEach(ownerId => {
                     if (ownerId === 'host') { queueGymBadgeAward(gymBadgeDelivery.leaderId); return; }
@@ -26786,6 +26789,98 @@
                 maybeStartChampionVictory(gymBadgeDelivery.leaderId, (lobbyState.players || [])
                     .filter(pl => gymBadgeDelivery.owners.includes(pl.id))
                     .map(pl => ({ id: pl.id, name: pl.name || 'Trainer', color: pl.color || null })));
+            }
+        }
+
+        // ---- Player-vs-player victory reward ----
+        // Whoever wins a battle between two players (Battle a Player from the board, or the Let's Fight! card -- both end up
+        // as the same Arena battle) chooses: take a random card from the loser's hand, or draw from the Item Deck. The Host
+        // works out the winner when the battle ends (before the halves are cleared), tells the winner, and, if they pick the
+        // hand, moves the card itself, since it holds every hand.
+        // forfeitBy: the player who confirmed End Battle with nobody out of Pok\u00e9mon -- counted as the loser.
+        function hostPvpOutcome(st, forfeitBy) {
+            if (!st || !st.inProgress) return null;
+            const a = st.attacker, d = st.defender;
+            if (!a || !d || !a.ownerId || !d.ownerId || a.ownerId === d.ownerId) return null;
+            const spent = e => !!(e.member && e.member.fainted && e.noReplacement);
+            const aSpent = spent(a), dSpent = spent(d);
+            if (aSpent === dSpent) {
+                // A tie (both out) has no winner. Nobody out: a forfeit by one of the two players hands the win to the other.
+                if (aSpent || !forfeitBy || (forfeitBy !== a.ownerId && forfeitBy !== d.ownerId)) return null;
+                return forfeitBy === a.ownerId
+                    ? { winnerId: d.ownerId, loserId: a.ownerId, forfeit: true }
+                    : { winnerId: a.ownerId, loserId: d.ownerId, forfeit: true };
+            }
+            return aSpent ? { winnerId: d.ownerId, loserId: a.ownerId } : { winnerId: a.ownerId, loserId: d.ownerId };
+        }
+        const hostPendingPvpRewards = new Map(); // winner id -> { winnerId, loserId }
+        function hostSendToPlayer(key, msg) {
+            if (key === 'host') return false;
+            const entry = lobbyState.connections && lobbyState.connections.get(key);
+            if (entry && entry.conn && entry.conn.open) { entry.conn.send(msg); return true; }
+            return false;
+        }
+        function hostDeliverPvpReward(o) {
+            hostPendingPvpRewards.set(o.winnerId, o);
+            const msg = { type: 'pvp-reward', loserId: o.loserId, loserName: boardPlayerName(o.loserId), forfeit: !!o.forfeit };
+            if (o.winnerId === 'host') showPvpReward(msg); else hostSendToPlayer(o.winnerId, msg);
+        }
+        function hostPvpNote(key, text, showHand) {
+            if (key === 'host') { showGameToast(text); if (showHand) boardShowHand(); }
+            else hostSendToPlayer(key, { type: 'pvp-reward-note', text, showHand: !!showHand });
+        }
+        function hostApplyPvpRewardSteal(winnerKey) {
+            const r = hostPendingPvpRewards.get(winnerKey);
+            if (!r) return;
+            const loserKey = r.loserId;
+            const loserHand = loserKey === 'host' ? getLocalHandArray() : getPeerHandArray(loserKey);
+            if (!loserHand || !loserHand.length) { // nothing to take: they pick again (the prompt comes back with that option off)
+                const msg = { type: 'pvp-reward-empty', loserId: loserKey, loserName: boardPlayerName(loserKey) };
+                if (winnerKey === 'host') showPvpReward(msg); else hostSendToPlayer(winnerKey, msg);
+                return;
+            }
+            hostPendingPvpRewards.delete(winnerKey);
+            const cardId = loserHand.splice(Math.floor(Math.random() * loserHand.length), 1)[0];
+            if (loserKey === 'host') persistLocalHand(); else { persistGameSaves(); hostSendToPlayer(loserKey, { type: 'hand-remove', cardId }); }
+            const card = CARDS_BY_ID[cardId];
+            const deckName = (card && (getEffectiveCardDeck(card) || card.cardDeck)) || '';
+            if (winnerKey === 'host') { getLocalHandArray().push(cardId); persistLocalHand(); }
+            else {
+                const hand = getPeerHandArray(winnerKey);
+                if (hand) { hand.push(cardId); persistGameSaves(); }
+                hostSendToPlayer(winnerKey, { type: 'deck-drawn', deck: deckName, cardId });
+            }
+            const cardName = (card && card.name) || 'a card';
+            hostPvpNote(winnerKey, `You took ${cardName} from ${boardPlayerName(loserKey)}\u2019s hand.`, true);
+            hostPvpNote(loserKey, `${boardPlayerName(winnerKey)} took ${cardName} from your hand.`, false);
+            broadcastDeckState();
+            renderDecksScreen();
+        }
+        // Winner's side: the choice prompt.
+        function showPvpReward(msg) {
+            if (isActiveSaveReadOnly()) return;
+            const name = msg.loserName || 'your opponent';
+            if (!isVirtualDecksEnabledForActiveSave()) {
+                showGameToast(`You beat ${name}! Take a card at random from their hand, or draw a card from the Item Deck.`);
+                return;
+            }
+            const counts = guestDeckStateCache && guestDeckStateCache.handCounts;
+            const empty = msg.type === 'pvp-reward-empty' || (counts && counts[msg.loserId] === 0);
+            boardFrontierShow('Victory Reward', (msg.forfeit ? `${name} forfeited the battle!` : `You beat ${name}!`) + ' Choose your reward:' + (empty ? `\n\n(${name} has no cards in hand.)` : ''),
+                `<button class="filter-btn include game-pvpreward-btn" type="button" data-act="steal" ${empty ? 'disabled' : ''}>Take a Random Card from ${escapeHtml(name)}\u2019s Hand</button>`
+                + `<button class="filter-btn include game-pvpreward-btn" type="button" data-act="draw">Draw a Card from the Item Deck</button>`);
+            document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
+        }
+        function pvpRewardChoose(act) {
+            closeFrontierOverlay();
+            if (act === 'steal') {
+                if (lobbyState.role === 'host') hostApplyPvpRewardSteal('host');
+                else if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'pvp-reward-steal' });
+            } else if (act === 'draw') {
+                if (lobbyState.role === 'host') hostPendingPvpRewards.delete('host');
+                requestDrawCard('Item Deck');
+                boardShowHand();
+                showGameToast('Victory Reward: drew a card from the Item Deck.');
             }
         }
 
@@ -36809,6 +36904,18 @@
         // finishLocalWildCatch()). Hides the moves and recalls both
         // halves. In a lobby that's the Host's call (everyone's
         // Pok\u00e9mon go); solo it's done here.
+        // The End Battle button. When neither side has run out of Pok\u00e9mon there is no winner to end on, so it asks first:
+        // confirming forfeits the battle, which counts as a loss for the player who pressed it (see hostPvpOutcome() for what
+        // that changes in a player-vs-player battle). With a clear winner it ends straight away, as before.
+        function endBattleFromButton() {
+            if (battleInProgress && !isArenaSpectatorOfPlayerBattle() && !isBattleNextRoundBlocked()) {
+                boardFrontierShow('Forfeit the Battle?', 'Neither side has run out of Pok\u00e9mon. If you end the battle now it counts as a loss for you.',
+                    `<button class="filter-btn exclude game-forfeit-btn" type="button" data-act="forfeit">Forfeit</button>`
+                    + `<button class="filter-btn include game-forfeit-btn" type="button" data-act="keep">Keep Battling</button>`);
+                return;
+            }
+            endBattle();
+        }
         function endBattle() {
             // In a lobby the Host clears both shared halves for everyone.
             if (lobbyState.role !== null) { requestBattlePhase('end'); return; }
@@ -44345,6 +44452,8 @@
                     boardHandleRollFromGuest(conn.peer, data);
                 } else if (typeof data.type === 'string' && data.type.indexOf('board-pvp-') === 0 && typeof data.to === 'string') {
                     boardPvpRoute(Object.assign({}, data, { from: conn.peer })); // `from` comes from the connection, never from the message
+                } else if (data.type === 'pvp-reward-steal') {
+                    hostApplyPvpRewardSteal(conn.peer);
                 } else if (data.type === 'deck-draw' && typeof data.deck === 'string') {
                     hostApplyDraw(data.deck, conn.peer);
                 } else if (data.type === 'deck-gain-reward' && typeof data.deck === 'string' && typeof data.cardId === 'string') {
@@ -44433,7 +44542,7 @@
                 } else if (data.type === 'battle-no-replacement' && typeof data.slot === 'string') {
                     hostApplyBattleNoReplacement(data.slot, conn.peer, !!data.value);
                 } else if (data.type === 'battle-phase') {
-                    hostApplyBattlePhase(conn.peer, data.action);
+                    hostApplyBattlePhase(conn.peer, data.action, { forfeit: !!data.forfeit });
                 } else if (data.type === 'battle-dice') {
                     hostApplyBattleDice(data.slot, conn.peer, data);
                 } else if (data.type === 'host-transfer-accept' && conn.peer === pendingHostTransferTargetPeerId) {
@@ -47125,6 +47234,17 @@
                 else if (modeBtn.dataset.mode === 'gallery') beginTrainerBattleGalleryPick(modeBtn.dataset.cardId);
                 return;
             }
+            const forfeitBtn = e.target.closest('.game-forfeit-btn');
+            if (forfeitBtn) {
+                closeFrontierOverlay();
+                if (forfeitBtn.dataset.act === 'forfeit') {
+                    if (lobbyState.role !== null) requestBattlePhase('end', { forfeit: true });
+                    else endBattle();
+                }
+                return;
+            }
+            const pvpRewardBtn = e.target.closest('.game-pvpreward-btn');
+            if (pvpRewardBtn) { pvpRewardChoose(pvpRewardBtn.dataset.act); return; }
             const pvpBtn = e.target.closest('.game-pvpcard-btn');
             if (pvpBtn) {
                 closeFrontierOverlay();
@@ -48922,6 +49042,11 @@
                 } else if (data.type === 'battle-arena-state') {
                     guestBattleArenaCache = data;
                     applyIncomingArenaState(data);
+                } else if (data.type === 'pvp-reward' || data.type === 'pvp-reward-empty') {
+                    showPvpReward(data);
+                } else if (data.type === 'pvp-reward-note' && typeof data.text === 'string') {
+                    showGameToast(data.text);
+                    if (data.showHand) boardShowHand();
                 } else if (data.type === 'gym-badge-earned' && typeof data.leaderId === 'string') {
                     queueGymBadgeAward(data.leaderId);
                 } else if (data.type === 'battle-caught' && data.member) {
@@ -49917,7 +50042,7 @@
                 return;
             }
             if (e.target.closest('#game-battle-end-btn')) {
-                endBattle();
+                endBattleFromButton();
                 return;
             }
 
