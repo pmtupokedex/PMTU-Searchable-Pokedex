@@ -29477,6 +29477,8 @@
                         if (!card || !isBattleCardTagged(card)) pickCls = ' pick-dimmed';
                     } else if (catchCardPickActive) {
                         if (!card || !isCatchCardTagged(card)) pickCls = ' pick-dimmed';
+                    } else if (cardShufflePick) {
+                        optionsHtml = `<div class="game-hand-card-options-grid game-hand-pick-grid"><button class="filter-btn game-hand-pick-shuffle-btn" type="button" data-card-id="${escapeHtml(cardId)}">Shuffle into deck</button></div>`;
                     } else if (contestDiscardLeft > 0) {
                         optionsHtml = `<div class="game-hand-card-options-grid game-hand-pick-grid"><button class="filter-btn game-hand-pick-contest-btn" type="button" data-card-id="${escapeHtml(cardId)}">Discard (Contest Hall)</button></div>`;
                     } else if (safariPickActive) {
@@ -29622,6 +29624,7 @@
                         ${imgTag}
                         <div class="game-active-card-actions"><div class="game-active-card-buttons">
                             ${(!readOnly && cardIsLegendaryEncounter(card)) ? `<button class="filter-btn game-active-card-legend-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Find the Legendary</button><button class="filter-btn game-active-card-legend-decline-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Don&rsquo;t Find It</button>` : ''}
+                            ${(!readOnly && cardEffectLabel(card)) ? `<button class="filter-btn include game-active-card-effect-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">${escapeHtml(cardEffectLabel(card))}</button>` : ''}
                             ${(!readOnly && cardStartsPlayerBattle(card)) ? `<button class="filter-btn game-active-card-pvp-btn" type="button">Battle a Player</button>` : ''}
                             ${(!readOnly && cardStartsContest(card)) ? `<button class="filter-btn game-active-card-contest-btn" type="button">Begin Contest</button>` : ''}
                             ${canAttach ? `<button class="filter-btn game-active-card-attach-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Attach</button>` : ''}
@@ -34877,6 +34880,86 @@
             if (card.declineShuffleBack === 'yes') requestActiveCardShuffle(); else requestActiveCardDiscard();
         }
 
+        // ---- cards.json effect keywords (reusable on any card) ----
+        //   healTeam: "yes"            revive every Fainted Pok\u00e9mon on your team and clear every Status Condition (Pok\u00e9mon Center)
+        //   drawCards: N               draw N cards (drawCardsDeck, default "Item Deck")             (Pick Up Item, Pok\u00e9Stop)
+        //   shuffleToDraw: M           with drawCards: shuffle ONE hand card back into its deck to draw M instead of N (Pok\u00e9 Mart)
+        // Each puts one button on the card; using it resolves the effect and discards the card.
+        function cardEffectLabel(card) {
+            if (!card) return '';
+            const n = parseInt(card.drawCards, 10) || 0;
+            if (card.healTeam === 'yes') return 'Heal Team';
+            if (n && parseInt(card.shuffleToDraw, 10)) return 'Shop';
+            if (n) return 'Draw ' + n + ' ' + String(card.drawCardsDeck || 'Item Deck').replace(/ Deck$/, '') + ' Card' + (n === 1 ? '' : 's');
+            return '';
+        }
+        function cardEffectDrawCards(card, n) {
+            const deck = card.drawCardsDeck || 'Item Deck';
+            if (isVirtualDecksEnabledForActiveSave()) {
+                for (let i = 0; i < n; i++) requestDrawCard(deck);
+                boardShowHand();
+                showGameToast(card.name + ': drew ' + n + ' card' + (n === 1 ? '' : 's') + ' from the ' + deck + '.');
+            } else {
+                showGameToast(card.name + ': draw ' + n + ' card' + (n === 1 ? '' : 's') + ' from your physical ' + deck + '.');
+            }
+        }
+        function cardEffectDone(cardId) {
+            const info = getActiveCardInfo();
+            if (info && info.cardId === cardId && activeCardIsMine(info) && !info.committed) requestActiveCardDiscard();
+        }
+        function useCardEffect(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (isActiveSaveReadOnly() || !card || !cardEffectLabel(card)) return;
+            if (card.healTeam === 'yes') {
+                let cleared = 0, revived = 0;
+                boardTeamIndexes(m => m.status).forEach(i => { if (boardClearTeamStatus(i)) cleared++; });
+                boardTeamIndexes(m => m.fainted).forEach(i => { reviveTeamMember(i); revived++; });
+                showGameToast(card.name + ': ' + (revived || cleared
+                    ? (revived ? 'revived ' + revived + ' Pok\u00e9mon' : '') + (revived && cleared ? ' and ' : '') + (cleared ? 'cleared ' + cleared + ' Status Condition' + (cleared === 1 ? '' : 's') : '') + '.'
+                    : 'your team is already in perfect health.'));
+                cardEffectDone(cardId);
+                return;
+            }
+            const base = parseInt(card.drawCards, 10) || 0;
+            const bigger = parseInt(card.shuffleToDraw, 10) || 0;
+            if (!bigger) { cardEffectDrawCards(card, base); cardEffectDone(cardId); return; }
+            if (!isVirtualDecksEnabledForActiveSave()) {
+                boardFrontierShow(card.name, 'Shuffle one card from your hand back into its deck to draw ' + bigger + ' cards from the ' + (card.drawCardsDeck || 'Item Deck') + ', or keep your hand and draw just ' + base + '.',
+                    `<button class="filter-btn include game-cardfx-btn" type="button" data-act="done" data-card-id="${escapeHtml(cardId)}">Done</button>`);
+                return;
+            }
+            const hasHand = getLocalHandArray().length > 0;
+            boardFrontierShow(card.name, 'Shuffle one card from your hand back into its deck to draw ' + bigger + ' cards, or keep your hand and draw just ' + base + '.',
+                (hasHand ? `<button class="filter-btn include game-cardfx-btn" type="button" data-act="shuffle" data-card-id="${escapeHtml(cardId)}">Shuffle a Card (draw ${bigger})</button>` : '')
+                + `<button class="filter-btn game-cardfx-btn" type="button" data-act="skip" data-card-id="${escapeHtml(cardId)}">Just Draw ${base}</button>`);
+        }
+        function cardShopChoose(cardId, act) {
+            const card = CARDS_BY_ID[cardId];
+            if (!card) return;
+            if (act === 'done') { cardEffectDone(cardId); return; }
+            if (act === 'skip') { cardEffectDrawCards(card, parseInt(card.drawCards, 10) || 0); cardEffectDone(cardId); return; }
+            if (act === 'shuffle') {
+                cardShufflePick = { cardId };
+                boardShowHand();
+                showDecksNotice(card.name + ': choose a card from your hand to shuffle back into its deck.');
+                renderDecksScreen();
+            }
+        }
+        function cardShufflePickChoose(handCardId) {
+            const pick = cardShufflePick;
+            const hc = CARDS_BY_ID[handCardId];
+            const card = pick && CARDS_BY_ID[pick.cardId];
+            if (!pick || !hc || !card) return;
+            cardShufflePick = null;
+            const deckName = getEffectiveCardDeck(hc) || hc.cardDeck;
+            requestReturnToDeck(handCardId, 'top');
+            requestShuffleDeck(deckName); // in order behind the return, even over a guest's connection
+            cardEffectDrawCards(card, parseInt(card.shuffleToDraw, 10) || 0);
+            cardEffectDone(pick.cardId);
+            showDecksNotice(card.name + ': shuffled ' + hc.name + ' back into the ' + deckName + '.');
+            renderDecksScreen();
+        }
+
         // cards.json playerBattle: "yes" (Let's Fight!): a Begin-Battle button that runs the board's Battle a Player challenge.
         function cardStartsPlayerBattle(card) {
             return !!card && card.playerBattle === 'yes';
@@ -36376,6 +36459,7 @@
         // safariPending = { pool, threshold } for the visit in progress. Declared here, next to the catch state, so
         // setGameScreen() can never reach them before they exist.
         let safariPickActive = false;
+        let cardShufflePick = null; // { cardId } while the hand is picking a card to shuffle back for a Pok\u00e9 Mart-style card
         let contestDiscardLeft = 0; // Contest Hall loss penalty (or a battle card's victory discard): cards still to discard from the hand
         let contestDiscardLabel = 'Contest Hall'; // whose discard it is, for the notices
         let safariPending = null;
@@ -42991,7 +43075,7 @@
             }
             // A Battle Card badge tap remembers which half it came from
             // (see battleCardPlayTarget) only while on Hand & Decks.
-            if (screenId !== 'decks') { battleCardPlayTarget = null; attachPickMode = null; catchCardPickActive = false; if (safariPickActive) { safariPickActive = false; safariPending = null; } }
+            if (screenId !== 'decks') { cardShufflePick = null; battleCardPlayTarget = null; attachPickMode = null; catchCardPickActive = false; if (safariPickActive) { safariPickActive = false; safariPending = null; } }
             currentGameScreen = screenId;
             document.querySelectorAll('.game-screen').forEach(el => {
                 el.classList.toggle('active', el.id === `game-screen-${screenId}`);
@@ -47604,6 +47688,8 @@
         document.getElementById('game-frontier-overlay').addEventListener('click', (e) => {
             const cBtn = e.target.closest('.game-contest-btn');
             if (cBtn) { boardContestChoose(cBtn.dataset.act); return; }
+            const fxBtn = e.target.closest('.game-cardfx-btn');
+            if (fxBtn) { closeFrontierOverlay(); cardShopChoose(fxBtn.dataset.cardId, fxBtn.dataset.act); return; }
             const modeBtn = e.target.closest('.game-trainermode-btn');
             if (modeBtn) {
                 closeFrontierOverlay();
@@ -50120,6 +50206,11 @@
                 return;
             }
 
+            const activeCardEffectBtn = e.target.closest('.game-active-card-effect-btn');
+            if (activeCardEffectBtn) {
+                useCardEffect(activeCardEffectBtn.dataset.cardId);
+                return;
+            }
             const activeCardLegendBtn = e.target.closest('.game-active-card-legend-btn');
             if (activeCardLegendBtn) {
                 beginLegendaryEncounterFromCard(activeCardLegendBtn.dataset.cardId);
@@ -50192,6 +50283,11 @@
             // own Attach/Nature Cards photo opens (openTeamCardImageViewer()).
             if (e.target.closest('#game-decks-attach-pick-cancel-btn')) {
                 cancelAttachPick();
+                return;
+            }
+            const handPickShuffleBtn = e.target.closest('.game-hand-pick-shuffle-btn');
+            if (handPickShuffleBtn) {
+                cardShufflePickChoose(handPickShuffleBtn.dataset.cardId);
                 return;
             }
             const handPickContestBtn = e.target.closest('.game-hand-pick-contest-btn');
