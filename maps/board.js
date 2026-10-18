@@ -15,6 +15,8 @@
                                     kind 'catch' = a wild Pokémon is here and NOT yet revealed (token is null unless it was
                                     already face-up); the player answers with message {type:'board-encounter'} to reveal it,
                                     which comes back as kind 'encounter' (token revealed)
+            onPlace(playerId)    -- this device's player picked a marker up and put it down (any drop that was dragged, even back on the same space)
+            onDraw()             -- the board was just redrawn (the app uses it to show/hide buttons that depend on where a marker is)
             onAction(id, action) -- the player pressed a button shown with ctrl.showAction({text,buttons:[{id,label}]})
             (host/guest) playerId = the one token this device may move; omit it for a display-only host
    loadBoard(editorJson, {style:'condensed'|'full'}) picks which map of the export to use; the export's
@@ -28,7 +30,8 @@
    Host only: poolList(color) / takeFromPool(color,name) / settlePoolToken(name,'caught'|'returned') [Safari Zone: pick a token out
    of a pool, then keep it (caught) or put it back], where(playerId) [the id of the space a player's marker is on, or null -- the Host uses it to check two players really share a space], drawLegendary() [Roaming Legend: a random Legendary token from the orange pool, or off a random orange space when the pool is empty; settle it like drawFromPool()], drawFromPool(color) [Battle Frontier: take a RANDOM token out of a pool, returns its name or null; give it back with settlePoolToken(name,'returned')], movePlayer(playerId, spaceIdOrLabel|'@home') [moves a marker without a landing prompt ('@home' = their Current Home); returns the space's label, or '' if it could not], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
    for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
-   Messages: guest -> host {type:'board-move',player,to}
+   spaceOf(playerId) -> {id,type,label} of the space that player's marker is on (any role), or null.
+   Messages: guest -> host {type:'board-move',player,to}   {type:'board-stay'} [host: app sends it with player id -- re-runs the landing prompt for the space the player is already on]
              host -> guests {type:'board-state',snap:<JSON string>} */
 (function(global){
 const CSS=".bm-root{position:relative;--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #bgc{position:absolute;display:none;pointer-events:none;border-radius:10px;background:var(--bm-map);z-index:0}\n.bm-root.bm-bgc #bgc{display:block}\n.bm-root.bm-bgc #b{background:transparent;position:relative;z-index:1}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n.bm-root #actbar{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.4)}\n.bm-root #actbar[hidden]{display:none}\n.bm-root #mapctl{position:absolute;top:16px;left:16px;z-index:4;display:flex;gap:4px}\n.bm-root #mapctl button{margin:0;opacity:.92;box-shadow:0 1px 4px rgba(0,0,0,.35)}\n.bm-root.bm-aside-hidden aside{display:none}\n.bm-root.bm-aside-hidden #b{height:100%}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}.bm-root .bm-tkv{display:none;position:absolute;inset:0;z-index:6;background:rgba(0,0,0,.82);align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:24px;box-sizing:border-box;cursor:pointer}.bm-root .bm-tkv.on{display:flex}.bm-root .bm-tkv img{max-width:min(92%,460px);max-height:78%;object-fit:contain}.bm-root .bm-tkv-n{color:#fff;font:600 16px system-ui,sans-serif;text-align:center}";
@@ -204,6 +207,9 @@ function drawLegendary(){if(mode!=='host')return null;releaseStale();
 // sends the player home. Returns the label of the space it landed on, or '' when nothing moved.
 function movePlayer(p,target){if(mode!=='host'||pos[p]===undefined)return '';if(target==='@home')target=home[p]; // '@home' = the player's Current Home (a Black Out)
  let s=get(target);if(!s){const t=String(target||'').trim().toLowerCase();s=SP.find(x=>(x.label||'').trim().toLowerCase()===t)}if(!s)return '';const pl=PL.find(x=>x.id===p);pos[p]=s.id;pendingEnc[p]=null;pendingHome[p]=[];log(`host: ${pl?pl.name:p} was moved to ${s.label||s.id}`);snapshot();return s.label||s.id}
+// The player stays where they are (a 0 Movement Roll, or choosing to stay on a City): bring up that space's prompt as if they had just landed.
+function stayOnSpace(p){if(mode!=='host'||pos[p]===undefined||!get(pos[p])||!PL.some(q=>q.id===p))return false;log(`host: ${PL.find(q=>q.id===p).name} stays on ${pos[p]}`);land(p,pos[p],[]);return true}
+function spaceOf(p){const id=(curPos()||{})[p],s=id&&get(id);return s?{id:s.id,type:s.type,label:s.label||''}:null}
 function settlePoolToken(n,out){if(mode!=='host'||!held.has(n))return false;held.delete(n);
  if(out==='caught'){boardCaught.add(n);log(`host: ${n} leaves the game (caught in the Safari Zone)`)}else{backToPool(n);log(`host: ${n} returned to its pool`)}return true}
 // The host's COMPLETE state, face-down Pokémon and pools included. Never sent to the table: the app puts it in the
@@ -314,7 +320,7 @@ function draw(){buildModel();let h=(img&&(bgFail||!canBmp))?`<image href="${img}
  for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
   h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" pointer-events="none"/>`}
- svg.innerHTML=h;renderPl()}
+ svg.innerHTML=h;renderPl();if(opts.onDraw){try{opts.onDraw()}catch(e){}}}
 const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
 let Z=1,VX=0,VY=0,relZoom=1;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
 let EA=1.5;const updEA=()=>{const r=svg.getBoundingClientRect();if(r.width&&r.height)EA=r.width/r.height};
@@ -347,7 +353,7 @@ function moveDrag(){if(!drag)return;svg.querySelectorAll(`[data-p="${drag.p}"]`)
  if(!(n.best&&n.d<R*2&&n.best.id!==curPos()[drag.p])){ring.setAttribute('display','none');return}
  const s=n.best,rc=s.type==='city'||s.type==='special',pad=R*.5,e=dims(s),sc2=CS,w=rc?e.w+2*pad:R*3.4*sc2,h=rc?e.h+2*pad:R*3.4*sc2;
  ring.setAttribute('display','');ring.setAttribute('x',s.x-w/2);ring.setAttribute('y',s.y-h/2);ring.setAttribute('width',w);ring.setAttribute('height',h);ring.setAttribute('rx',rc?R*.5:R*1.7*sc2)}
-function dropToken(){if(!drag.moved){drag=null;draw();return}const q={x:drag.x,y:drag.y},p=drag.p;drag=null;const n=nearest(q);
+function dropToken(){if(!drag.moved){drag=null;draw();return}const q={x:drag.x,y:drag.y},p=drag.p;drag=null;if(opts.onPlace){try{opts.onPlace(p)}catch(e){}}const n=nearest(q);
  if(n.best&&n.d<R*2&&n.best.id!==curPos()[p]){if(mode==='guest'){send({type:'board-move',player:p,to:n.best.id});draw()}else hostMove(p,n.best.id)}else draw()}
 svg.onpointerdown=e=>{tap=null;svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
  if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;tap=null;startPinch();return}
@@ -391,13 +397,13 @@ return{
  loadBoard:importBoard,
  setImage:setImg,
  setStatus:t=>{$('jm').textContent=t},getStatus:()=>$('jm').textContent,
- handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw()}},
+ handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='host'&&m.type==='board-stay')stayOnSpace(m.player);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw()}},
  showAction,hideAction,
  resolveEncounter(id,out){if(mode==='host'&&st[id]&&st[id].token)resolve(id,out)},
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
  restoreSnapshot,
  setCaught,exportState,restoreState,adoptPlayer,
- poolList,takeFromPool,settlePoolToken,drawFromPool,drawLegendary,movePlayer,where,
+ poolList,takeFromPool,settlePoolToken,drawFromPool,drawLegendary,movePlayer,where,spaceOf,stayOnSpace,
  fit:()=>fitView(),
  setKeepScale(on){keepScale=!!on;updEA();Z=clampZ(Z);clampView();applyView()},
  restoreView,
