@@ -23,7 +23,7 @@
    circleScale sizes every round space (Catch 'Em and Event alike), and a space flagged start is where everyone begins.
    controller: resolveEncounter(spaceId,'caught'|'defeated'|'abandon'), showAction(a), hideAction(),
                loadBoard(editorJson), setImage(url), handleMessage(msg),
-               resend(), restoreSnapshot(snapString, [{id,c}]) [host: resume a game from a previous host's last board-state; players matched by color c], fit(), restoreView() [keeps the zoom, centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
+               resend(), restoreSnapshot(snapString, [{id,c}]) [host: resume a game from a previous host's last board-state; players matched by color c], fit(), restoreView() [until the player zooms by hand: fills the frame's height; afterwards keeps the zoom; centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
    setKeepScale(on) -- on: when the frame is resized (e.g. a docked side panel opens) the map keeps the same on-screen scale and just
                shows more/less of itself, and the map is never allowed to get shorter than the frame; off (default): refit as before.
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
@@ -322,7 +322,7 @@ function draw(){buildModel();let h=(img&&(bgFail||!canBmp))?`<image href="${img}
   h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" pointer-events="none"/>`}
  svg.innerHTML=h;renderPl();if(opts.onDraw){try{opts.onDraw()}catch(e){}}}
 const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
-let Z=1,VX=0,VY=0,relZoom=1;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
+let Z=1,VX=0,VY=0,relZoom=1,autoFill=true,initCentered=false; // autoFill: until the player zooms by hand, the view is 'fill the frame's height, centered on my marker'const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
 let EA=1.5;const updEA=()=>{const r=svg.getBoundingClientRect();if(r.width&&r.height)EA=r.width/r.height};
 let keepScale=false;
 // keepScale (desktop, side panel docking) only changes how a resize is handled (the on-screen scale is kept); the minimum zoom is always 'the whole map fits', so a narrow window can still show the entire map.
@@ -330,10 +330,13 @@ const zmin=()=>Math.min(1,W/(H*EA)),VW=()=>W/Z,VH=()=>W/Z/EA,clampZ=z=>Math.min(
 function clampView(){const w=VW(),h=VH();VX=w>=W-1e-6?(W-w)/2:Math.max(0,Math.min(W-w,VX));VY=h>=H-1e-6?(H-h)/2:Math.max(0,Math.min(H-h,VY))}
 function applyView(){svg.setAttribute('viewBox',`${VX} ${VY} ${VW()} ${VH()}`);relZoom=Z/zmin();$('zl').textContent=(Z/zmin()).toFixed(1)+'×';bgSched()}
 function fitView(){updEA();Z=zmin();VX=0;VY=0;clampView();applyView()}
+const zfill=()=>W/(H*EA);
+// Zoomed so the map fills the frame's height (the minimum zoom is still the whole map, so the player can zoom out from here), centered on the player's marker as far as the map's edges allow.
+function fillView(){updEA();Z=clampZ(zfill());VY=0;const mine=myId&&M.pos&&M.pos[myId],s=mine&&get(mine);if(s){initCentered=true;centerOn(mine)}else{VX=(W-VW())/2;clampView();applyView()}}
 function centerOn(id){const s=get(id);if(!s)return;VX=s.x-VW()/2;VY=s.y-VH()/2;clampView();applyView()}
-function restoreView(){updEA();Z=clampZ((relZoom||1)*zmin());VX=0;VY=0;const mine=myId&&M.pos&&M.pos[myId];if(mine&&get(mine))centerOn(mine);else{clampView();applyView()}}
-function zoomAt(fx,fy,nz){const ax=VX+fx*VW(),ay=VY+fy*VH();Z=clampZ(nz);VX=ax-fx*VW();VY=ay-fy*VH();clampView();applyView()}
-function startPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect();pinch={d0:Math.hypot(a.x-b.x,a.y-b.y)||1,Z0:Z,ax:VX+((a.x+b.x)/2-r.left)/r.width*VW(),ay:VY+((a.y+b.y)/2-r.top)/r.height*VH()}}
+function restoreView(){if(autoFill){fillView();return}updEA();Z=clampZ((relZoom||1)*zmin());VX=0;VY=0;const mine=myId&&M.pos&&M.pos[myId];if(mine&&get(mine))centerOn(mine);else{clampView();applyView()}}
+function zoomAt(fx,fy,nz){autoFill=false;const ax=VX+fx*VW(),ay=VY+fy*VH();Z=clampZ(nz);VX=ax-fx*VW();VY=ay-fy*VH();clampView();applyView()}
+function startPinch(){autoFill=false;const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect();pinch={d0:Math.hypot(a.x-b.x,a.y-b.y)||1,Z0:Z,ax:VX+((a.x+b.x)/2-r.left)/r.width*VW(),ay:VY+((a.y+b.y)/2-r.top)/r.height*VH()}}
 function doPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect(),mx=((a.x+b.x)/2-r.left)/r.width,my=((a.y+b.y)/2-r.top)/r.height;
  Z=clampZ(pinch.Z0*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d0);VX=pinch.ax-mx*VW();VY=pinch.ay-my*VH();clampView();applyView()}
 let lastTs=0;
@@ -371,8 +374,9 @@ svg.onpointerup=e=>{if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);if
  if(drag&&drag.id===e.pointerId)dropToken(e)};
 svg.onpointercancel=e=>{tap=null;ptrs.delete(e.pointerId);pinch=null;pan=null;if(drag){drag=null;draw()}};
 svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();zoomAt((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height,Z*Math.exp(-e.deltaY*.0015))},{passive:false});
-$('zi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('zo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('zf').onclick=fitView;$('mzi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('mzo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('mzf').onclick=fitView;if(mode!=='mock')root.classList.add('bm-aside-hidden');let lastRW=0,lastRH=0;
+$('zi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('zo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('zf').onclick=()=>{autoFill=false;fitView()};$('mzi').onclick=()=>zoomAt(.5,.5,Z*1.4);$('mzo').onclick=()=>zoomAt(.5,.5,Z/1.4);$('mzf').onclick=()=>{autoFill=false;fitView()};if(mode!=='mock')root.classList.add('bm-aside-hidden');let lastRW=0,lastRH=0;
 const ro=new ResizeObserver(()=>{const r=svg.getBoundingClientRect(),nw=r.width,nh=r.height;
+ if(autoFill&&nw>0&&nh>0){const cx=VX+VW()/2;updEA();Z=clampZ(zfill());VX=cx-VW()/2;VY=0;lastRW=nw;lastRH=nh;clampView();applyView();return}
  if(keepScale&&lastRW>0&&lastRH>0&&nw>0&&nh>0){
   // Frame resized (a docked panel opened/closed): keep the on-screen scale (px per map unit), anchored at the view's top-left, so the map
   // keeps its size and the frame just shows more or less of it. If the map was covering the frame's height it keeps covering it.
@@ -397,7 +401,7 @@ return{
  loadBoard:importBoard,
  setImage:setImg,
  setStatus:t=>{$('jm').textContent=t},getStatus:()=>$('jm').textContent,
- handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='host'&&m.type==='board-stay')stayOnSpace(m.player);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw()}},
+ handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='host'&&m.type==='board-stay')stayOnSpace(m.player);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw();if(autoFill&&!initCentered)fillView()}},
  showAction,hideAction,
  resolveEncounter(id,out){if(mode==='host'&&st[id]&&st[id].token)resolve(id,out)},
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
