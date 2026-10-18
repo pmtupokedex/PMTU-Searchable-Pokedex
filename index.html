@@ -1982,12 +1982,12 @@
             left: 50%;
             bottom: 0;
             transform: translate(-50%, 45%);
-            width: 60%;
+            width: 25%;
             z-index: 3;
             line-height: 0;
         }
         .game-contest-perf img { display: block; width: 100%; height: auto; }
-        @media (min-width: 664px) { .game-contest-perf { transform: translate(-50%, 50%); } }
+        @media (min-width: 664px) { .game-contest-perf { transform: translate(-50%, 29%); } }
         /* Winner's confetti: stays inside the half, never blocks taps, one pass. */
         .game-contest-confetti {
             position: absolute;
@@ -2022,7 +2022,6 @@
             cursor: default;
         }
         .game-contest-move b { font-weight: 800; }
-        .game-contest-stab { font-size: 0.7em; font-weight: 800; letter-spacing: 0.04em; opacity: 0.9; border: 1px solid currentColor; border-radius: 4px; padding: 0 3px; margin-left: 2px; }
         .game-contest-footnote {
             flex-basis: 100%;
             margin: 0;
@@ -46460,9 +46459,23 @@
             if (lobbyState.role === 'guest') { contestCountsCb = cb; boardSend({ type: 'board-contest-counts' }); return; }
             boardEnsureBoard().then(c => { const o = {}; BOARD_FRONTIER_COLORS.forEach(k => { o[k.id] = c.poolList(k.id).length; }); cb(o); }).catch(() => cb({}));
         }
+        // Host side draw. The pool draw itself is random, but a Contest the player just lost puts its opponent straight back
+        // into the pool, and a small pool (the board's spaces use the same pools) can hand that same token out again. So if
+        // the draw is the opponent of the last Contest in this color and another token is available, draw again and give the
+        // repeat back to the pool.
+        const contestLastDrawn = {};
+        function contestDrawFromBoard(c, color) {
+            let token = c.drawFromPool(color);
+            if (token && contestLastDrawn[color] === token) {
+                const other = c.drawFromPool(color);
+                if (other) { c.settlePoolToken(token, 'returned'); token = other; }
+            }
+            contestLastDrawn[color] = token || null;
+            return token || null;
+        }
         function boardContestRequestDraw(color, cb) {
             if (lobbyState.role === 'guest') { contestDrawCb = cb; boardSend({ type: 'board-contest-draw', color }); return; }
-            boardEnsureBoard().then(c => cb(c.drawFromPool(color) || null)).catch(() => cb(null));
+            boardEnsureBoard().then(c => cb(contestDrawFromBoard(c, color))).catch(() => cb(null));
         }
         // A hand-picked opponent: if that token is in the app's pool it is taken out (held) like a drawn one, so it can be
         // settled afterwards (back into the pool, or gone if caught). If it isn't in the pool -- the player is using a physical
@@ -46479,7 +46492,7 @@
             const color = String(data.color || '');
             const reply = name => boardSendToPeer(peerId, { type: 'board-contest-drawn', color, name });
             if (!getRegionMapSettingsForActiveSave().enabled || !BOARD_FRONTIER_COLORS.some(c => c.id === color)) { reply(null); return; }
-            boardEnsureBoard().then(c => reply(c.drawFromPool(color) || null)).catch(() => reply(null));
+            boardEnsureBoard().then(c => reply(contestDrawFromBoard(c, color))).catch(() => reply(null));
         }
         function boardHandleContestTake(peerId, data) {
             const color = String(data.color || ''), name = String(data.name || '');
@@ -46739,7 +46752,7 @@
             if (!moves.length) { container.innerHTML = '<span class="game-contest-footnote">No Moves — the d6 is all it has.</span>'; return; }
             container.innerHTML = moves.map(m => {
                 const type = getBattleMoveType(m.name);
-                return `<span class="filter-btn game-contest-move${type ? ` game-battle-move-typed poke-type-${type}` : ''}">${escapeHtml(m.name)} <b>+${m.value}${m.bonus ? '*' : ''}</b>${m.stab ? ' <span class="game-contest-stab">STAB</span>' : ''}</span>`;
+                return `<span class="filter-btn game-contest-move${type ? ` game-battle-move-typed poke-type-${type}` : ''}">${escapeHtml(m.name)} <b>+${m.value}${m.bonus ? '*' : ''}</b></span>`;
             }).join('') + (moves.some(m => m.bonus) ? '<span class="game-contest-footnote">* Moves with 0, *, 0*, or negative Attack Strength gain a +2 bonus.</span>' : '');
         }
         function contestReadoutHtml(score) {
@@ -46830,8 +46843,13 @@
         function contestShowPenalty() {
             const s = contestSession;
             if (!s || s.phase !== 'lost') return;
+            // With virtual decks the hand is known: under 2 cards, the discard option can't be taken -- shown disabled, with why.
+            const canDiscard = !isVirtualDecksEnabledForActiveSave() || getLocalHandArray().length >= 2;
+            const discardBtn = canDiscard ? contestBtn('discard', 'Discard 2 cards')
+                : '<button class="filter-btn include game-contest-btn" type="button" data-act="discard" disabled>Discard 2 cards</button>';
+            const note = canDiscard ? '' : '<p class="game-contest-footnote" style="color: inherit; text-shadow: none; opacity: 0.85;">Discarding is unavailable: you need at least 2 cards in your hand.</p>';
             boardFrontierShow('Contest Hall — Loss Penalty', 'Choose your penalty:',
-                ((!isVirtualDecksEnabledForActiveSave() || getLocalHandArray().length >= 2) ? contestBtn('discard', 'Discard 2 cards') : '') + contestBtn('penalty', '−2 to next Movement Roll'));
+                discardBtn + contestBtn('penalty', '−2 to next Movement Roll') + note);
         }
         function boardContestChoose(act) {
             const s = contestSession;
