@@ -4519,6 +4519,21 @@
             box-shadow: 0 10px 22px rgba(0, 0, 0, 0.6);
         }
 
+        /* A card that just arrived in the hand pulses gold for a few seconds. Each card carries its own negative
+           animation-delay (how long ago it arrived), so a re-render of the hand never restarts or cuts short
+           another card's pulse -- see getHandGlowOffsets(). */
+        .game-hand-card.new-arrival .game-hand-card-face {
+            animation: hand-card-arrival-glow 1.3s ease-in-out 3;
+            border-color: rgba(255, 214, 90, 0.9);
+        }
+        @keyframes hand-card-arrival-glow {
+            0%, 100% { box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45), 0 0 0 0 rgba(255, 214, 90, 0); }
+            50% { box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45), 0 0 26px 8px rgba(255, 214, 90, 0.95); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .game-hand-card.new-arrival .game-hand-card-face { animation: none; box-shadow: 0 0 16px 4px rgba(255, 214, 90, 0.8); }
+        }
+
         .game-hand-card-img {
             position: absolute;
             top: 0;
@@ -29419,6 +29434,7 @@
             const readOnly = isActiveSaveReadOnly();
             const hand = getLocalHandArray();
             if (!hand.length) {
+                getHandGlowOffsets(hand);
                 handEl.style.height = '';
                 handEl.innerHTML = `<p class="game-hand-empty">Your hand is empty.</p>`;
             } else {
@@ -29430,6 +29446,7 @@
                 // why a height that instead tracked whatever was
                 // currently hovered/expanded was the actual jitter bug.
                 handEl.style.height = (HAND_CARD_OVERLAP * (hand.length - 1) + HAND_CARD_HEIGHT + HAND_OPTIONS_EXPAND_ROOM + STACK_TOP_GAP) + 'px';
+                const glowOffsets = getHandGlowOffsets(hand);
                 handEl.innerHTML = hand.map((cardId, i) => {
                     const card = CARDS_BY_ID[cardId];
                     const name = card ? card.name : cardId;
@@ -29499,8 +29516,8 @@
                     }
 
                     return `
-                        <div class="game-hand-card${pickCls}" style="top: ${i * HAND_CARD_OVERLAP + STACK_TOP_GAP}px; z-index: ${i + 1};" tabindex="0">
-                            <div class="game-hand-card-face">
+                        <div class="game-hand-card${pickCls}${glowOffsets[i] !== undefined ? ' new-arrival' : ''}" style="top: ${i * HAND_CARD_OVERLAP + STACK_TOP_GAP}px; z-index: ${i + 1};" tabindex="0">
+                            <div class="game-hand-card-face"${glowOffsets[i] !== undefined ? ` style="animation-delay: -${glowOffsets[i]}ms;"` : ''}>
                                 ${card && card.imageUrl ? `<img class="game-hand-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}
                             </div>
                             <div class="game-hand-card-options">${optionsHtml}</div>
@@ -36459,6 +36476,37 @@
         // safariPending = { pool, threshold } for the visit in progress. Declared here, next to the catch state, so
         // setGameScreen() can never reach them before they exist.
         let safariPickActive = false;
+        // ---- new-arrival glow in the hand ----
+        // Every render compares the hand with the previous one; each card that is new gets a token {cardId, start}. A card
+        // glows while one of its tokens is younger than HAND_GLOW_MS. Tokens are per card, so cards drawn close together
+        // each keep their own full glow. Returns {handIndex: msSinceArrival} for the cards to glow in this render.
+        const HAND_GLOW_MS = 3900; // 3 pulses of 1.3s (see the CSS)
+        let handGlowPrevCounts = null, handGlowContext = null, handGlowTokens = [];
+        function getHandGlowOffsets(hand) {
+            const now = Date.now();
+            const ctx = String(activeSaveSlot) + '|' + String(activeGuestSaveId) + '|' + String(lobbyState.role);
+            const counts = {};
+            hand.forEach(id => { counts[id] = (counts[id] || 0) + 1; });
+            if (handGlowContext !== ctx) { handGlowContext = ctx; handGlowPrevCounts = null; handGlowTokens = []; } // a different save's hand: nothing is "new"
+            if (handGlowPrevCounts) {
+                Object.keys(counts).forEach(id => {
+                    for (let k = (handGlowPrevCounts[id] || 0); k < counts[id]; k++) handGlowTokens.push({ cardId: id, start: now });
+                });
+            }
+            handGlowPrevCounts = counts;
+            handGlowTokens = handGlowTokens.filter(t => now - t.start < HAND_GLOW_MS && counts[t.cardId]);
+            const out = {};
+            const byId = {};
+            handGlowTokens.forEach(t => { (byId[t.cardId] = byId[t.cardId] || []).push(t); });
+            Object.keys(byId).forEach(id => {
+                const toks = byId[id].sort((a, b) => b.start - a.start).slice(0, counts[id]); // newest first; never more than are held
+                let t = 0;
+                for (let i = hand.length - 1; i >= 0 && t < toks.length; i--) {
+                    if (hand[i] === id) out[i] = Math.max(0, now - toks[t++].start);
+                }
+            });
+            return out;
+        }
         let cardShufflePick = null; // { cardId } while the hand is picking a card to shuffle back for a Pok\u00e9 Mart-style card
         let contestDiscardLeft = 0; // Contest Hall loss penalty (or a battle card's victory discard): cards still to discard from the hand
         let contestDiscardLabel = 'Contest Hall'; // whose discard it is, for the notices
