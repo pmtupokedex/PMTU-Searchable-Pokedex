@@ -3453,10 +3453,13 @@
 
         /* Everyone else -- and the actor too, once the card's already
            committed (see renderActiveCardZone()'s own comment) -- just
-           views it, centered, with a Dismiss. */
-        .game-active-card-view.centered {
-            flex-direction: column;
-            align-items: center;
+           views it, in the same layout with a Dismiss as its only
+           action. */
+        .game-active-card-queue-note {
+            margin: 6px 0 0;
+            text-align: center;
+            font-size: 13px;
+            opacity: 0.75;
         }
 
         /* Same size as a card in hand (see .game-hand-card-img and
@@ -3560,9 +3563,6 @@
             margin: 0;
         }
 
-        .game-active-card-view.centered .game-active-card-dismiss-btn {
-            width: 160px;
-        }
 
         /* ---- Permanent Cards panel (see the chat this was designed
            in, renderDecksScreen()'s own Permanent Cards section) ----
@@ -20471,7 +20471,7 @@
                 // on the device hosting (or soloing) this save, same
                 // "authoritative on exactly one device" shape as decks/
                 // guestHands above.
-                activeCard: null,
+                activeCards: [],
             };
             persistGameSaves();
             // "Save This Progress" is the same session moving into a
@@ -24662,27 +24662,53 @@
         // false means it's still awaiting the actor's own Discard/
         // Permanent/Shuffle/Attach choice (see renderActiveCardZone()).
         // instanceId is a fresh random string every time this is set,
-        // purely so each viewer's own local activeCardDismissedInstanceId
+        // purely so each viewer's own local activeCardDismissedInstanceIds
         // (see dismissActiveCard()) can tell "a new card took over" apart
         // from "the exact same card got re-broadcast" without needing any
         // server-side per-viewer bookkeeping.
         //
         // Same "fall back to an in-memory-only value before there's a
         // real save to hold it" shape as unsavedDeckState above.
-        let unsavedActiveCard = null;
-        function readHostActiveCard() {
-            if (lobbyState.role === 'guest') return null;
-            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) return gameSaves[activeSaveSlot].activeCard || null;
-            return unsavedActiveCard;
+        //
+        // The zone holds one entry PER ACTOR (an array, oldest first), not
+        // one card for the whole lobby: a second player's card no longer
+        // bumps the first player's still-unresolved one. A new card from
+        // an actor who already has one pending still replaces (and
+        // discards) THAT actor's own previous card, same as before, so the
+        // list never holds more than one entry per player. Each device
+        // then decides locally what to show -- see getActiveCardInfo().
+        // (A save from before this change has a single `activeCard`; it
+        // is migrated into the array the first time it is read.)
+        let unsavedActiveCards = [];
+        function readHostActiveCards() {
+            if (lobbyState.role === 'guest') return [];
+            if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
+                const save = gameSaves[activeSaveSlot];
+                if (!Array.isArray(save.activeCards)) {
+                    save.activeCards = save.activeCard ? [save.activeCard] : [];
+                    save.activeCard = null;
+                }
+                return save.activeCards;
+            }
+            return unsavedActiveCards;
         }
 
-        function writeHostActiveCard(value) {
+        // This actor's own entry, or null.
+        function readHostActiveCard(actorKey) {
+            return readHostActiveCards().find(c => c && c.actorKey === actorKey) || null;
+        }
+
+        // Replaces this actor's entry with `value` (appended as the newest),
+        // or just removes it when value is null.
+        function writeHostActiveCard(value, actorKey) {
             if (lobbyState.role === 'guest') return;
+            const list = readHostActiveCards().filter(c => c && c.actorKey !== actorKey);
+            if (value) list.push(value);
             if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) {
-                gameSaves[activeSaveSlot].activeCard = value;
+                gameSaves[activeSaveSlot].activeCards = list;
                 persistGameSaves();
             } else {
-                unsavedActiveCard = value;
+                unsavedActiveCards = list;
             }
         }
 
@@ -24779,19 +24805,19 @@
         }
 
         // The one place anything (a draw, a Play, an Attach) puts a new
-        // card into the zone. If the PREVIOUS card was still pending
+        // card into the zone. If this actor's PREVIOUS card was still pending
         // (nobody had Discarded/made it Permanent/Shuffled it back in
         // yet) it defaults to Discard rather than just vanishing
         // untracked -- see the chat this was designed in.
         function setHostActiveCard(cardId, deckName, actorKey, committed) {
-            const previous = readHostActiveCard();
+            const previous = readHostActiveCard(actorKey);
             if (previous && !previous.committed) {
                 discardToHostDeck(previous.deckName, previous.cardId);
             }
             writeHostActiveCard({
                 cardId, deckName, actorKey, committed,
                 instanceId: 'ac-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-            });
+            }, actorKey);
             broadcastDeckState();
             renderDecksScreen();
         }
@@ -25507,10 +25533,10 @@
         // Sends whatever's currently active straight to its own deck's
         // discard pile and clears the zone for everyone.
         function hostApplyActiveCardDiscard(peerKey) {
-            const active = readHostActiveCard();
-            if (!active || active.actorKey !== peerKey) return;
+            const active = readHostActiveCard(peerKey);
+            if (!active) return;
             discardToHostDeck(active.deckName, active.cardId);
-            writeHostActiveCard(null);
+            writeHostActiveCard(null, peerKey);
             broadcastDeckState();
             renderDecksScreen();
         }
@@ -25539,8 +25565,8 @@
         // own color tag -- see confirmPermanentPickSelection()) simply
         // overwrites whatever a manually-chosen color would have been.
         function hostApplyActiveCardPermanent(peerKey, color, pokemonPick) {
-            const active = readHostActiveCard();
-            if (!active || active.actorKey !== peerKey) return;
+            const active = readHostActiveCard(peerKey);
+            if (!active) return;
             const card = CARDS_BY_ID[active.cardId];
             if (!card || card.canPermanent !== 'yes') return;
             let noteColor = NOTE_COLORS.includes(color) ? color : null;
@@ -25572,7 +25598,7 @@
                     if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-added', entry: newEntry });
                 }
             }
-            writeHostActiveCard(null);
+            writeHostActiveCard(null, peerKey);
             broadcastDeckState();
             renderDecksScreen();
         }
@@ -25753,8 +25779,8 @@
             const store = ensureHostDeckStore();
             if (!store) return;
             if (fromActive) {
-                const active = readHostActiveCard();
-                if (!active || active.actorKey !== peerKey || active.committed || active.cardId !== cardId) return;
+                const active = readHostActiveCard(peerKey);
+                if (!active || active.committed || active.cardId !== cardId) return;
             }
             const ownDeckName = getEffectiveCardDeck(card);
             // Same \"subset decks' discards live in the Item Deck's pile\"
@@ -25769,7 +25795,7 @@
             store[ownDeckName].drawPile.push(cardId);
             shuffleArray(store[targetDeckName].drawPile);
             if (ownDeckName !== targetDeckName) shuffleArray(store[ownDeckName].drawPile);
-            if (fromActive) writeHostActiveCard(null);
+            if (fromActive) writeHostActiveCard(null, peerKey);
             broadcastDeckState();
             renderDecksScreen();
         }
@@ -25789,14 +25815,14 @@
         // instead of discarding it -- e.g. an Event card whose own text
         // says to do exactly that.
         function hostApplyActiveCardShuffle(peerKey) {
-            const active = readHostActiveCard();
-            if (!active || active.actorKey !== peerKey) return;
+            const active = readHostActiveCard(peerKey);
+            if (!active) return;
             const store = ensureHostDeckStore();
             if (!store) return;
             ensureDeckBuilt(store, active.deckName);
             store[active.deckName].drawPile.push(active.cardId);
             shuffleArray(store[active.deckName].drawPile);
-            writeHostActiveCard(null);
+            writeHostActiveCard(null, peerKey);
             broadcastDeckState();
             renderDecksScreen();
         }
@@ -25809,9 +25835,9 @@
         // either way, see that function's own comment), so all that's
         // left here is clearing the shared zone.
         function hostApplyActiveCardResolveAttach(peerKey) {
-            const active = readHostActiveCard();
-            if (!active || active.actorKey !== peerKey) return;
-            writeHostActiveCard(null);
+            const active = readHostActiveCard(peerKey);
+            if (!active) return;
+            writeHostActiveCard(null, peerKey);
             broadcastDeckState();
             renderDecksScreen();
         }
@@ -26060,7 +26086,7 @@
                     handCounts[peerId] = (getPeerHandArray(peerId) || []).length;
                 });
             }
-            const payload = { type: 'deck-state', decks, handCounts, activeCard: readHostActiveCard(), deptStoreSaleHolder: findDeptStoreSaleHolder() };
+            const payload = { type: 'deck-state', decks, handCounts, activeCards: readHostActiveCards(), deptStoreSaleHolder: findDeptStoreSaleHolder() };
             if (lobbyState.connections) {
                 lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
             }
@@ -27764,11 +27790,36 @@
         // device's own local Host/solo store, or guestDeckStateCache on
         // a connected guest -- same one-shape-either-way pattern as
         // getDeckInfoMap(). Never mutates anything.
-        function getActiveCardInfo() {
+        //
+        // The zone is shared but each device shows only ONE card at a
+        // time: this player's own still-pending card always comes first
+        // (it is theirs to resolve, and another player's card must never
+        // push it out of view); otherwise the oldest card from another
+        // player (or one of their own already-committed ones) that this
+        // device hasn't dismissed yet. Dismissing one reveals the next in
+        // line, so other players' cards effectively queue up behind it.
+        function getActiveCardsList() {
             if (lobbyState.role === 'guest') {
-                return (guestDeckStateCache && guestDeckStateCache.activeCard) || null;
+                return guestDeckStateCache ? (guestDeckStateCache.activeCards || []) : null;
             }
-            return readHostActiveCard();
+            return readHostActiveCards();
+        }
+        function activeCardIsMine(info) {
+            return !!info && (lobbyState.role === null || info.actorKey === getMyLobbyPlayerId());
+        }
+        function getActiveCardInfo() {
+            const all = getActiveCardsList();
+            if (!all) return null;
+            // Forget dismissals of cards that have left the zone.
+            activeCardDismissedInstanceIds.forEach(id => { if (!all.some(c => c.instanceId === id)) activeCardDismissedInstanceIds.delete(id); });
+            const visible = all.filter(c => c && !activeCardDismissedInstanceIds.has(c.instanceId));
+            return visible.find(c => activeCardIsMine(c) && !c.committed) || visible[0] || null;
+        }
+        // How many other cards are waiting behind the one on screen.
+        function getActiveCardQueueCount() {
+            const all = getActiveCardsList() || [];
+            const shown = getActiveCardInfo();
+            return all.filter(c => c && !activeCardDismissedInstanceIds.has(c.instanceId) && (!shown || c.instanceId !== shown.instanceId)).length;
         }
 
         // Which Active Card instanceId (see setHostActiveCard()'s own
@@ -27779,10 +27830,10 @@
         // set for the card's own actor -- see renderActiveCardZone()'s
         // own comment on why the actor doesn't get a Dismiss for a still-
         // pending card, only Discard/Permanent/Shuffle/Attach instead.
-        let activeCardDismissedInstanceId = null;
+        const activeCardDismissedInstanceIds = new Set();
         function dismissActiveCard() {
             const info = getActiveCardInfo();
-            if (info) activeCardDismissedInstanceId = info.instanceId;
+            if (info && !(activeCardIsMine(info) && !info.committed)) activeCardDismissedInstanceIds.add(info.instanceId);
             renderDecksScreen();
         }
 
@@ -29077,7 +29128,7 @@
             const zoneEl = document.getElementById('game-active-card-zone');
             if (!zoneEl) return;
             const info = getActiveCardInfo();
-            if (!info || info.instanceId === activeCardDismissedInstanceId) {
+            if (!info) {
                 zoneEl.classList.remove('visible');
                 zoneEl.innerHTML = '';
                 return;
@@ -29089,7 +29140,9 @@
                 ? `<img class="game-active-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">`
                 : '';
             const myId = getMyLobbyPlayerId();
-            const isActor = lobbyState.role === null || info.actorKey === myId;
+            const isActor = activeCardIsMine(info);
+            const queued = getActiveCardQueueCount();
+            const queueNote = queued ? `<p class="game-active-card-queue-note">${queued} more card${queued === 1 ? '' : 's'} waiting</p>` : '';
             const readOnly = isActiveSaveReadOnly();
 
             if (isActor && !info.committed) {
@@ -29120,6 +29173,7 @@
                             ${cardHasDiscardShuffle(card) ? `<button class="filter-btn game-active-card-shuffle-discards-btn" type="button" data-card-id="${escapeHtml(info.cardId)}" title="Shuffles this card and the ${escapeHtml(card.shuffleDiscardPile)} discard pile into the ${escapeHtml(card.shuffleIntoDeck)}." ${readOnly ? 'disabled' : ''}>Shuffle Discards into Deck</button>` : ''}
                         </div>
                     </div>
+                    ${queueNote}
                 `;
                 // See pendingActiveCardScrollTrigger's own comment --
                 // requestAnimationFrame so the scroll happens after the
@@ -29132,10 +29186,13 @@
                 }
             } else {
                 zoneEl.innerHTML = `
-                    <div class="game-active-card-view centered">
+                    <div class="game-active-card-view actor">
                         ${imgTag}
-                        <button class="filter-btn exclude game-active-card-dismiss-btn" type="button">Dismiss</button>
+                        <div class="game-active-card-actions">
+                            <button class="filter-btn exclude game-active-card-dismiss-btn" type="button">Dismiss</button>
+                        </div>
                     </div>
+                    ${queueNote}
                 `;
             }
         }
@@ -42284,7 +42341,7 @@
             if (scrollEl) scrollEl.scrollTop = 0;
             if (screenId === 'main') renderBattleArenaGate();
             if (screenId === 'decks') renderDecksScreen();
-            if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); hideCatchOverlay(); if (catchAttempt && catchAttempt.resolved) { if (catchAttempt.safari && catchAttempt.safari.contest) contestMusicSet(false); catchAttempt = null; } }
+            if (screenId !== 'battle') { closeBattleOptionsOverlays(); closeBattleFieldOverlay(); hideCatchOverlay(); if (catchAttempt && catchAttempt.resolved) { if (catchAttempt.safari && catchAttempt.safari.contest) contestEnd(); catchAttempt = null; } }
             if (screenId === 'battle') {
                 renderBattleAttackerSlot();
                 renderBattleDefenderSlot();
@@ -44864,7 +44921,7 @@
             S.hostPlayerColor = G.playerColor || null;
             S.hostWasPlayer = true;
             S.lastPlayed = new Date().toISOString();
-            S.activeCard = null; // any in-flight shared card was tied to old peer ids
+            S.activeCards = []; S.activeCard = null; // any in-flight shared card was tied to old peer ids
             S.arenaCards = [];
             S.hostEpoch = Math.max(offer.epoch || 0, S.hostEpoch || 0) + 1;
             return { save: S, slotIndex, name: S.hostDisplayName, color: S.hostPlayerColor };
@@ -45953,6 +46010,22 @@
             contestMusicHolderSet(peerId, !!data.on);
         }
 
+        // A Contest begun from the Pok\u00e9mon Contest card (its Begin Contest button) discards that card when the Contest
+        // ends. Backing out before it starts (contestAbort()) leaves the card where it is so the player can try again.
+        let contestCardPending = false;
+        function beginContestFromCard() {
+            boardUseContestHall(null);
+            if (contestSession) contestCardPending = true;
+        }
+        // Every way a Contest finishes (Item reward, the Catch screen closing, either Loss Penalty) ends here.
+        function contestEnd() {
+            contestMusicSet(false);
+            if (!contestCardPending) return;
+            contestCardPending = false;
+            const info = getActiveCardInfo();
+            if (info && activeCardIsMine(info) && !info.committed && cardStartsContest(CARDS_BY_ID[info.cardId])) requestActiveCardDiscard();
+        }
+
         // ---- starting: choose the Contestant on the Team Tracker ----
         function boardUseContestHall(info) {
             if (isActiveSaveReadOnly()) return;
@@ -46001,6 +46074,7 @@
             contestClearTeamPick();
             if (s && s.opp) contestSettleOpp(s.opp, 'returned');
             closeFrontierOverlay();
+            contestCardPending = false;
             contestMusicSet(false);
         }
         function contestPickMine(index) {
@@ -46213,7 +46287,7 @@
                 contestSession = null; // resolved: nothing locks the Contest screen any more
                 if (act === 'item') {
                     contestSettleOpp(opp, 'returned');
-                    contestMusicSet(false);
+                    contestEnd();
                     if (isVirtualDecksEnabledForActiveSave()) { requestDrawCard('Item Deck'); boardShowHand(); showGameToast('Contest Hall: drew a card from the Item Deck.'); }
                     else showGameToast('Contest Hall: draw a card from your physical Item deck.');
                 } else {
@@ -46226,14 +46300,14 @@
             closeFrontierOverlay();
             contestSession = null;
             if (act === 'penalty') {
-                contestMusicSet(false);
+                contestEnd();
                 boardAddMovePenalty(2);
                 showGameToast('Contest Hall: −2 on your next Movement Roll.');
             } else if (act === 'discard') {
-                if (!isVirtualDecksEnabledForActiveSave()) { contestMusicSet(false); showGameToast('Contest Hall: discard 2 cards from your physical hand.'); closeGamePanel(); return; }
+                if (!isVirtualDecksEnabledForActiveSave()) { contestEnd(); showGameToast('Contest Hall: discard 2 cards from your physical hand.'); closeGamePanel(); return; }
                 const hand = getLocalHandArray();
                 if (hand.length <= 2) {
-                    contestMusicSet(false);
+                    contestEnd();
                     hand.slice().forEach(id => { const c = CARDS_BY_ID[id]; if (c) requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, id); });
                     showGameToast(hand.length ? 'Contest Hall: discarded your hand.' : 'Contest Hall: your hand is empty — nothing to discard.');
                     if (hand.length) boardShowHand(); else closeGamePanel();
@@ -46266,7 +46340,7 @@
             requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, cardId);
             contestDiscardLeft--;
             if (contestDiscardLeft > 0) showDecksNotice('Contest Hall: choose 1 more card to discard.');
-            else { showDecksNotice('Contest Hall: penalty paid.'); contestMusicSet(false); }
+            else { showDecksNotice('Contest Hall: penalty paid.'); contestEnd(); }
             if (typeof renderDecksScreen === 'function') setTimeout(renderDecksScreen, 450);
         }
 
@@ -46593,7 +46667,7 @@
         }
         function boardSafariStartCatch(name, threshold, frontier, label, opts) {
             const entry = POKEMON_BY_NAME[name];
-            if (!entry || isActiveSaveReadOnly()) { if (!(opts && opts.untracked)) boardSafariSettle(name, 'returned'); if (opts && opts.contest) contestMusicSet(false); if (!entry) showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
+            if (!entry || isActiveSaveReadOnly()) { if (!(opts && opts.untracked)) boardSafariSettle(name, 'returned'); if (opts && opts.contest) contestEnd(); if (!entry) showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
             const source = { dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false };
             catchAttempt = { fainted: false, hadStatus: false, roll: null, cardId: null, manualBonus: 0,
                 safari: { name, member: buildWildPokemonMember(source), threshold, settled: false, frontier: !!frontier, label: label || '',
@@ -49159,7 +49233,7 @@
             const activeCardContestBtn = e.target.closest('.game-active-card-contest-btn');
             if (activeCardContestBtn) {
                 // Same entry point the Contest Hall space action uses (see boardRunServiceAction()).
-                boardUseContestHall(null);
+                beginContestFromCard();
                 return;
             }
 
@@ -50790,7 +50864,7 @@
             // Closing a Safari Zone attempt without catching puts its token back in the pool.
             const sf = catchAttempt && catchAttempt.safari;
             if (sf && !sf.settled) { sf.settled = true; discardMemberEquippedCards(sf.member); if (!sf.untracked) boardSafariSettle(sf.name, 'returned'); }
-            if (sf && sf.contest) contestMusicSet(false); // the Contest's catch screen is the last step of the action
+            if (sf && sf.contest) contestEnd(); // the Contest's catch screen is the last step of the action
             catchAttempt = null;
             catchCardPickActive = false;
             hideCatchOverlay();
