@@ -1982,12 +1982,12 @@
             left: 50%;
             bottom: 0;
             transform: translate(-50%, 45%);
-            width: 25%;
+            width: 60%;
             z-index: 3;
             line-height: 0;
         }
         .game-contest-perf img { display: block; width: 100%; height: auto; }
-        @media (min-width: 664px) { .game-contest-perf { transform: translate(-50%, 29%); } }
+        @media (min-width: 664px) { .game-contest-perf { transform: translate(-50%, 50%); } }
         /* Winner's confetti: stays inside the half, never blocks taps, one pass. */
         .game-contest-confetti {
             position: absolute;
@@ -14911,15 +14911,13 @@
         #game-board-frame { position: relative; flex: 1; min-height: 0; border-radius: 8px; overflow: hidden; background: #101418; }
         #game-board-mount, #game-board-mount .bm-root { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: auto; height: auto; }
         #game-board-frame:fullscreen { border-radius: 0; }
-        #board-fs-exit { display: none; position: absolute; top: 8px; right: 8px; z-index: 5; margin: 0; }
-        #game-board-frame:fullscreen #board-fs-exit { display: block; }
+        #board-roll-btn { position: absolute; top: 8px; right: 8px; z-index: 5; margin: 0; }
 
         /* Movement roll: the number a player just rolled with the map's Roll button, shown to the whole table in the
-           roller's color. Top-right corner of the map frame (below the Exit fullscreen button when that is showing). White
+           roller's color. Top-right corner of the map frame (below the Roll Movement Die button). White
            outline-free glyphs would vanish on the map art, so it gets the app's usual black outline: the 8-shadow version
            here, swapped for a real text-stroke on high-DPI screens in the @media block below (same threshold as the shared list). */
-        #board-roll-display { position: absolute; top: 12px; right: 12px; z-index: 6; display: none; flex-direction: column; align-items: flex-end; pointer-events: none; }
-        #game-board-frame:fullscreen #board-roll-display { top: 56px; }
+        #board-roll-display { position: absolute; top: 56px; right: 12px; z-index: 6; display: none; flex-direction: column; align-items: flex-end; pointer-events: none; }
         #board-roll-display.visible { display: flex; animation: board-roll-pop 0.28s ease-out; }
         #board-roll-display.fading { opacity: 0; transition: opacity 0.4s ease; }
         @keyframes board-roll-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
@@ -18071,7 +18069,7 @@
     <div id="board-view">
         <div id="game-board-frame">
             <div id="game-board-mount"></div>
-            <button class="filter-btn" id="board-fs-exit" type="button">Exit fullscreen</button>
+            <button class="filter-btn" id="board-roll-btn" type="button">Roll Movement Die</button>
             <div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div>
         </div>
     </div>
@@ -46880,7 +46878,7 @@
             contestSession = null;
             if (act === 'penalty') {
                 contestEnd();
-                boardAddMovePenalty(2);
+                boardSetMovePenalty(2); // on or off: a second Contest loss before the next roll doesn't stack
                 showGameToast('Contest Hall: −2 on your next Movement Roll.');
             } else if (act === 'discard') {
                 if (!isVirtualDecksEnabledForActiveSave()) { contestEnd(); showGameToast('Contest Hall: discard 2 cards from your physical hand.'); closeGamePanel(); return; }
@@ -48204,12 +48202,12 @@
             const b = document.createElement('button');
             b.id = 'board-fs-btn';
             b.type = 'button';
-            b.textContent = 'Fullscreen';
+            b.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
             bar.appendChild(b);
         }
 
         // ---- Movement roll ----
-        // The map's "Roll d6" button: rolls a d6 for this player's movement and shows the number to the whole table, in the
+        // The board's "Roll Movement Die" button: rolls a d6 for this player's movement and shows the number to the whole table, in the
         // roller's color, in a corner of the map. The roll is informational (players still move their own marker). A pending
         // movement penalty (Contest Hall's Loss Penalty: -2) is taken off the NEXT roll once, and a roll never goes below 0.
         // The penalty lives in the player's own save (like frontierLegendaryClaimed), so it survives a reload.
@@ -48226,15 +48224,11 @@
             if (v) data.movePenalty = v; else delete data.movePenalty;
             if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves();
         }
-        function boardAddMovePenalty(n) { boardSetMovePenalty(boardMovePenalty() + n); }
+        // The Roll Movement Die button is part of the board frame itself (top right, see #board-roll-btn); the board's own
+        // developer "Panel" toggle is removed from the map controls.
         function boardInstallRollButton() {
-            const bar = document.querySelector('#game-board-mount #mapctl');
-            if (!bar || bar.querySelector('#board-roll-btn')) return;
-            const b = document.createElement('button');
-            b.id = 'board-roll-btn';
-            b.type = 'button';
-            b.textContent = 'Roll d6';
-            bar.appendChild(b);
+            const panelBtn = document.querySelector('#game-board-mount #mpanel');
+            if (panelBtn) panelBtn.remove();
         }
         function boardRollMovement() {
             if (isActiveSaveReadOnly()) return;
@@ -48314,13 +48308,18 @@
             const t = e.target;
             if (!t || !t.closest) return;
             if (t.closest('#board-fs-btn')) {
+                // One button toggles: Fullscreen <-> Exit Fullscreen.
                 const frame = document.getElementById('game-board-frame');
-                if (frame && frame.requestFullscreen) frame.requestFullscreen().catch(() => {});
+                if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+                else if (frame && frame.requestFullscreen) frame.requestFullscreen().catch(() => {});
             }
-            else if (t.closest('#board-fs-exit')) { if (document.fullscreenElement) document.exitFullscreen(); }
             else if (t.closest('#board-roll-btn')) boardRollMovement();
         });
-        document.addEventListener('fullscreenchange', () => { if (boardCtrl) requestAnimationFrame(() => boardCtrl.restoreView()); });
+        document.addEventListener('fullscreenchange', () => {
+            const fsBtn = document.getElementById('board-fs-btn');
+            if (fsBtn) fsBtn.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
+            if (boardCtrl) requestAnimationFrame(() => boardCtrl.restoreView());
+        });
 
         function getMyLobbyPlayerId() {
             if (lobbyState.role === 'host') return 'host';
