@@ -29641,6 +29641,7 @@
                         ${imgTag}
                         <div class="game-active-card-actions"><div class="game-active-card-buttons">
                             ${(!readOnly && cardIsLegendaryEncounter(card)) ? `<button class="filter-btn game-active-card-legend-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Find the Legendary</button><button class="filter-btn game-active-card-legend-decline-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Don&rsquo;t Find It</button>` : ''}
+                            ${(!readOnly && cardHasScaledOpponents(card) && canUseBattleArena()) ? `<button class="filter-btn include game-active-card-scaled-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Begin Battle</button>` : ''}
                             ${(!readOnly && cardEffectLabel(card)) ? `<button class="filter-btn include game-active-card-effect-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">${escapeHtml(cardEffectLabel(card))}</button>` : ''}
                             ${(!readOnly && cardStartsPlayerBattle(card)) ? `<button class="filter-btn game-active-card-pvp-btn" type="button">Battle a Player</button>` : ''}
                             ${(!readOnly && cardStartsContest(card)) ? `<button class="filter-btn game-active-card-contest-btn" type="button">Begin Contest</button>` : ''}
@@ -34735,6 +34736,55 @@
             });
         }
 
+        // ---- Scaled opponents (TV Interviewer) ----
+        // cards.json "scaledOpponents": { levelCap, lines: [ { forms: [ { name, upTo }, ... ] }, ... ] }
+        // Each line is one evolution line of tokens, queued in order as the NPC Trainer's team. The line's form is the first
+        // whose `upTo` covers the level of the highest-Level Pok\u00e9mon on the card owner's team (capped at levelCap); that
+        // token's Level is raised by however far that level is above the form's own base level.
+        function cardHasScaledOpponents(card) {
+            return !!(card && card.scaledOpponents && Array.isArray(card.scaledOpponents.lines) && card.scaledOpponents.lines.length);
+        }
+        function getTeamHighestLevel() {
+            let best = 0;
+            (getActiveSaveData().team.members || []).forEach(m => { if (m) best = Math.max(best, getBattleMemberTotalLevel(m)); });
+            return best;
+        }
+        function buildScaledOpponentMembers(card) {
+            const cfg = card.scaledOpponents;
+            const cap = parseInt(cfg.levelCap, 10) || 12;
+            const level = Math.max(1, Math.min(cap, getTeamHighestLevel()));
+            const hpRule = getHpRule(getActiveSaveData());
+            const members = [];
+            cfg.lines.forEach(line => {
+                const forms = Array.isArray(line.forms) ? line.forms : [];
+                const form = forms.find(f => level <= (parseInt(f.upTo, 10) || 0)) || forms[forms.length - 1];
+                const entry = form && POKEMON_BY_NAME[form.name];
+                if (!entry) return;
+                const m = buildWildPokemonMember({ dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false });
+                m.level = Math.max(0, level - getTeamMemberBaseLevel(m));
+                const hpMax = getTeamMemberHpMax(m, hpRule);
+                if (hpMax !== null) m.hp = hpMax;
+                members.push(m);
+            });
+            return { members, level };
+        }
+        function beginScaledOpponentsBattle(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (isActiveSaveReadOnly() || !cardHasScaledOpponents(card)) return;
+            if (!canUseBattleArena()) { showBattleArenaGateToast(); return; }
+            openGamePanel();
+            setGameScreen('battle');
+            confirmBattleSlotReplace('attacker', () => {
+                const { members, level } = buildScaledOpponentMembers(card);
+                if (!members.length) { showGameToast(card.name + ': could not find its Pok\u00e9mon in the Pok\u00e9mon data.'); return; }
+                setBattleAttackerTrainer(members[0], members.slice(1));
+                renderBattleAttackerSlot();
+                renderBattleDefenderSlot();
+                beginCardBattleResolution({ cardId, tokens: [] });
+                showGameToast(card.name + ': facing ' + members.map(m => m.name).join(' and ') + ' at Level ' + level + '.');
+            });
+        }
+
         // ---- Discarding a battle card once its battle is over ----
         // Rival Battle, Trainer Battle and Let's Fight! each hand the player a battle to play out in the Arena. Once that
         // battle has started and then ended, the card is discarded for them (if it is still theirs in the Active Card zone)
@@ -34801,9 +34851,13 @@
             cardBattlePending = null;
             (p.tokens || []).forEach(name => boardSafariSettle(name, 'returned'));
             if (!discard) return;
-            if (p.won) applyCardBattleReward(CARDS_BY_ID[p.cardId]);
+            const doneCard = CARDS_BY_ID[p.cardId];
+            if (p.won) applyCardBattleReward(doneCard);
             const info = getActiveCardInfo();
-            if (info && info.cardId === p.cardId && activeCardIsMine(info) && !info.committed) requestActiveCardDiscard();
+            if (info && info.cardId === p.cardId && activeCardIsMine(info) && !info.committed) {
+                // victoryShuffleBack: "yes" -- a win shuffles the card back into its deck instead of discarding it
+                if (p.won && doneCard && doneCard.victoryShuffleBack === 'yes') requestActiveCardShuffle(); else requestActiveCardDiscard();
+            }
         }
         function watchCardBattle() {
             const p = cardBattlePending;
@@ -50254,6 +50308,11 @@
                 return;
             }
 
+            const activeCardScaledBtn = e.target.closest('.game-active-card-scaled-btn');
+            if (activeCardScaledBtn) {
+                beginScaledOpponentsBattle(activeCardScaledBtn.dataset.cardId);
+                return;
+            }
             const activeCardEffectBtn = e.target.closest('.game-active-card-effect-btn');
             if (activeCardEffectBtn) {
                 useCardEffect(activeCardEffectBtn.dataset.cardId);
