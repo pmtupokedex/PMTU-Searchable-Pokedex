@@ -34378,19 +34378,74 @@
             finishCardBattle(false);
             cardBattlePending = Object.assign({ tokens: [], started: false }, opts);
         }
+        // True once the NPC side of the Arena (the Rival / Trainer in the Attacker half) is out of Pok\u00e9mon -- i.e. the
+        // card's battle was won. The Host reads the shared state; everyone else the mirror of it.
+        function isCardBattleOpponentSpent() {
+            if (lobbyState.role === 'host') {
+                const st = hostBattleArenaState;
+                return !!(st && st.attacker && !st.attacker.ownerId && isHostAttackerSideSpent(st));
+            }
+            const m = getBattleSlotMember('attacker');
+            return !!(m && m.fainted && battleAttackerMemberIndex === 'trainer' && !(battleTrainerQueue && battleTrainerQueue.length));
+        }
+
+        // Victory rewards, read from the card so they can be reused with other numbers (cards.json):
+        //   "victoryDraw": N           draw N cards when the card's battle is won
+        //   "victoryDrawDeck": "..."   which deck (default "Item Deck")
+        //   "victoryDiscard": M        then discard M cards of your choice from your hand
+        function applyCardBattleReward(card) {
+            if (!card || isActiveSaveReadOnly()) return;
+            const draw = Math.max(0, parseInt(card.victoryDraw, 10) || 0);
+            const discard = Math.max(0, parseInt(card.victoryDiscard, 10) || 0);
+            if (!draw && !discard) return;
+            const deck = card.victoryDrawDeck || 'Item Deck';
+            if (!isVirtualDecksEnabledForActiveSave()) {
+                showGameToast(`${card.name}: you won! ` + (draw ? `Draw ${draw} card${draw === 1 ? '' : 's'} from your physical ${deck}` : '')
+                    + (draw && discard ? ', then discard ' : (discard ? 'Discard ' : '')) + (discard ? `${discard} card${discard === 1 ? '' : 's'} from your hand` : '') + '.');
+                return;
+            }
+            const startLen = getLocalHandArray().length;
+            for (let i = 0; i < draw; i++) requestDrawCard(deck);
+            boardShowHand();
+            showGameToast(`${card.name}: you won! ` + (draw ? `Drew ${draw} card${draw === 1 ? '' : 's'} from the ${deck}.` : ''));
+            if (!discard) return;
+            // The drawn cards reach a guest's hand over the network, so wait for them (briefly) before asking for the discards.
+            let waited = 0;
+            const begin = () => {
+                if (getLocalHandArray().length < startLen + draw && waited < 5000) { waited += 250; setTimeout(begin, 250); return; }
+                const hand = getLocalHandArray();
+                if (hand.length <= discard) {
+                    hand.slice().forEach(id => { const c = CARDS_BY_ID[id]; if (c) requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, id); });
+                    showDecksNotice(`${card.name}: discarded your hand.`);
+                    return;
+                }
+                contestDiscardLabel = card.name;
+                contestDiscardLeft = discard;
+                boardShowHand();
+                showDecksNotice(`${card.name}: choose ${discard} card${discard === 1 ? '' : 's'} from your hand to discard.`);
+                renderDecksScreen();
+            };
+            begin();
+        }
+
         function finishCardBattle(discard) {
             const p = cardBattlePending;
             if (!p) return;
             cardBattlePending = null;
             (p.tokens || []).forEach(name => boardSafariSettle(name, 'returned'));
             if (!discard) return;
+            if (p.won) applyCardBattleReward(CARDS_BY_ID[p.cardId]);
             const info = getActiveCardInfo();
             if (info && info.cardId === p.cardId && activeCardIsMine(info) && !info.committed) requestActiveCardDiscard();
         }
         function watchCardBattle() {
             const p = cardBattlePending;
             if (!p) return;
-            if (battleInProgress) { p.started = true; return; }
+            if (battleInProgress) {
+                p.started = true;
+                if (isCardBattleOpponentSpent()) p.won = true; // read while it is still on screen: End Battle clears the halves
+                return;
+            }
             if (p.started) { finishCardBattle(true); return; }
             // A Let's Fight! challenge that ended (declined, cancelled) without a Pok\u00e9mon ever being sent out.
             if (p.pvp && !p.sent && !boardPvp) finishCardBattle(false);
@@ -35911,7 +35966,8 @@
         // safariPending = { pool, threshold } for the visit in progress. Declared here, next to the catch state, so
         // setGameScreen() can never reach them before they exist.
         let safariPickActive = false;
-        let contestDiscardLeft = 0; // Contest Hall loss penalty: cards still to discard from the hand
+        let contestDiscardLeft = 0; // Contest Hall loss penalty (or a battle card's victory discard): cards still to discard from the hand
+        let contestDiscardLabel = 'Contest Hall'; // whose discard it is, for the notices
         let safariPending = null;
 
         let soloBattleCards = { attacker: null, defender: null };
@@ -46535,6 +46591,7 @@
                     if (hand.length) boardShowHand(); else closeGamePanel();
                     return;
                 }
+                contestDiscardLabel = 'Contest Hall';
                 contestDiscardLeft = 2; // the music plays on until both cards are chosen (see boardContestDiscard())
                 boardShowHand();
                 showDecksNotice('Contest Hall: choose 2 cards from your hand to discard.');
@@ -46561,8 +46618,11 @@
             setTimeout(() => { contestDiscardBusy = false; }, 400);
             requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, cardId);
             contestDiscardLeft--;
-            if (contestDiscardLeft > 0) showDecksNotice('Contest Hall: choose 1 more card to discard.');
-            else { showDecksNotice('Contest Hall: penalty paid.'); contestEnd(); }
+            if (contestDiscardLeft > 0 && !getLocalHandArray().length) contestDiscardLeft = 0; // nothing left to discard
+            const label = contestDiscardLabel;
+            if (contestDiscardLeft > 0) showDecksNotice(label + ': choose ' + (contestDiscardLeft === 1 ? '1 more card' : contestDiscardLeft + ' more cards') + ' to discard.');
+            else if (label === 'Contest Hall') { showDecksNotice('Contest Hall: penalty paid.'); contestEnd(); }
+            else showDecksNotice(label + ': cards discarded.');
             if (typeof renderDecksScreen === 'function') setTimeout(renderDecksScreen, 450);
         }
 
