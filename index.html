@@ -1966,7 +1966,7 @@
         }
 
         /* Contest Hall screen -- the Battle Arena's halves (same classes), minus the battle machinery. The slot cards are
-           built by contestBuildSlot() and are markers only (HP badge, nothing tappable), so pointer events are off. */
+           built by contestBuildSlot() and are markers only (Contest Performance badge, nothing tappable), so pointer events are off. */
         #game-contest-mine-slot .game-team-slot,
         #game-contest-opp-slot .game-team-slot {
             width: 250px;
@@ -1976,6 +1976,43 @@
         #game-contest-opp-slot { padding-top: 10px; padding-bottom: 25px; }
         #game-contest-mine-slot { padding-top: 12px; padding-bottom: 25px; }
         .game-contest-slot, .game-contest-slot * { pointer-events: none; }
+        /* Contest Performance badge: where the level counter sits (centered, hanging half off the bottom edge). */
+        .game-contest-perf {
+            position: absolute;
+            left: 50%;
+            bottom: 0;
+            transform: translate(-50%, 45%);
+            width: 60%;
+            z-index: 3;
+            line-height: 0;
+        }
+        .game-contest-perf img { display: block; width: 100%; height: auto; }
+        @media (min-width: 664px) { .game-contest-perf { transform: translate(-50%, 50%); } }
+        /* Winner's confetti: stays inside the half, never blocks taps, one pass. */
+        .game-contest-confetti {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+            border-radius: inherit;
+            pointer-events: none;
+            z-index: 5;
+        }
+        .game-contest-confetti i {
+            position: absolute;
+            top: -20px;
+            display: block;
+            border-radius: 2px;
+            opacity: 0;
+            animation-name: game-contest-confetti-fall;
+            animation-timing-function: linear;
+            animation-fill-mode: forwards;
+        }
+        @keyframes game-contest-confetti-fall {
+            0% { opacity: 1; top: -20px; transform: translateX(0) rotate(0deg); }
+            85% { opacity: 1; }
+            100% { opacity: 0; top: 105%; transform: translateX(var(--drift)) rotate(var(--spin)); }
+        }
+        @media (prefers-reduced-motion: reduce) { .game-contest-confetti { display: none; } }
         .game-contest-move {
             display: inline-flex;
             align-items: center;
@@ -1985,6 +2022,7 @@
             cursor: default;
         }
         .game-contest-move b { font-weight: 800; }
+        .game-contest-stab { font-size: 0.7em; font-weight: 800; letter-spacing: 0.04em; opacity: 0.9; border: 1px solid currentColor; border-radius: 4px; padding: 0 3px; margin-left: 2px; }
         .game-contest-footnote {
             flex-basis: 100%;
             margin: 0;
@@ -2004,7 +2042,8 @@
             text-shadow: -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black, 1px 1px 0 black;
         }
         .game-contest-status:empty { display: none; }
-        #game-contest-roll-btn .game-battle-dice-result-icon { vertical-align: middle; margin-left: 4px; }
+        /* The d6 is slimmed (and its box pulled in) so the button stays as tall as Leave Contest. */
+        #game-contest-roll-btn .game-battle-dice-result-icon { width: 24px; height: 24px; padding: 0; margin: -4px 0 -4px 4px; vertical-align: middle; }
 
         /* One button per move the Pokémon in a half knows -- see
            renderBattleMoves(). Empty (no Pokémon, or its data hasn't
@@ -15670,7 +15709,11 @@
                  zone badges. Opponent on top, your Contestant below. There is no Back button on purpose: the Contest is left with
                  Leave Contest (a loss) or by finishing it. -->
             <div class="game-screen" id="game-screen-contest">
-                <div class="game-screen-header"></div>
+                <div class="game-screen-header">
+                    <!-- Invisible stand-in for the Back button the other screens have here: the desktop title/arena offsets
+                         assume a header that tall. There is deliberately no Back button (see above). -->
+                    <span class="game-screen-back-wrap" aria-hidden="true" style="visibility: hidden; pointer-events: none;"></span>
+                </div>
                 <p class="game-screen-title">Contest Hall</p>
                 <div class="game-battle-arena">
                     <div class="game-battle-half game-battle-defender" id="game-contest-opp-half">
@@ -46388,22 +46431,28 @@
             const hits = ['pink', 'green', 'blue', 'yellow', 'red'].filter(c => tags.includes(c));
             return hits.length === 1 ? hits[0] : null;
         }
-        function boardContestMoveStrength(moveName) {
+        // A Move's Contest value: its Attack Strength (0 / negative / manual / half-level / derived strengths count as +2),
+        // plus the usual STAB +1 when the Move can get STAB (no "stab": "false" in moves.json) and shares a type with
+        // the Pokémon -- the same rule the Battle Arena uses.
+        function boardContestMoveStrength(moveName, member) {
             const e = getBattleMoveEntry(moveName);
             const a = e && e.attack_strength;
-            if (a && a.mode === 'fixed' && typeof a.value === 'number' && a.value > 0) return { value: a.value, bonus: false };
-            return { value: 2, bonus: true }; // 0, negative (Triple Kick), manual, half-level and derived strengths all count as +2
+            let value = 2, bonus = true;
+            if (a && a.mode === 'fixed' && typeof a.value === 'number' && a.value > 0) { value = a.value; bonus = false; }
+            const type = getBattleMoveType(moveName);
+            const stab = !!(member && type && moveCanGetStab(moveName) && getBattleMemberTypes(member).includes(type));
+            return { value: value + (stab ? BATTLE_STAB_BONUS : 0), base: value, stab, bonus };
         }
         function boardContestMoves(name) {
             const e = POKEMON_BY_NAME[name];
             return (e && Array.isArray(e.known_moves)) ? e.known_moves.slice() : [];
         }
-        function boardContestMoveList(name) {
-            return boardContestMoves(name).map(m => Object.assign({ name: m }, boardContestMoveStrength(m)));
+        function boardContestMoveList(name, member) {
+            return boardContestMoves(name).map(m => Object.assign({ name: m }, boardContestMoveStrength(m, member)));
         }
-        function boardContestScore(name) {
+        function boardContestScore(name, member) {
             const roll = 1 + Math.floor(Math.random() * 6);
-            const moves = boardContestMoveList(name);
+            const moves = boardContestMoveList(name, member);
             const movesTotal = moves.reduce((s, m) => s + m.value, 0);
             return { name, roll, moves, movesTotal, total: roll + movesTotal };
         }
@@ -46607,13 +46656,32 @@
             if (!s || !s.mine || !s.opp) return;
             s.opp.member = buildWildPokemonMember(s.opp.source);
             s.phase = 'ready';
-            s.mineScore = null; s.oppScore = null; s.winner = null; s.ties = 0; s.left = false;
+            s.mineScore = null; s.oppScore = null; s.winner = null; s.ties = 0; s.left = false; s.confettiShown = false;
+            contestClearConfetti();
             openGamePanel();
             setGameScreen('contest');
             renderContest();
         }
-        function contestBuildSlot(container, member, fainted) {
+        // Contest Performance badge art: Default (both in the Hall, no result yet), Loser, Winner.
+        const CONTEST_PERF_BADGES = {
+            default: 'https://dl.dropboxusercontent.com/scl/fi/xipthomz0z07im5xs0asf/contest-default.png?rlkey=io7hzu5rps71j404ricgy2020&st=ga0qjvfo&dl=1',
+            loser: 'https://dl.dropboxusercontent.com/scl/fi/tie58ipvg29u7ti3kdqoa/contest-loser.png?rlkey=ozzvcorfsc8uknb3ubs5jewup&st=nljpivba&dl=1',
+            winner: 'https://dl.dropboxusercontent.com/scl/fi/p9aqpj8lw2wjqzxgybrvo/contest-winner.png?rlkey=2nqbnksnpwn1ukwffx40mia29&st=2pa9jyw0&dl=1'
+        };
+        function buildContestPerformanceBadge(state) {
+            const badge = document.createElement('div');
+            badge.className = 'game-contest-perf';
+            badge.dataset.state = state;
+            const img = document.createElement('img');
+            img.src = CONTEST_PERF_BADGES[state] || CONTEST_PERF_BADGES.default;
+            img.alt = state === 'winner' ? 'Contest winner' : state === 'loser' ? 'Contest loser' : 'In the Contest Hall';
+            img.draggable = false;
+            badge.appendChild(img);
+            return badge;
+        }
+        function contestBuildSlot(container, member, state) {
             if (!container) return;
+            const fainted = state === 'loser';
             const view = Object.assign({}, member, { fainted: !!fainted });
             const slot = document.createElement('div');
             slot.className = 'game-team-slot game-contest-slot';
@@ -46628,20 +46696,51 @@
             img.classList.toggle('fainted', !!view.fainted);
             img.onerror = () => { img.style.display = 'none'; };
             slot.appendChild(img);
-            // Only the HP badge, and it is purely a marker here: Fainted shows who lost. (Contest-specific HP art can swap in
-            // at this one call.)
-            slot.appendChild(buildHpBadge(view, 'contest', getHpRule(getActiveSaveData())));
+            // Only the Contest Performance badge (it takes the place of the HP badge), centered on the bottom edge where the
+            // level counter normally sits. Purely a marker: the loser's art is also shown fainted.
+            slot.appendChild(buildContestPerformanceBadge(state || 'default'));
             container.innerHTML = '';
             container.appendChild(slot);
         }
-        function contestRenderMoves(container, name) {
+        // ---- confetti, contained in the winning half (.game-battle-half is position: relative) ----
+        function contestClearConfetti() {
+            document.querySelectorAll('.game-contest-confetti').forEach(el => el.remove());
+        }
+        function contestConfetti(halfId) {
+            contestClearConfetti();
+            const half = document.getElementById(halfId);
+            if (!half) return;
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            const layer = document.createElement('div');
+            layer.className = 'game-contest-confetti';
+            layer.setAttribute('aria-hidden', 'true');
+            const colors = ['#ff595e', '#ffca3a', '#8ac926', '#1982c4', '#6a4c93', '#ff9f1c', '#ffffff'];
+            let longest = 0;
+            for (let i = 0; i < 70; i++) {
+                const p = document.createElement('i');
+                const dur = 2.2 + Math.random() * 2.2, delay = Math.random() * 1.2;
+                longest = Math.max(longest, dur + delay);
+                p.style.left = (Math.random() * 100) + '%';
+                p.style.background = colors[i % colors.length];
+                p.style.width = (5 + Math.random() * 5) + 'px';
+                p.style.height = (8 + Math.random() * 7) + 'px';
+                p.style.setProperty('--drift', ((Math.random() - 0.5) * 90) + 'px');
+                p.style.setProperty('--spin', ((Math.random() < 0.5 ? -1 : 1) * (360 + Math.random() * 720)) + 'deg');
+                p.style.animationDuration = dur + 's';
+                p.style.animationDelay = delay + 's';
+                layer.appendChild(p);
+            }
+            half.appendChild(layer);
+            setTimeout(() => { if (layer.parentNode) layer.remove(); }, (longest + 0.3) * 1000);
+        }
+        function contestRenderMoves(container, name, member) {
             if (!container) return;
-            const moves = boardContestMoveList(name);
+            const moves = boardContestMoveList(name, member);
             if (!moves.length) { container.innerHTML = '<span class="game-contest-footnote">No Moves — the d6 is all it has.</span>'; return; }
             container.innerHTML = moves.map(m => {
                 const type = getBattleMoveType(m.name);
-                return `<span class="filter-btn game-contest-move${type ? ` game-battle-move-typed poke-type-${type}` : ''}">${escapeHtml(m.name)} <b>+${m.value}${m.bonus ? '*' : ''}</b></span>`;
-            }).join('') + (moves.some(m => m.bonus) ? '<span class="game-contest-footnote">* Moves with 0, *, or 0* Attack Strength gain a +2 bonus.</span>' : '');
+                return `<span class="filter-btn game-contest-move${type ? ` game-battle-move-typed poke-type-${type}` : ''}">${escapeHtml(m.name)} <b>+${m.value}${m.bonus ? '*' : ''}</b>${m.stab ? ' <span class="game-contest-stab">STAB</span>' : ''}</span>`;
+            }).join('') + (moves.some(m => m.bonus) ? '<span class="game-contest-footnote">* Moves with 0, *, 0*, or negative Attack Strength gain a +2 bonus.</span>' : '');
         }
         function contestReadoutHtml(score) {
             if (!score) return '';
@@ -46653,10 +46752,13 @@
             const s = contestSession;
             if (!s || !s.mine || !s.opp || !s.opp.member) return;
             const decided = s.phase === 'won' || s.phase === 'lost';
-            contestBuildSlot(document.getElementById('game-contest-opp-slot'), s.opp.member, decided && s.winner === 'mine');
-            contestBuildSlot(document.getElementById('game-contest-mine-slot'), s.mine.member, decided && s.winner === 'opp');
-            contestRenderMoves(document.getElementById('game-contest-opp-moves'), s.opp.name);
-            contestRenderMoves(document.getElementById('game-contest-mine-moves'), s.mine.name);
+            contestBuildSlot(document.getElementById('game-contest-opp-slot'), s.opp.member, !decided ? 'default' : (s.winner === 'mine' ? 'loser' : 'winner'));
+            contestBuildSlot(document.getElementById('game-contest-mine-slot'), s.mine.member, !decided ? 'default' : (s.winner === 'opp' ? 'loser' : 'winner'));
+            // Confetti falls once, in the winner's half, the moment the result lands.
+            if (decided && !s.confettiShown) { s.confettiShown = true; contestConfetti(s.winner === 'mine' ? 'game-contest-mine-half' : 'game-contest-opp-half'); }
+            if (!decided) { s.confettiShown = false; contestClearConfetti(); }
+            contestRenderMoves(document.getElementById('game-contest-opp-moves'), s.opp.name, s.opp.member);
+            contestRenderMoves(document.getElementById('game-contest-mine-moves'), s.mine.name, s.mine.member);
             document.getElementById('game-contest-opp-readout').innerHTML = contestReadoutHtml(s.oppScore);
             document.getElementById('game-contest-mine-readout').innerHTML = contestReadoutHtml(s.mineScore);
             const mineHalf = document.getElementById('game-contest-mine-half');
@@ -46677,8 +46779,8 @@
         function contestRoll() {
             const s = contestSession;
             if (!s || (s.phase !== 'ready' && s.phase !== 'tie')) return;
-            s.mineScore = boardContestScore(s.mine.name);
-            s.oppScore = boardContestScore(s.opp.name);
+            s.mineScore = boardContestScore(s.mine.name, s.mine.member);
+            s.oppScore = boardContestScore(s.opp.name, s.opp.member);
             if (s.mineScore.total === s.oppScore.total) {
                 s.phase = 'tie';
                 s.ties++;
@@ -46767,9 +46869,10 @@
                 const hand = getLocalHandArray();
                 if (hand.length <= 2) {
                     contestEnd();
+                    const handCount = hand.length; // read before discarding: `hand` is the live array and empties as cards go
                     hand.slice().forEach(id => { const c = CARDS_BY_ID[id]; if (c) requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, id); });
-                    showGameToast(hand.length ? 'Contest Hall: discarded your hand.' : 'Contest Hall: your hand is empty — nothing to discard.');
-                    if (hand.length) boardShowHand(); else closeGamePanel();
+                    showGameToast(handCount ? 'Contest Hall: discarded your hand.' : 'Contest Hall: your hand is empty — nothing to discard.');
+                    if (handCount) boardShowHand(); else closeGamePanel();
                     return;
                 }
                 contestDiscardLabel = 'Contest Hall';
