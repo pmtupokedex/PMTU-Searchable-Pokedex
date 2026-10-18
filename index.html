@@ -569,6 +569,7 @@
            colors whatever the player picks. */
         #game-panel,
         .game-battle-half,
+        .game-active-card-view,
         #game-victory-overlay {
             --game-theme-border: rgba(0, 0, 0, 0.45);
             --game-theme-bg-1: url("https://dl.dropboxusercontent.com/scl/fi/o9uq9gefkjbs0wcrnsx88/Pokedex-Extra-Background-6.png?rlkey=2adzs4vkbicd973ultf8y690l&st=apgxhlq3&dl=1");
@@ -581,6 +582,7 @@
            defaults. */
         #game-panel[data-player-theme="red"],
         .game-battle-half[data-player-theme="red"],
+        .game-active-card-view[data-player-theme="red"],
         #game-victory-overlay[data-player-theme="red"] {
             --game-theme-border: #e63233;
             --game-theme-bg-1: url("https://dl.dropboxusercontent.com/scl/fi/rit9hzcdfizf8v9ixt8jm/Pokedex-Player-Background-Red.png?rlkey=0kc4jhcn6mep77nvgim2m8ss2&st=xl9z5jcz&dl=1");
@@ -588,6 +590,7 @@
         }
         #game-panel[data-player-theme="blue"],
         .game-battle-half[data-player-theme="blue"],
+        .game-active-card-view[data-player-theme="blue"],
         #game-victory-overlay[data-player-theme="blue"] {
             --game-theme-border: #2c3eaa;
             --game-theme-bg-1: url("https://dl.dropboxusercontent.com/scl/fi/csyjklkmskqod2tjqn293/Pokedex-Player-Background-Blue.png?rlkey=gzlsgv2zxxe71des6ryo3us2d&st=syeeflzg&dl=1");
@@ -595,6 +598,7 @@
         }
         #game-panel[data-player-theme="green"],
         .game-battle-half[data-player-theme="green"],
+        .game-active-card-view[data-player-theme="green"],
         #game-victory-overlay[data-player-theme="green"] {
             --game-theme-border: #378e2f;
             --game-theme-bg-1: url("https://dl.dropboxusercontent.com/scl/fi/rc0raujn9w7dx95423dyp/Pokedex-Player-Background-Green.png?rlkey=cnp15ua7dt9a2nn8w7lwra7ci&st=g5qgq46t&dl=1");
@@ -602,6 +606,7 @@
         }
         #game-panel[data-player-theme="yellow"],
         .game-battle-half[data-player-theme="yellow"],
+        .game-active-card-view[data-player-theme="yellow"],
         #game-victory-overlay[data-player-theme="yellow"] {
             --game-theme-border: #fdca01;
             --game-theme-bg-1: url("https://dl.dropboxusercontent.com/scl/fi/e5jngpmus13vdi4gt7tdf/Pokedex-Player-Background-Yellow.png?rlkey=aavi8udetkcghtcd59uxgn48h&st=f1n9sonb&dl=1");
@@ -609,6 +614,7 @@
         }
         #game-panel[data-player-theme="orange"],
         .game-battle-half[data-player-theme="orange"],
+        .game-active-card-view[data-player-theme="orange"],
         #game-victory-overlay[data-player-theme="orange"] {
             --game-theme-border: #f28c1e;
             --game-theme-bg-1: url("https://dl.dropboxusercontent.com/scl/fi/2an5zobavdqcpjwjz9gm5/Pokedex-Player-Background-Orange.png?rlkey=lkk377jgfcga8y9q4gdhrbyib&st=s10960d2&dl=1");
@@ -616,6 +622,7 @@
         }
         #game-panel[data-player-theme="purple"],
         .game-battle-half[data-player-theme="purple"],
+        .game-active-card-view[data-player-theme="purple"],
         #game-victory-overlay[data-player-theme="purple"] {
             --game-theme-border: #8e44ad;
             --game-theme-bg-1: url("https://dl.dropboxusercontent.com/scl/fi/fbkofoz5m5wmnjcwty11w/Pokedex-Player-Background-Purple.png?rlkey=tythfwand769vma7tand9giae&st=yuixc48a&dl=1");
@@ -3435,13 +3442,36 @@
             display: block;
         }
 
+        /* Same player-color art + darkening + colored border as the
+           Battle Arena's halves (see .game-battle-half and
+           the player-theme block near the top): the owner's color comes
+           from data-player-theme, set in renderActiveCardZone(); without
+           one it keeps the default art. */
         .game-active-card-view {
             display: flex;
             gap: 14px;
-            background: rgba(0, 0, 0, 0.35);
-            border: 2px solid rgba(255, 255, 255, 0.25);
             border-radius: 16px;
             padding: 14px;
+            background-image: var(--game-theme-bg-1), var(--game-theme-bg-2);
+            background-size: cover, 240px 240px;
+            background-position: center, center;
+            background-repeat: no-repeat, repeat;
+            background-blend-mode: multiply;
+            border: 3px solid transparent;
+            background-origin: border-box;
+            position: relative;
+            isolation: isolate;
+        }
+        .game-active-card-view::after {
+            content: "";
+            position: absolute;
+            inset: -3px;
+            z-index: -1;
+            box-sizing: border-box;
+            border: 3px solid var(--game-theme-border);
+            border-radius: inherit;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.35);
         }
 
         /* The card's own actor, while it's still pending a Discard/
@@ -3455,12 +3485,6 @@
            committed (see renderActiveCardZone()'s own comment) -- just
            views it, in the same layout with a Dismiss as its only
            action. */
-        .game-active-card-queue-note {
-            margin: 6px 0 0;
-            text-align: center;
-            font-size: 13px;
-            opacity: 0.75;
-        }
 
         /* Same size as a card in hand (see .game-hand-card-img and
            .game-team-attach-banner-img) so a revealed/played card reads
@@ -3549,18 +3573,58 @@
         .game-note-color-dot--yellow { background: #fdca01; }
         .game-note-color-dot--red { background: #e63233; }
 
+        /* The card sits in a wrapper that is allowed to shrink below the
+           card's own 240px while the <img> keeps its full size and simply
+           overflows the wrapper's right edge. On a narrow screen the
+           buttons column (which never shrinks below its widest button, and
+           is painted above) therefore slides over the card's right side
+           instead of the buttons getting squeezed with their text
+           spilling out. */
+        .game-active-card-imgwrap {
+            flex: 0 1 240px;
+            min-width: 0;
+        }
+        .game-active-card-imgwrap .game-active-card-img {
+            display: block;
+        }
+
         .game-active-card-actions {
             display: flex;
             flex-direction: column;
             gap: 8px;
+            flex: 1 0 auto;
+            align-self: stretch;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* The buttons stay vertically centered in whatever room the
+           queue note below them leaves. */
+        .game-active-card-buttons {
             flex: 1;
-            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 8px;
         }
 
         .game-active-card-actions .filter-btn {
             width: 100%;
             box-sizing: border-box;
             margin: 0;
+            white-space: nowrap;
+        }
+
+        /* Pinned to the bottom of the box, under the buttons. width: 0 +
+           min-width: 100% keeps the sentence from widening the column
+           (the buttons set that); it wraps to a second line instead. */
+        .game-active-card-queue-note {
+            margin: 0;
+            width: 0;
+            min-width: 100%;
+            text-align: center;
+            font-size: 13px;
+            opacity: 0.85;
         }
 
 
@@ -24816,6 +24880,7 @@
             }
             writeHostActiveCard({
                 cardId, deckName, actorKey, committed,
+                at: Date.now(),
                 instanceId: 'ac-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
             }, actorKey);
             broadcastDeckState();
@@ -27807,19 +27872,59 @@
         function activeCardIsMine(info) {
             return !!info && (lobbyState.role === null || info.actorKey === getMyLobbyPlayerId());
         }
-        function getActiveCardInfo() {
+        // Other players' cards this device has been told about, oldest
+        // first: { entry, seen }. The Host's list only holds what is in the
+        // zone RIGHT NOW, so a card another player plays and resolves
+        // (Discard, Permanent...) while this player is still busy with their
+        // own would otherwise vanish before it ever reached the screen. Each
+        // card is therefore kept here until it has actually been shown on
+        // this device (seen) or dismissed; once it has been seen, it leaves
+        // as soon as the Host's copy does, same as before. This player's own
+        // cards are never queued here -- they come straight from the Host.
+        const activeCardQueue = [];
+        function getActiveCardEntries() {
             const all = getActiveCardsList();
-            if (!all) return null;
+            if (!all) return [];
+            all.forEach(c => {
+                if (!c || activeCardIsMine(c) || activeCardDismissedInstanceIds.has(c.instanceId)) return;
+                const q = activeCardQueue.find(x => x.entry.instanceId === c.instanceId);
+                if (q) q.entry = c; else activeCardQueue.push({ entry: c, seen: false });
+            });
+            for (let i = activeCardQueue.length - 1; i >= 0; i--) {
+                const q = activeCardQueue[i];
+                const live = all.some(c => c && c.instanceId === q.entry.instanceId);
+                if (activeCardDismissedInstanceIds.has(q.entry.instanceId) || (!live && q.seen)) activeCardQueue.splice(i, 1);
+            }
             // Forget dismissals of cards that have left the zone.
-            activeCardDismissedInstanceIds.forEach(id => { if (!all.some(c => c.instanceId === id)) activeCardDismissedInstanceIds.delete(id); });
-            const visible = all.filter(c => c && !activeCardDismissedInstanceIds.has(c.instanceId));
-            return visible.find(c => activeCardIsMine(c) && !c.committed) || visible[0] || null;
+            activeCardDismissedInstanceIds.forEach(id => { if (!all.some(c => c && c.instanceId === id)) activeCardDismissedInstanceIds.delete(id); });
+            return activeCardQueue.map(q => q.entry)
+                .concat(all.filter(c => c && activeCardIsMine(c) && !activeCardDismissedInstanceIds.has(c.instanceId)))
+                .sort((a, b) => (a.at || 0) - (b.at || 0));
+        }
+        function getActiveCardInfo() {
+            const entries = getActiveCardEntries();
+            return entries.find(c => activeCardIsMine(c) && !c.committed) || entries[0] || null;
+        }
+        // Called once a card has actually been drawn in the zone.
+        function markActiveCardSeen(info) {
+            const q = info && activeCardQueue.find(x => x.entry.instanceId === info.instanceId);
+            if (q) q.seen = true;
         }
         // How many other cards are waiting behind the one on screen.
         function getActiveCardQueueCount() {
-            const all = getActiveCardsList() || [];
             const shown = getActiveCardInfo();
-            return all.filter(c => c && !activeCardDismissedInstanceIds.has(c.instanceId) && (!shown || c.instanceId !== shown.instanceId)).length;
+            return getActiveCardEntries().filter(c => !shown || c.instanceId !== shown.instanceId).length;
+        }
+        // Colour of the player who owns the card, for the zone's background
+        // (same player-theme art as the Battle Arena's halves); null falls
+        // back to the default art.
+        function getActiveCardOwnerColor(info) {
+            if (!info) return null;
+            if (lobbyState.role !== null) {
+                const owner = lobbyState.players.find(p => p.id === info.actorKey);
+                return (owner && owner.color) || null;
+            }
+            return getMyLobbyThemeColor();
         }
 
         // Which Active Card instanceId (see setHostActiveCard()'s own
@@ -29137,10 +29242,13 @@
             const card = CARDS_BY_ID[info.cardId];
             const name = (card && card.name) || info.cardId;
             const imgTag = card && card.imageUrl
-                ? `<img class="game-active-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">`
+                ? `<div class="game-active-card-imgwrap"><img class="game-active-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}"></div>`
                 : '';
             const myId = getMyLobbyPlayerId();
             const isActor = activeCardIsMine(info);
+            markActiveCardSeen(info);
+            const ownerColor = getActiveCardOwnerColor(info);
+            const themeAttr = ownerColor ? ` data-player-theme="${escapeHtml(ownerColor)}"` : '';
             const queued = getActiveCardQueueCount();
             const queueNote = queued ? `<p class="game-active-card-queue-note">${queued} more card${queued === 1 ? '' : 's'} waiting</p>` : '';
             const readOnly = isActiveSaveReadOnly();
@@ -29159,9 +29267,9 @@
                 // the NPC Trainer's Pok\u00e9mon from the gallery.
                 const trainerCount = (!readOnly && canUseBattleArena()) ? getTrainerBattleCardPokemonCount(info.cardId) : 0;
                 zoneEl.innerHTML = `
-                    <div class="game-active-card-view actor">
+                    <div class="game-active-card-view actor"${themeAttr}>
                         ${imgTag}
-                        <div class="game-active-card-actions">
+                        <div class="game-active-card-actions"><div class="game-active-card-buttons">
                             ${(!readOnly && cardStartsContest(card)) ? `<button class="filter-btn game-active-card-contest-btn" type="button">Begin Contest</button>` : ''}
                             ${canAttach ? `<button class="filter-btn game-active-card-attach-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Attach</button>` : ''}
                             ${canPermanent ? `<button class="filter-btn game-active-card-permanent-btn" type="button">Permanent</button>` : ''}
@@ -29172,8 +29280,9 @@
                             <button class="filter-btn game-active-card-shuffle-btn" type="button" ${readOnly ? 'disabled' : ''}>Shuffle</button>
                             ${cardHasDiscardShuffle(card) ? `<button class="filter-btn game-active-card-shuffle-discards-btn" type="button" data-card-id="${escapeHtml(info.cardId)}" title="Shuffles this card and the ${escapeHtml(card.shuffleDiscardPile)} discard pile into the ${escapeHtml(card.shuffleIntoDeck)}." ${readOnly ? 'disabled' : ''}>Shuffle Discards into Deck</button>` : ''}
                         </div>
+                        ${queueNote}
+                        </div>
                     </div>
-                    ${queueNote}
                 `;
                 // See pendingActiveCardScrollTrigger's own comment --
                 // requestAnimationFrame so the scroll happens after the
@@ -29186,13 +29295,14 @@
                 }
             } else {
                 zoneEl.innerHTML = `
-                    <div class="game-active-card-view actor">
+                    <div class="game-active-card-view actor"${themeAttr}>
                         ${imgTag}
-                        <div class="game-active-card-actions">
+                        <div class="game-active-card-actions"><div class="game-active-card-buttons">
                             <button class="filter-btn exclude game-active-card-dismiss-btn" type="button">Dismiss</button>
                         </div>
+                        ${queueNote}
+                        </div>
                     </div>
-                    ${queueNote}
                 `;
             }
         }
