@@ -22082,7 +22082,7 @@
                 const targetLabel = teamSendToBattleTargetSlot === 'attacker' ? 'Attacker' : teamSendToBattleTargetSlot === 'defender' ? 'Defender' : '';
                 if (teamSwapPick) {
                     const left = teamSwapPick.max - teamSwapPick.picks.length;
-                    sendToBattleBannerText.textContent = 'Tap ' + (left === 1 ? 'a Pok\u00e9mon' : 'up to ' + left + ' Pok\u00e9mon') + ' on your team to trade away, then note its token\u2019s color.' + (teamSwapPick.picks.length ? ' (' + teamSwapPick.picks.length + ' chosen)' : '');
+                    sendToBattleBannerText.textContent = 'Tap ' + (left === 1 ? 'a Pok\u00e9mon' : 'up to ' + left + ' Pok\u00e9mon') + ' on your team to trade away.' + (teamSwapPick.picks.length ? ' (' + teamSwapPick.picks.length + ' chosen)' : '');
                 } else if (teamLevelPick) {
                     sendToBattleBannerText.textContent = 'Tap a Pok\u00e9mon on your team to give it a Level.';
                 } else if (teamContestPick) {
@@ -35081,6 +35081,12 @@
             const tag = e && Array.isArray(e.tags) ? e.tags.find(t => /^gen\d+$/.test(String(t))) : null;
             return tag ? parseInt(String(tag).slice(3), 10) : null;
         }
+        // The color of a token, read from its Pok\u00e9mon-data entry's color tag (null if it has none, e.g. a Legendary).
+        function getTokenColor(name) {
+            const e = POKEMON_BY_NAME[name];
+            const tag = e && Array.isArray(e.tags) ? e.tags.find(t => NOTE_COLORS.includes(String(t))) : null;
+            return tag ? String(tag) : null;
+        }
         function beginPokemonSwap(cardId) {
             const card = CARDS_BY_ID[cardId];
             if (isActiveSaveReadOnly() || !card) return;
@@ -35117,7 +35123,11 @@
             const uid = ensureMemberUid(m);
             if (pick.picks.some(x => x.uid === uid)) { showGameToast('You already chose that Pok\u00e9mon.'); return; }
             pick.pendingUid = uid;
-            openNoteColorPicker({ swapUid: uid });
+            // Color and generation come from the Pok\u00e9mon's CURRENT evolution stage (member.name), so a Kirlia is traded for a
+            // blue token even though the Ralts it began as was pink. A temporary Mega / Gigantamax form is ignored (formOverride
+            // is separate from member.name). The player is asked only when the data has no color for that form.
+            const color = getTokenColor(m.name);
+            if (color) swapColorChosen(uid, color); else openNoteColorPicker({ swapUid: uid });
         }
         function swapColorChosen(uid, color) {
             const pick = teamSwapPick;
@@ -35125,7 +35135,7 @@
             const m = (getActiveSaveData().team.members || []).find(x => x && x.uid === uid);
             if (!m) return;
             const card = CARDS_BY_ID[pick.cardId];
-            const gen = getTokenGeneration(m.caughtAs || m.name);
+            const gen = getTokenGeneration(m.name);
             const entry = { uid, name: getBattleMemberDisplay(m).name || m.name, color, gen };
             pick.picks.push(entry);
             pick.pendingUid = null;
