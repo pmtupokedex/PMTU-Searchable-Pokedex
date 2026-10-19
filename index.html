@@ -22080,7 +22080,10 @@
             const sendToBattleBannerText = document.getElementById('game-team-send-to-battle-banner-text');
             if (sendToBattleBannerText) {
                 const targetLabel = teamSendToBattleTargetSlot === 'attacker' ? 'Attacker' : teamSendToBattleTargetSlot === 'defender' ? 'Defender' : '';
-                if (teamLevelPick) {
+                if (teamSwapPick) {
+                    const left = teamSwapPick.max - teamSwapPick.picks.length;
+                    sendToBattleBannerText.textContent = 'Tap ' + (left === 1 ? 'a Pok\u00e9mon' : 'up to ' + left + ' Pok\u00e9mon') + ' on your team to trade away, then note its token\u2019s color.' + (teamSwapPick.picks.length ? ' (' + teamSwapPick.picks.length + ' chosen)' : '');
+                } else if (teamLevelPick) {
                     sendToBattleBannerText.textContent = 'Tap a Pok\u00e9mon on your team to give it a Level.';
                 } else if (teamContestPick) {
                     sendToBattleBannerText.textContent = 'Contest Hall \u2014 tap a Pok\u00e9mon on your team to enter it as your Contestant.';
@@ -22960,6 +22963,7 @@
         // answering Attacker/Defender/Cancel on it) -- same "one place
         // unwinds everything" shape as exitTeamReleaseMode().
         function exitTeamSendToBattleMode() {
+            if (teamSwapPick) { clearTeamSwapPick(); return; } // Cancel on a card's trade pick
             if (teamLevelPick) { clearTeamLevelPick(); return; } // Cancel on a card's Level pick
             if (teamContestPick) { contestAbort(); return; } // Cancel on the Contest Hall's Contestant pick
             // Cancelling while setting up a Battle a Player challenge calls it off; that mode started from the Team Tracker's own
@@ -29700,7 +29704,7 @@
         function openNoteColorPicker(purpose) {
             noteColorPickerPurpose = purpose || null;
             const titleEl = document.getElementById('game-note-color-title');
-            if (titleEl) titleEl.textContent = noteColorPickerPurpose ? 'Choose the Space\u2019s Color' : 'Choose a Color';
+            if (titleEl) titleEl.textContent = (noteColorPickerPurpose && noteColorPickerPurpose.swapUid) ? 'Choose the Token\u2019s Color' : noteColorPickerPurpose ? 'Choose the Space\u2019s Color' : 'Choose a Color';
             const gridEl = document.getElementById('game-note-color-grid');
             if (gridEl) {
                 gridEl.innerHTML = NOTE_COLORS.map(color => {
@@ -34965,6 +34969,7 @@
             if (card.healTeam === 'yes') return 'Heal Team';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
             if (card.poolGain === 'space') return 'Draw a Pok\u00e9mon';
+            if (parseInt(card.swapPokemon, 10) > 0) return 'Trade Pok\u00e9mon';
             if (n && parseInt(card.shuffleToDraw, 10)) return 'Shop';
             if (n) return 'Draw ' + n + ' ' + String(card.drawCardsDeck || 'Item Deck').replace(/ Deck$/, '') + ' Card' + (n === 1 ? '' : 's');
             return '';
@@ -34999,6 +35004,7 @@
                 document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
                 return;
             }
+            if (parseInt(card.swapPokemon, 10) > 0) { beginPokemonSwap(cardId); return; }
             if (card.poolGain === 'space') { // poolGain: "space" -- the player says which color of space they are on
                 if (!getRegionMapSettingsForActiveSave().enabled) { showGameToast(card.name + ': the app\u2019s game board is off for this save \u2014 take a token of your space\u2019s color from your physical pool.'); return; }
                 openNoteColorPicker({ gainCardId: cardId });
@@ -35061,6 +35067,171 @@
                 showGameToast(card.name + ': ' + entry.name + ' joined your team!');
                 cardEffectDone(cardId);
             });
+        }
+        // ---- Wonder Trade / Regional Traveler: trade team Pok\u00e9mon back into the pool for new tokens of the same color ----
+        // cards.json "swapPokemon": N (trade up to N Pok\u00e9mon); "swapNewGeneration": "yes" (each new token must be from a
+        // different generation than the one traded in; when the pool has none, the card is discarded and a new card is drawn from
+        // "swapFailDrawDeck", default Event Deck). The player taps each Pok\u00e9mon in Team Tracker and notes its token's color
+        // (the generation is read from the Pok\u00e9mon data, and asked for only when it isn't there). New tokens are drawn FIRST
+        // (so a traded-in token can't come straight back), then the traded Pok\u00e9mon are released (the board returns their tokens to the
+        // pool by itself) with their Attach / Nature cards discarded, and the new ones join the team.
+        let teamSwapPick = null; // { cardId, max, picks: [{ uid, name, color, gen }], pendingUid }
+        function getTokenGeneration(name) {
+            const e = POKEMON_BY_NAME[name];
+            const tag = e && Array.isArray(e.tags) ? e.tags.find(t => /^gen\d+$/.test(String(t))) : null;
+            return tag ? parseInt(String(tag).slice(3), 10) : null;
+        }
+        function beginPokemonSwap(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (isActiveSaveReadOnly() || !card) return;
+            if (!getRegionMapSettingsForActiveSave().enabled) { showGameToast(card.name + ': the app\u2019s game board is off for this save \u2014 do the trade with your physical pool.'); return; }
+            if (!boardTeamIndexes(m => !m.gymLeaderId).length) { showGameToast('You have no Pok\u00e9mon to trade.'); return; }
+            if (teamReplacePendingMember || teamReleaseModeActive || teamSendToBattleModeActive || handAttachPendingCardId || isTradeNegotiationActive()) {
+                showGameToast('Finish what you are doing in Team Tracker first.');
+                return;
+            }
+            openGamePanel();
+            setGameScreen('team');
+            teamSwapPick = { cardId, max: Math.max(1, parseInt(card.swapPokemon, 10) || 1), picks: [], pendingUid: null };
+            teamSendToBattleModeActive = true; // borrows the send-to-battle mode and its banner
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        function clearTeamSwapPick() {
+            if (!teamSwapPick) return;
+            teamSwapPick = null;
+            teamSendToBattleModeActive = false;
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        function swapPickMember(index) {
+            const pick = teamSwapPick;
+            const m = getTeamSlotMember(index);
+            if (!pick || !m) return;
+            if (m.gymLeaderId) { showGameToast('A Gym Leader card can\u2019t be traded.'); return; }
+            const inArena = (battleAttackerTeamId === getActiveTeamId() && battleAttackerMemberIndex === index) || (battleDefenderTeamId === getActiveTeamId() && battleDefenderMemberIndex === index);
+            if (inArena) { showGameToast('That Pok\u00e9mon is in the Battle Arena \u2014 choose another.'); return; }
+            const uid = ensureMemberUid(m);
+            if (pick.picks.some(x => x.uid === uid)) { showGameToast('You already chose that Pok\u00e9mon.'); return; }
+            pick.pendingUid = uid;
+            openNoteColorPicker({ swapUid: uid });
+        }
+        function swapColorChosen(uid, color) {
+            const pick = teamSwapPick;
+            if (!pick || pick.pendingUid !== uid) return;
+            const m = (getActiveSaveData().team.members || []).find(x => x && x.uid === uid);
+            if (!m) return;
+            const card = CARDS_BY_ID[pick.cardId];
+            const gen = getTokenGeneration(m.caughtAs || m.name);
+            const entry = { uid, name: getBattleMemberDisplay(m).name || m.name, color, gen };
+            pick.picks.push(entry);
+            pick.pendingUid = null;
+            if (card.swapNewGeneration === 'yes' && !gen) { // not in the Pok\u00e9mon data: the player says which generation it is
+                boardFrontierShow(card.name, 'Which generation is ' + entry.name + '?', Array.from({ length: 9 }, (_, i) => `<button class="filter-btn include game-swap-btn" type="button" data-act="gen" data-gen="${i + 1}">Gen ${i + 1}</button>`).join(''));
+                return;
+            }
+            swapAskMore();
+        }
+        function swapAskMore() {
+            const pick = teamSwapPick;
+            if (!pick) return;
+            renderTeamGrid(); // the banner's count
+            if (pick.picks.length >= pick.max || !boardTeamIndexes(m => !m.gymLeaderId && !pick.picks.some(x => x.uid === m.uid)).length) { swapShowConfirm(); return; }
+            boardFrontierShow(CARDS_BY_ID[pick.cardId].name, 'Trade another Pok\u00e9mon? (' + pick.picks.length + ' of up to ' + pick.max + ' chosen)',
+                `<button class="filter-btn include game-swap-btn" type="button" data-act="more">Choose Another</button>`
+                + `<button class="filter-btn include game-swap-btn" type="button" data-act="done">That\u2019s All</button>`
+                + `<button class="filter-btn exclude game-swap-btn" type="button" data-act="cancel">Cancel</button>`);
+        }
+        function swapShowConfirm() {
+            const pick = teamSwapPick;
+            if (!pick) return;
+            const card = CARDS_BY_ID[pick.cardId];
+            const lab = c => c.charAt(0).toUpperCase() + c.slice(1);
+            boardFrontierShow(card.name, 'Return to the pool:\n' + pick.picks.map(x => '\u2022 ' + x.name + ' (' + lab(x.color) + (card.swapNewGeneration === 'yes' && x.gen ? ', Gen ' + x.gen : '') + ')').join('\n')
+                + '\n\nTheir Attach and Nature cards are discarded and their Levels and Status are lost. For each one you draw a random ' + (card.swapNewGeneration === 'yes' ? 'token of a different generation' : 'token of the same color') + '.',
+                `<button class="filter-btn include game-swap-btn" type="button" data-act="confirm">Trade</button>`
+                + `<button class="filter-btn exclude game-swap-btn" type="button" data-act="cancel">Cancel</button>`);
+            document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
+        }
+        function swapOverlayChoose(act, gen) {
+            const pick = teamSwapPick;
+            if (!pick) return;
+            if (act === 'gen') { const last = pick.picks[pick.picks.length - 1]; if (last) last.gen = parseInt(gen, 10) || null; swapAskMore(); }
+            else if (act === 'more') renderTeamGrid();
+            else if (act === 'done') swapShowConfirm();
+            else if (act === 'confirm') swapPerform();
+            else if (act === 'cancel') clearTeamSwapPick();
+        }
+        // Draws a token of `color` that is not from generation `avoidGen` (null: any). Tokens of the wrong generation are held
+        // aside while drawing so the loop always ends, then put back. cb(name | null).
+        function swapDrawToken(color, avoidGen, cb) {
+            const rejected = [];
+            const finish = name => { rejected.forEach(r => boardSafariSettle(r, 'returned')); cb(name); };
+            const step = () => {
+                if (rejected.length > 80) { finish(null); return; }
+                boardContestRequestDraw(color, name => {
+                    if (!name) { finish(null); return; }
+                    if (avoidGen && getTokenGeneration(name) === avoidGen) { rejected.push(name); step(); return; }
+                    finish(name);
+                });
+            };
+            step();
+        }
+        function swapPerform() {
+            const pick = teamSwapPick;
+            if (!pick) return;
+            const card = CARDS_BY_ID[pick.cardId];
+            const results = [];
+            const next = () => {
+                if (results.length < pick.picks.length) {
+                    const p = pick.picks[results.length];
+                    swapDrawToken(p.color, card.swapNewGeneration === 'yes' ? p.gen : null, name => { results.push({ pick: p, name }); next(); });
+                    return;
+                }
+                swapFinish(card, results);
+            };
+            next();
+        }
+        function swapFinish(card, results) {
+            const cardId = teamSwapPick && teamSwapPick.cardId;
+            clearTeamSwapPick();
+            const good = results.filter(r => r.name && POKEMON_BY_NAME[r.name]);
+            results.filter(r => r.name && !POKEMON_BY_NAME[r.name]).forEach(r => boardSafariSettle(r.name, 'returned'));
+            if (!good.length) {
+                if (card.swapNewGeneration === 'yes') { // nothing from another generation in the pool: the card is discarded and a new one drawn
+                    const deck = card.swapFailDrawDeck || 'Event Deck';
+                    showGameToast(card.name + ': the pool only has Pok\u00e9mon from that generation \u2014 discarding the card and drawing a new ' + deck.replace(/ Deck$/, '') + ' card.');
+                    if (isVirtualDecksEnabledForActiveSave()) { requestDrawCard(deck); boardShowHand(); }
+                    cardEffectDone(cardId);
+                } else showGameToast(card.name + ': there are no tokens of that color left in the pool.');
+                return;
+            }
+            const data = getActiveSaveData();
+            const gone = new Set(good.map(r => r.pick.uid));
+            (data.team.members || []).forEach(m => {
+                if (!m || !gone.has(m.uid) || !isVirtualDecksEnabledForActiveSave()) return;
+                if (m.attachCardId) discardUnattachedCard(m.attachCardId);
+                if (m.natureCardId) discardUnattachedCard(m.natureCardId);
+            });
+            data.team.members = (data.team.members || []).filter(m => !(m && gone.has(m.uid)));
+            if (activeSaveSlot !== null) persistGameSaves(); else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            const joined = [];
+            good.forEach(r => {
+                const e = POKEMON_BY_NAME[r.name];
+                boardSafariSettle(r.name, 'caught');
+                applyCaughtWildMember(buildWildPokemonMember({ dex: (e.tags && e.tags[0]) || '', name: e.name, src: e.src, shinysrc: e.shinysrc || '', shiny: false }));
+                joined.push(e.name);
+            });
+            boardReportCaught(true); // the traded-in tokens go back to their pools
+            openGamePanel();
+            setGameScreen('team');
+            renderTeamGrid();
+            showGameToast(card.name + ': traded ' + good.map(r => r.pick.name).join(' and ') + ' for ' + joined.join(' and ') + '.');
+            cardEffectDone(cardId);
         }
         let teamLevelPick = null; // { cardId } while the Team Tracker is choosing which Pok\u00e9mon gains a card's Level
         function cardLevelGainPick(cardId) {
@@ -43221,6 +43392,7 @@
                     // been made -- either way, this mode only makes
                     // sense while still looking at Team Tracker, same
                     // reasoning as teamReleaseModeActive just above.
+                    if (teamSwapPick) teamSwapPick = null; // leaving Team Tracker mid-pick calls the trade off (the card stays in the zone)
                     if (teamLevelPick) teamLevelPick = null; // leaving Team Tracker mid-pick calls off a card's Level pick (the card stays in the zone)
                     if (teamContestPick) contestAbort(); // leaving Team Tracker mid-pick backs out of the Contest Hall
                     boardPvpChooserClosed(); // leaving mid-pick calls a Battle a Player challenge off (a completed send has already cleared it)
@@ -47876,6 +48048,8 @@
         document.getElementById('game-frontier-overlay').addEventListener('click', (e) => {
             const cBtn = e.target.closest('.game-contest-btn');
             if (cBtn) { boardContestChoose(cBtn.dataset.act); return; }
+            const swapBtn = e.target.closest('.game-swap-btn');
+            if (swapBtn) { closeFrontierOverlay(); swapOverlayChoose(swapBtn.dataset.act, swapBtn.dataset.gen); return; }
             const fxBtn = e.target.closest('.game-cardfx-btn');
             if (fxBtn) { closeFrontierOverlay(); cardShopChoose(fxBtn.dataset.cardId, fxBtn.dataset.act); return; }
             const modeBtn = e.target.closest('.game-trainermode-btn');
@@ -51126,6 +51300,12 @@
                     openTeamReleaseConfirmOverlay(Number(teamSlot.dataset.index));
                     return;
                 }
+                if (teamSwapPick) {
+                    if (isActiveSaveReadOnly()) return;
+                    if (teamSlot.dataset.filled !== 'true') return;
+                    swapPickMember(Number(teamSlot.dataset.index));
+                    return;
+                }
                 if (teamLevelPick) {
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
@@ -52585,7 +52765,9 @@
                 const purpose = noteColorPickerPurpose;
                 const color = swatchBtn.dataset.color;
                 closeNoteColorPicker();
-                if (purpose && purpose.gainCardId) {
+                if (purpose && purpose.swapUid) {
+                    swapColorChosen(purpose.swapUid, color);
+                } else if (purpose && purpose.gainCardId) {
                     cardPoolGain(purpose.gainCardId, color);
                 } else if (purpose && purpose.trainerPoolCardId) {
                     startTrainerBattleFromPool(purpose.trainerPoolCardId, color);
