@@ -320,7 +320,7 @@ function draw(){buildModel();let h=(img&&(bgFail||!canBmp))?`<image href="${img}
  for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
   h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" pointer-events="none"/>`}
- svg.innerHTML=h;renderPl();placeAct();if(opts.onDraw){try{opts.onDraw()}catch(e){}}}
+ svg.innerHTML=h;renderPl();try{placeAct()}catch(e){}if(opts.onDraw){try{opts.onDraw()}catch(e){}}}
 const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
 /* autoFill: until the player zooms by hand, the view is 'fill the frame's height, centered on my marker' */let Z=1,VX=0,VY=0,relZoom=1,autoFill=true,initCentered=false;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
 let EA=1.5;const updEA=()=>{const r=svg.getBoundingClientRect();if(r.width&&r.height)EA=r.width/r.height};
@@ -328,7 +328,7 @@ let keepScale=false;
 // keepScale (desktop, side panel docking) only changes how a resize is handled (the on-screen scale is kept); the minimum zoom is always 'the whole map fits', so a narrow window can still show the entire map.
 const zmin=()=>Math.min(1,W/(H*EA)),VW=()=>W/Z,VH=()=>W/Z/EA,clampZ=z=>Math.min(10,Math.max(zmin(),z));
 function clampView(){const w=VW(),h=VH();VX=w>=W-1e-6?(W-w)/2:Math.max(0,Math.min(W-w,VX));VY=h>=H-1e-6?(H-h)/2:Math.max(0,Math.min(H-h,VY))}
-function applyView(){svg.setAttribute('viewBox',`${VX} ${VY} ${VW()} ${VH()}`);relZoom=Z/zmin();$('zl').textContent=(Z/zmin()).toFixed(1)+'×';bgSched();placeAct()}
+function applyView(){svg.setAttribute('viewBox',`${VX} ${VY} ${VW()} ${VH()}`);relZoom=Z/zmin();$('zl').textContent=(Z/zmin()).toFixed(1)+'×';bgSched();try{placeAct()}catch(e){}}
 function fitView(){updEA();Z=zmin();VX=0;VY=0;clampView();applyView()}
 const zfill=()=>W/(H*EA);
 // Zoomed so the map fills the frame's height (the minimum zoom is still the whole map, so the player can zoom out from here), centered on the player's marker as far as the map's edges allow.
@@ -425,7 +425,7 @@ function placeAct(){const b=$('actbar');if(!b||b.hidden)return;
  if(!side){const o=actSide==='t'?['t','b']:['b','t'];side=o.find(s=>(s==='b'?roomB:roomT)>=h)||(roomB>=roomT?'b':'t')}
  let left,top,c;
  if(side==='r'||side==='l'){shrink(Bt-T-2*G);left=side==='r'?ax+rad+gap:ax-rad-gap-W;
-  let minTop=T+G;root.querySelectorAll('#mapctl,[data-actbar-avoid]').forEach(e=>{const r=e.getBoundingClientRect();if(!r.width||!r.height)return;const l=r.left-rr.left,t=r.top-rr.top,rg=l+r.width;if(rg>left&&l<left+W&&t<ay)minTop=Math.max(minTop,t+r.height+6)});
+  let minTop=T+G;document.querySelectorAll('#mapctl,[data-actbar-avoid]').forEach(e=>{const r=e.getBoundingClientRect();if(!r.width||!r.height)return;const l=r.left-rr.left,t=r.top-rr.top,rg=l+r.width;if(rg>left&&l<left+W&&t<ay)minTop=Math.max(minTop,t+r.height+6)});
   top=Math.max(minTop,Math.min(ay-h/2,Bt-G-h));top=Math.min(top,Bt-G-h);c=ay-top}
  else{shrink(side==='b'?roomB:roomT);left=Math.max(L+G,Math.min(ax-W/2,Rt-G-W));top=side==='b'?ay+rad+gap:ay-rad-gap-h;c=ax-left}
  let cs=side; // which edge carries the pointer: normally the one facing the marker; docked, it still points toward where the marker is, off the map
