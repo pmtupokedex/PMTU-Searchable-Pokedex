@@ -34964,6 +34964,7 @@
             const n = parseInt(card.drawCards, 10) || 0;
             if (card.healTeam === 'yes') return 'Heal Team';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
+            if (card.poolGain === 'space') return 'Draw a Pok\u00e9mon';
             if (n && parseInt(card.shuffleToDraw, 10)) return 'Shop';
             if (n) return 'Draw ' + n + ' ' + String(card.drawCardsDeck || 'Item Deck').replace(/ Deck$/, '') + ' Card' + (n === 1 ? '' : 's');
             return '';
@@ -34996,6 +34997,11 @@
                     + `<button class="filter-btn include game-cardfx-btn" type="button" data-act="level" data-card-id="${escapeHtml(cardId)}">Gain a Level</button>`
                     + `<button class="filter-btn exclude game-cardfx-btn" type="button" data-act="cancel" data-card-id="${escapeHtml(cardId)}">Cancel</button>`);
                 document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
+                return;
+            }
+            if (card.poolGain === 'space') { // poolGain: "space" -- the player says which color of space they are on
+                if (!getRegionMapSettingsForActiveSave().enabled) { showGameToast(card.name + ': the app\u2019s game board is off for this save \u2014 take a token of your space\u2019s color from your physical pool.'); return; }
+                openNoteColorPicker({ gainCardId: cardId });
                 return;
             }
             if (card.healTeam === 'yes') {
@@ -35038,11 +35044,12 @@
         }
         // poolGain: "pink" -- draw a random token of that color from the board's pool; it joins the team (a full team gets the
         // usual replace prompt). levelGain: N -- the Team Tracker opens to choose which Pok\u00e9mon gains the Level(s).
-        function cardPoolGain(cardId) {
+        function cardPoolGain(cardId, spaceColor) {
             const card = CARDS_BY_ID[cardId];
             if (!card || isActiveSaveReadOnly()) return;
-            boardContestRequestDraw(String(card.poolGain), name => {
-                if (!name) { showGameToast('There are no ' + card.poolGain + ' Pok\u00e9mon left in the pool.'); return; }
+            const color = spaceColor || String(card.poolGain);
+            boardContestRequestDraw(color, name => {
+                if (!name) { showGameToast('There are no ' + color + ' Pok\u00e9mon left in the pool.'); return; }
                 const entry = POKEMON_BY_NAME[name];
                 if (!entry) { boardSafariSettle(name, 'returned'); showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
                 const member = buildWildPokemonMember({ dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false });
@@ -52569,7 +52576,9 @@
                 const purpose = noteColorPickerPurpose;
                 const color = swatchBtn.dataset.color;
                 closeNoteColorPicker();
-                if (purpose && purpose.trainerPoolCardId) {
+                if (purpose && purpose.gainCardId) {
+                    cardPoolGain(purpose.gainCardId, color);
+                } else if (purpose && purpose.trainerPoolCardId) {
                     startTrainerBattleFromPool(purpose.trainerPoolCardId, color);
                 } else if (purpose && purpose.trainerCardId) {
                     startTrainerBattleCardPick(purpose.trainerCardId, color);
