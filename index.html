@@ -15101,6 +15101,7 @@
         /* A smaller .filter-btn for the game board's own buttons: same look, less padding, so it takes up less room over the map. */
         /* The second selector is for the map's own +/-/Fit/Fullscreen buttons, which board.js styles with a more specific rule. */
         .filter-btn-compact,
+        #game-board-mount #actbar button.filter-btn-compact:disabled { opacity: 0.72; cursor: default; }
         #game-board-mount #mapctl button.filter-btn-compact,
         #game-board-mount #actbar button.filter-btn-compact {
             background-color: rgba(0, 0, 0, 0.88); color: white; border: 2px solid rgba(0,0,0,0.25);
@@ -46783,36 +46784,39 @@
                 text = 'Nothing left to catch here.';
             } else if (info.kind === 'city' || info.kind === 'special') {
                 const acts = info.space.actions || [];
-                // Battle actions get a button unless this player already holds that Badge; the rest stay as text for now.
-                const parts = acts.map(a => {
+                // Every action is a button. One that can't be used right now (locked, already done) is still shown, disabled, with a
+                // note saying why. The heading is just the location; only things no button covers (like the Roll For Item table) get a line.
+                const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+                const notes = [];
+                acts.forEach(a => {
                     const sv = boardResolveServiceAction(a);
                     if (sv) {
                         const svLock = boardServiceActionLock(sv.type);
-                        if (svLock) return boardActionLabel(a) + ' \ud83d\udd12 ' + svLock;
-                        buttons.push({ id: 'sact:' + sv.type, label: sv.name });
-                        return boardActionLabel(a);
+                        if (svLock) buttons.push({ id: 'locked', label: sv.name, note: cap(svLock), disabled: true });
+                        else buttons.push({ id: 'sact:' + sv.type, label: sv.name });
+                        return;
                     }
                     const rl = boardResolveRollAction(a);
                     if (rl) {
                         buttons.push({ id: 'rfi', label: 'Roll d6 for Item' });
-                        return boardActionLabel(a) + ' (' + boardRollSummary(rl.table) + ')';
+                        notes.push(boardActionLabel(a) + ' (' + boardRollSummary(rl.table) + ')');
+                        return;
                     }
                     const it = boardResolveItemAction(a);
                     if (it) {
                         const found = boardFindItemCard(it.item);
-                        if (found && boardGainItemClaimed(found)) return boardActionLabel(a) + ' \u2713 gained';
-                        buttons.push({ id: 'gitem:' + encodeURIComponent(it.item), label: 'Gain Item: ' + it.item });
-                        return boardActionLabel(a);
+                        if (found && boardGainItemClaimed(found)) buttons.push({ id: 'gained', label: 'Gain Item: ' + it.item, note: 'Already gained \u2713', disabled: true });
+                        else buttons.push({ id: 'gitem:' + encodeURIComponent(it.item), label: 'Gain Item: ' + it.item });
+                        return;
                     }
                     const r = boardResolveBattleAction(a);
-                    if (!r) return boardActionLabel(a);
-                    if (boardBattleActionDefeated(r)) return boardActionLabel(a) + ' \u2713 defeated';
+                    if (!r) { notes.push(boardActionLabel(a)); return; }
+                    if (boardBattleActionDefeated(r)) { buttons.push({ id: 'done', label: boardBattleButtonLabel(r), note: 'Defeated \u2713', disabled: true }); return; }
                     const lock = boardBattleActionLock(r);
-                    if (lock) return boardActionLabel(a) + ' \ud83d\udd12 ' + lock;
+                    if (lock) { buttons.push({ id: 'locked', label: boardBattleButtonLabel(r), note: cap(lock), disabled: true }); return; }
                     buttons.push({ id: 'bact:' + r.type + ':' + (r.leaderId || ''), label: boardBattleButtonLabel(r) });
-                    return boardActionLabel(a);
                 });
-                text = (info.space.label || 'This location') + (parts.length ? ' \u2014 ' + parts.join(' \u00b7 ') : '');
+                text = (info.space.label || 'This location') + (notes.length ? '\n' + notes.join('\n') : '');
             } else {
                 // A plain space has no prompt of its own, but another player's marker here still offers Battle / Trade.
                 if (!boardPlayerActionButtons(info).length) return;
@@ -46822,8 +46826,8 @@
             if (info.alsoHere && info.alsoHere.length) text += ' Also here: ' + info.alsoHere.join(', ') + '.';
             boardPlayerActionButtons(info).forEach(b => buttons.push(b)); // Battle / Trade with another player on this space
             if (plainSpace) buttons.push({ id: 'skip', label: 'Not now' });
-            (info.homeOptions || []).forEach(o => buttons.push({ id: 'home:' + o.id, label: 'Set Current Home: ' + o.label + (o.how ? ' (' + o.how + ')' : '') }));
-            if (!buttons.length) buttons.push({ id: 'skip', label: 'OK' });
+            (info.homeOptions || []).forEach(o => buttons.push({ id: 'home:' + o.id, label: 'Set Current Home: ' + o.label }));
+            if (!buttons.some(b => !b.disabled)) buttons.push({ id: 'skip', label: 'OK' });
             boardCtrl.showAction({ text, buttons, info });
         }
         function boardOnAction(id, action) {
