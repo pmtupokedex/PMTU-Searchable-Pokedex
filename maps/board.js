@@ -336,15 +336,17 @@ function fillView(){updEA();Z=clampZ(zfill());VY=0;const mine=myId&&M.pos&&M.pos
 function centerOn(id){const s=get(id);if(!s)return;VX=s.x-VW()/2;VY=s.y-VH()/2;clampView();applyView()}
 function restoreView(){if(autoFill){fillView();return}updEA();Z=clampZ((relZoom||1)*zmin());VX=0;VY=0;const mine=myId&&M.pos&&M.pos[myId];if(mine&&get(mine))centerOn(mine);else{clampView();applyView()}}
 function zoomAt(fx,fy,nz){autoFill=false;const ax=VX+fx*VW(),ay=VY+fy*VH();Z=clampZ(nz);VX=ax-fx*VW();VY=ay-fy*VH();clampView();applyView()}
-// Find Me: zoom to 35% past the 'fill the frame's height' zoom, centered on this player's marker, with a short pulsing ring around it.
+// Find Me: zoom to 50% past the 'fill the frame's height' zoom, centered on this player's marker, with a short pulsing ring around it.
 const meId=()=>myId||(mode==='mock'?active:undefined);
 let pulseTm=0;
 function pulseMe(){const id=meId(),q=PL.find(o=>o.id===id),sp=id&&M.pos&&M.pos[id];if(!q||!sp||!get(sp))return;const [x,y]=tokenXY(sp)(q);
  const old=svg.querySelector('#bmPulse');if(old)old.remove();clearTimeout(pulseTm);
- const ring=(w,col,op,b)=>`<circle cx="${x}" cy="${y}" r="${R}" fill="none" stroke="${col}" stroke-width="${w}" opacity="0"><animate attributeName="r" values="${R}; ${R*3.4}" dur=".8s" begin="${b}s" repeatCount="3"/><animate attributeName="opacity" values="${op}; 0" dur=".8s" begin="${b}s" repeatCount="3"/></circle>`;
+ const ring=(w,col,op,b)=>`<circle cx="${x}" cy="${y}" r="${R}" fill="none" stroke="${col}" stroke-width="${w}" opacity="0"><animate attributeName="r" values="${R}; ${R*3.4}" dur=".8s" begin="indefinite" data-b="${b}" repeatCount="3"/><animate attributeName="opacity" values="${op}; 0" dur=".8s" begin="indefinite" data-b="${b}" repeatCount="3"/></circle>`;
  svg.insertAdjacentHTML('beforeend',`<g id="bmPulse" pointer-events="none">${ring(R*.9,'#fff',.55,0)}${ring(R*.5,q.c,.95,0)}${ring(R*.9,'#fff',.4,.25)}${ring(R*.5,q.c,.8,.25)}</g>`);
+ // SMIL times are measured from when the whole SVG loaded, so a plain begin=0 only plays for a pulse made in the first moments. Start each animation explicitly instead.
+ svg.querySelectorAll('#bmPulse animate').forEach(a=>{try{a.beginElementAt(+a.dataset.b||0)}catch(e){}});
  pulseTm=setTimeout(()=>{const g=svg.querySelector('#bmPulse');if(g)g.remove()},2800)}
-function findMe(){const id=meId(),sp=id&&M.pos&&M.pos[id];if(!(sp&&get(sp)))return;autoFill=false;updEA();Z=clampZ(zfill()*1.35);VY=0;centerOn(sp);pulseMe()}
+function findMe(){const id=meId(),sp=id&&M.pos&&M.pos[id];if(!(sp&&get(sp)))return;autoFill=false;updEA();Z=clampZ(zfill()*1.5);VY=0;centerOn(sp);pulseMe()}
 function startPinch(){autoFill=false;const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect();pinch={d0:Math.hypot(a.x-b.x,a.y-b.y)||1,Z0:Z,ax:VX+((a.x+b.x)/2-r.left)/r.width*VW(),ay:VY+((a.y+b.y)/2-r.top)/r.height*VH()}}
 function doPinch(){const [a,b]=[...ptrs.values()],r=svg.getBoundingClientRect(),mx=((a.x+b.x)/2-r.left)/r.width,my=((a.y+b.y)/2-r.top)/r.height;
  Z=clampZ(pinch.Z0*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d0);VX=pinch.ax-mx*VW();VY=pinch.ay-my*VH();clampView();applyView()}
