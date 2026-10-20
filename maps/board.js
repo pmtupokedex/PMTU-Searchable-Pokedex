@@ -409,10 +409,14 @@ $('jb').onclick=()=>{try{importBoard(JSON.parse($('jt').value))}catch(err){$('jm
 function showAction(a){const b=$('actbar');b.innerHTML='';const inn=document.createElement('div');inn.className='actin';const lines=String(a.text||'').split('\n'),tx=document.createElement('div');fillLabel(tx,lines[0]);tx.style.marginBottom='6px';inn.appendChild(tx);
  if(lines.length>1){const dt=document.createElement('div');dt.className='actnote';dt.textContent=lines.slice(1).join('\n');inn.appendChild(dt)}
  // a button may carry a note (shown under its label) and may be disabled: visible but not clickable, the note saying what is needed
- (a.buttons||[]).forEach(x=>{const bt=document.createElement('button');bt.className='filter-btn filter-btn-compact';fillLabel(bt,x.label);if(x.note){const sm=document.createElement('span');sm.className='bn';sm.textContent=x.note;bt.appendChild(sm)}if(x.disabled)bt.disabled=true;else bt.onclick=()=>{hideAction();if(opts.onAction)opts.onAction(x.id,a)};
+ const addBtn=(x,host)=>{const bt=document.createElement('button');bt.className='filter-btn filter-btn-compact';fillLabel(bt,x.label);if(x.note){const sm=document.createElement('span');sm.className='bn';sm.textContent=x.note;bt.appendChild(sm)}if(x.disabled)bt.disabled=true;else bt.onclick=()=>{hideAction();if(opts.onAction)opts.onAction(x.id,a)};
   if(x.detail){ // a small "i" button on the same line: asks the app for more detail on this action; the box stays open
-   const row=document.createElement('div');row.className='actrow';row.appendChild(bt);const ib=document.createElement('button');ib.className='filter-btn filter-btn-compact actinfo';ib.textContent='i';ib.title='Details';ib.setAttribute('aria-label','Details');ib.onclick=()=>{if(opts.onAction)opts.onAction(x.detail,a)};row.appendChild(ib);inn.appendChild(row)}
-  else inn.appendChild(bt)});b.appendChild(inn);actSide='';b.hidden=false;placeAct()}
+   const row=document.createElement('div');row.className='actrow';row.appendChild(bt);const ib=document.createElement('button');ib.className='filter-btn filter-btn-compact actinfo';ib.textContent='i';ib.title='Details';ib.setAttribute('aria-label','Details');ib.onclick=()=>{if(opts.onAction)opts.onAction(x.detail,a)};row.appendChild(ib);host.appendChild(row)}
+  else host.appendChild(bt)};
+ (a.buttons||[]).forEach(x=>addBtn(x,inn));
+ // optional extra sections below the buttons ({header,buttons}): a white, black-bordered header, then that section's own buttons
+ (a.sections||[]).forEach(sc=>{if(!sc||!(sc.buttons||[]).length)return;const sec=document.createElement('div');sec.className='actsec';if(sc.header){const hd=document.createElement('div');hd.className='actsec-head';hd.textContent=sc.header;sec.appendChild(hd)}sc.buttons.forEach(x=>addBtn(x,sec));inn.appendChild(sec)});
+ b.appendChild(inn);actSide='';b.hidden=false;placeAct()}
 // A "Label: rest" line may wrap right after the colon, keeping "rest" together as one unit (it only splits if it is wider than the box on its own).
 function fillLabel(el,t){t=String(t==null?'':t);const m=/^([^:\n]{1,40}:)(\s*)([\s\S]+)$/.exec(t);if(!m){el.textContent=t;return}
  el.appendChild(document.createTextNode(m[1]+m[2]));const sp=document.createElement('span');sp.className='bs';sp.textContent=m[3];el.appendChild(sp)}
