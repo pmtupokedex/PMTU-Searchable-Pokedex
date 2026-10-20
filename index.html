@@ -15313,6 +15313,11 @@
            roller's color. Top-right corner of the map frame (below the Roll Movement Die button). White
            outline-free glyphs would vanish on the map art, so it gets the app's usual black outline: the 8-shadow version
            here, swapped for a real text-stroke on high-DPI screens in the @media block below (same threshold as the shared list). */
+        /* Running step count while a marker is held (fed by board.js's onWalk): the same glyphs as the roll, in white, to the roll's left. */
+        #board-roll-row { display: flex; align-items: flex-start; justify-content: flex-end; gap: 14px; }
+        #board-walk-count { display: none; margin-right: 4px; font-weight: bold; font-size: 72px; line-height: 1; color: #fff; pointer-events: none;
+            text-shadow: -2px -2px 0 black, 0 -2px 0 black, 2px -2px 0 black, -2px 0 0 black, 2px 0 0 black, -2px 2px 0 black, 0 2px 0 black, 2px 2px 0 black; }
+        #board-walk-count.visible { display: block; }
         #board-roll-display { position: relative; margin-right: 4px; transform-origin: top right; display: none; flex-direction: column; align-items: flex-end; pointer-events: none; }
         #board-roll-display.visible { display: flex; animation: board-roll-pop 0.28s ease-out; }
         #board-roll-display.fading { opacity: 0; transition: opacity 0.4s ease; }
@@ -15326,7 +15331,7 @@
         #board-roll-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
         @media (min-resolution: 1.25dppx), (-webkit-min-device-pixel-ratio: 1.25) {
         @supports (-webkit-text-stroke: 1px black) or (text-stroke: 1px black) {
-            #board-roll-num { text-shadow: none; -webkit-text-stroke: 6px black; text-stroke: 6px black; paint-order: stroke fill; }
+            #board-roll-num, #board-walk-count { text-shadow: none; -webkit-text-stroke: 6px black; text-stroke: 6px black; paint-order: stroke fill; }
             #board-roll-note { text-shadow: none; -webkit-text-stroke: 3px black; text-stroke: 3px black; paint-order: stroke fill; }
         }
         }
@@ -18495,7 +18500,7 @@
             <div id="board-roll-controls" data-actbar-avoid>
                 <button class="filter-btn filter-btn-compact" id="board-roll-btn" type="button">Roll Movement Die</button>
                 <button class="filter-btn filter-btn-compact" id="board-stay-btn" type="button" hidden>Stay on City Space</button>
-                <div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div>
+                <div id="board-roll-row"><span id="board-walk-count" aria-hidden="true" title="Spaces in the move so far"></span><div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div></div>
             </div>
         </div>
     </div>
@@ -46748,7 +46753,7 @@
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onDraw: boardUpdateStayButton, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
                 boardSig = sig;
                 boardSaveKey = saveKey;
                 boardSaveDirty = false;
@@ -46851,8 +46856,15 @@
             }
             return null;
         }
+        // board.js reports the step count of the move being planned (null once the marker is put down).
+        function boardWalkCount(n) {
+            const el = document.getElementById('board-walk-count');
+            if (!el) return;
+            if (n == null) { el.classList.remove('visible'); el.textContent = ''; }
+            else { el.textContent = String(n); el.classList.add('visible'); }
+        }
         function boardGateBlocked(reason, space) {
-            showGameToast('\uD83D\uDD12 ' + reason);
+            showGameToast((String(reason).charAt(0) === '\u21A9' ? '' : '\uD83D\uDD12 ') + reason);
         }
         // --- message routing (called from the host and guest dispatchers) ---
         function boardHandleFromGuest(peerId, data) {
