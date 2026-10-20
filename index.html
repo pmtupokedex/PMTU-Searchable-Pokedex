@@ -2304,6 +2304,14 @@
         .game-board-key-icon { display: block; width: auto; height: auto; max-width: 100%; max-height: 160px; object-fit: contain; } /* never upscaled; wider than 52px shrinks to fit, keeping its proportions */
         .game-board-key-text { flex: 1 1 auto; min-width: 0; }
         .game-board-key-name { font-weight: bold; font-size: 15px; margin: 0 0 2px; }
+        /* Roll For Item: one table per space that has it, under the description. */
+        .game-board-roll-tables { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+        .game-board-roll-table { background: rgba(0, 0, 0, 0.18); border-radius: 8px; padding: 6px 8px; }
+        .game-board-roll-table-title { font-weight: bold; font-size: 13px; margin: 0 0 4px; }
+        .game-board-roll-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .game-board-roll-table th, .game-board-roll-table td { text-align: left; padding: 2px 6px; border-top: 1px solid rgba(255, 255, 255, 0.2); }
+        .game-board-roll-table th { font-size: 11px; text-transform: uppercase; opacity: 0.8; border-top: 0; }
+        .game-board-roll-table th:first-child, .game-board-roll-table td:first-child { width: 3.5em; white-space: nowrap; }
         .game-board-key-desc { font-size: 13px; line-height: 1.35; margin: 0; white-space: pre-line; } /* a \n in the text is a line break */
 
         /* Dice block (see renderBattleDice()): three counters side by
@@ -47060,29 +47068,29 @@
                     const sv = boardResolveServiceAction(a);
                     if (sv) {
                         const svLock = boardServiceActionLock(sv.type);
-                        if (svLock) buttons.push({ id: 'locked', label: sv.name, note: cap(svLock), disabled: true });
-                        else buttons.push({ id: 'sact:' + sv.type, label: sv.name });
+                        if (svLock) buttons.push({ id: 'locked', label: sv.name, note: cap(svLock), disabled: true, detail: 'details:' + sv.type });
+                        else buttons.push({ id: 'sact:' + sv.type, label: sv.name, detail: 'details:' + sv.type });
                         return;
                     }
                     const rl = boardResolveRollAction(a);
                     if (rl) {
-                        // the small "i" next to it opens this action in Explore Actions (where the item table is listed)
+                        // the small "i" (every action button has one) opens that action in Explore Actions, where the item tables are listed
                         buttons.push({ id: 'rfi', label: 'Roll For Item', detail: 'details:roll-for-item' });
                         return;
                     }
                     const it = boardResolveItemAction(a);
                     if (it) {
                         const found = boardFindItemCard(it.item);
-                        if (found && boardGainItemClaimed(found)) buttons.push({ id: 'gained', label: 'Gain Item: ' + it.item, note: 'Already gained \u2713', disabled: true });
-                        else buttons.push({ id: 'gitem:' + encodeURIComponent(it.item), label: 'Gain Item: ' + it.item });
+                        if (found && boardGainItemClaimed(found)) buttons.push({ id: 'gained', label: 'Gain Item: ' + it.item, note: 'Already gained \u2713', disabled: true, detail: 'details:gain-item' });
+                        else buttons.push({ id: 'gitem:' + encodeURIComponent(it.item), label: 'Gain Item: ' + it.item, detail: 'details:gain-item' });
                         return;
                     }
                     const r = boardResolveBattleAction(a);
                     if (!r) { notes.push(boardActionLabel(a)); return; }
-                    if (boardBattleActionDefeated(r)) { buttons.push({ id: 'done', label: boardBattleButtonLabel(r), note: 'Defeated \u2713', disabled: true }); return; }
+                    if (boardBattleActionDefeated(r)) { buttons.push({ id: 'done', label: boardBattleButtonLabel(r), note: 'Defeated \u2713', disabled: true, detail: 'details:' + r.type }); return; }
                     const lock = boardBattleActionLock(r);
-                    if (lock) { buttons.push({ id: 'locked', label: boardBattleButtonLabel(r), note: cap(lock), disabled: true }); return; }
-                    buttons.push({ id: 'bact:' + r.type + ':' + (r.leaderId || ''), label: boardBattleButtonLabel(r) });
+                    if (lock) { buttons.push({ id: 'locked', label: boardBattleButtonLabel(r), note: cap(lock), disabled: true, detail: 'details:' + r.type }); return; }
+                    buttons.push({ id: 'bact:' + r.type + ':' + (r.leaderId || ''), label: boardBattleButtonLabel(r), detail: 'details:' + r.type });
                 });
                 text = (info.space.label || 'This location') + (notes.length ? '\n' + notes.join('\n') : '');
             } else {
@@ -48027,6 +48035,55 @@
             };
             return groups.map(g => faceText(g.faces) + ': ' + g.item).join(' \u00b7 ');
         }
+        // Rows for a roll table, e.g. [{ faces: '1', item: 'Potion' }, { faces: '5\u20136', item: 'Treasure' }] -- faces that give the
+        // same item share one row (same grouping as boardRollSummary()).
+        function boardRollRows(table) {
+            const groups = [];
+            table.forEach((item, i) => {
+                if (!item) return;
+                const key = boardCardNameKey(item);
+                let g = groups.find(x => x.key === key);
+                if (!g) groups.push(g = { key, item, faces: [] });
+                g.faces.push(i + 1);
+            });
+            return groups.map(g => {
+                const runs = [];
+                g.faces.forEach(f => {
+                    const last = runs[runs.length - 1];
+                    if (last && f === last[1] + 1) last[1] = f; else runs.push([f, f]);
+                });
+                return { faces: runs.map(([lo, hi]) => lo === hi ? String(lo) : lo + '\u2013' + hi).join(', '), item: g.item };
+            });
+        }
+        // One small table per space on this board that has Roll For Item, titled with the space's name. Read straight from the
+        // board data, so it always matches what the Roll For Item button actually rolls.
+        function boardRollTablesEl(data) {
+            const wrap = document.createElement('div');
+            wrap.className = 'game-board-roll-tables';
+            ((data && data.spaces) || []).forEach(sp => {
+                let rl = null;
+                (sp.actions || []).some(a => (rl = boardResolveRollAction(a)));
+                if (!rl) return;
+                const box = document.createElement('div');
+                box.className = 'game-board-roll-table';
+                const title = document.createElement('p');
+                title.className = 'game-board-roll-table-title';
+                title.textContent = sp.label || 'Unnamed space';
+                box.appendChild(title);
+                const tbl = document.createElement('table');
+                const head = tbl.createTHead().insertRow();
+                ['Roll', 'Item'].forEach(t => { const th = document.createElement('th'); th.textContent = t; head.appendChild(th); });
+                const body = tbl.createTBody();
+                boardRollRows(rl.table).forEach(r => {
+                    const tr = body.insertRow();
+                    tr.insertCell().textContent = r.faces;
+                    tr.insertCell().textContent = r.item;
+                });
+                box.appendChild(tbl);
+                wrap.appendChild(box);
+            });
+            return wrap.children.length ? wrap : null;
+        }
         function boardHighestTMDeck() {
             if (!isTieredTMDecksEnabledForActiveSave()) return 'TM Deck';
             return [TM_TIER_DECK_NAMES.Expert, TM_TIER_DECK_NAMES.Advanced, TM_TIER_DECK_NAMES.Novice].find(d => isTMDeckUnlockedForActiveSave(d)) || TM_TIER_DECK_NAMES.Novice;
@@ -48651,8 +48708,8 @@
             if (!others.length) return [];
             const one = others.length === 1 ? others[0].name : null;
             return [
-                { id: 'pvp:battle', label: one ? 'Battle ' + one : 'Battle a Player' },
-                { id: 'pvp:trade', label: one ? 'Trade with ' + one : 'Trade with a Player' },
+                { id: 'pvp:battle', label: one ? 'Battle ' + one : 'Battle a Player', detail: 'details:player-battle' },
+                { id: 'pvp:trade', label: one ? 'Trade with ' + one : 'Trade with a Player', detail: 'details:player-trade' },
             ];
         }
         // A button was pressed: one other player is chosen automatically, several are asked.
@@ -49095,7 +49152,13 @@
             list.innerHTML = '';
             // The actions this board's spaces have, one list in the file's order (no header).
             Object.entries(doc.actions || {}).filter(([id, a]) => a && (a.universal === true || present.has(id))).forEach(([id, base]) => {
-                list.appendChild(boardKeyCard(resolve(id, base), fill, id));
+                const card = boardKeyCard(resolve(id, base), fill, id);
+                if (id === 'roll-for-item') {
+                    const tables = boardRollTablesEl(data);
+                    const textEl = card.querySelector('.game-board-key-text');
+                    if (tables && textEl) textEl.appendChild(tables);
+                }
+                list.appendChild(card);
             });
             // Gate Markers: a second list with its own header, laid out the same way. There is nothing in a board's data to say
             // which ones a map has, so an entry that is only for some maps names them ("regions": ["kanto"]); no list = every map.
