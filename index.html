@@ -15282,15 +15282,21 @@
         /* Text in the action box that isn't inside a button (the location name and the detail lines): white with the app's usual
            black outline -- the 8-shadow version here, swapped for a real text-stroke on high-DPI screens, same threshold as the
            Movement roll number below. */
-        #game-board-mount #actbar .actin > div:not(.actrow) { font-size: 15px; font-weight: 700; }
+        #game-board-mount #actbar .actin > div:not(.actrow):not(.actsec) { font-size: 15px; font-weight: 700; }
         #game-board-mount #actbar .actin > div.actnote { font-size: 13px; font-weight: 600; }
-        #game-board-mount #actbar .actin > div:not(.actrow) {
+        /* An extra section under the buttons (e.g. "Update Current Home?"): its own white header with a black border, then its buttons. */
+        #game-board-mount #actbar .actsec { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+        #game-board-mount #actbar .actsec-head {
+            background: #fff; color: #000; border: 2px solid #000; border-radius: 10px;
+            font-size: 13px; font-weight: 700; text-align: center; padding: 2px 8px; text-shadow: none; -webkit-text-stroke: 0;
+        }
+        #game-board-mount #actbar .actin > div:not(.actrow):not(.actsec) {
             color: #fff;
             text-shadow: -1px -1px 0 black, 0 -1px 0 black, 1px -1px 0 black, -1px 0 0 black, 1px 0 0 black, -1px 1px 0 black, 0 1px 0 black, 1px 1px 0 black;
         }
         @media (min-resolution: 1.25dppx), (-webkit-min-device-pixel-ratio: 1.25) {
         @supports (-webkit-text-stroke: 1px black) or (text-stroke: 1px black) {
-            #game-board-mount #actbar .actin > div:not(.actrow) { text-shadow: none; -webkit-text-stroke: 3px black; text-stroke: 3px black; paint-order: stroke fill; }
+            #game-board-mount #actbar .actin > div:not(.actrow):not(.actsec) { text-shadow: none; -webkit-text-stroke: 3px black; text-stroke: 3px black; paint-order: stroke fill; }
             #game-board-mount #actbar .actin > div.actnote { -webkit-text-stroke: 2.5px black; text-stroke: 2.5px black; }
         }
         }
@@ -47102,9 +47108,11 @@
             if (info.alsoHere && info.alsoHere.length) text += ' Also here: ' + info.alsoHere.join(', ') + '.';
             boardPlayerActionButtons(info).forEach(b => buttons.push(b)); // Battle / Trade with another player on this space
             if (plainSpace) buttons.push({ id: 'skip', label: 'Not now' });
-            (info.homeOptions || []).forEach(o => buttons.push({ id: 'home:' + o.id, label: 'Set Current Home:\n' + o.label }));
+            // Pending Current Home choices get their own section under the actions: one button per city (just its name), plus Not Now.
+            const homeButtons = (info.homeOptions || []).map(o => ({ id: 'home:' + o.id, label: o.label }));
+            const sections = homeButtons.length ? [{ header: 'Update Current Home?', buttons: homeButtons.concat([{ id: 'home-dismiss', label: 'Not Now' }]) }] : [];
             if (!buttons.some(b => !b.disabled)) buttons.push({ id: 'skip', label: 'OK' });
-            boardCtrl.showAction({ text, buttons, info });
+            boardCtrl.showAction({ text, buttons, sections, info });
             boardUpdateStayButton();
         }
         function boardOnAction(id, action) {
@@ -47161,7 +47169,11 @@
                 const city = id.slice(5);
                 if (lobbyState.role === 'guest') boardSend({ type: 'board-sethome', city });
                 else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-sethome', player: 'host', city });
-                if (info) { info.homeOptions = (info.homeOptions || []).filter(o => o.id !== city); boardDeliverLanding(info); } // keep the other choices
+                if (info) { info.homeOptions = []; boardDeliverLanding(info); } // choosing one clears the other pending choices
+            } else if (id === 'home-dismiss') {
+                if (info) { info.homeOptions = []; boardDeliverLanding(info); } // Not Now: just drop the Update Current Home section
+            } else if (id === 'bf-rules') {
+                boardOpenActionDetails('battle-frontier');
             }
         }
         // ---- Board space actions ----
@@ -48467,8 +48479,8 @@
             if (boardFrontierArenaBusy()) return;
             const claimed = boardFrontierLegendaryClaimed();
             const buttons = BOARD_FRONTIER_COLORS.map(c => ({ id: 'bf-color:' + c.id, label: c.label + (c.id === 'orange' && claimed ? ' (reward already claimed)' : '') }));
-            buttons.push({ id: 'skip', label: 'Not now' });
-            boardCtrl.showAction({ text: 'Battle Frontier \u2014 choose a token color. A random Pok\u00e9mon of that color is drawn as the Defender (it can\u2019t be caught). Defeat it for that color\u2019s reward; lose or walk away and you return to Olivine City.', buttons, info });
+            buttons.push({ id: 'bf-rules', label: 'Open Battle Frontier Rules' });
+            boardCtrl.showAction({ text: 'Choose a Pok\u00e9mon Token Color', buttons, info });
         }
         function boardFrontierChooseColor(color, info) {
             if (isActiveSaveReadOnly() || !BOARD_FRONTIER_COLORS.some(c => c.id === color)) return;
