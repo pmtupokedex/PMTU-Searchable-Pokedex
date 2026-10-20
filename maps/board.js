@@ -34,7 +34,7 @@
    Messages: guest -> host {type:'board-move',player,to,path:[the spaces walked, start to end]}   {type:'board-stay'} [host: app sends it with player id -- re-runs the landing prompt for the space the player is already on]
              host -> guests {type:'board-state',snap:<JSON string>} */
 (function(global){
-const CSS=".bm-root{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}\n.bm-root input,.bm-root textarea{user-select:text;-webkit-user-select:text;-webkit-touch-callout:default}\n.bm-root{position:relative;--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #bgc{position:absolute;display:none;pointer-events:none;border-radius:10px;background:var(--bm-map);z-index:0}\n.bm-root.bm-bgc #bgc{display:block}\n.bm-root.bm-bgc #b{background:transparent;position:relative;z-index:1}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n.bm-root #actbar{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.4)}\n.bm-root #actbar[hidden]{display:none}\n.bm-root #actbar.anch{left:0;top:0;right:auto;bottom:auto;padding:8px;box-sizing:border-box;border-radius:12px;background:var(--pc,var(--bm-panel));color:var(--pt,var(--bm-ink));border:2px solid #fff}\n.bm-root #actbar.anch .actin{max-height:var(--ah,none);overflow-y:auto;display:flex;flex-direction:column;gap:5px}\n.bm-root #actbar.anch .actin>div:not(.actrow){margin:0 0 2px!important;font-size:13px;line-height:1.3;white-space:pre-line}\n.bm-root #actbar .actin>div:first-child:not(.actrow){font-weight:600}\n.bm-root #actbar .actin>div.actnote{font-size:12px;font-weight:400}\n.bm-root #actbar .bs{display:inline-block;max-width:100%}\n.bm-root #actbar .actrow{display:flex;gap:4px;align-items:stretch}\n.bm-root #actbar.anch .actin .actrow>button:first-child{flex:1 1 auto;min-width:0;width:auto}\n.bm-root #actbar.anch .actin .actrow>button.actinfo{flex:0 0 auto;width:auto;padding:0 10px;font-style:italic;font-family:Georgia,serif;font-weight:700}\n.bm-root #actbar .bn{display:block;margin-top:1px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;opacity:.85}\n.bm-root #actbar.anch .actin button{display:block;width:100%;margin:0;white-space:pre-line;text-align:center}\n.bm-root #actbar.anch::before{content:'';display:none;position:absolute;width:10px;height:10px;background:var(--pc,var(--bm-panel));border:2px solid #fff;transform:rotate(45deg)}\n.bm-root #actbar.anch.s-r::before{display:block;left:-8px;top:calc(var(--c) - 6px);border-right:0;border-top:0}\n.bm-root #actbar.anch.s-l::before{display:block;right:-8px;top:calc(var(--c) - 6px);border-left:0;border-bottom:0}\n.bm-root #actbar.anch.s-b::before{display:block;top:-8px;left:calc(var(--c) - 6px);border-right:0;border-bottom:0}\n.bm-root #actbar.anch.s-t::before{display:block;bottom:-8px;left:calc(var(--c) - 6px);border-left:0;border-top:0}\n.bm-root #mapctl{position:absolute;top:16px;left:16px;z-index:4;display:flex;gap:4px}\n.bm-root #mapctl button{margin:0;opacity:.92;box-shadow:0 1px 4px rgba(0,0,0,.35)}\n.bm-root.bm-aside-hidden aside{display:none}\n.bm-root.bm-aside-hidden #b{height:100%}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}.bm-root .bm-tkv{display:none;position:absolute;inset:0;z-index:6;background:rgba(0,0,0,.82);align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:24px;box-sizing:border-box;cursor:pointer}.bm-root .bm-tkv.on{display:flex}.bm-root .bm-tkv img{max-width:min(92%,460px);max-height:78%;object-fit:contain}.bm-root .bm-tkv-n{color:#fff;font:600 16px system-ui,sans-serif;text-align:center}";
+const CSS=".bm-root{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}\n.bm-root input,.bm-root textarea{user-select:text;-webkit-user-select:text;-webkit-touch-callout:default}\n.bm-root #cpBtn{position:absolute;left:16px;bottom:16px;z-index:6;margin:0;padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,.35)}\n.bm-root #cpBtn[hidden]{display:none}\n.bm-root #cpBtn:disabled{opacity:.55}\n.bm-root{position:relative;--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #bgc{position:absolute;display:none;pointer-events:none;border-radius:10px;background:var(--bm-map);z-index:0}\n.bm-root.bm-bgc #bgc{display:block}\n.bm-root.bm-bgc #b{background:transparent;position:relative;z-index:1}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n.bm-root #actbar{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.4)}\n.bm-root #actbar[hidden]{display:none}\n.bm-root #actbar.anch{left:0;top:0;right:auto;bottom:auto;padding:8px;box-sizing:border-box;border-radius:12px;background:var(--pc,var(--bm-panel));color:var(--pt,var(--bm-ink));border:2px solid #fff}\n.bm-root #actbar.anch .actin{max-height:var(--ah,none);overflow-y:auto;display:flex;flex-direction:column;gap:5px}\n.bm-root #actbar.anch .actin>div:not(.actrow){margin:0 0 2px!important;font-size:13px;line-height:1.3;white-space:pre-line}\n.bm-root #actbar .actin>div:first-child:not(.actrow){font-weight:600}\n.bm-root #actbar .actin>div.actnote{font-size:12px;font-weight:400}\n.bm-root #actbar .bs{display:inline-block;max-width:100%}\n.bm-root #actbar .actrow{display:flex;gap:4px;align-items:stretch}\n.bm-root #actbar.anch .actin .actrow>button:first-child{flex:1 1 auto;min-width:0;width:auto}\n.bm-root #actbar.anch .actin .actrow>button.actinfo{flex:0 0 auto;width:auto;padding:0 10px;font-style:italic;font-family:Georgia,serif;font-weight:700}\n.bm-root #actbar .bn{display:block;margin-top:1px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;opacity:.85}\n.bm-root #actbar.anch .actin button{display:block;width:100%;margin:0;white-space:pre-line;text-align:center}\n.bm-root #actbar.anch::before{content:'';display:none;position:absolute;width:10px;height:10px;background:var(--pc,var(--bm-panel));border:2px solid #fff;transform:rotate(45deg)}\n.bm-root #actbar.anch.s-r::before{display:block;left:-8px;top:calc(var(--c) - 6px);border-right:0;border-top:0}\n.bm-root #actbar.anch.s-l::before{display:block;right:-8px;top:calc(var(--c) - 6px);border-left:0;border-bottom:0}\n.bm-root #actbar.anch.s-b::before{display:block;top:-8px;left:calc(var(--c) - 6px);border-right:0;border-bottom:0}\n.bm-root #actbar.anch.s-t::before{display:block;bottom:-8px;left:calc(var(--c) - 6px);border-left:0;border-top:0}\n.bm-root #mapctl{position:absolute;top:16px;left:16px;z-index:4;display:flex;gap:4px}\n.bm-root #mapctl button{margin:0;opacity:.92;box-shadow:0 1px 4px rgba(0,0,0,.35)}\n.bm-root.bm-aside-hidden aside{display:none}\n.bm-root.bm-aside-hidden #b{height:100%}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}.bm-root .bm-tkv{display:none;position:absolute;inset:0;z-index:6;background:rgba(0,0,0,.82);align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:24px;box-sizing:border-box;cursor:pointer}.bm-root .bm-tkv.on{display:flex}.bm-root .bm-tkv img{max-width:min(92%,460px);max-height:78%;object-fit:contain}.bm-root .bm-tkv-n{color:#fff;font:600 16px system-ui,sans-serif;text-align:center}";
 const HTML="<canvas id=\"bgc\"></canvas><svg id=\"b\" viewBox=\"0 0 1000 620\"></svg>\n<aside>\n <div class=\"box\" id=\"bkbox\" hidden><a id=\"bk\" href=\"#\" style=\"color:inherit\">\u2190 Back to the app</a></div>\n <div class=\"box\"><h4>View</h4><button id=\"zi\">+</button><button id=\"zo\">\u2212</button><button id=\"zf\">Fit</button> <small id=\"zl\"></small><br><small>Drag empty map to pan, pinch or scroll to zoom. Dragging a token near the edge scrolls the map.</small></div>\n <div class=\"box\"><h4>Load board</h4><button id=\"imgBtn\">Map image\u2026</button><input id=\"imgF\" type=\"file\" accept=\"image/*\" hidden> <button id=\"sb\">Sample board</button>\n  <textarea id=\"jt\" rows=\"3\" style=\"width:100%;box-sizing:border-box;margin-top:4px\" placeholder=\"Paste editor export JSON\"></textarea><button id=\"jb\">Load JSON</button><small id=\"jm\"></small></div>\n <div class=\"box\"><h4>View as</h4><div id=\"vw\"></div><small id=\"vwn\"></small></div>\n <div class=\"box\"><h4>Players (drag a token on the map)</h4><div id=\"pl\"></div><small>Mock host runs in this page; the log shows the messages that would travel over PeerJS.</small></div>\n <div class=\"box\"><h4>Prompt</h4><div id=\"pr\"><small>Move a token onto a space.</small></div><div style=\"margin-top:6px\"><button id=\"ev\">Draw Event Card (active player)</button><button id=\"lose\">Active player lost a battle</button></div><div id=\"hm\" style=\"margin-top:4px\"></div></div>\n <div class=\"box\" id=\"hostbox\"><h4>Host only: pools &amp; hidden tokens</h4><div id=\"host\"></div></div>\n <div class=\"box\" id=\"netbox\"><h4>What guests receive</h4><div id=\"leak\"></div><details><summary>Last board-state snapshot (JSON)</summary><pre id=\"snapj\" style=\"white-space:pre-wrap;word-break:break-all;font-size:10px;max-height:160px;overflow:auto\"></pre></details></div>\n <div class=\"box\" id=\"logbox\"><h4>Host log</h4><div id=\"log\"></div></div>\n</aside><div id=\"mapctl\"><button id=\"mzi\">+</button><button id=\"mzo\">&minus;</button><button id=\"mzf\">Fit</button><button id=\"mme\" title=\"Center on my marker\">Find Me</button></div><div id=\"actbar\" hidden></div>";
 function mount(container,opts){
 opts=opts||{};
@@ -42,6 +42,13 @@ if(!document.getElementById('bm-style')){const st=document.createElement('style'
 const root=document.createElement('div');root.className='bm-root';root.innerHTML=HTML;container.appendChild(root);
 const editable=e=>/^(INPUT|TEXTAREA)$/.test(e.target.tagName); // text boxes keep their normal menu and selection
 root.addEventListener('contextmenu',e=>{if(!editable(e))e.preventDefault()});root.addEventListener('selectstart',e=>{if(!editable(e))e.preventDefault()});
+// Checkpoint button: bottom-left of the map, only while a marker is being dragged (a second finger taps it while the first holds the marker).
+const cpBtn=document.createElement('button');cpBtn.id='cpBtn';cpBtn.type='button';cpBtn.className='filter-btn filter-btn-compact';cpBtn.hidden=true;cpBtn.textContent='Set checkpoint';root.appendChild(cpBtn);
+const DWELL=900;let lastWalkN=null;
+cpBtn.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();toggleCp()});
+cpBtn.addEventListener('click',e=>e.preventDefault());
+const onCpKey=e=>{if(drag&&(e.code==='Space'||e.key===' ')&&!e.repeat&&!editable(e)){e.preventDefault();toggleCp()}};
+document.addEventListener('keydown',onCpKey);
 
 const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={},pendingEnc={},CS=1,ES=1;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
 const $=id=>root.querySelector('#'+id),svg=$('b');
@@ -254,8 +261,8 @@ function gateBlocks(l,from,p){const g=l[2]&&l[2].gate;if(!g||!opts.gateCheck)ret
  if(!gmemo.has(g)){let r=null;try{r=opts.gateCheck(g,p)||null}catch(e){}gmemo.set(g,r)}return gmemo.get(g)}
 function linkOf(a,b){return LK.find(x=>(x[0]===a&&x[1]===b)||(x[0]===b&&x[1]===a))}
 // Shortest walk a -> b that only crosses gates player p may cross. {path:[a,...,b]} | {blocked:'reason'} | {jump:true} (no route at all: not a walk).
-function walkRoute(a,b,p){if(a===b)return{path:[a]};const adj={};for(const l of LK){(adj[l[0]]=adj[l[0]]||[]).push([l[1],l]);(adj[l[1]]=adj[l[1]]||[]).push([l[0],l])}
- const bfs=useG=>{const prev={[a]:null},q=[a];while(q.length){const c=q.shift();if(c===b)break;for(const [n,l] of adj[c]||[]){if(n in prev||(useG&&gateBlocks(l,c,p)))continue;prev[n]=c;q.push(n)}}
+function walkRoute(a,b,p,ban){if(a===b)return{path:[a]};const adj={};for(const l of LK){(adj[l[0]]=adj[l[0]]||[]).push([l[1],l]);(adj[l[1]]=adj[l[1]]||[]).push([l[0],l])}
+ const bfs=useG=>{const prev={[a]:null},q=[a];while(q.length){const c=q.shift();if(c===b)break;for(const [n,l] of adj[c]||[]){if(n in prev||(c===a&&n===ban)||(useG&&gateBlocks(l,c,p)))continue;prev[n]=c;q.push(n)}}
   if(!(b in prev))return null;const path=[];for(let c=b;c!==null;c=prev[c])path.unshift(c);return path};
  const ok=bfs(true);if(ok)return{path:ok};const free=bfs(false);if(!free)return{jump:true};
  let why='';for(let i=0;i<free.length-1&&!why;i++)why=gateBlocks(linkOf(free[i],free[i+1]),free[i],p)||'';
@@ -263,7 +270,7 @@ function walkRoute(a,b,p){if(a===b)return{path:[a]};const adj={};for(const l of 
 // A path a guest sent is only believed if it really is a chain of links from where the marker was to where it ended.
 function validPath(path,from,to){if(!Array.isArray(path)||path.length<2||path[0]!==from||path[path.length-1]!==to||path.length>400)return false;for(let i=0;i<path.length-1;i++)if(!get(path[i])||!linkOf(path[i],path[i+1]))return false;return true}
 function hostMove(p,to,path){const prev=pos[p];const ok=validPath(path,prev,to);log(`${PL.find(x=>x.id===p).name} → host: board-move ${to}${ok?' ('+(path.length-1)+' steps)':''}`);pos[p]=to;snapshot();
- land(p,to,ok?path.slice(1,-1).filter(id=>get(id).type==='city'):routeCities(prev,to))}
+ land(p,to,ok?[...new Set(path.slice(1,-1))].filter(id=>id!==to&&get(id).type==='city'):routeCities(prev,to))}
 function landEvent(p,id,passed,here){const s=get(id),homeOpts=[...passed.map(c=>({id:c,label:get(c).label||c,how:'passed through'})),...(s.type==='city'?[{id,label:s.label||id,how:''}]:[])].filter(o=>home[p]!==o.id);
  pendingHome[p]=homeOpts.map(o=>o.id);pendingEnc[p]=null;let kind=(s.type==='city'||s.type==='special')?s.type:s.type==='event'?'event':'none';const o=st[id];
  if(s.type==='catch'&&o){if(o.empty)kind='empty';else{kind='catch';pendingEnc[p]=id}} // nothing is revealed until the player chooses to encounter it
@@ -347,7 +354,7 @@ function draw(){buildModel();let h=(img&&(bgFail||!canBmp))?`<image href="${img}
  for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
   h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" pointer-events="none"/>`}
- svg.innerHTML=h;renderPl();try{placeAct()}catch(e){}if(opts.onDraw){try{opts.onDraw()}catch(e){}}}
+ svg.innerHTML=h;cpSync();renderPl();try{placeAct()}catch(e){}if(opts.onDraw){try{opts.onDraw()}catch(e){}}}
 const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
 /* autoFill: until the player zooms by hand, the view is 'fill the frame's height, centered on my marker' */let Z=1,VX=0,VY=0,relZoom=1,autoFill=true,initCentered=false;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
 let EA=1.5;const updEA=()=>{const r=svg.getBoundingClientRect();if(r.width&&r.height)EA=r.width/r.height};
@@ -395,32 +402,77 @@ function spaceBox(s,col,sw,dash){const rc=s.type==='city'||s.type==='special',e=
  // Exactly the space's own shape (the rectangle / circle the board-editor outlines); the stroke is centred on that edge.
  return rc?`<rect x="${s.x-e.w/2}" y="${s.y-e.h/2}" width="${e.w}" height="${e.h}" rx="${R*.3}" fill="none" stroke="${col}" stroke-width="${sw}"${d}/>`
   :`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="none" stroke="${col}" stroke-width="${sw}"${d}/>`}
+// ---- Checkpoints: drag.cps = [{id, leg:[the walk from the previous checkpoint (or the start) to this one]}], oldest first.
+// Walking on is measured from the newest checkpoint, and every locked leg is kept exactly as it was highlighted when it was placed.
+const lockedOf=d=>{let l=[];for(const c of d.cps||[])l=l.length?l.concat(c.leg.slice(1)):c.leg.slice();return l};
+const orgOf=d=>(d.cps&&d.cps.length)?d.cps[d.cps.length-1].id:curPos()[d.p];
+const isTopCp=(d,id)=>!!(d.cps&&d.cps.length&&d.cps[d.cps.length-1].id===id);
+function hoverOf(d){const n=nearest({x:d.x,y:d.y});return n.best&&n.d<R*2&&((d.cps&&d.cps.length)||n.best.id!==curPos()[d.p])?n.best:null}
+// The route to a hovered space from the current origin. After a checkpoint the walk may not turn straight back onto the space it just came from, and "no route" is never a jump.
+function routeOf(d,s){const org=orgOf(d);if(s.id===org)return{path:[org]};const lp=lockedOf(d),ban=lp.length>1?lp[lp.length-2]:null;
+ const r=get(org)?walkRoute(org,s.id,d.p,ban):{jump:true};
+ return(d.cps&&d.cps.length&&r.jump)?{blocked:'↩ No way forward from there (no turning back).'}:r}
+function cpSync(){const on=!!drag;if(cpBtn.hidden===on)cpBtn.hidden=!on;
+ if(on){const top=drag.hov&&isTopCp(drag,drag.hov),can=top||!!(drag.hov&&drag.r&&drag.r.path&&!drag.r.blocked&&drag.r.path.length>1);
+  const t=top?'Clear checkpoint '+drag.cps.length:'Set checkpoint';if(cpBtn.textContent!==t)cpBtn.textContent=t;cpBtn.disabled=!can}
+ const n=on?(drag.steps||0):null;if(n!==lastWalkN){lastWalkN=n;if(opts.onWalk){try{opts.onWalk(n)}catch(e){}}}}
+function toggleCp(){if(!drag)return;const d=drag,cps=d.cps=d.cps||[],s=d.hov&&get(d.hov);if(!s)return;
+ if(isTopCp(d,s.id))cps.pop();
+ else{const r=d.r;if(!r||!r.path||r.blocked||r.path.length<2)return;cps.push({id:s.id,leg:r.path})}
+ d.cool=s.id;d.dw=null;try{navigator.vibrate&&navigator.vibrate(25)}catch(e){}moveDrag()}
+function dwellDraw(prog,id,top){const g=$('dwellG');if(!g)return;if(prog==null){if(g.firstChild)g.innerHTML='';return}
+ const s=get(id);if(!s)return;const rc=s.type==='city'||s.type==='special',e=dims(s),pad=R*.9,col=top?'#fb7185':'#38bdf8',at=`pathLength="100" fill="none" stroke="${col}" stroke-width="${R*.5}" stroke-linecap="round" stroke-dasharray="${prog*100} 100" opacity=".95"`;
+ g.innerHTML=rc?`<rect x="${s.x-e.w/2-pad}" y="${s.y-e.h/2-pad}" width="${e.w+2*pad}" height="${e.h+2*pad}" rx="${R*.8}" ${at}/>`:`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS+pad}" ${at}/>`}
+// Holding the marker still over a space for about a second sets a checkpoint there (or clears it, if it is the newest one).
+function dwellSync(d,s){const id=s&&s.id;if(d.cool&&d.cool!==id)d.cool=null;
+ const ok=id&&d.cool!==id&&(isTopCp(d,id)||(d.r&&d.r.path&&!d.r.blocked&&d.r.path.length>1));
+ if(!ok){d.dw=null;return}const p=lastPtr||{x:0,y:0};
+ if(!d.dw||d.dw.id!==id||Math.hypot(p.x-d.dw.px,p.y-d.dw.py)>14)d.dw={id,t0:performance.now(),px:p.x,py:p.y}}
+function dwellTick(d){if(drag!==d)return;const w=d.dw;
+ if(w){const prog=(performance.now()-w.t0)/DWELL;if(prog>=1){dwellDraw(null);toggleCp()}else dwellDraw(prog,w.id,isTopCp(d,w.id))}else dwellDraw(null);
+ requestAnimationFrame(()=>dwellTick(d))}
+// The walk preview drawn while a marker is held: START on the space it was picked up from (so it is never forgotten, even if the
+// player changes their mind and drops it back), the locked legs (blue) and live leg (yellow) with every space on the way numbered 1, 2, 3...
+// Checkpoints wear a numbered blue flag at the lower right of their space.
+function spaceBox(s,col,sw,dash){const rc=s.type==='city'||s.type==='special',e=dims(s),d=dash?` stroke-dasharray="${R*.7} ${R*.5}"`:'';
+ // Exactly the space's own shape (the rectangle / circle the board-editor outlines); the stroke is centred on that edge.
+ return rc?`<rect x="${s.x-e.w/2}" y="${s.y-e.h/2}" width="${e.w}" height="${e.h}" rx="${R*.3}" fill="none" stroke="${col}" stroke-width="${sw}"${d}/>`
+  :`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="none" stroke="${col}" stroke-width="${sw}"${d}/>`}
 function drawWalk(r,to){const g=$('walkG');if(!g||!drag)return;const o=get(curPos()[drag.p]);let h='';
- if(o){h+=spaceBox(o,'#4ade80',R*.3,true);h+=`<text x="${o.x}" y="${o.y-(o.type==='city'||o.type==='special'?dims(o).h/2:R*1.5*CS)-R*1.2}" text-anchor="middle" font-size="${R*1.1}" font-weight="700" fill="#4ade80" stroke="#000" stroke-width="${R*.25}" paint-order="stroke">START</text>`}
- if(r&&r.path&&r.path.length>1){const pts=r.path.map(id=>get(id));h+=`<polyline points="${pts.map(q=>q.x+','+q.y).join(' ')}" fill="none" stroke="#ffeb3b" stroke-width="${R*.5}" stroke-linejoin="round" stroke-linecap="round" opacity=".85"/>`;
-  // every outline first, then every number badge, so no space's outline can paint over a neighbour's number
-  pts.slice(1).forEach((q,i)=>{h+=spaceBox(q,i===pts.length-2?'#ffeb3b':'#fff',R*.25,false)});
-  pts.slice(1).forEach((q,i)=>{const last=i===pts.length-2;
-   const bx=q.x+(q.type==='city'||q.type==='special'?dims(q).w/2:R*1.5*CS)*.8,by=q.y-(q.type==='city'||q.type==='special'?dims(q).h/2:R*1.5*CS)*.8;
-   h+=`<circle cx="${bx}" cy="${by}" r="${R*.95}" fill="${last?'#ffeb3b':'#fff'}" stroke="#000" stroke-width="${R*.15}"/><text x="${bx}" y="${by+R*.4}" text-anchor="middle" font-size="${R*1.15}" font-weight="700" fill="#000">${i+1}</text>`})}
- else if(r&&r.blocked&&to){const q=get(to);h+=spaceBox(q,'#ff4d4d',R*.35,true);
-  h+=`<text x="${q.x}" y="${q.y-R*2.8}" text-anchor="middle" font-size="${R*1.1}" font-weight="700" fill="#fff" stroke="#000" stroke-width="${R*.3}" paint-order="stroke">🔒 ${xa(r.blocked)}</text>`}
- g.innerHTML=h}
+ const rcOf=q=>q.type==='city'||q.type==='special',hw=q=>rcOf(q)?dims(q).w/2:R*1.5*CS,hh=q=>rcOf(q)?dims(q).h/2:R*1.5*CS;
+ if(o){h+=spaceBox(o,'#4ade80',R*.3,true);h+=`<text x="${o.x}" y="${o.y-hh(o)-R*1.2}" text-anchor="middle" font-size="${R*1.1}" font-weight="700" fill="#4ade80" stroke="#000" stroke-width="${R*.25}" paint-order="stroke">START</text>`}
+ const lp=lockedOf(drag),leg=(r&&r.path&&r.path.length>1)?r.path:null,full=lp.length?(leg?lp.concat(leg.slice(1)):lp):(leg||[]);drag.steps=Math.max(0,full.length-1);
+ const poly=(ids,col)=>`<polyline points="${ids.map(id=>{const q=get(id);return q.x+','+q.y}).join(' ')}" fill="none" stroke="${col}" stroke-width="${R*.5}" stroke-linejoin="round" stroke-linecap="round" opacity=".85"/>`;
+ if(lp.length>1)h+=poly(lp,'#7dd3fc');if(leg)h+=poly(leg,'#ffeb3b');
+ // every outline first, then every number badge, so no space's outline can paint over a neighbour's number
+ full.slice(1).forEach((id,i)=>{h+=spaceBox(get(id),i===full.length-2?'#ffeb3b':'#fff',R*.25,false)});
+ const seen={};
+ full.slice(1).forEach((id,i)=>{const q=get(id),last=i===full.length-2,k=seen[id]=(seen[id]||0)+1; // a space walked past again gets its next badge nudged left
+  const bx=q.x+hw(q)*.8-(k-1)*R*2,by=q.y-hh(q)*.8;
+  h+=`<circle cx="${bx}" cy="${by}" r="${R*.95}" fill="${last?'#ffeb3b':'#fff'}" stroke="#000" stroke-width="${R*.15}"/><text x="${bx}" y="${by+R*.4}" text-anchor="middle" font-size="${R*1.15}" font-weight="700" fill="#000">${i+1}</text>`});
+ const seenC={};
+ (drag.cps||[]).forEach((c,i)=>{const q=get(c.id),k=seenC[c.id]=(seenC[c.id]||0)+1,fx=q.x+hw(q)*.8-(k-1)*R*2,fy=q.y+hh(q)*.8,top=i===drag.cps.length-1;
+  h+=`<circle cx="${fx}" cy="${fy}" r="${R*.95}" fill="#38bdf8" stroke="${top?'#fff':'#000'}" stroke-width="${R*(top?.25:.15)}"/><text x="${fx}" y="${fy+R*.4}" text-anchor="middle" font-size="${R*1.05}" font-weight="700" fill="#000">⚑${i+1}</text>`});
+ if(!leg&&r&&r.blocked&&to){const q=get(to);h+=spaceBox(q,'#ff4d4d',R*.35,true);
+  h+=`<text x="${q.x}" y="${q.y-R*2.8}" text-anchor="middle" font-size="${R*1.1}" font-weight="700" fill="#fff" stroke="#000" stroke-width="${R*.3}" paint-order="stroke">${r.blocked.startsWith('↩')?'':'🔒 '}${xa(r.blocked)}</text>`}
+ g.innerHTML=h;cpSync()}
 function moveDrag(){if(!drag)return;svg.querySelectorAll(`[data-p="${drag.p}"]`).forEach(c=>{c.setAttribute('cx',drag.x);c.setAttribute('cy',drag.y)});
- const ring=$('snapR');if(!ring)return;const n=nearest({x:drag.x,y:drag.y});
- if(!(n.best&&n.d<R*2&&n.best.id!==curPos()[drag.p])){ring.setAttribute('display','none');drawWalk(null);return}
- const from=curPos()[drag.p],r=get(from)?walkRoute(from,n.best.id,drag.p):{jump:true};drawWalk(r,n.best.id);ring.setAttribute('stroke',r.blocked?'#ff4d4d':'#ffeb3b');
- const s=n.best,rc=s.type==='city'||s.type==='special',e=dims(s),sc2=CS,w=rc?e.w:R*3*sc2,h=rc?e.h:R*3*sc2;
+ const ring=$('snapR');if(!ring)return;const s=hoverOf(drag);drag.hov=s?s.id:null;
+ if(!s){drag.r=null;dwellSync(drag,null);ring.setAttribute('display','none');drawWalk(null);return}
+ const r=drag.r=routeOf(drag,s);dwellSync(drag,s);drawWalk(r,s.id);ring.setAttribute('stroke',r.blocked?'#ff4d4d':'#ffeb3b');
+ const rc=s.type==='city'||s.type==='special',e=dims(s),sc2=CS,w=rc?e.w:R*3*sc2,h=rc?e.h:R*3*sc2;
  ring.setAttribute('display','');ring.setAttribute('x',s.x-w/2);ring.setAttribute('y',s.y-h/2);ring.setAttribute('width',w);ring.setAttribute('height',h);ring.setAttribute('rx',rc?R*.3:R*1.5*sc2)}
-function dropToken(){if(!drag.moved){drag=null;draw();return}const q={x:drag.x,y:drag.y},p=drag.p;drag=null;if(opts.onPlace){try{opts.onPlace(p)}catch(e){}}const n=nearest(q);
- if(n.best&&n.d<R*2&&n.best.id!==curPos()[p]){const from=curPos()[p],r=get(from)?walkRoute(from,n.best.id,p):{jump:true};
-  if(r.blocked){draw();if(opts.onBlocked){try{opts.onBlocked(r.blocked,{id:n.best.id,label:n.best.label||''})}catch(e){}}return} // locked out: the marker goes back to where it started
-  if(mode==='guest'){send({type:'board-move',player:p,to:n.best.id,path:r.path});draw()}else hostMove(p,n.best.id,r.path)}else draw()}
+function dropToken(){if(!drag.moved){drag=null;draw();return}const d=drag,q={x:d.x,y:d.y},p=d.p;drag=null;if(opts.onPlace){try{opts.onPlace(p)}catch(e){}}
+ const hit=hoverOf(d);
+ if(hit){const r=routeOf(d,hit),lp=lockedOf(d);
+  if(r.blocked){draw();if(opts.onBlocked){try{opts.onBlocked(r.blocked,{id:hit.id,label:hit.label||''})}catch(e){}}return} // locked out: the marker goes back to where it started
+  const path=lp.length?(hit.id===orgOf(d)?lp:lp.concat(r.path.slice(1))):r.path;
+  if(mode==='guest'){send({type:'board-move',player:p,to:hit.id,path});draw()}else hostMove(p,hit.id,path)}else draw()}
 svg.onpointerdown=e=>{tap=null;svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
  if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;tap=null;startPinch();return}
  if(ptrs.size>2)return;
  const g=e.target.closest('[data-p]');
- if(g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId)){const off=e.pointerType==='touch'?30:0;drag={p:g.dataset.p,id:e.pointerId,off,...pt({clientX:e.clientX,clientY:e.clientY-off})};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};gmemo=new Map();draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/><g id="walkG" pointer-events="none"></g>`);drawWalk(null)}
+ if(g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId)){const off=e.pointerType==='touch'?30:0;drag={p:g.dataset.p,id:e.pointerId,off,...pt({clientX:e.clientX,clientY:e.clientY-off})};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};gmemo=new Map();draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/><g id="dwellG" pointer-events="none"></g><g id="walkG" pointer-events="none"></g>`);drag.cps=[];drawWalk(null);dwellTick(drag)}
  else{pan={id:e.pointerId,x:e.clientX,y:e.clientY};const k=e.target.closest&&e.target.closest('[data-tk]');tap=k?{id:e.pointerId,x:e.clientX,y:e.clientY,n:k.dataset.tk}:null}};
 svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});if(tap&&tap.id===e.pointerId&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8)tap=null;
  if(pinch&&ptrs.size>=2){doPinch();return}
@@ -516,7 +568,7 @@ return{
  setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>o.cid&&pos[o.id]&&!list.some(n=>n.id===o.id)&&!list.some(n=>n.cid===o.cid)&&!(restoreQ||[]).some(q=>q.cid===o.cid&&!q.done));
   if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!q.done);gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id],from:g.id}))}}
  PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
- destroy(){gone=1;bgClear();closeTok();ro.disconnect();root.remove()}
+ destroy(){gone=1;document.removeEventListener('keydown',onCpKey);bgClear();closeTok();ro.disconnect();root.remove()}
 };
 
 }
