@@ -31,7 +31,7 @@
    of a pool, then keep it (caught) or put it back], where(playerId) [the id of the space a player's marker is on, or null -- the Host uses it to check two players really share a space], drawLegendary() [Roaming Legend: a random Legendary token from the orange pool, or off a random orange space when the pool is empty; settle it like drawFromPool()], drawFromPool(color) [Battle Frontier: take a RANDOM token out of a pool, returns its name or null; give it back with settlePoolToken(name,'returned')], movePlayer(playerId, spaceIdOrLabel|'@home') [moves a marker without a landing prompt ('@home' = their Current Home); returns the space's label, or '' if it could not], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
    for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
    spaceOf(playerId) -> {id,type,label} of the space that player's marker is on (any role), or null.
-   Messages: guest -> host {type:'board-move',player,to}   {type:'board-stay'} [host: app sends it with player id -- re-runs the landing prompt for the space the player is already on]
+   Messages: guest -> host {type:'board-move',player,to,path:[the spaces walked, start to end]}   {type:'board-stay'} [host: app sends it with player id -- re-runs the landing prompt for the space the player is already on]
              host -> guests {type:'board-state',snap:<JSON string>} */
 (function(global){
 const CSS=".bm-root{position:relative;--bm-bg:#eef0f4;--bm-panel:#fff;--bm-ink:#1c1c22;--bm-mut:#6b6b78;--bm-line:#d6d6de;--bm-map:#cfe8c4;display:flex;gap:8px;padding:8px;box-sizing:border-box;width:100%;height:100%;background:var(--bm-bg);color:var(--bm-ink);font:13px system-ui,sans-serif;overflow:hidden}\n@media (prefers-color-scheme:dark){.bm-root{--bm-bg:#15151a;--bm-panel:#202028;--bm-ink:#ececf1;--bm-mut:#9a9aa8;--bm-line:#34343f;--bm-map:#27402b}}\n.bm-root #bgc{position:absolute;display:none;pointer-events:none;border-radius:10px;background:var(--bm-map);z-index:0}\n.bm-root.bm-bgc #bgc{display:block}\n.bm-root.bm-bgc #b{background:transparent;position:relative;z-index:1}\n.bm-root #b{flex:1;min-width:0;max-width:100%;height:100%;box-sizing:border-box;background:var(--bm-map);border:1px solid var(--bm-line);border-radius:10px;touch-action:none}\n.bm-root aside{width:300px;display:flex;flex-direction:column;gap:8px;overflow:auto}\n.bm-root .box{background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:8px}\n.bm-root .box[hidden]{display:none}\n.bm-root h4{margin:0 0 4px;font-size:12px}\n.bm-root button,.bm-root textarea{font:inherit;color:var(--bm-ink);background:var(--bm-bg);border:1px solid var(--bm-line);border-radius:6px;padding:4px 8px}\n.bm-root button{cursor:pointer;margin:2px 2px 0 0}\n.bm-root button.on{outline:2px solid #d03a2f}\n.bm-root #log{max-height:170px;overflow:auto;font:11px ui-monospace,monospace;color:var(--bm-mut)}\n.bm-root small{color:var(--bm-mut)}\n.bm-root #actbar{position:absolute;left:12px;right:12px;bottom:12px;z-index:5;background:var(--bm-panel);border:1px solid var(--bm-line);border-radius:10px;padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.4)}\n.bm-root #actbar[hidden]{display:none}\n.bm-root #actbar.anch{left:0;top:0;right:auto;bottom:auto;padding:8px;box-sizing:border-box;border-radius:12px;background:var(--pc,var(--bm-panel));color:var(--pt,var(--bm-ink));border:2px solid #fff}\n.bm-root #actbar.anch .actin{max-height:var(--ah,none);overflow-y:auto;display:flex;flex-direction:column;gap:5px}\n.bm-root #actbar.anch .actin>div:not(.actrow){margin:0 0 2px!important;font-size:13px;line-height:1.3;white-space:pre-line}\n.bm-root #actbar .actin>div:first-child:not(.actrow){font-weight:600}\n.bm-root #actbar .actin>div.actnote{font-size:12px;font-weight:400}\n.bm-root #actbar .bs{display:inline-block;max-width:100%}\n.bm-root #actbar .actrow{display:flex;gap:4px;align-items:stretch}\n.bm-root #actbar.anch .actin .actrow>button:first-child{flex:1 1 auto;min-width:0;width:auto}\n.bm-root #actbar.anch .actin .actrow>button.actinfo{flex:0 0 auto;width:auto;padding:0 10px;font-style:italic;font-family:Georgia,serif;font-weight:700}\n.bm-root #actbar .bn{display:block;margin-top:1px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;opacity:.85}\n.bm-root #actbar.anch .actin button{display:block;width:100%;margin:0;white-space:pre-line;text-align:center}\n.bm-root #actbar.anch::before{content:'';display:none;position:absolute;width:10px;height:10px;background:var(--pc,var(--bm-panel));border:2px solid #fff;transform:rotate(45deg)}\n.bm-root #actbar.anch.s-r::before{display:block;left:-8px;top:calc(var(--c) - 6px);border-right:0;border-top:0}\n.bm-root #actbar.anch.s-l::before{display:block;right:-8px;top:calc(var(--c) - 6px);border-left:0;border-bottom:0}\n.bm-root #actbar.anch.s-b::before{display:block;top:-8px;left:calc(var(--c) - 6px);border-right:0;border-bottom:0}\n.bm-root #actbar.anch.s-t::before{display:block;bottom:-8px;left:calc(var(--c) - 6px);border-left:0;border-top:0}\n.bm-root #mapctl{position:absolute;top:16px;left:16px;z-index:4;display:flex;gap:4px}\n.bm-root #mapctl button{margin:0;opacity:.92;box-shadow:0 1px 4px rgba(0,0,0,.35)}\n.bm-root.bm-aside-hidden aside{display:none}\n.bm-root.bm-aside-hidden #b{height:100%}\n@media(max-width:760px){.bm-root{flex-direction:column;overflow-x:hidden;overflow-y:auto}.bm-root #b{flex:0 0 auto;align-self:stretch;width:100%;height:78%}.bm-root aside{width:auto;overflow:visible;flex:0 0 auto}}.bm-root .bm-tkv{display:none;position:absolute;inset:0;z-index:6;background:rgba(0,0,0,.82);align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:24px;box-sizing:border-box;cursor:pointer}.bm-root .bm-tkv.on{display:flex}.bm-root .bm-tkv img{max-width:min(92%,460px);max-height:78%;object-fit:contain}.bm-root .bm-tkv-n{color:#fff;font:600 16px system-ui,sans-serif;text-align:center}";
@@ -125,7 +125,7 @@ function sampleBoard(){const S=[['A','city',0,90,540,'Pallet'],['B','catch','red
  applyBoard({SP:S,LK:L,W:1000,H:620,R:14,names:SAMPLE_NAMES,start:'A'})}
 function importBoard(d,o){const cnt=k=>d.spaces.filter(s=>s.pos&&s.pos[k]).length;let m0;if(o&&o.style){if(!cnt(o.style))throw new Error('this board has no '+o.style+' map yet');m0=o.style}else m0=['condensed','full'].map(k=>[k,cnt(k)]).sort((a,b)=>b[1]-a[1])[0][0];const m=m0,asp=(d.maps&&d.maps[m]&&d.maps[m].aspect)||1.5,w=1000;
  const S=d.spaces.filter(s=>s.pos&&s.pos[m]).map(s=>({id:s.id,type:s.type,color:s.region||(s.type==='catch'?'red':null),x:s.pos[m].x*w,y:s.pos[m].y*w/asp,w:s.pos[m].w&&s.pos[m].w*w,h:s.pos[m].h&&s.pos[m].h*w/asp,label:s.label||'',spawn:s.spawn,start:!!s.start,actions:s.actions||[]}));
- const ids=new Set(S.map(s=>s.id)),L=d.links.filter(l=>ids.has(l[0])&&ids.has(l[1])).map(l=>[l[0],l[1],l[2]?{note:'🔒 '+(l[2].label||(l[2].type+' '+l[2].value))}:undefined]);
+ const ids=new Set(S.map(s=>s.id)),L=d.links.filter(l=>ids.has(l[0])&&ids.has(l[1])).map(l=>[l[0],l[1],l[2]?{note:'🔒 '+(l[2].label||(l[2].type+' '+l[2].value)),gate:l[2]}:undefined]);
  const cols=[...new Set(S.filter(s=>s.type==='catch').map(s=>s.color))],names={};if(!cols.includes('orange'))cols.push('orange');
  cols.forEach(c=>{const n=S.filter(s=>s.type==='catch'&&s.color===c&&!s.spawn).length+(c==='orange'?3:4);names[c]=Array.from({length:n},(_,i)=>c[0].toUpperCase()+c.slice(1)+' '+(i+1))});
  if(opts.getPools){const ext=opts.getPools(cols);if(ext)Object.assign(names,ext)}
@@ -242,7 +242,26 @@ function routeCities(a,b){const adj={};for(const [x,y] of LK){(adj[x]=adj[x]||[]
  const prev={[a]:null},q=[a];while(q.length){const c=q.shift();if(c===b)break;for(const n of adj[c]||[])if(!(n in prev)){prev[n]=c;q.push(n)}}
  const out=[];if(!(b in prev))return out;for(let c=prev[b];c&&c!==a;c=prev[c])out.unshift(c);return out.filter(id=>get(id).type==='city')}
 function setHome(p,c){const n=PL.find(x=>x.id===p).name;home[p]=c;log(`host: ${n}'s Current Home → ${get(c).label||c}`);snapshot()}
-function hostMove(p,to){const prev=pos[p];log(`${PL.find(x=>x.id===p).name} → host: board-move ${to}`);pos[p]=to;snapshot();land(p,to,routeCities(prev,to))}
+// ---- Walking: the route a marker takes, one space at a time ----
+// A gate lives on a link ({type,value,label,dir} from the editor, kept as link[2].gate). It is player-specific, so the DEVICE
+// that is moving its own marker asks the app (opts.gateCheck(gate,player) -> null if the player may cross, else the reason).
+// dir 'ab' / 'ba' only locks the crossing in that direction (link order = the editor's s1 -> s2); 'both' locks either way.
+// Pokémon gates (a space nobody may pass until its spawn is gone) are not handled here yet.
+let gmemo=new Map();
+function gateBlocks(l,from,p){const g=l[2]&&l[2].gate;if(!g||!opts.gateCheck)return null;const d=g.dir||'both';if((d==='ab'&&from!==l[0])||(d==='ba'&&from!==l[1]))return null;
+ if(!gmemo.has(g)){let r=null;try{r=opts.gateCheck(g,p)||null}catch(e){}gmemo.set(g,r)}return gmemo.get(g)}
+function linkOf(a,b){return LK.find(x=>(x[0]===a&&x[1]===b)||(x[0]===b&&x[1]===a))}
+// Shortest walk a -> b that only crosses gates player p may cross. {path:[a,...,b]} | {blocked:'reason'} | {jump:true} (no route at all: not a walk).
+function walkRoute(a,b,p){if(a===b)return{path:[a]};const adj={};for(const l of LK){(adj[l[0]]=adj[l[0]]||[]).push([l[1],l]);(adj[l[1]]=adj[l[1]]||[]).push([l[0],l])}
+ const bfs=useG=>{const prev={[a]:null},q=[a];while(q.length){const c=q.shift();if(c===b)break;for(const [n,l] of adj[c]||[]){if(n in prev||(useG&&gateBlocks(l,c,p)))continue;prev[n]=c;q.push(n)}}
+  if(!(b in prev))return null;const path=[];for(let c=b;c!==null;c=prev[c])path.unshift(c);return path};
+ const ok=bfs(true);if(ok)return{path:ok};const free=bfs(false);if(!free)return{jump:true};
+ let why='';for(let i=0;i<free.length-1&&!why;i++)why=gateBlocks(linkOf(free[i],free[i+1]),free[i],p)||'';
+ return{blocked:why||'A locked gate is in the way.'}}
+// A path a guest sent is only believed if it really is a chain of links from where the marker was to where it ended.
+function validPath(path,from,to){if(!Array.isArray(path)||path.length<2||path[0]!==from||path[path.length-1]!==to||path.length>400)return false;for(let i=0;i<path.length-1;i++)if(!get(path[i])||!linkOf(path[i],path[i+1]))return false;return true}
+function hostMove(p,to,path){const prev=pos[p];const ok=validPath(path,prev,to);log(`${PL.find(x=>x.id===p).name} → host: board-move ${to}${ok?' ('+(path.length-1)+' steps)':''}`);pos[p]=to;snapshot();
+ land(p,to,ok?path.slice(1,-1).filter(id=>get(id).type==='city'):routeCities(prev,to))}
 function landEvent(p,id,passed,here){const s=get(id),homeOpts=[...passed.map(c=>({id:c,label:get(c).label||c,how:'passed through'})),...(s.type==='city'?[{id,label:s.label||id,how:''}]:[])].filter(o=>home[p]!==o.id);
  pendingHome[p]=homeOpts.map(o=>o.id);pendingEnc[p]=null;let kind=(s.type==='city'||s.type==='special')?s.type:s.type==='event'?'event':'none';const o=st[id];
  if(s.type==='catch'&&o){if(o.empty)kind='empty';else{kind='catch';pendingEnc[p]=id}} // nothing is revealed until the player chooses to encounter it
@@ -368,18 +387,34 @@ function nearest(q){let best=null,d=1e9;for(const s of SP){const rc=s.type==='ci
   else k=Math.max(Math.hypot(q.x-s.x,q.y-s.y)-R*1.5*CS,0);
   if(k<d||(k===d&&k===0&&rc)){d=k;best=s}}
  return{best,d}}
+// The walk preview drawn while a marker is held: START on the space it was picked up from (so it is never forgotten, even if the
+// player changes their mind and drops it back), and, over a space it could move to, each space on the way numbered 1, 2, 3...
+function spaceBox(s,pad,col,sw,dash){const rc=s.type==='city'||s.type==='special',e=dims(s),w=rc?e.w+2*pad:R*3.4*CS+pad,h=rc?e.h+2*pad:R*3.4*CS+pad;
+ return `<rect x="${s.x-w/2}" y="${s.y-h/2}" width="${w}" height="${h}" rx="${rc?R*.5:R*1.7*CS}" fill="none" stroke="${col}" stroke-width="${sw}"${dash?` stroke-dasharray="${R*.7} ${R*.5}"`:''}/>`}
+function drawWalk(r,to){const g=$('walkG');if(!g||!drag)return;const o=get(curPos()[drag.p]);let h='';
+ if(o){h+=spaceBox(o,R*.8,'#4ade80',R*.3,true);h+=`<text x="${o.x}" y="${o.y-(o.type==='city'||o.type==='special'?dims(o).h/2:R*1.5*CS)-R*1.2}" text-anchor="middle" font-size="${R*1.1}" font-weight="700" fill="#4ade80" stroke="#000" stroke-width="${R*.25}" paint-order="stroke">START</text>`}
+ if(r&&r.path&&r.path.length>1){const pts=r.path.map(id=>get(id));h+=`<polyline points="${pts.map(q=>q.x+','+q.y).join(' ')}" fill="none" stroke="#ffeb3b" stroke-width="${R*.5}" stroke-linejoin="round" stroke-linecap="round" opacity=".85"/>`;
+  pts.slice(1).forEach((q,i)=>{const last=i===pts.length-2;h+=spaceBox(q,R*.4,last?'#ffeb3b':'#fff',R*.25,false);
+   const bx=q.x+(q.type==='city'||q.type==='special'?dims(q).w/2:R*1.5*CS)*.8,by=q.y-(q.type==='city'||q.type==='special'?dims(q).h/2:R*1.5*CS)*.8;
+   h+=`<circle cx="${bx}" cy="${by}" r="${R*.95}" fill="${last?'#ffeb3b':'#fff'}" stroke="#000" stroke-width="${R*.15}"/><text x="${bx}" y="${by+R*.4}" text-anchor="middle" font-size="${R*1.15}" font-weight="700" fill="#000">${i+1}</text>`})}
+ else if(r&&r.blocked&&to){const q=get(to);h+=spaceBox(q,R*.4,'#ff4d4d',R*.35,true);
+  h+=`<text x="${q.x}" y="${q.y-R*2.8}" text-anchor="middle" font-size="${R*1.1}" font-weight="700" fill="#fff" stroke="#000" stroke-width="${R*.3}" paint-order="stroke">🔒 ${xa(r.blocked)}</text>`}
+ g.innerHTML=h}
 function moveDrag(){if(!drag)return;svg.querySelectorAll(`[data-p="${drag.p}"]`).forEach(c=>{c.setAttribute('cx',drag.x);c.setAttribute('cy',drag.y)});
  const ring=$('snapR');if(!ring)return;const n=nearest({x:drag.x,y:drag.y});
- if(!(n.best&&n.d<R*2&&n.best.id!==curPos()[drag.p])){ring.setAttribute('display','none');return}
+ if(!(n.best&&n.d<R*2&&n.best.id!==curPos()[drag.p])){ring.setAttribute('display','none');drawWalk(null);return}
+ const from=curPos()[drag.p],r=get(from)?walkRoute(from,n.best.id,drag.p):{jump:true};drawWalk(r,n.best.id);ring.setAttribute('stroke',r.blocked?'#ff4d4d':'#ffeb3b');
  const s=n.best,rc=s.type==='city'||s.type==='special',pad=R*.5,e=dims(s),sc2=CS,w=rc?e.w+2*pad:R*3.4*sc2,h=rc?e.h+2*pad:R*3.4*sc2;
  ring.setAttribute('display','');ring.setAttribute('x',s.x-w/2);ring.setAttribute('y',s.y-h/2);ring.setAttribute('width',w);ring.setAttribute('height',h);ring.setAttribute('rx',rc?R*.5:R*1.7*sc2)}
 function dropToken(){if(!drag.moved){drag=null;draw();return}const q={x:drag.x,y:drag.y},p=drag.p;drag=null;if(opts.onPlace){try{opts.onPlace(p)}catch(e){}}const n=nearest(q);
- if(n.best&&n.d<R*2&&n.best.id!==curPos()[p]){if(mode==='guest'){send({type:'board-move',player:p,to:n.best.id});draw()}else hostMove(p,n.best.id)}else draw()}
+ if(n.best&&n.d<R*2&&n.best.id!==curPos()[p]){const from=curPos()[p],r=get(from)?walkRoute(from,n.best.id,p):{jump:true};
+  if(r.blocked){draw();if(opts.onBlocked){try{opts.onBlocked(r.blocked,{id:n.best.id,label:n.best.label||''})}catch(e){}}return} // locked out: the marker goes back to where it started
+  if(mode==='guest'){send({type:'board-move',player:p,to:n.best.id,path:r.path});draw()}else hostMove(p,n.best.id,r.path)}else draw()}
 svg.onpointerdown=e=>{tap=null;svg.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
  if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;tap=null;startPinch();return}
  if(ptrs.size>2)return;
  const g=e.target.closest('[data-p]');
- if(g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId)){const off=e.pointerType==='touch'?30:0;drag={p:g.dataset.p,id:e.pointerId,off,...pt({clientX:e.clientX,clientY:e.clientY-off})};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/>`)}
+ if(g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId)){const off=e.pointerType==='touch'?30:0;drag={p:g.dataset.p,id:e.pointerId,off,...pt({clientX:e.clientX,clientY:e.clientY-off})};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};gmemo=new Map();draw();svg.insertAdjacentHTML('beforeend',`<g id="walkG" pointer-events="none"></g><rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/>`);drawWalk(null)}
  else{pan={id:e.pointerId,x:e.clientX,y:e.clientY};const k=e.target.closest&&e.target.closest('[data-tk]');tap=k?{id:e.pointerId,x:e.clientX,y:e.clientY,n:k.dataset.tk}:null}};
 svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});if(tap&&tap.id===e.pointerId&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8)tap=null;
  if(pinch&&ptrs.size>=2){doPinch();return}
@@ -409,7 +444,7 @@ $('jb').onclick=()=>{try{importBoard(JSON.parse($('jt').value))}catch(err){$('jm
 function showAction(a){const b=$('actbar');b.innerHTML='';const inn=document.createElement('div');inn.className='actin';const lines=String(a.text||'').split('\n'),tx=document.createElement('div');fillLabel(tx,lines[0]);tx.style.marginBottom='6px';inn.appendChild(tx);
  if(lines.length>1){const dt=document.createElement('div');dt.className='actnote';dt.textContent=lines.slice(1).join('\n');inn.appendChild(dt)}
  // a button may carry a note (shown under its label) and may be disabled: visible but not clickable, the note saying what is needed
- const addBtn=(x,host)=>{const bt=document.createElement('button');bt.className='filter-btn filter-btn-compact';fillLabel(bt,x.label);if(x.note){const sm=document.createElement('span');sm.className='bn';sm.textContent=x.note;bt.appendChild(sm)}if(x.disabled)bt.disabled=true;else bt.onclick=()=>{hideAction();if(opts.onAction)opts.onAction(x.id,a)};
+ const addBtn=(x,host)=>{const bt=document.createElement('button');bt.className='filter-btn filter-btn-compact';fillLabel(bt,x.label);if(x.note){const sm=document.createElement('span');sm.className='bn';sm.textContent=x.note;bt.appendChild(sm)}if(x.disabled)bt.disabled=true;else bt.onclick=()=>{if(!x.keepOpen)hideAction();if(opts.onAction)opts.onAction(x.id,a)}; // keepOpen: like the "i" button, leaves the box up
   if(x.detail){ // a small "i" button on the same line: asks the app for more detail on this action; the box stays open
    const row=document.createElement('div');row.className='actrow';row.appendChild(bt);const ib=document.createElement('button');ib.className='filter-btn filter-btn-compact actinfo';ib.textContent='i';ib.title='Details';ib.setAttribute('aria-label','Details');ib.onclick=()=>{if(opts.onAction)opts.onAction(x.detail,a)};row.appendChild(ib);host.appendChild(row)}
   else host.appendChild(bt)};
@@ -461,7 +496,7 @@ return{
  loadBoard:importBoard,
  setImage:setImg,
  setStatus:t=>{$('jm').textContent=t},getStatus:()=>$('jm').textContent,
- handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to);else if(mode==='host'&&m.type==='board-stay')stayOnSpace(m.player);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-reroll')rerollEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw();if(autoFill&&!initCentered)fillView()}},
+ handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to,m.path);else if(mode==='host'&&m.type==='board-stay')stayOnSpace(m.player);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-reroll')rerollEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw();if(autoFill&&!initCentered)fillView()}},
  showAction,hideAction,
  resolveEncounter(id,out){if(mode==='host'&&st[id]&&st[id].token)resolve(id,out)},
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
