@@ -46748,7 +46748,7 @@
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onDraw: boardUpdateStayButton, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onDraw: boardUpdateStayButton, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
                 boardSig = sig;
                 boardSaveKey = saveKey;
                 boardSaveDirty = false;
@@ -46792,10 +46792,72 @@
             boardPlayersSig = sig;
             boardCtrl.setPlayers(list);
         }
+        // ---- Gates on paths ----
+        // board.js asks, for the player moving THEIR OWN marker on THIS device, whether they may cross a gated path. Every gate is
+        // player-specific, so each is checked against this device's own save. Returns null (may cross) or the reason (shown as a toast
+        // and over the locked space). Bad or incomplete gate data never locks a player out -- it lets them through.
+        // Gate types come from the Board Editor: badge | villain | item | ability | points | other.
+        const BOARD_ABILITY_GATE_MIN_TIER = { surf: 5 }; // an ability gate that also needs a Gym Badge of at least this Tier
+        function boardTeamHasAbility(tag) {
+            const members = (getActiveSaveData().team && getActiveSaveData().team.members) || [];
+            return members.some(m => {
+                if (!m) return false;
+                const e = POKEMON_BY_NAME[m.formOverride] || POKEMON_BY_NAME[m.name];
+                return !!(e && Array.isArray(e.tags) && e.tags.some(x => String(x).toLowerCase() === tag));
+            });
+        }
+        function boardCurrentGameLength() {
+            const s = (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) || (activeSaveSlot !== null && gameSaves[activeSaveSlot]) || null;
+            return (s && s.gameLength) || 'medium';
+        }
+        function boardGateCheck(gate) {
+            if (!gate || typeof gate !== 'object') return null;
+            const data = getActiveSaveData();
+            const value = String(gate.value == null ? '' : gate.value).trim();
+            if (gate.type === 'badge') {
+                const need = parseInt(value, 10);
+                if (!Number.isFinite(need)) return null;
+                return getHighestCollectedBadgeTier(data) >= need ? null : 'Needs a Gym Badge of Tier ' + need + ' or higher.';
+            }
+            if (gate.type === 'ability') {
+                const tag = value.toLowerCase();
+                if (!tag) return null;
+                const label = value.toUpperCase();
+                const needTier = BOARD_ABILITY_GATE_MIN_TIER[tag] || 0;
+                const missing = [];
+                if (needTier && getHighestCollectedBadgeTier(data) < needTier) missing.push('a Gym Badge of Tier ' + needTier + ' or higher');
+                if (!boardTeamHasAbility(tag)) missing.push('a Pok\u00e9mon with ' + label + ' on your team');
+                return missing.length ? 'Needs ' + missing.join(' and ') + '.' : null;
+            }
+            if (gate.type === 'villain') {
+                const villain = boardLeadersOfCategory('villain')[0];
+                if (!villain) return null;
+                return isGymLeaderDefeated(villain.id) ? null : 'Needs the Villain team defeated (and their Badge earned).';
+            }
+            if (gate.type === 'item') {
+                if (!value) return null;
+                const want = boardCardNameKey(value);
+                const has = getLocalPermanentArray().some(entry => {
+                    const card = entry && CARDS_BY_ID[entry.cardId];
+                    return !!card && boardCardNameKey(card.name) === want;
+                });
+                return has ? null : 'Needs the ' + value + ' card in your Permanent zone.';
+            }
+            if (gate.type === 'points') {
+                const thresholds = GAME_LENGTH_STAGE_THRESHOLDS[boardCurrentGameLength()] || GAME_LENGTH_STAGE_THRESHOLDS.medium;
+                const custom = parseInt(value, 10);
+                const need = Number.isFinite(custom) ? custom : thresholds.end.points; // a number, or blank / "endgame" = the game length's Endgame points
+                return computeBadgePoints(data) >= need ? null : 'Needs ' + need + ' Badge Points.';
+            }
+            return null;
+        }
+        function boardGateBlocked(reason, space) {
+            showGameToast('\uD83D\uDD12 ' + reason);
+        }
         // --- message routing (called from the host and guest dispatchers) ---
         function boardHandleFromGuest(peerId, data) {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
-            boardEnsureBoard().then(c => c.handleMessage({ type: 'board-move', player: peerId, to: data.to })).catch(() => {});
+            boardEnsureBoard().then(c => c.handleMessage({ type: 'board-move', player: peerId, to: data.to, path: Array.isArray(data.path) ? data.path.filter(x => typeof x === 'string') : undefined })).catch(() => {});
         }
         function boardHandleHello() {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
