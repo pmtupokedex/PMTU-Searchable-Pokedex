@@ -15318,6 +15318,15 @@
         #board-walk-count { display: none; margin-right: 4px; font-weight: bold; font-size: 72px; line-height: 1; color: #fff; pointer-events: none;
             text-shadow: -2px -2px 0 black, 0 -2px 0 black, 2px -2px 0 black, -2px 0 0 black, 2px 0 0 black, -2px 2px 0 black, 0 2px 0 black, 2px 2px 0 black; }
         #board-walk-count.visible { display: block; }
+        #board-walk-count.fading { opacity: 0; transition: opacity 0.4s ease; }
+        /* While a marker is held the Roll / Stay buttons slide away so they never cover a space near the map's edge (board.js reports the drag
+           through onDragState). The numbers stay, and hop to a free corner if the marker gets close to them: .c-tl / .c-br. */
+        #board-roll-controls > .filter-btn { max-height: 80px; overflow: hidden; transition: max-height 0.25s ease, padding 0.25s ease, margin 0.25s ease, border-width 0.25s ease, opacity 0.2s ease; }
+        #board-roll-controls.dragging > .filter-btn { max-height: 0; padding-top: 0; padding-bottom: 0; border-top-width: 0; border-bottom-width: 0; margin-bottom: -4px; opacity: 0; pointer-events: none; }
+        #board-roll-controls.c-tl { right: auto; left: 16px; align-items: flex-start; }
+        #board-roll-controls.c-br { top: auto; bottom: 16px; }
+        #board-roll-controls.c-tl #board-roll-row { justify-content: flex-start; }
+        #board-roll-controls.c-tl #board-roll-display { margin-right: 0; margin-left: 4px; transform-origin: top left; align-items: flex-start; }
         #board-roll-display { position: relative; margin-right: 4px; transform-origin: top right; display: none; flex-direction: column; align-items: flex-end; pointer-events: none; }
         #board-roll-display.visible { display: flex; animation: board-roll-pop 0.28s ease-out; }
         #board-roll-display.fading { opacity: 0; transition: opacity 0.4s ease; }
@@ -46753,7 +46762,7 @@
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, onDragState: boardDragState, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
                 boardSig = sig;
                 boardSaveKey = saveKey;
                 boardSaveDirty = false;
@@ -46857,11 +46866,46 @@
             return null;
         }
         // board.js reports the step count of the move being planned (null once the marker is put down).
-        function boardWalkCount(n) {
+        // While held the count is steady; once the marker is put down (settled) it stays a moment and fades exactly like the die result.
+        var boardWalkFadeTimer = null, boardWalkHideTimer = null;
+        function boardWalkCount(n, settled) {
             const el = document.getElementById('board-walk-count');
             if (!el) return;
-            if (n == null) { el.classList.remove('visible'); el.textContent = ''; }
-            else { el.textContent = String(n); el.classList.add('visible'); }
+            clearTimeout(boardWalkFadeTimer); clearTimeout(boardWalkHideTimer);
+            el.classList.remove('fading');
+            if (n == null) { el.classList.remove('visible'); el.textContent = ''; return; }
+            el.textContent = String(n);
+            el.classList.add('visible');
+            if (settled) {
+                boardWalkFadeTimer = setTimeout(() => el.classList.add('fading'), BOARD_ROLL_AFTER_PLACE_MS);
+                boardWalkHideTimer = setTimeout(() => { el.classList.remove('visible', 'fading'); el.textContent = ''; }, BOARD_ROLL_AFTER_PLACE_MS + 400);
+            }
+        }
+        // Dragging a marker: tuck the buttons away, and keep the numbers clear of the marker by moving them between the top-right,
+        // top-left and bottom-right corners (the bottom-left holds the checkpoint button on touch screens).
+        var boardNumCorner = 'tr';
+        function boardDragState(info) {
+            const c = document.getElementById('board-roll-controls'), fr = document.getElementById('game-board-frame'), row = document.getElementById('board-roll-row');
+            if (!c || !fr || !row) return;
+            if (!info || !info.on) { c.classList.remove('dragging', 'c-tl', 'c-br'); boardNumCorner = 'tr'; return; }
+            c.classList.add('dragging');
+            const w = row.offsetWidth, h = row.offsetHeight, r = fr.getBoundingClientRect(), G = 16, MARGIN = 80;
+            const box = {
+                tr: { l: r.right - G - w, t: r.top + G, r: r.right - G, b: r.top + G + h },
+                tl: { l: r.left + G, t: r.top + G, r: r.left + G + w, b: r.top + G + h },
+                br: { l: r.right - G - w, t: r.bottom - G - h, r: r.right - G, b: r.bottom - G }
+            };
+            const pts = [[info.x, info.y]];
+            if (typeof info.fx === 'number') pts.push([info.fx, info.fy]);
+            const dist = k => Math.min(...pts.map(([x, y]) => Math.hypot(Math.max(box[k].l - x, 0, x - box[k].r), Math.max(box[k].t - y, 0, y - box[k].b))));
+            const order = [boardNumCorner, 'tr', 'tl', 'br'].filter((k, i, a) => a.indexOf(k) === i); // the current corner first, so it doesn't flip-flop
+            let pick = order.find(k => dist(k) >= MARGIN);
+            if (!pick) pick = order.reduce((a, k) => dist(k) > dist(a) ? k : a, order[0]);
+            if (pick !== boardNumCorner) {
+                boardNumCorner = pick;
+                c.classList.toggle('c-tl', pick === 'tl');
+                c.classList.toggle('c-br', pick === 'br');
+            }
         }
         function boardGateBlocked(reason, space) {
             showGameToast((String(reason).charAt(0) === '\u21A9' ? '' : '\uD83D\uDD12 ') + reason);
