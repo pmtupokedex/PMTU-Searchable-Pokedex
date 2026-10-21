@@ -476,7 +476,8 @@ svg.onpointerdown=e=>{tap=null;svg.setPointerCapture(e.pointerId);ptrs.set(e.poi
  if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;tap=null;startPinch();return}
  if(ptrs.size>2)return;
  const g=e.target.closest('[data-p]');
- if(g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId)){const off=e.pointerType==='touch'?30:0;drag={p:g.dataset.p,id:e.pointerId,off,...pt({clientX:e.clientX,clientY:e.clientY-off})};active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};gmemo=new Map();draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/><g id="dwellG" pointer-events="none"></g><g id="walkG" pointer-events="none"></g>`);drag.cps=[];drawWalk(null);dwellTick(drag)}
+ if(g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId)){const off=e.pointerType==='touch'?30:0;const q0=pt({clientX:e.clientX,clientY:e.clientY-off});drag={p:g.dataset.p,id:e.pointerId,off,x:q0.x,y:q0.y}; // (spreading a DOMPoint copies nothing, which left x/y undefined until the first move)
+ active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};gmemo=new Map();draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/><g id="dwellG" pointer-events="none"></g><g id="walkG" pointer-events="none"></g>`);drag.cps=[];drawWalk(null);dwellTick(drag)}
  else{pan={id:e.pointerId,x:e.clientX,y:e.clientY};const k=e.target.closest&&e.target.closest('[data-tk]');tap=k?{id:e.pointerId,x:e.clientX,y:e.clientY,n:k.dataset.tk}:null}};
 svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});if(tap&&tap.id===e.pointerId&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8)tap=null;
  if(pinch&&ptrs.size>=2){doPinch();return}
