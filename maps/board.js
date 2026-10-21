@@ -544,13 +544,23 @@ function placeAct(){const b=$('actbar');if(!b||b.hidden)return;
  const W=Math.min(220,sr.width-2*G);b.style.width=W+'px';let h=b.offsetHeight;
  const shrink=room=>{if(h>room){b.style.setProperty('--ah',Math.max(60,room-18)+'px');h=b.offsetHeight}};
  const roomR=Rt-G-(ax+rad+gap),roomL=(ax-rad-gap)-(L+G),roomB=Bt-G-(ay+rad+gap),roomT=(ay-rad-gap)-(T+G);
- let side=null;for(const s of(actSide==='l'?['l','r']:['r','l']))if((s==='r'?roomR:roomL)>=W){side=s;break}
- if(!side){const o=actSide==='t'?['t','b']:['b','t'];side=o.find(s=>(s==='b'?roomB:roomT)>=h)||(roomB>=roomT?'b':'t')}
- let left,top,c;
- if(side==='r'||side==='l'){shrink(Bt-T-2*G);left=side==='r'?ax+rad+gap:ax-rad-gap-W;
-  let minTop=T+G;document.querySelectorAll('[data-actbar-avoid]').forEach(e=>{const r=e.getBoundingClientRect();if(!r.width||!r.height)return;const l=r.left-rr.left,t=r.top-rr.top,rg=l+r.width;if(rg>left&&l<left+W&&t<ay)minTop=Math.max(minTop,t+r.height+6)});
-  top=Math.max(minTop,Math.min(ay-h/2,Bt-G-h));top=Math.min(top,Bt-G-h);c=ay-top}
- else{shrink(side==='b'?roomB:roomT);left=Math.max(L+G,Math.min(ax-W/2,Rt-G-W));top=side==='b'?ay+rad+gap:ay-rad-gap-h;c=ax-left}
+ // Keep-clear zones: the app's button bars and the roll numbers ([data-actbar-avoid]). The box slides along its edge of the marker (up/down beside it,
+ // left/right above or below it) to stay clear of them, and its pointer slides along the box to keep aiming at the marker.
+ const AV=[];document.querySelectorAll('[data-actbar-avoid]').forEach(e=>{const r=e.getBoundingClientRect();if(!r.width||!r.height)return;AV.push({soft:e.getAttribute('data-actbar-avoid')==='soft',l:r.left-rr.left-6,t:r.top-rr.top-6,r:r.right-rr.left+6,b:r.bottom-rr.top+6})});
+ // The start (in [lo,hi]) nearest to `want` for a span of `size` that overlaps none of the blocked [a,b] stretches; null if there is no room.
+ const fit=(lo,hi,size,want,blk)=>{if(hi<lo)return null;const cand=[Math.max(lo,Math.min(hi,want))];blk.forEach(([a,c])=>{cand.push(a-size,c)});let best=null;
+  for(const t of cand){if(t<lo-.5||t>hi+.5)continue;const tt=Math.max(lo,Math.min(hi,t));if(blk.some(([a,c])=>tt<c-.5&&tt+size>a+.5))continue;if(best===null||Math.abs(tt-want)<Math.abs(best-want))best=tt}return best};
+ // mode 2: clear of every zone; 1: clear of the hard ones only (data-actbar-avoid="soft", the roll numbers, may be covered); 0: ignore them all (nothing else fits)
+ const tryPlace=(s,mode)=>{const Z=mode?AV.filter(v=>mode===2||!v.soft):[];
+  if(s==='r'||s==='l'){shrink(Bt-T-2*G);const lf=s==='r'?ax+rad+gap:ax-rad-gap-W;
+   const tp=fit(T+G,Bt-G-h,h,ay-h/2,Z.filter(v=>v.r>lf&&v.l<lf+W).map(v=>[v.t,v.b]));return tp===null?null:{left:lf,top:tp,c:ay-tp}}
+  shrink(s==='b'?roomB:roomT);const tp=s==='b'?ay+rad+gap:ay-rad-gap-h;
+  const lf=fit(L+G,Rt-G-W,W,ax-W/2,Z.filter(v=>v.b>tp&&v.t<tp+h).map(v=>[v.l,v.r]));return lf===null?null:{left:lf,top:tp,c:ax-lf}};
+ const sides=[];for(const s of(actSide==='l'?['l','r']:['r','l']))if((s==='r'?roomR:roomL)>=W)sides.push(s);
+ for(const s of(actSide==='t'?['t','b']:['b','t']))if((s==='b'?roomB:roomT)>=h)sides.push(s);
+ if(!sides.length)sides.push(roomB>=roomT?'b':'t');
+ let side=null,pl=null;for(const mode of[2,1,0]){for(const s of sides){pl=tryPlace(s,mode);if(pl){side=s;break}}if(pl)break}
+ let left=pl.left,top=pl.top,c=pl.c;
  let cs=side; // which edge carries the pointer: normally the one facing the marker; docked, it still points toward where the marker is, off the map
  if(!on){const dx=cx-(left+W/2),dy=cy-(top+h/2);if(Math.abs(dx)*h>=Math.abs(dy)*W){cs=dx<0?'r':'l';c=h/2+dy/Math.max(1,Math.abs(dx))*(W/2)}else{cs=dy<0?'b':'t';c=W/2+dx/Math.max(1,Math.abs(dy))*(h/2)}}
  const len=(cs==='r'||cs==='l')?h:W;c=Math.max(14,Math.min(len-14,c));
@@ -579,7 +589,7 @@ return{
  cities:()=>SP.filter(s=>s.type==='city').map(s=>({id:s.id,label:s.label||'',fly:!!s.fly,actions:s.actions||[]})),
  fit:()=>fitView(),
  setKeepScale(on){keepScale=!!on;updEA();Z=clampZ(Z);clampView();applyView()},
- restoreView,
+ restoreView,placeAction:()=>{try{placeAct()}catch(e){}},
  setView:v=>setView(v),
  setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>o.cid&&pos[o.id]&&!list.some(n=>n.id===o.id)&&!list.some(n=>n.cid===o.cid)&&!(restoreQ||[]).some(q=>q.cid===o.cid&&!q.done));
   if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!q.done);gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id],from:g.id}))}}
