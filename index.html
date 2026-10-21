@@ -15315,12 +15315,21 @@
         #board-ability-bar { position: absolute; left: 50%; bottom: 12px; z-index: 4; transform: translateX(-50%); display: flex; justify-content: center; gap: 8px;
             width: max-content; max-width: calc(100% - 24px); pointer-events: none; transition: transform 0.25s ease, opacity 0.2s ease; }
         #board-ability-bar.dragging { transform: translate(-50%, calc(100% + 24px)); opacity: 0; }
-        .board-ability-btn { pointer-events: auto; flex: 0 1 64px; min-width: 0; aspect-ratio: 1 / 1; padding: 0; margin: 0; border-radius: 12px; overflow: hidden; cursor: pointer;
-            border: 2px solid rgba(255, 255, 255, 0.9); background: rgba(16, 20, 24, 0.7); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45); -webkit-tap-highlight-color: transparent; }
+        .board-ability-btn { pointer-events: auto; flex: 0 1 64px; min-width: 0; aspect-ratio: 1 / 1; padding: 0; margin: 0; border-radius: 50%; overflow: hidden; cursor: pointer;
+            border: 2px solid #000; background: rgba(16, 20, 24, 0.7); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45); -webkit-tap-highlight-color: transparent; }
         .board-ability-btn img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; transition: filter 0.2s ease; }
-        .board-ability-btn.locked { cursor: default; border-color: rgba(255, 255, 255, 0.35); }
+        .board-ability-btn.locked { cursor: default; }
         .board-ability-btn.locked img { filter: grayscale(1) brightness(0.35); }
         #board-ability-bar.dragging .board-ability-btn { pointer-events: none; }
+        /* Confirm / pick dialog for Dig, Fly and Teleport (boardAskJump): covers just the map frame. */
+        #board-jump-overlay { position: absolute; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center;
+            padding: 20px; box-sizing: border-box; background: rgba(0, 0, 0, 0.55); }
+        #board-jump-overlay[hidden] { display: none; }
+        #board-jump-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; box-sizing: border-box; }
+        #board-jump-list { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px; max-height: 40vh; overflow-y: auto; }
+        #board-jump-list:empty { display: none; }
+        #board-jump-list .filter-btn { margin: 0; width: 100%; box-sizing: border-box; }
+        #board-jump-yes:disabled { opacity: 0.45; cursor: default; }
 
         /* Movement roll: the number a player just rolled with the map's Roll button, shown to the whole table in the
            roller's color. Top-right corner of the map frame (below the Roll Movement Die button). White
@@ -18525,6 +18534,17 @@
                 <div id="board-roll-row"><span id="board-walk-count" aria-hidden="true" title="Spaces in the move so far"></span><div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div></div>
             </div>
             <div id="board-ability-bar" role="group" aria-label="Movement abilities"></div>
+            <div id="board-jump-overlay" hidden>
+                <div class="game-confirm-card">
+                    <p class="game-confirm-title" id="board-jump-title"></p>
+                    <p class="game-confirm-subtext" id="board-jump-text"></p>
+                    <div id="board-jump-list"></div>
+                    <div class="game-save-slot-actions">
+                        <button class="filter-btn" id="board-jump-yes" type="button">Yes</button>
+                        <button class="filter-btn exclude" id="board-jump-no" type="button">Cancel</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -45474,6 +45494,8 @@
                     boardHandleReroll(conn.peer);
                 } else if (data.type === 'board-stay') {
                     boardHandleStay(conn.peer);
+                } else if (data.type === 'board-jump' && typeof data.to === 'string') {
+                    boardHandleJumpFromGuest(conn.peer, data);
                 } else if (data.type === 'board-roll-placed') {
                     boardHandleRollPlacedFromGuest(conn.peer);
                 } else if (data.type === 'board-caught' && Array.isArray(data.names)) {
@@ -46776,7 +46798,7 @@
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, onDragState: boardDragState, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onTravel: boardOnTravel, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, onDragState: boardDragState, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
                 boardSig = sig;
                 boardSaveKey = saveKey;
                 boardSaveDirty = false;
@@ -46838,7 +46860,8 @@
         // ---- Movement-ability buttons ----
         // Each is usable (full colour) once this player meets the same requirements the map's ability gates use (boardGateCheck):
         // Dig and Teleport need a team Pok\u00e9mon with the ability, Fly also a Tier 3+ Gym Badge, Surf a Tier 5+ one (BOARD_ABILITY_GATE_MIN_TIER).
-        // They aren't wired to anything yet.
+        // Pressing one: Surf just says what it does; Dig / Fly / Teleport ask for confirmation, then move this player's marker straight to
+        // a City (boardUseAbility below). A locked button says what is missing instead.
         const BOARD_ABILITY_BUTTONS = [
             { id: 'dig', label: 'Dig', url: 'https://dl.dropboxusercontent.com/scl/fi/x40exjym9k60pf9xtsicm/ability_dig.png?rlkey=8yctsvjiwlt3gl1nvfxzqpu5o&st=21rzqg5v&dl=1' },
             { id: 'fly', label: 'Fly', url: 'https://dl.dropboxusercontent.com/scl/fi/p716lgvkmk9szoh0cy184/ability_fly.png?rlkey=ax3ekv8hvf885g6eqlwkh4kni&st=tvec9vtv&dl=1' },
@@ -46848,6 +46871,7 @@
         function boardUpdateAbilityButtons() {
             const bar = document.getElementById('board-ability-bar');
             if (!bar) return;
+            try { boardNoteCurrentCity(); } catch (e) { /* board not ready */ }
             if (!bar.firstChild) {
                 BOARD_ABILITY_BUTTONS.forEach(a => {
                     const b = document.createElement('button');
@@ -46871,6 +46895,130 @@
                 if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', tip); }
                 b.setAttribute('aria-disabled', locked ? 'true' : 'false');
             });
+        }
+        // ---- Cities this player has been to (for Fly) ----
+        // A City counts once the player's marker has landed on it or passed through it. It is kept in this player's own save
+        // (save.boardVisited[region] = [space ids]) so it survives a reload, like movePenalty. Only the device that moved records it.
+        function boardVisitedList() {
+            const data = getActiveSaveData(), all = data && data.boardVisited, list = all && all[boardWantedConfig().region];
+            return Array.isArray(list) ? list : [];
+        }
+        function boardNoteVisited(ids) {
+            if (!boardCtrl || !boardCtrl.cities || isActiveSaveReadOnly()) return;
+            const data = getActiveSaveData();
+            if (!data) return;
+            const cityIds = new Set(boardCtrl.cities().map(c => c.id)), have = new Set(boardVisitedList());
+            const add = [...new Set((ids || []).filter(id => typeof id === 'string' && cityIds.has(id) && !have.has(id)))];
+            if (!add.length) return;
+            const region = boardWantedConfig().region;
+            if (!data.boardVisited || typeof data.boardVisited !== 'object') data.boardVisited = {};
+            data.boardVisited[region] = [...have, ...add];
+            if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves();
+        }
+        function boardOnTravel(playerId, path) {
+            if (playerId === (getMyLobbyPlayerId() || 'host')) boardNoteVisited(path);
+        }
+        // Wherever this player's marker is standing (the start, a landing, a Black Out) counts too.
+        function boardNoteCurrentCity() {
+            if (!boardCtrl || !boardCtrl.spaceOf) return;
+            const me = boardMyPlayer(), sp = me && boardCtrl.spaceOf(me.id);
+            if (sp && sp.type === 'city') boardNoteVisited([sp.id]);
+        }
+        // Cities this player may Fly to: one with a FLY icon (the editor's "FLY destination" box, space.fly) that they have been to, or
+        // one whose Gym Badge they have earned. Never the one they are standing on.
+        function boardFlyDestinations() {
+            if (!boardCtrl || !boardCtrl.cities) return [];
+            const visited = new Set(boardVisitedList()), me = boardMyPlayer(), here = me && boardCtrl.spaceOf(me.id);
+            return boardCtrl.cities().filter(c => {
+                if (here && c.id === here.id) return false;
+                if (c.fly && visited.has(c.id)) return true;
+                return c.actions.some(a => {
+                    const r = boardResolveBattleAction(a);
+                    return !!r && r.type === 'gym-battle' && boardBattleActionDefeated(r);
+                });
+            });
+        }
+        // ---- Dig / Fly / Teleport ----
+        // One dialog for all three: a title, a line of text, optionally a list to pick from, and Yes / Cancel.
+        var boardJumpAsk = null;
+        function boardAskJump(cfg) {
+            const ov = document.getElementById('board-jump-overlay');
+            if (!ov) return;
+            boardJumpAsk = { cfg, pick: null };
+            document.getElementById('board-jump-title').textContent = cfg.title;
+            document.getElementById('board-jump-text').textContent = cfg.text || '';
+            const list = document.getElementById('board-jump-list');
+            list.innerHTML = '';
+            (cfg.choices || []).forEach(ch => {
+                const b = document.createElement('button');
+                b.type = 'button'; b.className = 'filter-btn board-jump-opt'; b.dataset.choice = ch.id; b.textContent = ch.label;
+                list.appendChild(b);
+            });
+            const yes = document.getElementById('board-jump-yes');
+            yes.textContent = cfg.yesLabel || 'Yes';
+            yes.disabled = !!(cfg.choices && cfg.choices.length);
+            ov.hidden = false;
+        }
+        function boardCloseJumpAsk() {
+            const ov = document.getElementById('board-jump-overlay');
+            if (ov) ov.hidden = true;
+            boardJumpAsk = null;
+        }
+        function boardJumpPick(btn) {
+            if (!boardJumpAsk) return;
+            boardJumpAsk.pick = btn.dataset.choice;
+            document.querySelectorAll('#board-jump-list .board-jump-opt').forEach(b => b.classList.toggle('include', b === btn));
+            document.getElementById('board-jump-yes').disabled = false;
+        }
+        function boardJumpConfirm() {
+            const a = boardJumpAsk;
+            if (!a || ((a.cfg.choices || []).length && !a.pick)) return;
+            boardCloseJumpAsk();
+            a.cfg.onYes(a.pick);
+        }
+        // Moves this player's marker straight to a City: `to` is a City's space id or '@home'; `land` shows that City's actions box.
+        function boardDoJump(to, land) {
+            const me = boardMyPlayer();
+            if (!me || !boardCtrl) return;
+            boardAnnounceRollSettled(me); // the move is decided, so any roll still on screen can wind down
+            try { boardCtrl.hideAction(); } catch (e) { /* nothing showing */ }
+            if (lobbyState.role === 'guest') boardSend({ type: 'board-jump', to, land });
+            else boardCtrl.handleMessage({ type: 'board-jump', player: me.id, to, land });
+        }
+        const BOARD_FLY_SHOWS_ACTIONS = false; // landing by Fly brings up the City's actions box (Dig does not; Teleport does)
+        function boardUseAbility(id) {
+            const def = BOARD_ABILITY_BUTTONS.find(a => a.id === id);
+            if (!def) return;
+            let why = null;
+            try { why = boardGateCheck({ type: 'ability', value: id }); } catch (e) { why = 'Not available.'; }
+            if (why) { showGameToast(def.label + ' \u2014 ' + why); return; }
+            if (id === 'surf') { showGameToast('You are able to traverse paths blocked by Surf gates.'); return; }
+            if (isActiveSaveReadOnly() || !boardCtrl) return;
+            const me = boardMyPlayer();
+            if (!me) { showGameToast('Only players can use ' + def.label + '.'); return; }
+            const here = boardCtrl.spaceOf(me.id);
+            if (id === 'dig' || id === 'teleport') {
+                const home = boardCtrl.homeOf(me.id);
+                if (!home) { showGameToast('You have no Current Home to ' + def.label + ' to.'); return; }
+                if (here && here.id === home.id) { showGameToast('You are already at your Current Home (' + (home.label || 'City') + ').'); return; }
+                boardAskJump({
+                    title: 'Use ' + def.label + '?',
+                    text: 'Your marker will move straight to your Current Home' + (home.label ? ', ' + home.label : '') + '.',
+                    onYes: () => boardDoJump('@home', id === 'teleport')
+                });
+                return;
+            }
+            if (id === 'fly') {
+                const dests = boardFlyDestinations();
+                if (!dests.length) { showGameToast('No City to Fly to yet \u2014 you can Fly to a FLY City you have visited, or a City whose Gym Badge you have earned.'); return; }
+                boardAskJump({
+                    title: 'Use Fly?',
+                    text: 'Choose a City to Fly to.',
+                    choices: dests.map(c => ({ id: c.id, label: c.label || c.id })),
+                    yesLabel: 'Fly',
+                    onYes: city => boardDoJump(city, BOARD_FLY_SHOWS_ACTIONS)
+                });
+            }
         }
         function boardCurrentGameLength() {
             const s = (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) || (activeSaveSlot !== null && gameSaves[activeSaveSlot]) || null;
@@ -46988,6 +47136,11 @@
             boardEnsureBoard().then(c => { boardSyncPlayers(); c.resend(); }).catch(() => {});
         }
         // The player (identified by their connection, never by anything in the message) chose to encounter the wild Pokémon here.
+        // The player (identified by their connection) used Dig / Fly / Teleport: their marker goes straight to a City (board.js checks it is one).
+        function boardHandleJumpFromGuest(peerId, data) {
+            if (!getRegionMapSettingsForActiveSave().enabled) return;
+            boardEnsureBoard().then(c => c.handleMessage({ type: 'board-jump', player: peerId, to: data.to, land: !!data.land })).catch(() => {});
+        }
         // The player (identified by their connection) stays on the space they are on: show them that space's prompt again.
         function boardHandleStay(peerId) {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
@@ -49575,6 +49728,7 @@
             }
             boardEnsureBoard().then(c => {
                 boardSyncPlayers();
+                boardUpdateAbilityButtons(); // the team / badges may have changed while the board was away
                 requestAnimationFrame(() => c.restoreView());
                 setTimeout(() => { if (boardCtrl) boardCtrl.restoreView(); }, 420); // again once a closing drawer's padding transition has settled
                 if (lobbyState.role === 'guest') boardSend({ type: 'board-hello' });
@@ -49594,7 +49748,14 @@
             }
             else if (t.closest('#board-roll-btn')) boardRollMovement();
             else if (t.closest('#board-stay-btn')) boardStayOnSpace();
+            else if (t.closest('.board-ability-btn')) boardUseAbility(t.closest('.board-ability-btn').dataset.ability);
+            else if (t.closest('.board-jump-opt')) boardJumpPick(t.closest('.board-jump-opt'));
+            else if (t.closest('#board-jump-yes')) boardJumpConfirm();
+            else if (t.closest('#board-jump-no') || t.id === 'board-jump-overlay') boardCloseJumpAsk();
         });
+        // The ability buttons depend on this player's team and Gym Badges, which change in other screens or panels without the map
+        // being redrawn, so while the board is up they are re-checked a couple of times a second (it only touches the page when one changes).
+        setInterval(() => { if (boardModeActive && boardCtrl) boardUpdateAbilityButtons(); }, 400);
         document.addEventListener('fullscreenchange', () => {
             const fsBtn = document.getElementById('board-fs-btn');
             if (fsBtn) fsBtn.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
