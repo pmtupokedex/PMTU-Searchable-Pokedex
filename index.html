@@ -15349,14 +15349,16 @@
         #game-board-frame.bars-v #board-ability-bar.dragging { --tx: calc(100% + 24px); transform: translate(var(--tx), var(--ty)); opacity: 0; }
         #game-board-frame.bars-v .board-ability-btn,
         #game-board-frame.bars-v #game-board-mount #mapctl button.board-ability-btn { flex: 0 1 50px; width: auto; min-width: 0; min-height: 0; }
-        /* the step count and the roll: centred, 16px in from the frame's bottom edge (or its top edge once the stacks move up), sliding with them */
+        /* the step count and the roll: centred, 16px in from the frame's bottom edge (or its top edge when it is on the top half). It appears on
+           the half the stacks are on, then stays on its half (a held marker pushes it to the other one). */
         #game-board-frame.bars-v #board-roll-controls {
             --ty: calc(-100% - 16px);
             top: 100%; bottom: auto; left: 50%; right: auto; align-items: center;
             transform: translate(-50%, var(--ty));
             transition: top 0.35s ease, transform 0.35s ease;
         }
-        #game-board-frame.bars-v.bars-top #board-roll-controls { top: 16px; --ty: 0px; }
+        #game-board-frame.bars-v.nums-top #board-roll-controls { top: 16px; --ty: 0px; }
+        #game-board-frame.bars-v.nums-snap #board-roll-controls { transition: none; }
         #game-board-frame.bars-v #board-roll-row { justify-content: center; }
         #game-board-frame.bars-v #board-roll-display { margin-right: 0; transform-origin: center; align-items: center; }
         /* Confirm / pick dialog for Dig, Fly and Teleport (boardAskJump): covers just the map frame. */
@@ -15374,7 +15376,11 @@
            outline-free glyphs would vanish on the map art, so it gets the app's usual black outline: the 8-shadow version
            here, swapped for a real text-stroke on high-DPI screens in the @media block below (same threshold as the shared list). */
         /* Running step count while a marker is held (fed by board.js's onWalk): the same glyphs as the roll, in white, to the roll's left. */
-        #board-roll-row { display: flex; align-items: flex-start; justify-content: flex-end; gap: 14px; }
+        #board-roll-row { display: flex; align-items: flex-start; justify-content: flex-end; gap: 14px; border-radius: 18px; background: rgba(0, 0, 0, 0); transition: background-color 0.4s ease; }
+        /* a dark half-transparent backing while a number shows (it fades out with the number, which gets .fading); no padding while nothing shows,
+           so an empty row takes no room and the action box has nothing to keep clear of */
+        #board-roll-row:has(.visible) { padding: 6px 16px; }
+        #board-roll-row:has(.visible:not(.fading)) { background: rgba(0, 0, 0, 0.55); }
         #board-walk-count { display: none; margin-right: 4px; font-weight: bold; font-size: 72px; line-height: 1; color: #fff; pointer-events: none;
             text-shadow: -2px -2px 0 black, 0 -2px 0 black, 2px -2px 0 black, -2px 0 0 black, 2px 0 0 black, -2px 2px 0 black, 0 2px 0 black, 2px 2px 0 black; }
         #board-walk-count.visible { display: block; }
@@ -18566,10 +18572,10 @@
     <div id="board-view">
         <div id="game-board-frame">
             <div id="game-board-mount"></div>
-            <div id="board-roll-controls" data-actbar-avoid>
+            <div id="board-roll-controls" data-actbar-avoid="soft">
                 <div id="board-roll-row"><span id="board-walk-count" aria-hidden="true" title="Spaces in the move so far"></span><div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div></div>
             </div>
-            <div id="board-ability-bar" role="group" aria-label="Movement abilities"></div>
+            <div id="board-ability-bar" role="group" aria-label="Movement abilities" data-actbar-avoid></div>
             <div id="board-jump-overlay" hidden>
                 <div class="game-confirm-card">
                     <p class="game-confirm-title" id="board-jump-title"></p>
@@ -47123,6 +47129,7 @@
         function boardWalkCount(n, settled) {
             const el = document.getElementById('board-walk-count');
             if (!el) return;
+            if (n != null) boardNumbersSpawn();
             clearTimeout(boardWalkFadeTimer); clearTimeout(boardWalkHideTimer);
             el.classList.remove('fading');
             if (n == null) { el.classList.remove('visible'); el.textContent = ''; return; }
@@ -47152,9 +47159,8 @@
             };
             const abBar = document.getElementById('board-ability-bar');
             if (abBar) abBar.classList.toggle('dragging', !!(info && info.on));
-            if (BOARD_BARS_VERTICAL) { // vertical layout: the numbers follow the button stacks (top or bottom half); a marker held near them pushes both away
-                boardMarkerHeld = !!(info && info.on);
-                if (boardMarkerHeld) boardAvoidNumbers(info, fr, row);
+            if (BOARD_BARS_VERTICAL) { // vertical layout: a marker held near the numbers pushes them to the other half
+                if (info && info.on) boardAvoidNumbers(info, fr, row);
                 return;
             }
             if (!info || !info.on) {
@@ -49640,16 +49646,38 @@
         const BOARD_MAP_ORDER_V = ['mme', 'board-fs-btn', 'mzf', 'mzi', 'mzo'];
         const BOARD_BAR_EDGE_NEAR = 60;   // px: the map's edge counts as "close" when it is this near the frame's edge...
         const BOARD_BAR_EDGE_COVER = 70;  // ...but only while the empty gap between them is smaller than a stack is wide (else nothing is covered)
-        var boardBarsAtTop = false, boardMarkerHeld = false;
-        // Moves the button stacks and the step count / roll result together: to the top half of the frame (true) or the bottom half.
+        var boardBarsAtTop = false, boardNumsTop = false;
+        // Re-place the action box once the bars have finished sliding, so it clears their new spot.
+        function boardReplaceActionSoon() { setTimeout(() => { try { if (boardCtrl && boardCtrl.placeAction) boardCtrl.placeAction(); } catch (e) { /* board gone */ } }, 420); }
+        // Moves the button stacks to the top half of the frame (true) or the bottom half.
         function boardSetBarsTop(want) {
             if (want === boardBarsAtTop) return;
             boardBarsAtTop = want;
             const fr = document.getElementById('game-board-frame');
             if (fr) fr.classList.toggle('bars-top', want);
+            boardReplaceActionSoon();
         }
-        // A marker being dragged near the numbers pushes them (and the buttons) to the other half, whichever of the two halves is farther
-        // from the marker; the numbers stay put otherwise. Measured on screen, like the corner hopping this replaces.
+        // The step count / roll result sits on the top or bottom half, independent of the stacks once it is up. snap: jump there with no slide
+        // (used when it first appears, while nothing is showing yet).
+        function boardSetNumsTop(want, snap) {
+            if (want === boardNumsTop) return;
+            boardNumsTop = want;
+            const fr = document.getElementById('game-board-frame');
+            if (!fr) return;
+            if (snap) { fr.classList.add('nums-snap'); fr.classList.toggle('nums-top', want); void fr.offsetWidth; requestAnimationFrame(() => fr.classList.remove('nums-snap')); }
+            else fr.classList.toggle('nums-top', want);
+            boardReplaceActionSoon();
+        }
+        // When the numbers first appear (nothing of them showing yet), they appear on the half the buttons are on, which is usually not where the
+        // player's marker is. After that they stay on their half.
+        function boardNumbersSpawn() {
+            if (!BOARD_BARS_VERTICAL) return;
+            const walk = document.getElementById('board-walk-count'), roll = document.getElementById('board-roll-display');
+            if ((walk && walk.classList.contains('visible')) || (roll && roll.classList.contains('visible'))) return;
+            boardSetNumsTop(boardBarsAtTop, true);
+        }
+        // A marker being dragged near the numbers pushes them to the other half (whichever half is farther from the marker). The buttons are
+        // already tucked away while a marker is held, so they don't need to move. Measured on screen.
         function boardAvoidNumbers(info, fr, row) {
             if (!info || !fr || !row) return;
             const r = fr.getBoundingClientRect(), G = 16, MARGIN = 80;
@@ -49658,11 +49686,11 @@
             const pts = [[info.x, info.y]];
             if (typeof info.fx === 'number') pts.push([info.fx, info.fy]);
             const dist = z => Math.min(...pts.map(([x, y]) => Math.hypot(Math.max(z.l - x, 0, x - z.r), Math.max(z.t - y, 0, y - z.b))));
-            const here = dist(zone(boardBarsAtTop)), other = dist(zone(!boardBarsAtTop));
-            if (here < MARGIN && other > here) boardSetBarsTop(!boardBarsAtTop);
+            const here = dist(zone(boardNumsTop)), other = dist(zone(!boardNumsTop));
+            if (here < MARGIN && other > here) boardSetNumsTop(!boardNumsTop);
         }
         function boardOnView(v) {
-            if (!BOARD_BARS_VERTICAL || !v || boardMarkerHeld) return; // (while a marker is held, only the numbers decide)
+            if (!BOARD_BARS_VERTICAL || !v) return;
             const nearTop = v.above <= BOARD_BAR_EDGE_NEAR && v.above > -BOARD_BAR_EDGE_COVER;
             const nearBottom = v.below <= BOARD_BAR_EDGE_NEAR && v.below > -BOARD_BAR_EDGE_COVER;
             let want = boardBarsAtTop; // in between (or both edges near, a map that fits the frame): stay where they are
@@ -49673,8 +49701,8 @@
         function boardApplyBarLayout() {
             const fr = document.getElementById('game-board-frame'), ctl = document.getElementById('mapctl');
             if (fr) { fr.classList.toggle('bars-v', BOARD_BARS_VERTICAL); fr.classList.toggle('bars-top', BOARD_BARS_VERTICAL && boardBarsAtTop); }
-            // the action box keeps clear of a row of buttons across the top; the vertical stacks sit in the corners and don't need it
-            if (ctl) { if (BOARD_BARS_VERTICAL) ctl.removeAttribute('data-actbar-avoid'); else ctl.setAttribute('data-actbar-avoid', ''); }
+            // the action box (and its pointer) slides to keep clear of the button bars / stacks: board.js reads [data-actbar-avoid]
+            if (ctl) ctl.setAttribute('data-actbar-avoid', '');
         }
         // Shows the Fullscreen button's current state: its picture and tooltip swap between Fullscreen and Exit Fullscreen.
         function boardSyncFsButton() {
@@ -49827,6 +49855,7 @@
             note.style.color = color;
             if (sr) sr.textContent = name + ' rolled ' + value + (penalty > 0 ? ' (' + raw + ' minus ' + penalty + ')' : '') + '. ';
             boardRollOwner = color.toLowerCase();
+            boardNumbersSpawn();
             box.classList.remove('visible', 'fading');
             void box.offsetWidth; // restart the pop animation for a quick second roll
             box.classList.add('visible');
