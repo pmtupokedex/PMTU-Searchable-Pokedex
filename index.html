@@ -15349,10 +15349,16 @@
         #game-board-frame.bars-v #board-ability-bar.dragging { --tx: calc(100% + 24px); transform: translate(var(--tx), var(--ty)); opacity: 0; }
         #game-board-frame.bars-v .board-ability-btn,
         #game-board-frame.bars-v #game-board-mount #mapctl button.board-ability-btn { flex: 0 1 50px; width: auto; min-width: 0; min-height: 0; }
-        /* the step count and the roll: a placeholder spot at the top centre while the stacks hold the corners */
-        #game-board-frame.bars-v #board-roll-controls { top: 16px; left: 50%; right: auto; transform: translateX(-50%); align-items: center; }
+        /* the step count and the roll: centred, 16px in from the frame's bottom edge (or its top edge once the stacks move up), sliding with them */
+        #game-board-frame.bars-v #board-roll-controls {
+            --ty: calc(-100% - 16px);
+            top: 100%; bottom: auto; left: 50%; right: auto; align-items: center;
+            transform: translate(-50%, var(--ty));
+            transition: top 0.35s ease, transform 0.35s ease;
+        }
+        #game-board-frame.bars-v.bars-top #board-roll-controls { top: 16px; --ty: 0px; }
         #game-board-frame.bars-v #board-roll-row { justify-content: center; }
-        #game-board-frame.bars-v #board-roll-display { margin-right: 0; transform-origin: top center; align-items: center; }
+        #game-board-frame.bars-v #board-roll-display { margin-right: 0; transform-origin: center; align-items: center; }
         /* Confirm / pick dialog for Dig, Fly and Teleport (boardAskJump): covers just the map frame. */
         #board-jump-overlay { position: absolute; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center;
             padding: 20px; box-sizing: border-box; background: rgba(0, 0, 0, 0.55); }
@@ -47146,7 +47152,11 @@
             };
             const abBar = document.getElementById('board-ability-bar');
             if (abBar) abBar.classList.toggle('dragging', !!(info && info.on));
-            if (BOARD_BARS_VERTICAL) return; // vertical layout: the numbers stay where the CSS puts them (top centre, for now)
+            if (BOARD_BARS_VERTICAL) { // vertical layout: the numbers follow the button stacks (top or bottom half); a marker held near them pushes both away
+                boardMarkerHeld = !!(info && info.on);
+                if (boardMarkerHeld) boardAvoidNumbers(info, fr, row);
+                return;
+            }
             if (!info || !info.on) {
                 if (boardNumCorner !== 'tr') slideTo(() => c.classList.remove('dragging', 'c-tl', 'c-br'));
                 else c.classList.remove('dragging', 'c-tl', 'c-br');
@@ -49630,18 +49640,35 @@
         const BOARD_MAP_ORDER_V = ['mme', 'board-fs-btn', 'mzf', 'mzi', 'mzo'];
         const BOARD_BAR_EDGE_NEAR = 60;   // px: the map's edge counts as "close" when it is this near the frame's edge...
         const BOARD_BAR_EDGE_COVER = 70;  // ...but only while the empty gap between them is smaller than a stack is wide (else nothing is covered)
-        var boardBarsAtTop = false;
+        var boardBarsAtTop = false, boardMarkerHeld = false;
+        // Moves the button stacks and the step count / roll result together: to the top half of the frame (true) or the bottom half.
+        function boardSetBarsTop(want) {
+            if (want === boardBarsAtTop) return;
+            boardBarsAtTop = want;
+            const fr = document.getElementById('game-board-frame');
+            if (fr) fr.classList.toggle('bars-top', want);
+        }
+        // A marker being dragged near the numbers pushes them (and the buttons) to the other half, whichever of the two halves is farther
+        // from the marker; the numbers stay put otherwise. Measured on screen, like the corner hopping this replaces.
+        function boardAvoidNumbers(info, fr, row) {
+            if (!info || !fr || !row) return;
+            const r = fr.getBoundingClientRect(), G = 16, MARGIN = 80;
+            const w = Math.max(row.offsetWidth, 140), h = Math.max(row.offsetHeight, 80), cx = r.left + r.width / 2;
+            const zone = top => top ? { l: cx - w / 2, r: cx + w / 2, t: r.top + G, b: r.top + G + h } : { l: cx - w / 2, r: cx + w / 2, t: r.bottom - G - h, b: r.bottom - G };
+            const pts = [[info.x, info.y]];
+            if (typeof info.fx === 'number') pts.push([info.fx, info.fy]);
+            const dist = z => Math.min(...pts.map(([x, y]) => Math.hypot(Math.max(z.l - x, 0, x - z.r), Math.max(z.t - y, 0, y - z.b))));
+            const here = dist(zone(boardBarsAtTop)), other = dist(zone(!boardBarsAtTop));
+            if (here < MARGIN && other > here) boardSetBarsTop(!boardBarsAtTop);
+        }
         function boardOnView(v) {
-            if (!BOARD_BARS_VERTICAL || !v) return;
+            if (!BOARD_BARS_VERTICAL || !v || boardMarkerHeld) return; // (while a marker is held, only the numbers decide)
             const nearTop = v.above <= BOARD_BAR_EDGE_NEAR && v.above > -BOARD_BAR_EDGE_COVER;
             const nearBottom = v.below <= BOARD_BAR_EDGE_NEAR && v.below > -BOARD_BAR_EDGE_COVER;
             let want = boardBarsAtTop; // in between (or both edges near, a map that fits the frame): stay where they are
             if (nearBottom && !nearTop) want = true;
             else if (nearTop && !nearBottom) want = false;
-            if (want === boardBarsAtTop) return;
-            boardBarsAtTop = want;
-            const fr = document.getElementById('game-board-frame');
-            if (fr) fr.classList.toggle('bars-top', want);
+            boardSetBarsTop(want);
         }
         function boardApplyBarLayout() {
             const fr = document.getElementById('game-board-frame'), ctl = document.getElementById('mapctl');
