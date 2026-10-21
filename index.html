@@ -15309,6 +15309,19 @@
         #board-roll-controls .filter-btn { pointer-events: auto; }
         #board-stay-btn[hidden] { display: none; }
 
+        /* Movement-ability buttons (Dig / Fly / Surf / Teleport) along the bottom of the map. Grey and dark until this player can use
+           the ability. They share the row evenly and shrink together on a narrow screen, but never grow past 64px on a wide one.
+           Like the corner buttons they slide down out of the frame while a marker is being dragged (boardDragState). */
+        #board-ability-bar { position: absolute; left: 50%; bottom: 12px; z-index: 4; transform: translateX(-50%); display: flex; justify-content: center; gap: 8px;
+            width: max-content; max-width: calc(100% - 24px); pointer-events: none; transition: transform 0.25s ease, opacity 0.2s ease; }
+        #board-ability-bar.dragging { transform: translate(-50%, calc(100% + 24px)); opacity: 0; }
+        .board-ability-btn { pointer-events: auto; flex: 0 1 64px; min-width: 0; aspect-ratio: 1 / 1; padding: 0; margin: 0; border-radius: 12px; overflow: hidden; cursor: pointer;
+            border: 2px solid rgba(255, 255, 255, 0.9); background: rgba(16, 20, 24, 0.7); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45); -webkit-tap-highlight-color: transparent; }
+        .board-ability-btn img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; transition: filter 0.2s ease; }
+        .board-ability-btn.locked { cursor: default; border-color: rgba(255, 255, 255, 0.35); }
+        .board-ability-btn.locked img { filter: grayscale(1) brightness(0.35); }
+        #board-ability-bar.dragging .board-ability-btn { pointer-events: none; }
+
         /* Movement roll: the number a player just rolled with the map's Roll button, shown to the whole table in the
            roller's color. Top-right corner of the map frame (below the Roll Movement Die button). White
            outline-free glyphs would vanish on the map art, so it gets the app's usual black outline: the 8-shadow version
@@ -18511,6 +18524,7 @@
                 <button class="filter-btn filter-btn-compact" id="board-stay-btn" type="button" hidden>Stay on City Space</button>
                 <div id="board-roll-row"><span id="board-walk-count" aria-hidden="true" title="Spaces in the move so far"></span><div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div></div>
             </div>
+            <div id="board-ability-bar" role="group" aria-label="Movement abilities"></div>
         </div>
     </div>
 
@@ -46770,6 +46784,7 @@
                 boardPlayersSig = JSON.stringify(players);
                 boardInstallFsButton();
                 boardInstallRollButton();
+                boardUpdateAbilityButtons();
                 boardUpdateStayButton();
                 boardApplyKeepScale();
                 boardCtrl.loadBoard(d, { style: cfg.style });
@@ -46811,13 +46826,50 @@
         // player-specific, so each is checked against this device's own save. Returns null (may cross) or the reason (shown as a toast
         // and over the locked space). Bad or incomplete gate data never locks a player out -- it lets them through.
         // Gate types come from the Board Editor: badge | villain | item | ability | points | other.
-        const BOARD_ABILITY_GATE_MIN_TIER = { surf: 5 }; // an ability gate that also needs a Gym Badge of at least this Tier
+        const BOARD_ABILITY_GATE_MIN_TIER = { fly: 3, surf: 5 }; // an ability gate that also needs a Gym Badge of at least this Tier
         function boardTeamHasAbility(tag) {
             const members = (getActiveSaveData().team && getActiveSaveData().team.members) || [];
             return members.some(m => {
                 if (!m) return false;
                 const e = POKEMON_BY_NAME[m.formOverride] || POKEMON_BY_NAME[m.name];
                 return !!(e && Array.isArray(e.tags) && e.tags.some(x => String(x).toLowerCase() === tag));
+            });
+        }
+        // ---- Movement-ability buttons ----
+        // Each is usable (full colour) once this player meets the same requirements the map's ability gates use (boardGateCheck):
+        // Dig and Teleport need a team Pok\u00e9mon with the ability, Fly also a Tier 3+ Gym Badge, Surf a Tier 5+ one (BOARD_ABILITY_GATE_MIN_TIER).
+        // They aren't wired to anything yet.
+        const BOARD_ABILITY_BUTTONS = [
+            { id: 'dig', label: 'Dig', url: 'https://dl.dropboxusercontent.com/scl/fi/x40exjym9k60pf9xtsicm/ability_dig.png?rlkey=8yctsvjiwlt3gl1nvfxzqpu5o&st=21rzqg5v&dl=1' },
+            { id: 'fly', label: 'Fly', url: 'https://dl.dropboxusercontent.com/scl/fi/p716lgvkmk9szoh0cy184/ability_fly.png?rlkey=ax3ekv8hvf885g6eqlwkh4kni&st=tvec9vtv&dl=1' },
+            { id: 'surf', label: 'Surf', url: 'https://dl.dropboxusercontent.com/scl/fi/pw5mbamugkygoalajicxn/ability_surf.png?rlkey=40f2gdd1bohm14pymgqswzous&st=jmrvj1g1&dl=1' },
+            { id: 'teleport', label: 'Teleport', url: 'https://dl.dropboxusercontent.com/scl/fi/ym5ou8gjkxfey3dpc8669/ability_teleport.png?rlkey=s5bh2lomkkhqfsjw2y6vkgee8&st=y6t02i3a&dl=1' }
+        ];
+        function boardUpdateAbilityButtons() {
+            const bar = document.getElementById('board-ability-bar');
+            if (!bar) return;
+            if (!bar.firstChild) {
+                BOARD_ABILITY_BUTTONS.forEach(a => {
+                    const b = document.createElement('button');
+                    b.type = 'button';
+                    b.className = 'board-ability-btn locked';
+                    b.dataset.ability = a.id;
+                    const img = document.createElement('img');
+                    img.src = a.url; img.alt = ''; img.draggable = false;
+                    b.appendChild(img);
+                    bar.appendChild(b);
+                });
+            }
+            BOARD_ABILITY_BUTTONS.forEach(a => {
+                const b = bar.querySelector('[data-ability="' + a.id + '"]');
+                if (!b) return;
+                let why = null;
+                try { why = boardGateCheck({ type: 'ability', value: a.id }); } catch (e) { why = 'Not available.'; }
+                const locked = !!why;
+                if (b.classList.contains('locked') !== locked) b.classList.toggle('locked', locked);
+                const tip = locked ? a.label + ' \u2014 ' + why : a.label;
+                if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', tip); }
+                b.setAttribute('aria-disabled', locked ? 'true' : 'false');
             });
         }
         function boardCurrentGameLength() {
@@ -46898,6 +46950,8 @@
                 void c.offsetWidth;
                 c.style.transition = 'transform 0.3s ease'; c.style.transform = '';
             };
+            const abBar = document.getElementById('board-ability-bar');
+            if (abBar) abBar.classList.toggle('dragging', !!(info && info.on));
             if (!info || !info.on) {
                 if (boardNumCorner !== 'tr') slideTo(() => c.classList.remove('dragging', 'c-tl', 'c-br'));
                 else c.classList.remove('dragging', 'c-tl', 'c-br');
@@ -49397,6 +49451,7 @@
         function boardMyPlayer() { return boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host')) || null; }
         // "Stay on City Space" is only offered while this player's marker is on a City space. board.js calls this after every redraw.
         function boardUpdateStayButton() {
+            boardUpdateAbilityButtons(); // board.js calls this after every redraw, so the ability buttons follow team / badge changes too
             const b = document.getElementById('board-stay-btn');
             if (!b) return;
             let show = false;
