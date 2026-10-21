@@ -15300,23 +15300,27 @@
             #game-board-mount #actbar .actin > div.actnote { -webkit-text-stroke: 2.5px black; text-stroke: 2.5px black; }
         }
         }
-        /* Map controls: + / - / Find Me on the first row, Fit / Fullscreen on the second (rows are built in boardInstallRollButton). */
-        #game-board-mount #mapctl { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-        #game-board-mount #mapctl .board-ctl-row { display: flex; gap: 4px; }
+        /* Map controls (Zoom In / Zoom Out / Fit / Find Me / Fullscreen): a row of round picture buttons across the top of the frame, sized and
+           spaced like the bottom bar (#board-ability-bar). board.js already slides #mapctl up out of the frame while a marker is held. The bar
+           itself lets taps through to the map; only its buttons catch them. The buttons are made in boardInstallRollButton(). */
+        #game-board-mount #mapctl { top: 12px; left: 12px; right: 12px; display: flex; flex-direction: row; justify-content: center; align-items: flex-start; gap: 8px; pointer-events: none; }
         /* Top-right: just the step count and the rolled number (the Roll Movement Die and Stay on City Space buttons live in the bottom
            button bar, #board-ability-bar). The container lets taps through to the map. */
-        #board-roll-controls { position: absolute; top: 16px; right: 16px; z-index: 5; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; pointer-events: none; }
+        #board-roll-controls { position: absolute; top: 70px; right: 16px; z-index: 5; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; pointer-events: none; }
         #board-roll-controls .filter-btn { pointer-events: auto; }
 
         /* Button bar along the bottom of the map: Roll Movement Die, Stay on City Space, then the movement abilities (Dig / Fly / Surf / Teleport). Grey and dark until this player can use
-           the ability. They share the row evenly and shrink together on a narrow screen, but never grow past 64px on a wide one.
+           the ability. They share the row evenly and shrink together on a narrow screen, but never grow past 50px on a wide one.
            Like the corner buttons they slide down out of the frame while a marker is being dragged (boardDragState). */
-        #board-ability-bar { position: absolute; left: 50%; bottom: 12px; z-index: 4; transform: translateX(-50%); display: flex; justify-content: center; gap: 8px;
-            width: max-content; max-width: calc(100% - 24px); pointer-events: none; transition: transform 0.25s ease, opacity 0.2s ease; }
-        #board-ability-bar.dragging { transform: translate(-50%, calc(100% + 24px)); opacity: 0; }
-        .board-ability-btn { pointer-events: auto; flex: 0 1 50px; min-width: 0; aspect-ratio: 1 / 1; padding: 0; margin: 0; border-radius: 50%; overflow: hidden; cursor: pointer;
-            border: 2px solid #000; background: rgba(16, 20, 24, 0.7); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45); -webkit-tap-highlight-color: transparent; }
-        .board-ability-btn img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; transition: filter 0.2s ease; }
+        #board-ability-bar { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 4; display: flex; justify-content: center; gap: 8px;
+            pointer-events: none; transition: transform 0.25s ease, opacity 0.2s ease; }
+        #board-ability-bar.dragging { transform: translateY(calc(100% + 24px)); opacity: 0; }
+        .board-ability-btn,
+        #game-board-mount #mapctl button.board-ability-btn { pointer-events: auto; flex: 0 1 50px; min-width: 0; aspect-ratio: 1 / 1; padding: 0; margin: 0; border-radius: 50%; overflow: hidden; cursor: pointer;
+            border: 2px solid #000; background: rgba(16, 20, 24, 0.7); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45); -webkit-tap-highlight-color: transparent; opacity: 1; }
+        .board-ability-btn img,
+        #game-board-mount #mapctl button.board-ability-btn img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; transition: filter 0.2s ease; }
+        .board-ability-btn.no-img { color: #fff; font: 700 10px/1.1 sans-serif; padding: 2px; overflow-wrap: anywhere; }
         .board-ability-btn.locked { cursor: default; }
         .board-ability-btn.locked img { filter: grayscale(1) brightness(0.35); }
         #board-ability-bar.dragging .board-ability-btn { pointer-events: none; }
@@ -46854,6 +46858,16 @@
                 return !!(e && Array.isArray(e.tags) && e.tags.some(x => String(x).toLowerCase() === tag));
             });
         }
+        // Puts a picture on a round bar button. If the picture can't load (a bad or expired link, offline) the button shows its name in
+        // small text instead, so it still works and the broken link is easy to spot.
+        function boardButtonImage(b, url, label) {
+            const img = document.createElement('img');
+            img.alt = ''; img.draggable = false;
+            img.onerror = () => { img.remove(); b.classList.add('no-img'); b.textContent = label; };
+            img.src = url;
+            b.appendChild(img);
+            return img;
+        }
         // ---- Movement-ability buttons ----
         // Each is usable (full colour) once this player meets the same requirements the map's ability gates use (boardGateCheck):
         // Dig and Teleport need a team Pok\u00e9mon with the ability, Fly also a Tier 3+ Gym Badge, Surf a Tier 5+ one (BOARD_ABILITY_GATE_MIN_TIER).
@@ -46880,9 +46894,7 @@
                     b.className = 'board-ability-btn locked';
                     b.dataset.ability = a.id;
                     if (a.domId) b.id = a.domId;
-                    const img = document.createElement('img');
-                    img.src = a.url; img.alt = ''; img.draggable = false;
-                    b.appendChild(img);
+                    boardButtonImage(b, a.url, a.label);
                     bar.appendChild(b);
                 });
             }
@@ -47111,10 +47123,10 @@
                 boardNumCorner = 'tr'; return;
             }
             c.classList.add('dragging');
-            const w = row.offsetWidth, h = row.offsetHeight, r = fr.getBoundingClientRect(), G = 16, MARGIN = 80;
+            const w = row.offsetWidth, h = row.offsetHeight, r = fr.getBoundingClientRect(), G = 16, TOP = 70, MARGIN = 80; // TOP: clear of the button bar across the top
             const box = {
-                tr: { l: r.right - G - w, t: r.top + G, r: r.right - G, b: r.top + G + h },
-                tl: { l: r.left + G, t: r.top + G, r: r.left + G + w, b: r.top + G + h },
+                tr: { l: r.right - G - w, t: r.top + TOP, r: r.right - G, b: r.top + TOP + h },
+                tl: { l: r.left + G, t: r.top + TOP, r: r.left + G + w, b: r.top + TOP + h },
                 br: { l: r.right - G - w, t: r.bottom - G - h, r: r.right - G, b: r.bottom - G }
             };
             const pts = [[info.x, info.y]];
@@ -49567,8 +49579,25 @@
             const b = document.createElement('button');
             b.id = 'board-fs-btn';
             b.type = 'button';
-            b.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
-            bar.appendChild(b);
+            bar.appendChild(b); // gets its picture in boardInstallRollButton()
+        }
+        // The map's own buttons, in the order they sit in the top bar. id = the button's element id (board.js makes the first four).
+        const BOARD_MAP_BUTTONS = [
+            { id: 'mzi', label: 'Zoom In', url: 'https://dl.dropboxusercontent.com/scl/fi/gl6qmztbtmt6z2q68jrbc/board_zoom-in.png?rlkey=5hgv65kfea8dfldame3sgx0gn&st=7ij625ad&dl=1' },
+            { id: 'mzo', label: 'Zoom Out', url: 'https://dl.dropboxusercontent.com/scl/fi/k74l1jibmcr1fqc75e1ig/board_zoom-out.png?rlkey=1kynhetkgdadk86vjh3kdxwa9&st=wuyvulo7&dl=1' },
+            { id: 'mzf', label: 'Fit', url: 'https://dl.dropboxusercontent.com/scl/fi/13wvwh5bd0llhvt2y9kya/board_fit.png?rlkey=gq67v0u7chot6q0c3aw2oigqz&st=os9ff8if&dl=1' },
+            { id: 'mme', label: 'Find Me', url: 'https://dl.dropboxusercontent.com/scl/fi/flreec8nuf4t71i30al2z/board_recenter-on-player.png?rlkey=q1ou9swud4purrfqdpiubzfcm&st=ilf84fw2&dl=1' },
+            { id: 'board-fs-btn', label: 'Fullscreen', url: 'https://dl.dropboxusercontent.com/scl/fi/8rni7585tg6fqtgk75efk/board_fullscreen.png?rlkey=i6ar2g6mmq7vsndjgzc1l3cdl&st=2o7ts9d9&dl=1',
+              exitLabel: 'Exit Fullscreen', exitUrl: 'https://dl.dropboxusercontent.com/scl/fi/plcak6vf4tpzrxw0ep35h/board_fullscreen-exit.png?rlkey=5asuatxdxsa415a5us2f39146&st=plpf9aw5&dl=1' }
+        ];
+        // Shows the Fullscreen button's current state: its picture and tooltip swap between Fullscreen and Exit Fullscreen.
+        function boardSyncFsButton() {
+            const b = document.getElementById('board-fs-btn'), def = BOARD_MAP_BUTTONS.find(x => x.id === 'board-fs-btn');
+            if (!b || !def) return;
+            const on = !!document.fullscreenElement, label = on ? def.exitLabel : def.label, img = b.querySelector('img');
+            if (img && img.getAttribute('src') !== (on ? def.exitUrl : def.url)) img.src = on ? def.exitUrl : def.url;
+            if (!img) b.textContent = label; // the picture didn't load: the name stands in
+            b.title = label; b.setAttribute('aria-label', label);
         }
 
         // ---- Movement roll ----
@@ -49594,17 +49623,23 @@
         function boardInstallRollButton() {
             const panelBtn = document.querySelector('#game-board-mount #mpanel');
             if (panelBtn) panelBtn.remove();
-            // the map's +/-/Fit/Fullscreen buttons wear the compact filter-button look too, so they match the Roll button
-            document.querySelectorAll('#game-board-mount #mapctl button').forEach(b => b.classList.add('filter-btn', 'filter-btn-compact'));
+            // The map's own buttons become round picture buttons like the bottom bar's, in BOARD_MAP_BUTTONS order. Their click
+            // handlers (board.js for zoom / Fit / Find Me, the page's click listener for Fullscreen) stay on the same elements.
             const ctl = document.getElementById('mapctl');
-            if (ctl && !ctl.querySelector('.board-ctl-row')) {
-                [['mzi', 'mzo', 'mme'], ['mzf', 'board-fs-btn']].forEach(ids => {
-                    const row = document.createElement('div');
-                    row.className = 'board-ctl-row';
-                    ids.forEach(id => { const el = document.getElementById(id); if (el) row.appendChild(el); });
-                    ctl.appendChild(row);
-                });
-            }
+            if (!ctl) return;
+            BOARD_MAP_BUTTONS.forEach(def => {
+                const b = document.getElementById(def.id);
+                if (!b) return;
+                if (!b.querySelector('img')) {
+                    b.textContent = '';
+                    b.classList.remove('filter-btn', 'filter-btn-compact');
+                    b.classList.add('board-ability-btn');
+                    boardButtonImage(b, def.url, def.label);
+                    b.title = def.label; b.setAttribute('aria-label', def.label);
+                }
+                ctl.appendChild(b); // (re)appending puts them in order
+            });
+            boardSyncFsButton();
         }
         function boardMyPlayer() { return boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host')) || null; }
         // "Stay on City Space" is only usable while this player's marker is on a City space.
@@ -49761,8 +49796,7 @@
         // being redrawn, so while the board is up they are re-checked a couple of times a second (it only touches the page when one changes).
         setInterval(() => { if (boardModeActive && boardCtrl) boardUpdateAbilityButtons(); }, 400);
         document.addEventListener('fullscreenchange', () => {
-            const fsBtn = document.getElementById('board-fs-btn');
-            if (fsBtn) fsBtn.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
+            boardSyncFsButton();
             if (boardCtrl) requestAnimationFrame(() => boardCtrl.restoreView());
         });
 
