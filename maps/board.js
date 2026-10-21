@@ -44,7 +44,8 @@ const editable=e=>/^(INPUT|TEXTAREA)$/.test(e.target.tagName); // text boxes kee
 root.addEventListener('contextmenu',e=>{if(!editable(e))e.preventDefault()});root.addEventListener('selectstart',e=>{if(!editable(e))e.preventDefault()});
 // Checkpoint button: bottom-left of the map, only while a marker is being dragged (a second finger taps it while the first holds the marker).
 const cpBtn=document.createElement('button');cpBtn.id='cpBtn';cpBtn.type='button';cpBtn.className='filter-btn filter-btn-compact';cpBtn.hidden=true;cpBtn.textContent='Set checkpoint';root.appendChild(cpBtn);
-const DWELL=1250;let lastWalkN=null,walkKeep=null,dragWas=false;const hasTouch=()=>{try{return navigator.maxTouchPoints>0||matchMedia('(any-pointer: coarse)').matches}catch(e){return false}};
+const DWELL=1250,DWELL_QUIET=500; // total hold; the first DWELL_QUIET ms show nothing, then the ring fills over the rest
+let lastWalkN=null,walkKeep=null,dragWas=false;const hasTouch=()=>{try{return navigator.maxTouchPoints>0||matchMedia('(any-pointer: coarse)').matches}catch(e){return false}};
 cpBtn.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();toggleCp()});
 cpBtn.addEventListener('click',e=>e.preventDefault());
 const onCpKey=e=>{if(drag&&(e.code==='Space'||e.key===' ')&&!e.repeat&&!editable(e)){e.preventDefault();toggleCp()}};
@@ -432,7 +433,7 @@ function dwellSync(d,s){const id=s&&s.id;if(d.cool&&d.cool!==id)d.cool=null;
  if(!ok){d.dw=null;return}const p=lastPtr||{x:0,y:0};
  if(!d.dw||d.dw.id!==id||Math.hypot(p.x-d.dw.px,p.y-d.dw.py)>14)d.dw={id,t0:performance.now(),px:p.x,py:p.y}}
 function dwellTick(d){if(drag!==d)return;const w=d.dw;
- if(w){const prog=(performance.now()-w.t0)/DWELL;if(prog>=1){dwellDraw(null);toggleCp()}else dwellDraw(prog,w.id,isTopCp(d,w.id))}else dwellDraw(null);
+ if(w){const t=performance.now()-w.t0;if(t>=DWELL){dwellDraw(null);toggleCp()}else if(t<DWELL_QUIET)dwellDraw(null);else dwellDraw((t-DWELL_QUIET)/(DWELL-DWELL_QUIET),w.id,isTopCp(d,w.id))}else dwellDraw(null);
  requestAnimationFrame(()=>dwellTick(d))}
 // The walk preview drawn while a marker is held: START on the space it was picked up from (so it is never forgotten, even if the
 // player changes their mind and drops it back), the locked legs (blue) and live leg (yellow) with every space on the way numbered 1, 2, 3...
