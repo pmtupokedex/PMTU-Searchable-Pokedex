@@ -46887,7 +46887,22 @@
         function boardDragState(info) {
             const c = document.getElementById('board-roll-controls'), fr = document.getElementById('game-board-frame'), row = document.getElementById('board-roll-row');
             if (!c || !fr || !row) return;
-            if (!info || !info.on) { c.classList.remove('dragging', 'c-tl', 'c-br'); boardNumCorner = 'tr'; return; }
+            // The numbers glide to their new spot: measure where the row is now, apply the new corner, then play the difference back as a slide.
+            const slideTo = change => {
+                const old = row.getBoundingClientRect();
+                c.style.transition = 'none'; c.style.transform = '';
+                change();
+                const now = row.getBoundingClientRect(), dx = old.left - now.left, dy = old.top - now.top;
+                if (!dx && !dy || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+                c.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+                void c.offsetWidth;
+                c.style.transition = 'transform 0.3s ease'; c.style.transform = '';
+            };
+            if (!info || !info.on) {
+                if (boardNumCorner !== 'tr') slideTo(() => c.classList.remove('dragging', 'c-tl', 'c-br'));
+                else c.classList.remove('dragging', 'c-tl', 'c-br');
+                boardNumCorner = 'tr'; return;
+            }
             c.classList.add('dragging');
             const w = row.offsetWidth, h = row.offsetHeight, r = fr.getBoundingClientRect(), G = 16, MARGIN = 80;
             const box = {
@@ -46903,8 +46918,7 @@
             if (!pick) pick = order.reduce((a, k) => dist(k) > dist(a) ? k : a, order[0]);
             if (pick !== boardNumCorner) {
                 boardNumCorner = pick;
-                c.classList.toggle('c-tl', pick === 'tl');
-                c.classList.toggle('c-br', pick === 'br');
+                slideTo(() => { c.classList.toggle('c-tl', pick === 'tl'); c.classList.toggle('c-br', pick === 'br'); });
             }
         }
         function boardGateBlocked(reason, space) {
