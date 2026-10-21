@@ -15324,6 +15324,28 @@
         .board-ability-btn.locked { cursor: default; }
         .board-ability-btn.locked img { filter: grayscale(1) brightness(0.35); }
         #board-ability-bar.dragging .board-ability-btn { pointer-events: none; }
+        /* ---- Vertical layout (BOARD_BARS_VERTICAL): the map buttons stack on the left, the movement buttons on the right ----
+           Both stacks sit in the bottom corners (.bars-top: the top corners). They are placed with top + translate so that moving between
+           the corners animates; --tx / --ty carry the sideways slide-away while a marker is held and the up/down offset. */
+        #game-board-frame.bars-v #game-board-mount #mapctl,
+        #game-board-frame.bars-v #board-ability-bar {
+            --tx: 0px; --ty: calc(-100% - 12px);
+            top: 100%; bottom: auto; width: 50px; max-height: calc(100% - 24px); flex-direction: column; justify-content: flex-start;
+            transform: translate(var(--tx), var(--ty));
+            transition: top 0.35s ease, transform 0.35s ease, opacity 0.2s ease;
+        }
+        #game-board-frame.bars-v #game-board-mount #mapctl { left: 12px; right: auto; align-items: flex-start; }
+        #game-board-frame.bars-v #board-ability-bar { left: auto; right: 12px; align-items: flex-end; }
+        #game-board-frame.bars-v.bars-top #game-board-mount #mapctl,
+        #game-board-frame.bars-v.bars-top #board-ability-bar { top: 12px; --ty: 0px; }
+        #game-board-frame.bars-v #game-board-mount .bm-root.bm-dragging #mapctl { --tx: calc(-100% - 24px); transform: translate(var(--tx), var(--ty)); opacity: 0; }
+        #game-board-frame.bars-v #board-ability-bar.dragging { --tx: calc(100% + 24px); transform: translate(var(--tx), var(--ty)); opacity: 0; }
+        #game-board-frame.bars-v .board-ability-btn,
+        #game-board-frame.bars-v #game-board-mount #mapctl button.board-ability-btn { flex: 0 1 50px; width: auto; min-width: 0; min-height: 0; }
+        /* the step count and the roll: a placeholder spot at the top centre while the stacks hold the corners */
+        #game-board-frame.bars-v #board-roll-controls { top: 16px; left: 50%; right: auto; transform: translateX(-50%); align-items: center; }
+        #game-board-frame.bars-v #board-roll-row { justify-content: center; }
+        #game-board-frame.bars-v #board-roll-display { margin-right: 0; transform-origin: top center; align-items: center; }
         /* Confirm / pick dialog for Dig, Fly and Teleport (boardAskJump): covers just the map frame. */
         #board-jump-overlay { position: absolute; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center;
             padding: 20px; box-sizing: border-box; background: rgba(0, 0, 0, 0.55); }
@@ -46799,7 +46821,7 @@
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onTravel: boardOnTravel, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, onDragState: boardDragState, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onTravel: boardOnTravel, onView: boardOnView, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, onDragState: boardDragState, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
                 boardSig = sig;
                 boardSaveKey = saveKey;
                 boardSaveDirty = false;
@@ -47117,6 +47139,7 @@
             };
             const abBar = document.getElementById('board-ability-bar');
             if (abBar) abBar.classList.toggle('dragging', !!(info && info.on));
+            if (BOARD_BARS_VERTICAL) return; // vertical layout: the numbers stay where the CSS puts them (top centre, for now)
             if (!info || !info.on) {
                 if (boardNumCorner !== 'tr') slideTo(() => c.classList.remove('dragging', 'c-tl', 'c-br'));
                 else c.classList.remove('dragging', 'c-tl', 'c-br');
@@ -49586,10 +49609,39 @@
             { id: 'mzi', label: 'Zoom In', url: 'https://dl.dropboxusercontent.com/scl/fi/gl6qmztbtmt6z2q68jrbc/board_zoom-in.png?rlkey=5hgv65kfea8dfldame3sgx0gn&st=7ij625ad&dl=1' },
             { id: 'mzo', label: 'Zoom Out', url: 'https://dl.dropboxusercontent.com/scl/fi/k74l1jibmcr1fqc75e1ig/board_zoom-out.png?rlkey=1kynhetkgdadk86vjh3kdxwa9&st=wuyvulo7&dl=1' },
             { id: 'mzf', label: 'Fit', url: 'https://dl.dropboxusercontent.com/scl/fi/13wvwh5bd0llhvt2y9kya/board_fit.png?rlkey=gq67v0u7chot6q0c3aw2oigqz&st=os9ff8if&dl=1' },
-            { id: 'mme', label: 'Find Me', url: 'https://dl.dropboxusercontent.com/scl/fi/flreec8nuf4t71i30al2z/board_recenter-on-player.png?rlkey=q1ou9swud4purrfqdpiubzfcm&st=ilf84fw2&dl=1' },
             { id: 'board-fs-btn', label: 'Fullscreen', url: 'https://dl.dropboxusercontent.com/scl/fi/8rni7585tg6fqtgk75efk/board_fullscreen.png?rlkey=i6ar2g6mmq7vsndjgzc1l3cdl&st=2o7ts9d9&dl=1',
-              exitLabel: 'Exit Fullscreen', exitUrl: 'https://dl.dropboxusercontent.com/scl/fi/plcak6vf4tpzrxw0ep35h/board_fullscreen-exit.png?rlkey=5asuatxdxsa415a5us2f39146&st=plpf9aw5&dl=1' }
+              exitLabel: 'Exit Fullscreen', exitUrl: 'https://dl.dropboxusercontent.com/scl/fi/plcak6vf4tpzrxw0ep35h/board_fullscreen-exit.png?rlkey=5asuatxdxsa415a5us2f39146&st=plpf9aw5&dl=1' },
+            { id: 'mme', label: 'Find Me', url: 'https://dl.dropboxusercontent.com/scl/fi/flreec8nuf4t71i30al2z/board_recenter-on-player.png?rlkey=q1ou9swud4purrfqdpiubzfcm&st=ilf84fw2&dl=1' }
         ];
+        // Button layout. Horizontal: the map buttons in a row across the top (Find Me at the right end), the movement buttons in a row across
+        // the bottom. Vertical: the map buttons in a stack on the left (zoom at the bottom of the stack), the movement buttons in a stack on
+        // the right (Roll Movement Die at the top); the stacks sit in the bottom corners and slide up to the top corners when the map's
+        // bottom edge comes near the frame's bottom edge, and back down when its top edge comes near the top (boardOnView).
+        // Vertical is the default for now; add ?bars=horizontal to the page's address to see the rows instead.
+        const BOARD_BARS_VERTICAL = (() => { try { return !/^h/i.test(new URLSearchParams(location.search).get('bars') || ''); } catch (e) { return true; } })();
+        const BOARD_MAP_ORDER_H = ['mzi', 'mzo', 'mzf', 'board-fs-btn', 'mme'];
+        const BOARD_MAP_ORDER_V = ['mme', 'board-fs-btn', 'mzf', 'mzi', 'mzo'];
+        const BOARD_BAR_EDGE_NEAR = 60;   // px: the map's edge counts as "close" when it is this near the frame's edge...
+        const BOARD_BAR_EDGE_COVER = 70;  // ...but only while the empty gap between them is smaller than a stack is wide (else nothing is covered)
+        var boardBarsAtTop = false;
+        function boardOnView(v) {
+            if (!BOARD_BARS_VERTICAL || !v) return;
+            const nearTop = v.above <= BOARD_BAR_EDGE_NEAR && v.above > -BOARD_BAR_EDGE_COVER;
+            const nearBottom = v.below <= BOARD_BAR_EDGE_NEAR && v.below > -BOARD_BAR_EDGE_COVER;
+            let want = boardBarsAtTop; // in between (or both edges near, a map that fits the frame): stay where they are
+            if (nearBottom && !nearTop) want = true;
+            else if (nearTop && !nearBottom) want = false;
+            if (want === boardBarsAtTop) return;
+            boardBarsAtTop = want;
+            const fr = document.getElementById('game-board-frame');
+            if (fr) fr.classList.toggle('bars-top', want);
+        }
+        function boardApplyBarLayout() {
+            const fr = document.getElementById('game-board-frame'), ctl = document.getElementById('mapctl');
+            if (fr) { fr.classList.toggle('bars-v', BOARD_BARS_VERTICAL); fr.classList.toggle('bars-top', BOARD_BARS_VERTICAL && boardBarsAtTop); }
+            // the action box keeps clear of a row of buttons across the top; the vertical stacks sit in the corners and don't need it
+            if (ctl) { if (BOARD_BARS_VERTICAL) ctl.removeAttribute('data-actbar-avoid'); else ctl.setAttribute('data-actbar-avoid', ''); }
+        }
         // Shows the Fullscreen button's current state: its picture and tooltip swap between Fullscreen and Exit Fullscreen.
         function boardSyncFsButton() {
             const b = document.getElementById('board-fs-btn'), def = BOARD_MAP_BUTTONS.find(x => x.id === 'board-fs-btn');
@@ -49627,8 +49679,8 @@
             // handlers (board.js for zoom / Fit / Find Me, the page's click listener for Fullscreen) stay on the same elements.
             const ctl = document.getElementById('mapctl');
             if (!ctl) return;
-            BOARD_MAP_BUTTONS.forEach(def => {
-                const b = document.getElementById(def.id);
+            (BOARD_BARS_VERTICAL ? BOARD_MAP_ORDER_V : BOARD_MAP_ORDER_H).forEach(id => {
+                const def = BOARD_MAP_BUTTONS.find(x => x.id === id), b = def && document.getElementById(id);
                 if (!b) return;
                 if (!b.querySelector('img')) {
                     b.textContent = '';
@@ -49640,6 +49692,7 @@
                 ctl.appendChild(b); // (re)appending puts them in order
             });
             boardSyncFsButton();
+            boardApplyBarLayout();
         }
         function boardMyPlayer() { return boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host')) || null; }
         // "Stay on City Space" is only usable while this player's marker is on a City space.
