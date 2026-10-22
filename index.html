@@ -46846,7 +46846,7 @@
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onTravel: boardOnTravel, onView: boardOnView, checkpointImages: BOARD_CHECKPOINT_IMAGES, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, onDragState: boardDragState, gateCheck: boardGateCheck, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
+                boardCtrl = window.BoardMap.mount(body, { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onTravel: boardOnTravel, onView: boardOnView, checkpointImages: BOARD_CHECKPOINT_IMAGES, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, onDragState: boardDragState, gateCheck: boardGateCheck, spawnBypass: boardSpawnBypass, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS });
                 boardSig = sig;
                 boardSaveKey = saveKey;
                 boardSaveDirty = false;
@@ -46950,7 +46950,7 @@
                 if (!b) return;
                 let why = null;
                 if (a.id === 'roll') why = null;
-                else if (a.id === 'stay') why = boardOnCitySpace() ? null : 'You can only stay while your Trainer Figure is on a City space.';
+                else if (a.id === 'stay') why = boardOnCitySpace() ? null : BOARD_STAY_MESSAGE;
                 else { try { why = boardGateCheck({ type: 'ability', value: a.id }); } catch (e) { why = 'Not available.'; } }
                 const locked = !!why;
                 if (b.classList.contains('locked') !== locked) b.classList.toggle('locked', locked);
@@ -47083,6 +47083,14 @@
                     onYes: city => boardDoJump(city, BOARD_FLY_SHOWS_ACTIONS)
                 });
             }
+        }
+        // Pok\u00e9mon gates: every preset boss (a spawn in the map file) blocks travel until it is defeated or caught. A player holding the item named
+        // here in their Permanent zone walks through as normal (names are matched without accents / case, like the item gates). Add more as needed.
+        const BOARD_STAY_MESSAGE = 'You can only stay while your Trainer Figure is on a City space or a space blocked by a Pok\u00e9mon.';
+        const BOARD_SPAWN_BYPASS_ITEM = { snorlax: 'Pok\u00e9 Flute' };
+        function boardSpawnBypass(spawn) {
+            const item = BOARD_SPAWN_BYPASS_ITEM[boardCardNameKey(spawn)];
+            return !!item && boardGateCheck({ type: 'item', value: item }) === null;
         }
         function boardCurrentGameLength() {
             const s = (activeGuestSaveId !== null && gameGuestSaves[activeGuestSaveId]) || (activeSaveSlot !== null && gameSaves[activeSaveSlot]) || null;
@@ -49767,11 +49775,11 @@
             boardApplyBarLayout();
         }
         function boardMyPlayer() { return boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host')) || null; }
-        // "Stay on City Space" is only usable while this player's marker is on a City space.
+        // "Stay on City Space" is usable while this player's marker is on a City space, or on a space a Pok\u00e9mon is still blocking.
         function boardOnCitySpace() {
             if (!boardCtrl || !boardCtrl.spaceOf || isActiveSaveReadOnly()) return false;
             const me = boardMyPlayer(), sp = me && boardCtrl.spaceOf(me.id);
-            return !!(sp && sp.type === 'city');
+            return !!(sp && (sp.type === 'city' || sp.gate));
         }
         // board.js calls this after every redraw: the button bar (Stay, abilities) follows where the marker is and the team / badges.
         function boardUpdateStayButton() {
@@ -49785,7 +49793,7 @@
         }
         function boardStayOnSpace() {
             if (isActiveSaveReadOnly()) return;
-            if (!boardOnCitySpace()) { showGameToast('You can only stay while your Trainer Figure is on a City space.'); return; }
+            if (!boardOnCitySpace()) { showGameToast(BOARD_STAY_MESSAGE); return; }
             const me = boardMyPlayer();
             if (!me) return;
             boardAnnounceRollSettled(me); // the move is decided, so any roll still on screen can wind down
