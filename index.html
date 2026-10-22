@@ -15333,6 +15333,23 @@
             border-radius: 50%; border: 2px solid #000; background: rgba(16, 20, 24, 0.7); opacity: 1; }
         #game-board-mount #cpBtn.board-ability-btn:disabled { opacity: 1; cursor: default; }
         #game-board-mount #cpBtn.board-ability-btn:disabled img { filter: grayscale(1) brightness(0.35); }
+        /* "[Name]'s Turn" banner: big centred text over everything for a couple of seconds at the start of each turn (taps pass through it). */
+        #board-turn-banner { position: fixed; left: 0; right: 0; top: 38%; z-index: 9000; display: none; flex-direction: column; align-items: center; gap: 4px; padding: 0 16px;
+            text-align: center; pointer-events: none; }
+        #board-turn-banner.visible { display: flex; animation: board-turn-pop 0.3s ease-out; }
+        #board-turn-banner.fading { opacity: 0; transition: opacity 0.5s ease; }
+        @keyframes board-turn-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) { #board-turn-banner.visible { animation: none; } }
+        #board-turn-name { font-weight: bold; font-size: clamp(32px, 9vw, 72px); line-height: 1.05; overflow-wrap: anywhere;
+            text-shadow: -3px -3px 0 black, 0 -3px 0 black, 3px -3px 0 black, -3px 0 0 black, 3px 0 0 black, -3px 3px 0 black, 0 3px 0 black, 3px 3px 0 black; }
+        #board-turn-num { font-weight: bold; font-size: clamp(20px, 5vw, 36px); line-height: 1.1; color: #fff;
+            text-shadow: -2px -2px 0 black, 0 -2px 0 black, 2px -2px 0 black, -2px 0 0 black, 2px 0 0 black, -2px 2px 0 black, 0 2px 0 black, 2px 2px 0 black; }
+        @media (min-resolution: 1.25dppx), (-webkit-min-device-pixel-ratio: 1.25) {
+        @supports (-webkit-text-stroke: 1px black) or (text-stroke: 1px black) {
+            #board-turn-name { text-shadow: none; -webkit-text-stroke: 8px black; text-stroke: 8px black; paint-order: stroke fill; }
+            #board-turn-num { text-shadow: none; -webkit-text-stroke: 5px black; text-stroke: 5px black; paint-order: stroke fill; }
+        }
+        }
         .board-ability-btn.no-img { color: #fff; font: 700 10px/1.1 sans-serif; padding: 2px; overflow-wrap: anywhere; }
         .board-ability-btn.locked { cursor: default; }
         .board-ability-btn.locked img { filter: grayscale(1) brightness(0.35); }
@@ -18595,6 +18612,8 @@
             </div>
         </div>
     </div>
+
+    <div id="board-turn-banner" aria-live="polite"><div id="board-turn-name"></div><div id="board-turn-num"></div></div>
 
     <div id="image-overlay">
         <div id="viewer-edge-spacer-top" class="viewer-edge-spacer"></div>
@@ -44237,6 +44256,7 @@
         function endSoloSession() {
             if (!soloSession.active) return;
             soloSession = { active: false, color: null, starterChosen: false, gameOfficiallyStarted: false };
+            turnsClear();
             const lobbyEl = document.getElementById('game-lobby');
             if (lobbyEl && lobbyEl.dataset.role === 'solo') {
                 lobbyEl.dataset.state = 'choice';
@@ -44283,6 +44303,7 @@
 
         function resetLobbyState() {
             pendingGuestSetupAfterJoin = false;
+            turnsClear();
             stopLobbyHeartbeat();
             releaseLobbyWakeLock();
             // Grab the outgoing peer and swap lobbyState to its fresh,
@@ -44926,6 +44947,7 @@
 
         function renderLobbyPlayers() {
             boardSyncPlayers();
+            turnsReconcile();
             const listEl = document.getElementById('game-lobby-players');
             listEl.innerHTML = lobbyState.players.map(p => `
                 <div class="game-lobby-player-row${p.isHost ? ' is-host' : ''}">
@@ -45259,6 +45281,7 @@
                 // 'identify' handling for the backstop that still exists
                 // for the genuine-race case this can't catch on its own).
                 takenColors: getLobbyTakenColors(excludePeerId),
+                turns: turnsPublicView(), // where the turn order stands, for a guest joining or re-syncing mid-game
             };
         }
 
@@ -45304,6 +45327,7 @@
             // just reloaded, since that's the same game.
             if (switchedGame) {
                 lobbyState.gameOfficiallyStarted = false;
+                turnsClear();
                 lobbyState.starterChosen = { host: lobbyState.hostIsPlayer && !!hostData.starterLocked };
                 // Isolated: the welcomes below are what tell every guest the game changed. If this step ever
                 // threw, they'd never be sent and guests would carry on in the old game -- previous Trainer
@@ -45566,6 +45590,8 @@
                     boardHandleContestTake(conn.peer, data);
                 } else if (data.type === 'board-contest-music') {
                     boardHandleContestMusic(conn.peer, data);
+                } else if (data.type === 'turn-end') {
+                    turnsHandleEnd(conn.peer);
                 } else if (data.type === 'board-roll') {
                     boardHandleRollFromGuest(conn.peer, data);
                 } else if (typeof data.type === 'string' && data.type.indexOf('board-pvp-') === 0 && typeof data.to === 'string') {
@@ -46473,7 +46499,7 @@
             // "Start Game" was already pressed on the old host: don't drop everyone back into the
             // pre-game team rules (see isGameOfficiallyStarted()). The welcome each guest gets from
             // this host reads this flag.
-            if (lobbyState.role === 'host' && offer.gameStarted) { lobbyState.gameOfficiallyStarted = true; updateLobbyStartGameButtonUI(); }
+            if (lobbyState.role === 'host' && offer.gameStarted) { lobbyState.gameOfficiallyStarted = true; updateLobbyStartGameButtonUI(); turnsResume(); }
             if (built.slotIndex === GAME_OVERFLOW_SLOT_INDEX) openOverflowPrompt();
         }
 
@@ -46857,6 +46883,7 @@
                 boardUpdateAbilityButtons();
                 boardUpdateStayButton();
                 boardApplyKeepScale();
+                turnsRenderBoard();
                 boardCtrl.loadBoard(d, { style: cfg.style });
                 const img = await boardFindImage(d, cfg.style, cfg.region);
                 if (img) boardCtrl.setImage(img);
@@ -46891,6 +46918,170 @@
             boardPlayersSig = sig;
             boardCtrl.setPlayers(list);
         }
+        // ---- Player turns ----
+        // Only when the game is played fully virtually (Virtual Decks AND the in-app map set to Virtual Tokens), in solo and multiplayer.
+        // The host (or the solo player) owns the turn state: Start Game shuffles the players into a turn order (a save that already has one
+        // keeps it, and anyone new goes to the end), and it is stored in the host's save as save.turns so a reload resumes from the same
+        // turn. Players are tracked by their stable client id (the one the board saves use), since a reconnecting guest gets a new peer id.
+        // Guests are sent a ready-to-draw "view" of it ('turn-state'; also inside 'welcome' for anyone joining later) and ask the host to
+        // end their turn with 'turn-end'. A player who is not currently in the lobby is skipped when the turn passes on.
+        var turnAuth = null;   // host / solo only: { order: [clientId], cur: clientId, counts: { clientId: n }, meta: { clientId: { name, hex } } }
+        var turnView = null;   // every device: { order: [{ pid, name, hex, n }], cur: pid | null, curName, curHex, curN }
+        var turnViewSig = '', turnBannerFade = null, turnBannerHide = null, turnLastAdvanceAt = 0;
+        function turnsEligible() {
+            try {
+                const map = getRegionMapSettingsForActiveSave();
+                return !!(isVirtualDecksEnabledForActiveSave() && map.enabled && map.style !== 'full');
+            } catch (e) { return false; }
+        }
+        function turnsSave() { return (activeSaveSlot !== null && gameSaves[activeSaveSlot]) || null; }
+        function turnsRoster() {
+            const solo = lobbyState.role === null, save = solo ? turnsSave() : null;
+            return boardPlayers().filter(p => p.cid).map(p => ({ pid: p.id, cid: p.cid, hex: p.c, name: solo ? ((save && save.hostDisplayName) || 'You') : p.name }));
+        }
+        function turnsFromSave(raw) {
+            const order = Array.isArray(raw.order) ? raw.order.filter(x => typeof x === 'string') : [];
+            const counts = {}, meta = {};
+            order.forEach(cid => {
+                counts[cid] = Math.max(0, parseInt(raw.counts && raw.counts[cid], 10) || 0);
+                const m = raw.meta && raw.meta[cid];
+                if (m && typeof m.name === 'string') meta[cid] = { name: m.name.slice(0, 40), hex: /^#[0-9a-f]{3,8}$/i.test(m.hex) ? m.hex : '#ffffff' };
+            });
+            return { order, cur: typeof raw.cur === 'string' && order.includes(raw.cur) ? raw.cur : null, counts, meta };
+        }
+        function turnsBuildView() {
+            const t = turnAuth;
+            if (!t) return null;
+            const roster = turnsRoster(), by = {};
+            roster.forEach(p => { by[p.cid] = p; t.meta[p.cid] = { name: p.name, hex: p.hex }; });
+            const order = t.order.map(cid => {
+                const p = by[cid], m = t.meta[cid] || {};
+                return { pid: p ? p.pid : null, name: (p && p.name) || m.name || 'Trainer', hex: (p && p.hex) || m.hex || '#ffffff', n: t.counts[cid] || 0 };
+            });
+            const cur = order[t.order.indexOf(t.cur)] || null;
+            return { order, cur: cur ? cur.pid : null, curName: cur ? cur.name : '', curHex: cur ? cur.hex : '#ffffff', curN: cur ? cur.n : 0 };
+        }
+        // Stores the state, shows it here, and sends it to the guests. `announce` pops the "[Name]'s Turn" banner on every device.
+        function turnsCommit(announce) {
+            const t = turnAuth;
+            if (!t) return;
+            const view = turnsBuildView(), save = turnsSave();
+            if (save) {
+                save.turns = { order: t.order.slice(), cur: t.cur, counts: Object.assign({}, t.counts), meta: JSON.parse(JSON.stringify(t.meta)) };
+                try { persistGameSaves(); } catch (e) { /* storage full: the turn still runs */ }
+            }
+            turnViewSig = JSON.stringify(view);
+            turnsApplyView(view, announce);
+            if (lobbyState.role === 'host') {
+                lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send({ type: 'turn-state', view, announce: !!announce }); });
+            }
+        }
+        function turnsPublicView() { return lobbyState.role === 'host' && turnAuth ? turnsBuildView() : null; }
+        function turnsApplyView(view, announce) {
+            turnView = (view && Array.isArray(view.order)) ? view : null;
+            turnsRender(!!announce);
+        }
+        function turnsRender(announce) {
+            try { if (boardCtrl && boardCtrl.setTurn) boardCtrl.setTurn(turnView ? turnView.cur : null); } catch (e) { /* board not built yet: turnsRenderBoard() runs once it is */ }
+            try { boardUpdateAbilityButtons(); } catch (e) { /* bar not built yet */ }
+            if (announce && turnView && turnView.curName) turnsShowBanner(turnView);
+            else if (!turnView) turnsHideBanner();
+        }
+        function turnsRenderBoard() { try { if (boardCtrl && boardCtrl.setTurn) boardCtrl.setTurn(turnView ? turnView.cur : null); } catch (e) { /* ignore */ } }
+        function turnsClear() { turnAuth = null; turnViewSig = ''; turnsApplyView(null, false); }
+        function turnsHideBanner() {
+            clearTimeout(turnBannerFade); clearTimeout(turnBannerHide);
+            const box = document.getElementById('board-turn-banner');
+            if (box) box.classList.remove('visible', 'fading');
+        }
+        function turnsShowBanner(v) {
+            const box = document.getElementById('board-turn-banner'), nm = document.getElementById('board-turn-name'), num = document.getElementById('board-turn-num');
+            if (!box || !nm || !num) return;
+            nm.textContent = (v.curName === 'You' ? 'Your' : v.curName + '’s') + ' Turn';
+            nm.style.color = /^#[0-9a-f]{3,8}$/i.test(v.curHex) ? v.curHex : '#ffffff';
+            num.textContent = 'Turn ' + v.curN;
+            clearTimeout(turnBannerFade); clearTimeout(turnBannerHide);
+            box.classList.remove('visible', 'fading');
+            void box.offsetWidth; // restart the pop animation when turns follow each other quickly
+            box.classList.add('visible');
+            turnBannerFade = setTimeout(() => box.classList.add('fading'), TURN_BANNER_MS);
+            turnBannerHide = setTimeout(() => box.classList.remove('visible', 'fading'), TURN_BANNER_MS + 500);
+        }
+        var TURN_BANNER_MS = 2400;
+        function turnsShuffle(list) {
+            const a = list.slice();
+            for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+            return a;
+        }
+        // Start Game: a shuffled order (or the save's own, if it already has one) and the first turn begins.
+        function turnsStart() {
+            if (!turnsEligible()) return;
+            const save = turnsSave(), roster = turnsRoster();
+            if (!save || !roster.length) return;
+            const t = (save.turns && Array.isArray(save.turns.order) && save.turns.order.length)
+                ? turnsFromSave(save.turns)
+                : { order: turnsShuffle(roster.map(p => p.cid)), cur: null, counts: {}, meta: {} };
+            roster.forEach(p => { if (!t.order.includes(p.cid)) t.order.push(p.cid); }); // anyone new joins at the end
+            const present = new Set(roster.map(p => p.cid));
+            turnAuth = t;
+            if (t.cur && present.has(t.cur)) { // resuming a saved game: the same player's turn carries on
+                if (!(t.counts[t.cur] > 0)) t.counts[t.cur] = 1;
+                turnsCommit(true);
+            } else {
+                const from = t.cur ? t.order.indexOf(t.cur) : -1, n = t.order.length;
+                let next = null;
+                for (let k = 1; k <= n && !next; k++) { const c = t.order[(from + k + n) % n]; if (present.has(c)) next = c; }
+                t.cur = next || t.order[0];
+                t.counts[t.cur] = (t.counts[t.cur] || 0) + 1;
+                turnsCommit(true);
+            }
+        }
+        // A host that took over a game already under way picks the turns up from the save it was handed.
+        function turnsResume() {
+            if (!turnsEligible()) return;
+            const save = turnsSave();
+            if (!save || !save.turns || !Array.isArray(save.turns.order) || !save.turns.order.length) return;
+            turnAuth = turnsFromSave(save.turns);
+            turnsRoster().forEach(p => { if (!turnAuth.order.includes(p.cid)) turnAuth.order.push(p.cid); });
+            turnsCommit(false);
+        }
+        // Called whenever the lobby roster is redrawn: newcomers go to the end of the order, and joins / reconnects / renames reach everyone.
+        function turnsReconcile() {
+            if (!turnAuth || lobbyState.role !== 'host') return;
+            let added = false;
+            turnsRoster().forEach(p => { if (!turnAuth.order.includes(p.cid)) { turnAuth.order.push(p.cid); added = true; } });
+            if (added || JSON.stringify(turnsBuildView()) !== turnViewSig) turnsCommit(false);
+        }
+        function turnsAdvance() {
+            const t = turnAuth;
+            if (!t || !t.order.length) return;
+            if (Date.now() - turnLastAdvanceAt < 700) return; // a double tap must not skip a turn
+            const present = new Set(turnsRoster().map(p => p.cid)), n = t.order.length, from = t.order.indexOf(t.cur);
+            let next = null;
+            for (let k = 1; k <= n && !next; k++) { const c = t.order[(from + k + n) % n]; if (present.has(c)) next = c; }
+            if (!next) return;
+            turnLastAdvanceAt = Date.now();
+            t.cur = next;
+            t.counts[next] = (t.counts[next] || 0) + 1;
+            turnsCommit(true);
+        }
+        // The current player may end their turn. A host may also end it when its player isn't in the lobby, or when the host isn't playing.
+        function turnsCanEnd() {
+            const v = turnView;
+            if (!v || isActiveSaveReadOnly()) return false;
+            const me = getMyLobbyPlayerId() || 'host';
+            if (v.cur && v.cur === me) return true;
+            return lobbyState.role === 'host' && (!lobbyState.hostIsPlayer || v.cur === null);
+        }
+        function turnsEndClick() {
+            if (!turnView) return;
+            if (!turnsCanEnd()) { showGameToast('It’s ' + (turnView.curName || 'another player') + '’s turn.'); return; }
+            if (lobbyState.role === 'guest') boardSend({ type: 'turn-end' });
+            else turnsAdvance();
+        }
+        function turnsHandleEnd(peerId) {
+            if (turnAuth && turnView && turnView.cur && turnView.cur === peerId) turnsAdvance(); // who it was comes from the connection
+        }
         // ---- Gates on paths ----
         // board.js asks, for the player moving THEIR OWN marker on THIS device, whether they may cross a gated path. Every gate is
         // player-specific, so each is checked against this device's own save. Returns null (may cross) or the reason (shown as a toast
@@ -46908,6 +47099,7 @@
         // Puts a picture on a round bar button. If the picture can't load (a bad or expired link, offline) the button shows its name in
         // small text instead, so it still works and the broken link is easy to spot.
         function boardButtonImage(b, url, label) {
+            if (!url) { b.classList.add('no-img'); b.textContent = label; return null; } // no picture yet: the button shows its name
             const img = document.createElement('img');
             img.alt = ''; img.draggable = false;
             img.onerror = () => { img.remove(); b.classList.add('no-img'); b.textContent = label; };
@@ -46928,6 +47120,7 @@
             { id: 'dig', label: 'Dig', url: 'https://dl.dropboxusercontent.com/scl/fi/x40exjym9k60pf9xtsicm/ability_dig.png?rlkey=8yctsvjiwlt3gl1nvfxzqpu5o&st=21rzqg5v&dl=1' },
             { id: 'fly', label: 'Fly', url: 'https://dl.dropboxusercontent.com/scl/fi/p716lgvkmk9szoh0cy184/ability_fly.png?rlkey=ax3ekv8hvf885g6eqlwkh4kni&st=tvec9vtv&dl=1' },
             { id: 'surf', label: 'Surf', url: 'https://dl.dropboxusercontent.com/scl/fi/pw5mbamugkygoalajicxn/ability_surf.png?rlkey=40f2gdd1bohm14pymgqswzous&st=jmrvj1g1&dl=1' },
+            { id: 'endturn', domId: 'board-endturn-btn', label: 'End Turn', url: null },
             { id: 'teleport', label: 'Teleport', url: 'https://dl.dropboxusercontent.com/scl/fi/ym5ou8gjkxfey3dpc8669/ability_teleport.png?rlkey=s5bh2lomkkhqfsjw2y6vkgee8&st=y6t02i3a&dl=1' }
         ];
         function boardUpdateAbilityButtons() {
@@ -46950,6 +47143,11 @@
                 if (!b) return;
                 let why = null;
                 if (a.id === 'roll') why = null;
+                else if (a.id === 'endturn') {
+                    const showIt = !!turnView;
+                    if ((b.style.display === 'none') === showIt) b.style.display = showIt ? '' : 'none';
+                    why = !showIt ? null : (turnsCanEnd() ? null : 'It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.');
+                }
                 else if (a.id === 'stay') why = boardOnCitySpace() ? null : BOARD_STAY_MESSAGE;
                 else { try { why = boardGateCheck({ type: 'ability', value: a.id }); } catch (e) { why = 'Not available.'; } }
                 const locked = !!why;
@@ -49924,6 +50122,7 @@
             }
             else if (t.closest('#board-roll-btn')) boardRollMovement();
             else if (t.closest('#board-stay-btn')) boardStayOnSpace();
+            else if (t.closest('#board-endturn-btn')) turnsEndClick();
             else if (t.closest('.board-ability-btn')) boardUseAbility(t.closest('.board-ability-btn').dataset.ability);
             else if (t.closest('.board-jump-opt')) boardJumpPick(t.closest('.board-jump-opt'));
             else if (t.closest('#board-jump-yes')) boardJumpConfirm();
@@ -50656,6 +50855,8 @@
                     // broadcastTrainerCardClaims().
                     lobbyState.trainerCardClaims = data.claims;
                     refreshTrainerCardPickerIfOpen();
+                } else if (data.type === 'turn-state') {
+                    turnsApplyView(data.view && typeof data.view === 'object' ? data.view : null, !!data.announce);
                 } else if (data.type === 'game-started') {
                     // The host pressed Start Game -- see
                     // finalizeLobbyGameStart().
@@ -50950,6 +51151,7 @@
             lobbyState.hostName = data.hostName;
             // Joining (or re-syncing) after Start Game was already pressed.
             lobbyState.gameOfficiallyStarted = !!data.gameStarted;
+            turnsApplyView(data.turns && typeof data.turns === 'object' ? data.turns : null, false);
             lobbyState.hostRuleset = {
                 region: data.region,
                 gameLength: data.gameLength,
@@ -51306,6 +51508,7 @@
                     if (conn.open) conn.send({ type: 'game-started' });
                 });
             }
+            turnsStart(); // virtual games: shuffle the turn order and begin the first turn
             updateLobbyStartGameButtonUI();
             refreshGameUI();
         }
