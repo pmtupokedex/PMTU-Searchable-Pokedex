@@ -137,7 +137,7 @@ const COL={red:'#e03131',blue:'#2f4fd0',green:'#2f9e44',yellow:'#f5c211',orange:
 let PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:'p3',name:'Brock',c:'#8d6e63'}];
 if(opts.players)PL=opts.players;
 const SAMPLE_NAMES={red:['Charmander','Vulpix','Growlithe','Ponyta','Magmar'],blue:['Squirtle','Psyduck','Slowpoke','Staryu','Lapras'],green:['Bulbasaur','Oddish','Bellsprout','Tangela','Scyther'],yellow:['Pikachu','Sandshrew','Geodude','Onix','Diglett'],orange:['Articuno','Zapdos','Moltres','Mewtwo']};
-let TURN=null,view='host',M={pos:{},home:{},spaces:{}},lastSnapStr='',SP=[],LK=[],W=1000,H=620,R=14,K=1,NAMES={},img=null,active='p1',pos={},home={},pools={},st={},drag=null,sync=0;
+let OUT=new Set(),TURN=null,view='host',M={pos:{},home:{},spaces:{}},lastSnapStr='',SP=[],LK=[],W=1000,H=620,R=14,K=1,NAMES={},img=null,active='p1',pos={},home={},pools={},st={},drag=null,sync=0;
 let entry={};const curEntry=()=>mode==='guest'?(M.entry||{}):entry;const curPos=()=>mode==='guest'?M.pos:pos;const curHome=()=>mode==='guest'?(M.home||{}):home;
 const get=id=>SP.find(s=>s.id===id),shuf=a=>{for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
 const log=t=>$('log').insertAdjacentHTML('afterbegin',`<div>${t}</div>`);
@@ -307,7 +307,7 @@ function hostMove(p,to,path){const prev=pos[p];const ok=validPath(path,prev,to);
 function landEvent(p,id,passed,here){const s=get(id),homeOpts=[...passed.map(c=>({id:c,label:get(c).label||c,how:'passed through'})),...(s.type==='city'?[{id,label:s.label||id,how:''}]:[])].filter(o=>home[p]!==o.id);
  pendingHome[p]=homeOpts.map(o=>o.id);pendingEnc[p]=null;let kind=(s.type==='city'||s.type==='special')?s.type:s.type==='event'?'event':'none';const o=st[id];
  if(s.type==='catch'&&o){if(o.empty)kind='empty';else{kind='catch';pendingEnc[p]=id}} // nothing is revealed until the player chooses to encounter it
- opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind,token:(kind==='catch'&&o.revealed)?o.token:null,boss:kind==='catch'&&o.revealed&&!!o.boss,alsoHere:here,alsoHereIds:PL.filter(q=>q.id!==p&&pos[q.id]===id).map(q=>({id:q.id,name:q.name})),homeOptions:homeOpts})}
+ opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind,token:(kind==='catch'&&o.revealed)?o.token:null,boss:kind==='catch'&&o.revealed&&!!o.boss,alsoHere:here,alsoHereIds:OUT.has(p)?[]:PL.filter(q=>q.id!==p&&pos[q.id]===id&&!OUT.has(q.id)).map(q=>({id:q.id,name:q.name})),homeOptions:homeOpts})}
 // The player chose to encounter the wild Pokémon on the space they are standing on: only now is it revealed.
 function acceptEncounter(p){const id=pendingEnc[p];if(!id||pos[p]!==id)return false;const o=st[id];if(!o||o.empty||!o.token)return false;pendingEnc[p]=null;
  if(!o.revealed){o.revealed=true;log(`host: reveal ${id} (${o.token}) to everyone`);snapshot()}
@@ -318,7 +318,7 @@ function rerollEncounter(p){const id=pendingEnc[p];if(!id||pos[p]!==id)return fa
  const s=get(id),c=o.home||s.color,pool=pools[c]||[],others=pool.filter(n=>n!==o.token),noOthers=!others.length;
  if(!noOthers){const n=others[Math.floor(Math.random()*others.length)],old=o.token;pool.splice(pool.indexOf(n),1);o.token=n;backToPool(old);log(`host: ${p} looked for another Pokémon on ${id}: ${old} back to the pool, ${n} dealt`);snapshot()}
  pendingEnc[p]=null;opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind:'encounter',token:o.token,boss:false,noOthers,alsoHere:[],homeOptions:[]});return true}
-function land(p,id,passed=[]){const s=get(id),here=PL.filter(q=>q.id!==p&&pos[q.id]===id).map(q=>q.name),name=PL.find(q=>q.id===p).name;
+function land(p,id,passed=[]){const s=get(id),here=OUT.has(p)?[]:PL.filter(q=>q.id!==p&&pos[q.id]===id&&!OUT.has(q.id)).map(q=>q.name),name=PL.find(q=>q.id===p).name;
  if(mode==='host'&&opts.onLanding){landEvent(p,id,passed,here);return}
  let h=`<b>${name}</b> landed on <b>${s.label||s.type+' '+s.id}</b>.`;
  const hm=$('hm');hm.innerHTML='';[...passed.map(c=>[c,' (passed through)']),...(s.type==='city'?[[id,'']]:[])].filter(([c])=>home[p]!==c).forEach(([c,w])=>{const b=document.createElement('button');b.textContent=`Set Current Home: ${get(c).label||c}${w}`;b.onclick=()=>{setHome(p,c);hm.innerHTML=''};hm.appendChild(b)});
@@ -389,7 +389,7 @@ function draw(){buildModel();let h=(img&&(bgFail||!canBmp))?`<image href="${img}
   h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*1.7}" fill="none" stroke="${q.c}" stroke-width="${R*.4}" pointer-events="none"><animate attributeName="r" values="${R*1.55};${R*2.3};${R*1.55}" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;.3;1" dur="1.6s" repeatCount="indefinite"/></circle><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*1.45}" fill="none" stroke="#fff" stroke-width="${R*.16}" pointer-events="none"/>`}}
  for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
-  h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" pointer-events="none"/>`}
+  h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}"${OUT.has(q.id)?' opacity=".35"':''} pointer-events="none"/>`}
  svg.innerHTML=h;cpSync();renderPl();try{placeAct()}catch(e){}if(opts.onDraw){try{opts.onDraw()}catch(e){}}}
 const pt=e=>new DOMPoint(e.clientX,e.clientY).matrixTransform(svg.getScreenCTM().inverse());
 /* autoFill: until the player zooms by hand, the view is 'fill the frame's height, centered on my marker' */let Z=1,VX=0,VY=0,relZoom=1,autoFill=true,initCentered=false;const ptrs=new Map();let pan=null,pinch=null,lastPtr=null,edgeOn=false;
@@ -620,6 +620,7 @@ return{
  setKeepScale(on){keepScale=!!on;updEA();Z=clampZ(Z);clampView();applyView()},
  restoreView,placeAction:()=>{try{placeAct()}catch(e){}},
  setView:v=>setView(v),
+ setBlackedOut(ids){OUT=new Set(Array.isArray(ids)?ids:[]);draw()}, // players who are blacked out: their marker is see-through and they don't count as on a space for other players' Battle / Trade
  setTurn(id){TURN=id||null;draw()}, // the player whose turn it is (their marker gets a pulsing ring), or null
  setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>o.cid&&pos[o.id]&&!list.some(n=>n.id===o.id)&&!list.some(n=>n.cid===o.cid)&&!(restoreQ||[]).some(q=>q.cid===o.cid&&!q.done));
   if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!q.done);gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id],entry:entry[g.id],from:g.id}))}}
