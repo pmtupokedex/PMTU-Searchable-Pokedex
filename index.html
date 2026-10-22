@@ -7810,6 +7810,11 @@
         #game-starter-picker-overlay { display: none; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); align-items: center; justify-content: center;
             z-index: 20; padding: 20px; box-sizing: border-box; }
         #game-starter-picker-overlay.visible { display: flex; }
+        /* one Pokémon per row, art at the Safari Zone picker's size */
+        #game-starter-picker-list { grid-template-columns: 1fr; }
+        #game-starter-picker-list .game-gym-leader-picker-img { width: 250px; max-width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; }
+        /* the forced setup pick (no starter yet) can only be answered by choosing one */
+        #game-starter-picker-overlay.forced #game-starter-picker-cancel-btn { display: none; }
         #game-starter-picker-list .game-starter-picker-item-taken { cursor: not-allowed; }
         #game-starter-picker-list .game-starter-picker-item-taken .game-gym-leader-picker-img { opacity: 0.45; filter: grayscale(0.6); }
         #game-starter-picker-list .game-starter-picker-item-taken .game-gym-leader-picker-sub { opacity: 1; color: #333; }
@@ -24589,9 +24594,12 @@
             try { const m = getRegionMapSettingsForActiveSave(); return !!(m.enabled && m.style !== 'full'); } catch (e) { return false; }
         }
         function starterSpeciesList() {
+            // Only starters in the loaded pool: the same Pok\u00e9mon the board's pools are built from (the save's region tag; see boardPoolsFor()).
+            let region = '';
+            try { region = String(boardWantedConfig().region || '').toLowerCase(); } catch (e) { /* not ready */ }
             return Object.values(POKEMON_BY_NAME).filter(p => {
                 const tags = Array.isArray(p.tags) ? p.tags.map(t => String(t).toLowerCase()) : [];
-                return tags.includes('starter') && !TEAM_ADD_FORCED_EXCLUDE_TAGS.some(t => tags.includes(t));
+                return tags.includes('starter') && (!region || tags.includes(region)) && !TEAM_ADD_FORCED_EXCLUDE_TAGS.some(t => tags.includes(t));
             });
         }
         function getMyStarterPick() {
@@ -24643,12 +24651,11 @@
                 const sub = mine ? 'Your starter' : (owner ? `Taken by ${owner.name || 'another player'}` : '');
                 const classes = 'game-battle-picker-item' + (mine ? ' game-starter-picker-item-mine' : '') + (owner ? ' game-starter-picker-item-taken' : '');
                 return `<button type="button" class="${classes}"${owner ? ' aria-disabled="true"' : ''} data-starter-name="${escapeHtml(p.name)}">
-                    <img class="game-gym-leader-picker-img" data-gl-url="${escapeHtml(p.src || '')}" alt="" onerror="this.style.visibility='hidden'">
+                    <img class="game-gym-leader-picker-img" src="${escapeHtml(p.src || '')}" loading="lazy" alt="" onerror="this.style.visibility='hidden'">
                     <span class="game-battle-picker-item-name">${escapeHtml(p.name)}</span>
                     ${sub ? `<span class="game-gym-leader-picker-sub">${escapeHtml(sub)}</span>` : ''}
                 </button>`;
             }).join('');
-            applyGymLeaderPickerImages(list);
         }
         function isStarterPickerOpen() {
             const o = document.getElementById('game-starter-picker-overlay');
@@ -24661,11 +24668,11 @@
             if (search) search.value = '';
             renderStarterPicker();
             const o = document.getElementById('game-starter-picker-overlay');
-            if (o) o.classList.add('visible');
+            if (o) { o.classList.toggle('forced', isStarterForcePickActive()); o.classList.add('visible'); }
         }
         function closeStarterPicker() {
             const o = document.getElementById('game-starter-picker-overlay');
-            if (o) o.classList.remove('visible');
+            if (o) o.classList.remove('visible', 'forced');
         }
         // Records the pick in this player's save and puts that Pokémon on the team as the starter.
         function applyStarterPick(name) {
@@ -24734,6 +24741,33 @@
             if (data.ok && typeof data.name === 'string') { applyStarterPick(data.name); return; }
             showGameToast(data.reason === 'taken' ? STARTER_TAKEN_MESSAGE : 'Couldn’t choose that starter. Please try again.');
             refreshStarterPickerIfOpen();
+        }
+        // ---- Holding the player on the Team Tracker during setup (like the Trainer Card step) ----
+        // Begin Game Setup puts a virtual-token player straight into the starter picker (no "Add a Pok\u00e9mon?" prompt) and keeps them on the
+        // Team Tracker until the starter is locked in and, if a starter Nature Card is owed, that card is placed. Re-derived every time, so it
+        // lets go by itself whenever it stops applying (session over, game started, read-only, ...).
+        var starterSetupHold = false;
+        function isStarterSetupHoldActive() {
+            if (!starterSetupHold) return false;
+            const data = getActiveSaveData();
+            const stillHeld = isPlaySessionActive() && starterPickerApplies() && !isTrainerCardHostNotPlaying() && !isActiveSaveReadOnly()
+                && !isGameOfficiallyStarted() && !!data && (!isStarterLocked() || !!data.starterNatureOwed);
+            if (!stillHeld) starterSetupHold = false;
+            return stillHeld;
+        }
+        function isStarterForcePickActive() {
+            return isStarterSetupHoldActive() && ((getActiveSaveData().team.members) || []).length === 0;
+        }
+        // Returns false (doing nothing) when there's nothing to hold for.
+        function beginStarterSetup() {
+            if (!starterPickerApplies() || isActiveSaveReadOnly() || isTrainerCardHostNotPlaying()) return false;
+            if (((getActiveSaveData().team.members) || []).length === 0 || !isStarterLocked()) {
+                starterSetupHold = !isGameOfficiallyStarted();
+            }
+            openGamePanel();
+            setGameScreen('team');
+            if (((getActiveSaveData().team.members) || []).length === 0) openStarterPicker();
+            return true;
         }
         // renderTeamGrid() calls this after every team change: a starter released before it was locked in gives its pick back.
         function starterReconcileClaim() {
@@ -34983,6 +35017,8 @@
         }
 
         function openTeamAddPromptOverlay() {
+            // Virtual-token games skip the prompt: the starter picker opens straight away.
+            if (starterPickerApplies() && !isActiveSaveReadOnly() && ((getActiveSaveData().team.members) || []).length === 0 && beginStarterSetup()) return;
             const overlay = document.getElementById('game-team-add-prompt-overlay');
             if (overlay) overlay.classList.add('visible');
         }
@@ -44014,6 +44050,7 @@
             // out; isTrainerCardSetupHoldActive() also clears itself in
             // those cases.
             if (isTrainerCardSetupHoldActive() && screenId !== 'trainer-card') screenId = 'trainer-card';
+            if (isStarterSetupHoldActive() && screenId !== 'team') screenId = 'team'; // same for the starter step
             // A pending replacement (see teamReplacePendingMember/
             // beginTeamReplaceMode()) only makes sense while actually
             // looking at Team Tracker -- leaving that screen any other
@@ -53374,7 +53411,7 @@
             const overlay = document.getElementById('game-starter-picker-overlay');
             if (!overlay) return;
             overlay.addEventListener('click', (e) => {
-                if (e.target === overlay || e.target.closest('#game-starter-picker-cancel-btn')) { closeStarterPicker(); return; }
+                if (e.target === overlay || e.target.closest('#game-starter-picker-cancel-btn')) { if (!isStarterForcePickActive()) closeStarterPicker(); return; }
                 const item = e.target.closest('[data-starter-name]');
                 if (!item) return;
                 if (item.getAttribute('aria-disabled') === 'true') { showGameToast(STARTER_TAKEN_MESSAGE); return; }
