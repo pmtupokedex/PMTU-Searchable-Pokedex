@@ -150,7 +150,7 @@ function sampleBoard(){const S=[['A','city',0,90,540,'Pallet'],['B','catch','red
  applyBoard({SP:S,LK:L,W:1000,H:620,R:14,names:SAMPLE_NAMES,start:'A'})}
 function importBoard(d,o){const cnt=k=>d.spaces.filter(s=>s.pos&&s.pos[k]).length;let m0;if(o&&o.style){if(!cnt(o.style))throw new Error('this board has no '+o.style+' map yet');m0=o.style}else m0=['condensed','full'].map(k=>[k,cnt(k)]).sort((a,b)=>b[1]-a[1])[0][0];const m=m0,asp=(d.maps&&d.maps[m]&&d.maps[m].aspect)||1.5,w=1000;
  const S=d.spaces.filter(s=>s.pos&&s.pos[m]).map(s=>({id:s.id,type:s.type,color:s.region||(s.type==='catch'?'red':null),x:s.pos[m].x*w,y:s.pos[m].y*w/asp,w:s.pos[m].w&&s.pos[m].w*w,h:s.pos[m].h&&s.pos[m].h*w/asp,label:s.label||'',spawn:s.spawn,start:!!s.start,fly:!!s.fly,actions:s.actions||[]}));
- const ids=new Set(S.map(s=>s.id)),L=d.links.filter(l=>ids.has(l[0])&&ids.has(l[1])).map(l=>[l[0],l[1],l[2]?{note:'🔒 '+(l[2].label||(l[2].type+' '+l[2].value)),gate:l[2]}:undefined]);
+ const ids=new Set(S.map(s=>s.id)),L=d.links.filter(l=>ids.has(l[0])&&ids.has(l[1])).map(l=>[l[0],l[1],l[2]?{note:'🔒 '+(l[2].label||(l[2].type+(l[2].value?' '+l[2].value:''))),gate:l[2]}:undefined]);
  const cols=[...new Set(S.filter(s=>s.type==='catch').map(s=>s.color))],names={};if(!cols.includes('orange'))cols.push('orange');
  cols.forEach(c=>{const n=S.filter(s=>s.type==='catch'&&s.color===c&&!s.spawn).length+(c==='orange'?3:4);names[c]=Array.from({length:n},(_,i)=>c[0].toUpperCase()+c.slice(1)+' '+(i+1))});
  if(opts.getPools){const ext=opts.getPools(cols);if(ext)Object.assign(names,ext)}
@@ -238,7 +238,7 @@ function stayOnSpace(p){if(mode!=='host'||pos[p]===undefined||!get(pos[p])||!PL.
 // Current Home). land: true brings up that City's prompt as if the player had just arrived; false moves them quietly. Returns true if it moved.
 function hostJump(p,to,doLand){if(mode!=='host'||pos[p]===undefined||!PL.some(q=>q.id===p))return false;const id=to==='@home'?home[p]:to,s=id&&get(id);if(!s||s.type!=='city')return false;
  pendingEnc[p]=null;pendingHome[p]=[];pos[p]=s.id;delete entry[p];log(`host: ${PL.find(q=>q.id===p).name} jumped to ${s.label||s.id}${doLand?'':' (no prompt)'}`);snapshot();if(doLand)land(p,s.id,[]);return true}
-function spaceOf(p){const id=(curPos()||{})[p],s=id&&get(id);return s?{id:s.id,type:s.type,label:s.label||'',gate:bossUp(s.id)}:null}
+function spaceOf(p){const id=(curPos()||{})[p],s=id&&get(id);return s?{id:s.id,type:s.type,label:s.label||'',gate:bossUp(s.id),battle:(s.actions||[]).some(a=>/^(elite-four|champion)-battle$/.test(a&&a.type||'')||/^\s*Battle (Elite Four|Champion)\s*$/i.test(typeof a==='string'?a:''))}:null}
 function settlePoolToken(n,out){if(mode!=='host'||!held.has(n))return false;held.delete(n);
  if(out==='caught'){boardCaught.add(n);log(`host: ${n} leaves the game (caught in the Safari Zone)`)}else{backToPool(n);log(`host: ${n} returned to its pool`)}return true}
 // The host's COMPLETE state, face-down Pokémon and pools included. Never sent to the table: the app puts it in the
