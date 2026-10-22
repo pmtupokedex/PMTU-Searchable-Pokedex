@@ -11,6 +11,7 @@
                                     list of URLs to try (the first that loads is used); if none load, the name is written instead
             showMarkers          -- default true; false draws no space shapes, labels, text, paths or lock icons (the map art
                                     carries them) -- only player tokens, home markers and the yellow drop highlight
+            spawnBypass(spawn,player) -- true when this player may walk through a Pokémon gate (a boss space) as normal, e.g. holding the Poké Flute for Snorlax; asked on the device that is moving
             onLanding(info)      -- host/solo: a player's move ended; info = {player,space,kind,token,boss,alsoHere [names of the other players on the space],alsoHereIds [the same players as {id,name}],homeOptions}
                                     kind 'catch' = a wild Pokémon is here and NOT yet revealed (token is null unless it was
                                     already face-up); the player answers with message {type:'board-encounter'} to reveal it,
@@ -137,7 +138,7 @@ let PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:
 if(opts.players)PL=opts.players;
 const SAMPLE_NAMES={red:['Charmander','Vulpix','Growlithe','Ponyta','Magmar'],blue:['Squirtle','Psyduck','Slowpoke','Staryu','Lapras'],green:['Bulbasaur','Oddish','Bellsprout','Tangela','Scyther'],yellow:['Pikachu','Sandshrew','Geodude','Onix','Diglett'],orange:['Articuno','Zapdos','Moltres','Mewtwo']};
 let view='host',M={pos:{},home:{},spaces:{}},lastSnapStr='',SP=[],LK=[],W=1000,H=620,R=14,K=1,NAMES={},img=null,active='p1',pos={},home={},pools={},st={},drag=null,sync=0;
-const curPos=()=>mode==='guest'?M.pos:pos;const curHome=()=>mode==='guest'?(M.home||{}):home;
+let entry={};const curEntry=()=>mode==='guest'?(M.entry||{}):entry;const curPos=()=>mode==='guest'?M.pos:pos;const curHome=()=>mode==='guest'?(M.home||{}):home;
 const get=id=>SP.find(s=>s.id===id),shuf=a=>{for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
 const log=t=>$('log').insertAdjacentHTML('afterbegin',`<div>${t}</div>`);
 // An action is a plain text string, or an object like {type:'gym-battle',leader:'kanto-brock',label:'Gym Battle (Brock)'}.
@@ -171,7 +172,7 @@ let restoreQ=null,owned=new Set(),boardCaught=new Set(),placed=new Set();
 // Players are matched to a previous game's entries by their durable client id (cid) first -- it survives a reconnect, a
 // reload and a color change -- and only then by color, and never onto a player who is known to be someone else.
 function restorePlayers(){if(!restoreQ)return;const left=[],taken=new Set(placed);
- const place=(o,p,how)=>{try{console.info('[board] restore',how||'?','->',p.id,'cid',p.cid||'-','color',p.c,'pos',o.pos||'(none)')}catch(e){}taken.add(p.id);placed.add(p.id);if(o.pos&&get(o.pos))pos[p.id]=o.pos;if(o.home&&get(o.home))home[p.id]=o.home};
+ const place=(o,p,how)=>{try{console.info('[board] restore',how||'?','->',p.id,'cid',p.cid||'-','color',p.c,'pos',o.pos||'(none)')}catch(e){}taken.add(p.id);placed.add(p.id);if(o.pos&&get(o.pos))pos[p.id]=o.pos;if(o.entry&&o.entry.at===o.pos)entry[p.id]=o.entry;if(o.home&&get(o.home))home[p.id]=o.home};
  restoreQ.forEach(o=>{if(!o.cid)return;const p=PL.find(x=>!taken.has(x.id)&&x.cid===o.cid);if(p){place(o,p,'cid');o.done=true;restoreQ.forEach(q=>{if(q!==o&&q.cid===o.cid)q.done=true})}});
  restoreQ.forEach(o=>{if(o.done)return;const p=PL.find(x=>!taken.has(x.id)&&x.c===o.c&&!(x.cid&&o.cid&&x.cid!==o.cid)&&!(o.cid&&!x.cid));if(p)place(o,p,'color');else left.push(o)});
  try{if(left.length)console.info('[board] restore waiting for',left.map(o=>(o.cid||'no-cid')+'@'+(o.pos||'?')).join(', '))}catch(e){}
@@ -185,7 +186,7 @@ function restoreSnapshot(str,oldPlayers){if(mode!=='host'||!str)return false;pla
  for(const c in pools)pools[c]=pools[c].filter(n=>!used.has(n));
  for(const id in st){const o=st[id];if(o.revealed||o.empty||!used.has(o.token))continue;const n=(pools[get(id).color]||[]).pop();if(n)o.token=n;else{o.token=null;o.empty=true;o.revealed=true}}
  sync=Math.max(sync,s.seq|0);
- restoreQ=(oldPlayers||[]).map(p=>({c:p.c,pos:s.pos[p.id],home:s.home&&s.home[p.id]}));
+ restoreQ=(oldPlayers||[]).map(p=>({c:p.c,pos:s.pos[p.id],home:s.home&&s.home[p.id],entry:s.entry&&s.entry[p.id]}));
  restorePlayers();log('host: restored the board from the previous host');snapshot();return true}
 // ---------- caught Pokémon, the full-state handoff, and a guest rejoining under a new id ----------
 // A Pokémon on any player's team is not in the wild. The app reports every team's caught forms (the form it was
@@ -230,37 +231,37 @@ function drawLegendary(){if(mode!=='host')return null;releaseStale();
 // Moves a player's marker straight to a space (an id, or its label such as 'Olivine City') with no landing prompt -- a lost Battle
 // sends the player home. Returns the label of the space it landed on, or '' when nothing moved.
 function movePlayer(p,target){if(mode!=='host'||pos[p]===undefined)return '';if(target==='@home')target=home[p]; // '@home' = the player's Current Home (a Black Out)
- let s=get(target);if(!s){const t=String(target||'').trim().toLowerCase();s=SP.find(x=>(x.label||'').trim().toLowerCase()===t)}if(!s)return '';const pl=PL.find(x=>x.id===p);pos[p]=s.id;pendingEnc[p]=null;pendingHome[p]=[];log(`host: ${pl?pl.name:p} was moved to ${s.label||s.id}`);snapshot();return s.label||s.id}
+ let s=get(target);if(!s){const t=String(target||'').trim().toLowerCase();s=SP.find(x=>(x.label||'').trim().toLowerCase()===t)}if(!s)return '';const pl=PL.find(x=>x.id===p);pos[p]=s.id;delete entry[p];pendingEnc[p]=null;pendingHome[p]=[];log(`host: ${pl?pl.name:p} was moved to ${s.label||s.id}`);snapshot();return s.label||s.id}
 // The player stays where they are (a 0 Movement Roll, or choosing to stay on a City): bring up that space's prompt as if they had just landed.
 function stayOnSpace(p){if(mode!=='host'||pos[p]===undefined||!get(pos[p])||!PL.some(q=>q.id===p))return false;log(`host: ${PL.find(q=>q.id===p).name} stays on ${pos[p]}`);land(p,pos[p],[]);return true}
 // A jump (the app's Dig / Fly / Teleport buttons): the marker goes straight to a City with no walking. to = a City's id, or '@home' (the player's
 // Current Home). land: true brings up that City's prompt as if the player had just arrived; false moves them quietly. Returns true if it moved.
 function hostJump(p,to,doLand){if(mode!=='host'||pos[p]===undefined||!PL.some(q=>q.id===p))return false;const id=to==='@home'?home[p]:to,s=id&&get(id);if(!s||s.type!=='city')return false;
- pendingEnc[p]=null;pendingHome[p]=[];pos[p]=s.id;log(`host: ${PL.find(q=>q.id===p).name} jumped to ${s.label||s.id}${doLand?'':' (no prompt)'}`);snapshot();if(doLand)land(p,s.id,[]);return true}
-function spaceOf(p){const id=(curPos()||{})[p],s=id&&get(id);return s?{id:s.id,type:s.type,label:s.label||''}:null}
+ pendingEnc[p]=null;pendingHome[p]=[];pos[p]=s.id;delete entry[p];log(`host: ${PL.find(q=>q.id===p).name} jumped to ${s.label||s.id}${doLand?'':' (no prompt)'}`);snapshot();if(doLand)land(p,s.id,[]);return true}
+function spaceOf(p){const id=(curPos()||{})[p],s=id&&get(id);return s?{id:s.id,type:s.type,label:s.label||'',gate:bossUp(s.id)}:null}
 function settlePoolToken(n,out){if(mode!=='host'||!held.has(n))return false;held.delete(n);
  if(out==='caught'){boardCaught.add(n);log(`host: ${n} leaves the game (caught in the Safari Zone)`)}else{backToPool(n);log(`host: ${n} returned to its pool`)}return true}
 // The host's COMPLETE state, face-down Pokémon and pools included. Never sent to the table: the app puts it in the
 // host backup so a successor can resume exactly where the old host stopped.
 function exportState(){if(mode!=='host')return null;const j=x=>JSON.parse(JSON.stringify(x));
  const P=j(pools);held.forEach((t,n)=>{const c=colorOf(n);if(c&&P[c]&&!P[c].includes(n))P[c].push(n)});
- return{v:1,seq:sync,spaces:j(st),pools:P,pos:j(pos),home:j(home),players:PL.map(p=>({id:p.id,c:p.c,cid:p.cid||null})),pending:j(restoreQ||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home})),owned:[...owned],boardCaught:[...boardCaught]}}
+ return{v:1,seq:sync,spaces:j(st),pools:P,pos:j(pos),home:j(home),entry:j(entry),players:PL.map(p=>({id:p.id,c:p.c,cid:p.cid||null})),pending:j(restoreQ||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home,entry:o.entry})),owned:[...owned],boardCaught:[...boardCaught]}}
 function restoreState(s){if(mode!=='host'||!s||s.v!==1||!s.spaces||!s.pools)return false;placed=new Set();
  for(const id in s.spaces){if(!st[id])continue;st[id]=Object.assign({},st[id],s.spaces[id])}
  pools=JSON.parse(JSON.stringify(s.pools));owned=new Set(s.owned||[]);boardCaught=new Set(s.boardCaught||[]);held=new Map();
  sync=Math.max(sync,s.seq|0);
- restoreQ=(s.players||[]).map(p=>({c:p.c,cid:p.cid||null,pos:s.pos&&s.pos[p.id],home:s.home&&s.home[p.id]})).concat((s.pending||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home})));
+ restoreQ=(s.players||[]).map(p=>({c:p.c,cid:p.cid||null,pos:s.pos&&s.pos[p.id],home:s.home&&s.home[p.id],entry:s.entry&&s.entry[p.id]})).concat((s.pending||[]).map(o=>({c:o.c,cid:o.cid||null,pos:o.pos,home:o.home,entry:o.entry})));
  restorePlayers();log('host: restored the full board (face-down Pokémon included) from the previous host');snapshot();return true}
 // A guest who reconnects gets a new connection id; the app calls this with the old and new ids (matched by guestClientId).
 function adoptPlayer(o,n){if(mode!=='host'||!o||!n||o===n||pos[o]===undefined)return false;
- if(restoreQ){restoreQ=restoreQ.filter(q=>q.from!==o);if(!restoreQ.length)restoreQ=null}pos[n]=pos[o];placed.add(n);if(home[o]!==undefined)home[n]=home[o];delete pos[o];delete home[o];delete pendingHome[o];if(pendingEnc[o]){pendingEnc[n]=pendingEnc[o];delete pendingEnc[o]}snapshot();return true}
+ if(restoreQ){restoreQ=restoreQ.filter(q=>q.from!==o);if(!restoreQ.length)restoreQ=null}pos[n]=pos[o];if(entry[o]){entry[n]=entry[o];delete entry[o]}placed.add(n);if(home[o]!==undefined)home[n]=home[o];delete pos[o];delete home[o];delete pendingHome[o];if(pendingEnc[o]){pendingEnc[n]=pendingEnc[o];delete pendingEnc[o]}snapshot();return true}
 function snapshot(){sync++;const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:(o.revealed&&!o.empty)?o.token:null,boss:o.boss}}
- lastSnapStr=JSON.stringify({seq:sync,pos,home,spaces:sp});if(mode==='host')send({type:'board-state',snap:lastSnapStr});log(`host → ${PL.length} guests: board-state #${sync} (${lastSnapStr.length} bytes)`);leakCheck();draw();renderHost()}
+ lastSnapStr=JSON.stringify({seq:sync,pos,home,entry,spaces:sp});if(mode==='host')send({type:'board-state',snap:lastSnapStr});log(`host → ${PL.length} guests: board-state #${sync} (${lastSnapStr.length} bytes)`);leakCheck();draw();renderHost()}
 function leakCheck(){const rev=new Set(),hid=new Set();for(const id in st){const o=st[id];if(o.token)(o.revealed?rev:hid).add(o.token)}for(const c in pools)pools[c].forEach(n=>hid.add(n));rev.forEach(n=>hid.delete(n));
  const bad=[...hid].filter(n=>lastSnapStr.includes(JSON.stringify(n)));
  $('leak').innerHTML=bad.length?`<b style="color:#d03a2f">✗ LEAK: ${bad.join(', ')}</b>`:`<span style="color:#2f9e44">✓ Leak check passed</span> <small>(${hid.size} hidden names, none in the snapshot)</small>`;
  $('snapj').textContent=JSON.stringify(JSON.parse(lastSnapStr),null,1)}
-function buildModel(){if(omni()){const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:o.token,boss:o.boss}}M={peek:true,pos,home,spaces:sp}}
+function buildModel(){if(omni()){const sp={};for(const id in st){const o=st[id];sp[id]={empty:o.empty,revealed:o.revealed,token:o.token,boss:o.boss}}M={peek:true,pos,home,entry,spaces:sp}}
  else M=Object.assign({pos:{},home:{},spaces:{}},lastSnapStr?JSON.parse(lastSnapStr):{})}
 function renderView(){$('vw').innerHTML=[['host','Host'],...PL.map(q=>[q.id,q.name])].map(([v,n])=>`<button class="${v===view?'on':''}" data-v="${v}">${n}</button>`).join('');
  $('vw').querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>setView(b.dataset.v));
@@ -274,21 +275,34 @@ function setHome(p,c){const n=PL.find(x=>x.id===p).name;home[p]=c;log(`host: ${n
 // A gate lives on a link ({type,value,label,dir} from the editor, kept as link[2].gate). It is player-specific, so the DEVICE
 // that is moving its own marker asks the app (opts.gateCheck(gate,player) -> null if the player may cross, else the reason).
 // dir 'ab' / 'ba' only locks the crossing in that direction (link order = the editor's s1 -> s2); 'both' locks either way.
-// Pokémon gates (a space nobody may pass until its spawn is gone) are not handled here yet.
+// Pokémon gates (a space holding a preset boss) are handled below, in walkRoute.
 let gmemo=new Map();
 function gateBlocks(l,from,p){const g=l[2]&&l[2].gate;if(!g||!opts.gateCheck)return null;const d=g.dir||'both';if((d==='ab'&&from!==l[0])||(d==='ba'&&from!==l[1]))return null;
  if(!gmemo.has(g)){let r=null;try{r=opts.gateCheck(g,p)||null}catch(e){}gmemo.set(g,r)}return gmemo.get(g)}
 function linkOf(a,b){return LK.find(x=>(x[0]===a&&x[1]===b)||(x[0]===b&&x[1]===a))}
 // Shortest walk a -> b that only crosses gates player p may cross. {path:[a,...,b]} | {blocked:'reason'} | {jump:true} (no route at all: not a walk).
+// A Pokémon gate is a space whose preset boss (spawn) has not been beaten or caught yet. Nobody walks PAST it (a move that reaches it ends there),
+// and a player who stopped on it may only leave the way they came in (entry[p] = {at,from}, kept by the host) until the boss is gone.
+// A player for whom opts.spawnBypass(spawn,p) is true (e.g. the Poké Flute for Snorlax) walks through as if it were an ordinary space.
+const bossUp=id=>{const s=get(id);if(!s||!s.spawn)return false;const o=mode==='guest'?(M.spaces||{})[id]:st[id];return !!(o&&o.boss)};
+function blocker(id,p){if(!bossUp(id))return null;const s=get(id),k='b:'+p+':'+s.spawn;if(!gmemo.has(k)){let r=false;try{r=!!(opts.spawnBypass&&opts.spawnBypass(s.spawn,p))}catch(e){}gmemo.set(k,r)}return gmemo.get(k)?null:s.spawn}
+function entryFrom(p,id){const e=curEntry()[p];return e&&e.at===id&&curPos()[p]===id?e.from:null}
+function setEntry(p,id,path){if(path&&path.length>1&&bossUp(id))entry[p]={at:id,from:path[path.length-2]};else delete entry[p]}
 function walkRoute(a,b,p,ban){if(a===b)return{path:[a]};const adj={};for(const l of LK){(adj[l[0]]=adj[l[0]]||[]).push([l[1],l]);(adj[l[1]]=adj[l[1]]||[]).push([l[0],l])}
- const bfs=useG=>{const prev={[a]:null},q=[a];while(q.length){const c=q.shift();if(c===b)break;for(const [n,l] of adj[c]||[]){if(n in prev||(c===a&&n===ban)||(useG&&gateBlocks(l,c,p)))continue;prev[n]=c;q.push(n)}}
+ const real=curPos()[p]===a,from=real&&blocker(a,p)?entryFrom(p,a):null; // a checkpoint is never "really" there: a move cannot go on from a gate it ended on
+ const bfs=(useG,useB)=>{const prev={[a]:null},q=[a];while(q.length){const c=q.shift();if(c===b)break;
+   if(useB&&(c===a?(real?false:!!blocker(a,p)):!!blocker(c,p)))continue;
+   for(const [n,l] of adj[c]||[]){if(n in prev||(c===a&&n===ban)||(useG&&gateBlocks(l,c,p))||(useB&&c===a&&from&&n!==from))continue;prev[n]=c;q.push(n)}}
   if(!(b in prev))return null;const path=[];for(let c=b;c!==null;c=prev[c])path.unshift(c);return path};
- const ok=bfs(true);if(ok)return{path:ok};const free=bfs(false);if(!free)return{jump:true};
- let why='';for(let i=0;i<free.length-1&&!why;i++)why=gateBlocks(linkOf(free[i],free[i+1]),free[i],p)||'';
- return{blocked:why||'A locked gate is in the way.'}}
+ const ok=bfs(true,true);if(ok)return{path:ok};const free=bfs(false,false);if(!free)return{jump:true};
+ const why=path=>{for(let i=0;i<path.length-1;i++){const c=path[i],n=path[i+1],bk=blocker(c,p);
+   if(i===0&&real&&bk&&from&&n!==from)return bk+' blocks that path. You can only head back the way you came.';
+   if(bk&&(i>0||!real))return bk+' blocks the way. Your move has to end on its space.';
+   const g=gateBlocks(linkOf(c,n),c,p);if(g)return g}return''};
+ return{blocked:why(bfs(true,false)||free)||'A locked gate is in the way.'}}
 // A path a guest sent is only believed if it really is a chain of links from where the marker was to where it ended.
 function validPath(path,from,to){if(!Array.isArray(path)||path.length<2||path[0]!==from||path[path.length-1]!==to||path.length>400)return false;for(let i=0;i<path.length-1;i++)if(!get(path[i])||!linkOf(path[i],path[i+1]))return false;return true}
-function hostMove(p,to,path){const prev=pos[p];const ok=validPath(path,prev,to);log(`${PL.find(x=>x.id===p).name} → host: board-move ${to}${ok?' ('+(path.length-1)+' steps)':''}`);pos[p]=to;snapshot();
+function hostMove(p,to,path){const prev=pos[p];const ok=validPath(path,prev,to);log(`${PL.find(x=>x.id===p).name} → host: board-move ${to}${ok?' ('+(path.length-1)+' steps)':''}`);pos[p]=to;setEntry(p,to,ok?path:null);snapshot();
  land(p,to,ok?[...new Set(path.slice(1,-1))].filter(id=>id!==to&&get(id).type==='city'):routeCities(prev,to))}
 function landEvent(p,id,passed,here){const s=get(id),homeOpts=[...passed.map(c=>({id:c,label:get(c).label||c,how:'passed through'})),...(s.type==='city'?[{id,label:s.label||id,how:''}]:[])].filter(o=>home[p]!==o.id);
  pendingHome[p]=homeOpts.map(o=>o.id);pendingEnc[p]=null;let kind=(s.type==='city'||s.type==='special')?s.type:s.type==='event'?'event':'none';const o=st[id];
@@ -604,7 +618,7 @@ return{
  restoreView,placeAction:()=>{try{placeAct()}catch(e){}},
  setView:v=>setView(v),
  setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>o.cid&&pos[o.id]&&!list.some(n=>n.id===o.id)&&!list.some(n=>n.cid===o.cid)&&!(restoreQ||[]).some(q=>q.cid===o.cid&&!q.done));
-  if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!q.done);gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id],from:g.id}))}}
+  if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!q.done);gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id],entry:entry[g.id],from:g.id}))}}
  PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
  destroy(){gone=1;document.removeEventListener('keydown',onCpKey);bgClear();closeTok();ro.disconnect();root.remove()}
 };
