@@ -7806,6 +7806,15 @@
             outline: 2px solid rgba(0, 0, 0, 0.55);
         }
 
+        /* Starter picker (virtual-token games) -- same overlay and list look as the Trainer Card picker. */
+        #game-starter-picker-overlay { display: none; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); align-items: center; justify-content: center;
+            z-index: 20; padding: 20px; box-sizing: border-box; }
+        #game-starter-picker-overlay.visible { display: flex; }
+        #game-starter-picker-list .game-starter-picker-item-taken { cursor: not-allowed; }
+        #game-starter-picker-list .game-starter-picker-item-taken .game-gym-leader-picker-img { opacity: 0.45; filter: grayscale(0.6); }
+        #game-starter-picker-list .game-starter-picker-item-taken .game-gym-leader-picker-sub { opacity: 1; color: #333; }
+        #game-starter-picker-list .game-starter-picker-item-mine { outline: 2px solid rgba(0, 0, 0, 0.55); }
+
         /* Trainer Card screen. The art spans the screen's full content
            width (the panel minus #game-scroll's own side padding), at
            whatever height its own aspect ratio gives. */
@@ -17365,6 +17374,23 @@
             </div>
         </div>
 
+        <!-- Starter picker: replaces the gallery for choosing the starter when the game uses the virtual board with virtual tokens, so two
+             players can't pick the same one. Lists every starter; one another player already holds is dimmed and can't be picked.
+             See openStarterPicker()/pickStarter(). -->
+        <div id="game-starter-picker-overlay">
+            <div class="game-confirm-card game-battle-picker-card">
+                <p class="game-confirm-title">Choose Your Starter</p>
+                <div class="game-gym-leader-picker-filters">
+                    <input type="search" id="game-starter-picker-search" placeholder="Search by name" aria-label="Search by name" autocomplete="off">
+                </div>
+                <div class="game-battle-picker-list" id="game-starter-picker-list"></div>
+                <p class="game-battle-picker-empty-text" id="game-starter-picker-empty-text">No matching Pok&eacute;mon.</p>
+                <div class="game-save-slot-actions">
+                    <button class="filter-btn exclude game-battle-picker-cancel-btn" id="game-starter-picker-cancel-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Lock In confirm: locking is permanent for the save, so it
              asks first. See lockTrainerCard(). Reuses the shared confirm
              overlay visual classes. -->
@@ -22331,6 +22357,7 @@
             // is recalled -- see ejectOverlayedBattleMembers().
             ejectOverlayedBattleMembers();
             try { boardCheckBlackout(); } catch (e) { /* board / lobby not ready yet */ }
+            try { starterReconcileClaim(); } catch (e) { /* data / lobby not ready yet */ }
             // A roster change can add/remove the last able replacement, so
             // Next Round's visibility is re-derived. try/catch: this can
             // run once at load, before lobbyState exists.
@@ -22772,6 +22799,13 @@
         // own CSS comment) so the relevant button(s) can't be tapped
         // back off for as long as this mode stays active.
         function beginTeamAddMode() {
+            // Virtual-token games choose the starter from the claim-aware picker instead of the gallery.
+            if (starterPickerApplies() && !isActiveSaveReadOnly() && ((getActiveSaveData().team.members) || []).length === 0) {
+                openGamePanel();
+                setGameScreen('team');
+                openStarterPicker();
+                return;
+            }
             boardNotePickStart(); // picking happens in the gallery; the board is returned to afterwards
             teamAddModeActive = true;
             document.body.classList.add('team-add-mode');
@@ -24540,6 +24574,178 @@
             }
             renderTrainerCardScreen();
             refreshTrainerCardPickerIfOpen();
+        }
+
+        // ---- Starter picker (virtual-token games) ----
+        // With the virtual board on its Virtual Tokens (condensed) setting, the starter is chosen from this picker instead of the gallery, so
+        // two players can't hold the same one. It works like the Trainer Card picker: the Host's save keeps save.starterClaims
+        // ({ guestClientId: { name: species, owner } }) and the Host's own pick is its save's starterPick; a guest asks with
+        // 'starter-pick-claim', the Host answers 'starter-pick-result' and tells everyone with 'starter-pick-claims' ({ species: { name } }).
+        // Each player's own save keeps starterPick (their species). Releasing the starter before locking it in frees the pick (see
+        // starterReconcileClaim(), called from renderTeamGrid()). Solo has nobody to clash with, so it just picks.
+        const STARTER_TAKEN_MESSAGE = 'Another player has already chosen that starter.';
+        var starterClaimPending = false, starterClaimTimer = null;
+        function starterPickerApplies() {
+            try { const m = getRegionMapSettingsForActiveSave(); return !!(m.enabled && m.style !== 'full'); } catch (e) { return false; }
+        }
+        function starterSpeciesList() {
+            return Object.values(POKEMON_BY_NAME).filter(p => {
+                const tags = Array.isArray(p.tags) ? p.tags.map(t => String(t).toLowerCase()) : [];
+                return tags.includes('starter') && !TEAM_ADD_FORCED_EXCLUDE_TAGS.some(t => tags.includes(t));
+            });
+        }
+        function getMyStarterPick() {
+            const data = getActiveSaveData();
+            return (data && typeof data.starterPick === 'string' && data.starterPick) ? data.starterPick : null;
+        }
+        function getStarterOwners() {
+            const owners = {};
+            if (lobbyState.role === 'guest') {
+                const cached = lobbyState.starterPickClaims;
+                if (cached && typeof cached === 'object') Object.keys(cached).forEach(n => { owners[n] = cached[n]; });
+                return owners;
+            }
+            if (lobbyState.role !== 'host') return owners;
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            if (!save) return owners;
+            const claims = save.starterClaims || {};
+            Object.keys(claims).forEach(gid => {
+                const rec = claims[gid];
+                if (!rec || !rec.name) return;
+                let owner = rec.owner;
+                lobbyState.connections.forEach(entry => { if (entry.guestClientId === gid && entry.name) owner = entry.name; });
+                owners[rec.name] = { name: owner || 'Another player' };
+            });
+            if (lobbyState.hostIsPlayer && save.starterPick) owners[save.starterPick] = { name: lobbyState.hostName || 'Host' };
+            return owners;
+        }
+        function starterOwnerKey(name) {
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            if (!save) return null;
+            if (lobbyState.hostIsPlayer && save.starterPick === name) return 'host';
+            const claims = save.starterClaims || {};
+            return Object.keys(claims).find(gid => claims[gid] && claims[gid].name === name) || null;
+        }
+        function renderStarterPicker() {
+            const list = document.getElementById('game-starter-picker-list');
+            const emptyText = document.getElementById('game-starter-picker-empty-text');
+            const search = document.getElementById('game-starter-picker-search');
+            if (!list || !emptyText) return;
+            const query = ((search && search.value) || '').trim().toLowerCase();
+            const owners = getStarterOwners(), mineName = getMyStarterPick();
+            const all = starterSpeciesList();
+            const entries = all.filter(p => !query || p.name.toLowerCase().includes(query));
+            list.style.display = entries.length ? '' : 'none';
+            emptyText.style.display = entries.length ? 'none' : 'block';
+            emptyText.textContent = all.length ? 'No matching Pokémon.' : 'Pokémon data is still loading…';
+            list.innerHTML = entries.map(p => {
+                const mine = p.name === mineName, owner = mine ? null : owners[p.name];
+                const sub = mine ? 'Your starter' : (owner ? `Taken by ${owner.name || 'another player'}` : '');
+                const classes = 'game-battle-picker-item' + (mine ? ' game-starter-picker-item-mine' : '') + (owner ? ' game-starter-picker-item-taken' : '');
+                return `<button type="button" class="${classes}"${owner ? ' aria-disabled="true"' : ''} data-starter-name="${escapeHtml(p.name)}">
+                    <img class="game-gym-leader-picker-img" data-gl-url="${escapeHtml(p.src || '')}" alt="" onerror="this.style.visibility='hidden'">
+                    <span class="game-battle-picker-item-name">${escapeHtml(p.name)}</span>
+                    ${sub ? `<span class="game-gym-leader-picker-sub">${escapeHtml(sub)}</span>` : ''}
+                </button>`;
+            }).join('');
+            applyGymLeaderPickerImages(list);
+        }
+        function isStarterPickerOpen() {
+            const o = document.getElementById('game-starter-picker-overlay');
+            return !!(o && o.classList.contains('visible'));
+        }
+        function refreshStarterPickerIfOpen() { if (isStarterPickerOpen()) renderStarterPicker(); }
+        function openStarterPicker() {
+            if (isActiveSaveReadOnly()) return;
+            const search = document.getElementById('game-starter-picker-search');
+            if (search) search.value = '';
+            renderStarterPicker();
+            const o = document.getElementById('game-starter-picker-overlay');
+            if (o) o.classList.add('visible');
+        }
+        function closeStarterPicker() {
+            const o = document.getElementById('game-starter-picker-overlay');
+            if (o) o.classList.remove('visible');
+        }
+        // Records the pick in this player's save and puts that Pokémon on the team as the starter.
+        function applyStarterPick(name) {
+            const entry = POKEMON_BY_NAME[name];
+            if (!entry || isActiveSaveReadOnly()) return;
+            if (((getActiveSaveData().team.members) || []).length > 0) return; // a starter is already on the team
+            addOrQueueTeamMember({ dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false });
+            getActiveSaveData().starterPick = name;
+            persistStarterData();
+            markUnsavedProgressChanged();
+            closeStarterPicker();
+            openGamePanel();
+            setGameScreen('team');
+            renderTeamGrid();
+        }
+        function pickStarter(name) {
+            if (isActiveSaveReadOnly() || !POKEMON_BY_NAME[name]) return;
+            if (!canAddTeamMemberNow() || ((getActiveSaveData().team.members) || []).length > 0) { showGameToast(PREGAME_TEAM_MESSAGE); return; }
+            if (getStarterOwners()[name]) { showGameToast(STARTER_TAKEN_MESSAGE); refreshStarterPickerIfOpen(); return; } // the Host's check is the real one
+            if (lobbyState.role === 'guest') {
+                if (starterClaimPending) return;
+                if (!lobbyState.hostConn || !lobbyState.hostConn.open) { showGameToast('Not connected to the host.'); return; }
+                starterClaimPending = true;
+                clearTimeout(starterClaimTimer);
+                starterClaimTimer = setTimeout(() => { starterClaimPending = false; }, TRAINER_CARD_CLAIM_TIMEOUT_MS);
+                lobbyState.hostConn.send({ type: 'starter-pick-claim', name }); // nothing is saved until the Host answers
+                return;
+            }
+            applyStarterPick(name);
+            if (lobbyState.role === 'host') broadcastStarterClaims();
+        }
+        function broadcastStarterClaims() {
+            if (lobbyState.role !== 'host') return;
+            const payload = { type: 'starter-pick-claims', claims: getStarterOwners() };
+            lobbyState.connections.forEach(({ conn }) => { if (conn && conn.open) conn.send(payload); });
+            refreshStarterPickerIfOpen();
+        }
+        function hostApplyStarterClaim(peerId, name) {
+            if (lobbyState.role !== 'host') return;
+            const entry = lobbyState.connections.get(peerId);
+            if (!entry) return;
+            const reply = (msg) => { if (entry.conn && entry.conn.open) entry.conn.send(msg); };
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            const gid = entry.guestClientId;
+            if (!save || !gid) { reply({ type: 'starter-pick-result', ok: false, name, reason: 'unavailable' }); return; }
+            if (!starterSpeciesList().some(p => p.name === name)) { reply({ type: 'starter-pick-result', ok: false, name, reason: 'unknown' }); return; }
+            const ownerKey = starterOwnerKey(name);
+            if (ownerKey && ownerKey !== gid) { reply({ type: 'starter-pick-result', ok: false, name, reason: 'taken', claims: getStarterOwners() }); return; }
+            if (!save.starterClaims || typeof save.starterClaims !== 'object') save.starterClaims = {};
+            save.starterClaims[gid] = { name, owner: entry.name || 'Trainer' }; // replaces whatever this player held, which frees it
+            persistGameSaves();
+            reply({ type: 'starter-pick-result', ok: true, name });
+            broadcastStarterClaims();
+        }
+        function hostReleaseStarterClaim(guestClientId) {
+            const save = activeSaveSlot !== null ? gameSaves[activeSaveSlot] : null;
+            if (!save || !save.starterClaims || !save.starterClaims[guestClientId]) return false;
+            delete save.starterClaims[guestClientId];
+            persistGameSaves();
+            return true;
+        }
+        function handleStarterPickResult(data) {
+            starterClaimPending = false;
+            clearTimeout(starterClaimTimer);
+            if (data.claims && typeof data.claims === 'object') lobbyState.starterPickClaims = data.claims;
+            if (data.ok && typeof data.name === 'string') { applyStarterPick(data.name); return; }
+            showGameToast(data.reason === 'taken' ? STARTER_TAKEN_MESSAGE : 'Couldn’t choose that starter. Please try again.');
+            refreshStarterPickerIfOpen();
+        }
+        // renderTeamGrid() calls this after every team change: a starter released before it was locked in gives its pick back.
+        function starterReconcileClaim() {
+            if (!starterPickerApplies()) return;
+            const data = getActiveSaveData();
+            if (!data || !data.starterPick || isStarterLocked() || isActiveSaveReadOnly()) return;
+            const first = (data.team.members || [])[0];
+            if (first && first.name === data.starterPick) return;
+            data.starterPick = null;
+            persistStarterData();
+            if (lobbyState.role === 'guest') { if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'starter-pick-release' }); }
+            else if (lobbyState.role === 'host') broadcastStarterClaims();
         }
 
         // ---- Pre-game team rules, starter Lock In, starter Nature Card ----
@@ -45344,6 +45550,7 @@
                 // for the genuine-race case this can't catch on its own).
                 takenColors: getLobbyTakenColors(excludePeerId),
                 blackedOut: lobbyState.role === 'host' ? [...boardBlackedSet] : [],
+                starterClaims: lobbyState.role === 'host' ? getStarterOwners() : {},
                 turns: turnsPublicView(), // where the turn order stands, for a guest joining or re-syncing mid-game
             };
         }
@@ -45528,6 +45735,11 @@
                 } else if (data.type === 'starter-chosen') {
                     lobbyState.starterChosen[conn.peer] = true;
                     updateLobbyStartGameButtonUI();
+                } else if (data.type === 'starter-pick-claim' && typeof data.name === 'string') {
+                    hostApplyStarterClaim(conn.peer, data.name);
+                } else if (data.type === 'starter-pick-release') {
+                    const rel = lobbyState.connections.get(conn.peer);
+                    if (rel && rel.guestClientId && hostReleaseStarterClaim(rel.guestClientId)) broadcastStarterClaims();
                 } else if (data.type === 'trainer-card-claim' && typeof data.cardId === 'string') {
                     hostApplyTrainerCardClaim(conn.peer, data.cardId);
                 } else if (data.type === 'starter-nature-request') {
@@ -45820,6 +46032,7 @@
             // when they reconnect). Broadcast after the drop so the kicked
             // connection isn't sent it.
             if (kickedGuestClientId && releaseTrainerCardClaim(kickedGuestClientId)) broadcastTrainerCardClaims();
+            if (kickedGuestClientId && hostReleaseStarterClaim(kickedGuestClientId)) broadcastStarterClaims();
             if (conn && conn.open) {
                 setTimeout(() => {
                     try { conn.close(); } catch (err) { /* already gone -- nothing to clean up */ }
@@ -45848,7 +46061,7 @@
             'typeEffectivenessRule', 'hpRule', 'pokeCoinsEnabled', 'naturesEnabled',
             'virtualDecksEnabled', 'tieredTMDecksEnabled', 'trainerCardsEnabled',
             'regionMapEnabled', 'regionMapStyle', 'stage', 'decks', 'guestHands',
-            'guestPermanentCards', 'guestOneTimeClaims', 'trainerCardClaims', 'starterNatureDraws', 'activeCard',
+            'guestPermanentCards', 'guestOneTimeClaims', 'trainerCardClaims', 'starterClaims', 'starterNatureDraws', 'activeCard',
             'hostDisplayName', 'hostPlayerColor', 'hostEpoch', 'hostWasPlayer',
             // guest-save-only identity fields
             'playerName', 'playerColor', 'hostNameCache',
@@ -51074,6 +51287,11 @@
                         onChoose: (color) => finalizeGuestJoin(retryName, color),
                         onCancel: () => leaveLobby(),
                     });
+                } else if (data.type === 'starter-pick-claims' && data.claims && typeof data.claims === 'object') {
+                    lobbyState.starterPickClaims = data.claims;
+                    refreshStarterPickerIfOpen();
+                } else if (data.type === 'starter-pick-result') {
+                    handleStarterPickResult(data);
                 } else if (data.type === 'trainer-card-claims' && data.claims && typeof data.claims === 'object') {
                     // Who holds which Trainer Card -- see
                     // broadcastTrainerCardClaims().
@@ -51379,6 +51597,7 @@
             lobbyState.gameOfficiallyStarted = !!data.gameStarted;
             turnsApplyView(data.turns && typeof data.turns === 'object' ? data.turns : null, false);
             boardApplyBlackedOut(data.blackedOut);
+            if (data.starterClaims && typeof data.starterClaims === 'object') lobbyState.starterPickClaims = data.starterClaims;
             try { boardReportBlackout(); } catch (e) { /* ignore */ }
             lobbyState.hostRuleset = {
                 region: data.region,
@@ -53149,6 +53368,19 @@
                 starterNatureSelectedIndex = parseInt(card.dataset.natureIndex, 10);
                 renderStarterNatureOverlay();
             });
+        })();
+
+        (function wireStarterPicker() {
+            const overlay = document.getElementById('game-starter-picker-overlay');
+            if (!overlay) return;
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay || e.target.closest('#game-starter-picker-cancel-btn')) { closeStarterPicker(); return; }
+                const item = e.target.closest('[data-starter-name]');
+                if (!item) return;
+                if (item.getAttribute('aria-disabled') === 'true') { showGameToast(STARTER_TAKEN_MESSAGE); return; }
+                pickStarter(item.dataset.starterName);
+            });
+            overlay.addEventListener('input', (e) => { if (e.target.id === 'game-starter-picker-search') renderStarterPicker(); });
         })();
 
         // Trainer Card picker and the screen's own two buttons -- the
@@ -55046,7 +55278,7 @@
         // filled in one region at a time.
         const BADGE_JINGLES = {
             'kanto': 'https://dl.dropboxusercontent.com/scl/fi/ajraodgdil65kpv05vm1w/1-26.-Obtained-a-Gym-Badge.mp3?rlkey=4iq8o16nfnldu5q6llnotk89x&st=vdd1b8bz&dl=1',
-            'johto': 'https://dl.dropboxusercontent.com/scl/fi/m6ut9al05qw0ei4wo6x6k/08-Obtained-a-Badge.mp3?rlkey=a3trz5xt171rxpextxhk0donj&st=c2h5m7jn&dl=1',
+            'johto': 'https://dl.dropboxusercontent.com/scl/fi/fqa1hpi1gtgbv0dmd174o/45-Received-a-Gym-Badge.mp3?rlkey=5i7xdeeq86lnjbfvktms0t28b&st=pljs4gqf&dl=1',
             'hoenn': 'https://dl.dropboxusercontent.com/scl/fi/m6ut9al05qw0ei4wo6x6k/08-Obtained-a-Badge.mp3?rlkey=a3trz5xt171rxpextxhk0donj&st=c2h5m7jn&dl=1',
             'sinnoh': 'https://dl.dropboxusercontent.com/scl/fi/qg6w1uxyt5fg3e0mu0564/041.-Get-Gym-Badge.mp3?rlkey=ukzvidus6vdi9igftm81rpc0j&st=ni0wpeq4&dl=1',
             'unova': 'https://dl.dropboxusercontent.com/scl/fi/d7kamvyugoe5m6kydpr7o/49-Obtained-a-Badge.mp3?rlkey=7u962d8equg0j5nmcvm5rlrw6&st=5ij9rw4h&dl=1',
