@@ -19,6 +19,7 @@
             onDraw()             -- the board was just redrawn (the app uses it to show/hide buttons that depend on where a marker is)
             onView({above,below}) -- the view moved or zoomed: px of map lying above / below the frame's visible area (negative = empty space between the
                                     map's edge and the frame's edge). The app uses it to move its button stacks between the top and bottom corners
+            checkpointImages     -- optional {set,clear}: picture URLs for the Set / Clear checkpoint button (otherwise it is a text button)
             onTravel(playerId, path) -- this device's player dropped their marker after walking: path = the space ids walked, start to end
             onAction(id, action) -- the player pressed a button shown with ctrl.showAction({text,buttons:[{id,label}]})
             (host/guest) playerId = the one token this device may move; omit it for a display-only host
@@ -48,6 +49,15 @@ const editable=e=>/^(INPUT|TEXTAREA)$/.test(e.target.tagName); // text boxes kee
 root.addEventListener('contextmenu',e=>{if(!editable(e))e.preventDefault()});root.addEventListener('selectstart',e=>{if(!editable(e))e.preventDefault()});
 // Checkpoint button: bottom-left of the map, only while a marker is being dragged (a second finger taps it while the first holds the marker).
 const cpBtn=document.createElement('button');cpBtn.id='cpBtn';cpBtn.type='button';cpBtn.className='filter-btn filter-btn-compact';cpBtn.hidden=true;cpBtn.textContent='Set checkpoint';root.appendChild(cpBtn);
+// opts.checkpointImages {set, clear}: the button is a picture (class board-ability-btn, styled by the app) that swaps between Set and Clear; a picture that
+// won't load falls back to the words. Greyed and dark when it can't be pressed (the app styles #cpBtn:disabled).
+const cpImg=opts.checkpointImages||null;
+if(cpImg){cpBtn.className='board-ability-btn cp-img';cpBtn.textContent='';cpBtn.title='Set checkpoint';cpBtn.setAttribute('aria-label','Set checkpoint');
+ const im=document.createElement('img');im.alt='';im.draggable=false;im.onerror=()=>{im.remove();cpBtn.classList.add('no-img');cpBtn.textContent=cpBtn.title};im.src=cpImg.set;cpBtn.appendChild(im)}
+function cpShow(top,n){const w=top?'Clear checkpoint':'Set checkpoint';
+ if(!cpImg){const t=top?w+' '+n:w;if(cpBtn.textContent!==t)cpBtn.textContent=t;return}
+ const t=top?w+' '+n:w;if(cpBtn.title!==t){cpBtn.title=t;cpBtn.setAttribute('aria-label',t)}
+ const im=cpBtn.querySelector('img'),u=top?cpImg.clear:cpImg.set;if(im){if(im.getAttribute('src')!==u)im.src=u}else cpBtn.textContent=w}
 const DWELL=1250,DWELL_QUIET=500; // total hold; the first DWELL_QUIET ms show nothing, then the ring fills over the rest
 let lastWalkN=null,walkKeep=null,dragWas=false;const hasTouch=()=>{try{return navigator.maxTouchPoints>0||matchMedia('(any-pointer: coarse)').matches}catch(e){return false}};
 cpBtn.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();toggleCp()});
@@ -423,7 +433,7 @@ function routeOf(d,s){const org=orgOf(d);if(s.id===org)return{path:[org]};const 
  return(d.cps&&d.cps.length&&r.jump)?{blocked:'↩ No way forward from there (no turning back).'}:r}
 function cpSync(){const on=!!drag,showBtn=on&&hasTouch();if(cpBtn.hidden===showBtn)cpBtn.hidden=!showBtn;if(dragWas!==on){dragWas=on;root.classList.toggle('bm-dragging',on);if(!on&&opts.onDragState){try{opts.onDragState({on:false})}catch(e){}}}
  if(on){const top=drag.hov&&isTopCp(drag,drag.hov),can=top||!!(drag.hov&&drag.r&&drag.r.path&&!drag.r.blocked&&drag.r.path.length>1);
-  const t=top?'Clear checkpoint '+drag.cps.length:'Set checkpoint';if(cpBtn.textContent!==t)cpBtn.textContent=t;cpBtn.disabled=!can}
+  cpShow(top,drag.cps?drag.cps.length:0);cpBtn.disabled=!can}
  if(on&&opts.onDragState){const m=svg.getScreenCTM(),f=lastPtr;if(m){try{opts.onDragState({on:true,x:m.a*drag.x+m.e,y:m.d*drag.y+m.f,fx:f?f.x:undefined,fy:f?f.y:undefined})}catch(e){}}}
  // when a move is committed the final count is reported once more as settled, so the app can let it fade like the die
  let n=on?(drag.steps||0):null,settled=false;if(!on&&walkKeep!=null){n=walkKeep;settled=true;walkKeep=null}
@@ -456,12 +466,8 @@ function drawWalk(r,to){const g=$('walkG');if(!g||!drag)return;const o=get(curPo
  const lp=lockedOf(drag),leg=(r&&r.path&&r.path.length>1)?r.path:null,full=lp.length?(leg?lp.concat(leg.slice(1)):lp):(leg||[]);drag.steps=Math.max(0,full.length-1);
  const poly=(ids,col)=>`<polyline points="${ids.map(id=>{const q=get(id);return q.x+','+q.y}).join(' ')}" fill="none" stroke="${col}" stroke-width="${R*.5}" stroke-linejoin="round" stroke-linecap="round" opacity=".85"/>`;
  if(lp.length>1)h+=poly(lp,'#7dd3fc');if(leg)h+=poly(leg,'#ffeb3b');
- // every outline first, then every number badge, so no space's outline can paint over a neighbour's number
+ // an outline on every space of the route (the step count itself is shown by the app, not on each space)
  full.slice(1).forEach((id,i)=>{h+=spaceBox(get(id),i===full.length-2?'#ffeb3b':'#fff',R*.25,false)});
- const seen={};
- full.slice(1).forEach((id,i)=>{const q=get(id),last=i===full.length-2,k=seen[id]=(seen[id]||0)+1; // a space walked past again gets its next badge nudged left
-  const bx=q.x+hw(q)*.8-(k-1)*R*2,by=q.y-hh(q)*.8;
-  h+=`<circle cx="${bx}" cy="${by}" r="${R*.95}" fill="${last?'#ffeb3b':'#fff'}" stroke="#000" stroke-width="${R*.15}"/><text x="${bx}" y="${by+R*.4}" text-anchor="middle" font-size="${R*1.15}" font-weight="700" fill="#000">${i+1}</text>`});
  const seenC={};
  (drag.cps||[]).forEach((c,i)=>{const q=get(c.id),k=seenC[c.id]=(seenC[c.id]||0)+1,fx=q.x+hw(q)*.8-(k-1)*R*2,fy=q.y+hh(q)*.8,top=i===drag.cps.length-1;
   h+=`<circle cx="${fx}" cy="${fy}" r="${R*.95}" fill="#38bdf8" stroke="${top?'#fff':'#000'}" stroke-width="${R*(top?.25:.15)}"/><text x="${fx}" y="${fy+R*.4}" text-anchor="middle" font-size="${R*1.05}" font-weight="700" fill="#000">⚑${i+1}</text>`});
@@ -568,7 +574,7 @@ function placeAct(){const b=$('actbar');if(!b||b.hidden)return;
  const side=pl.side;pl=tryPlace(side,usedMode,hFor(side,true))||pl; // now for real: shrink the box if it has to be shorter than it wants to be
  let left=pl.left,top=pl.top,c=pl.c;
  let cs=side; // which edge carries the pointer: normally the one facing the marker; docked, it still points toward where the marker is, off the map
- if(!on){const dx=cx-(left+W/2),dy=cy-(top+h/2);if(Math.abs(dx)*h>=Math.abs(dy)*W){cs=dx<0?'r':'l';c=h/2+dy/Math.max(1,Math.abs(dx))*(W/2)}else{cs=dy<0?'b':'t';c=W/2+dx/Math.max(1,Math.abs(dy))*(h/2)}}
+ if(!on){const dx=cx-(left+W/2),dy=cy-(top+h/2);if(Math.abs(dx)*h>=Math.abs(dy)*W){cs=dx<0?'r':'l';c=cy-top}else{cs=dy<0?'b':'t';c=cx-left}} // docked: the pointer stays level with (or in line with) the marker along the box's edge, however far the map is panned
  const len=(cs==='r'||cs==='l')?h:W;c=Math.max(14,Math.min(len-14,c));
  b.style.left=Math.round(left)+'px';b.style.top=Math.round(top)+'px';b.style.setProperty('--c',Math.round(c)+'px');
  b.classList.remove('s-r','s-l','s-t','s-b');b.classList.add('s-'+cs);if(on)actSide=side}
