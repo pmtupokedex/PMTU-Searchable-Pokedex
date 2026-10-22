@@ -15334,7 +15334,7 @@
         #game-board-mount #cpBtn.board-ability-btn:disabled { opacity: 1; cursor: default; }
         #game-board-mount #cpBtn.board-ability-btn:disabled img { filter: grayscale(1) brightness(0.35); }
         /* "[Name]'s Turn" banner: big centred text over everything for a couple of seconds at the start of each turn (taps pass through it). */
-        #board-turn-banner { position: fixed; left: 0; right: 0; top: 38%; z-index: 9000; display: none; flex-direction: column; align-items: center; gap: 4px; padding: 0 16px;
+        #board-turn-banner { position: fixed; left: 0; right: 0; top: 38%; z-index: 9000; display: none; flex-direction: column; align-items: center; gap: 4px; padding: 20px 16px; background: rgba(0, 0, 0, 0.6);
             text-align: center; pointer-events: none; }
         #board-turn-banner.visible { display: flex; animation: board-turn-pop 0.3s ease-out; }
         #board-turn-banner.fading { opacity: 0; transition: opacity 0.5s ease; }
@@ -15342,6 +15342,7 @@
         @media (prefers-reduced-motion: reduce) { #board-turn-banner.visible { animation: none; } }
         #board-turn-name { font-weight: bold; font-size: clamp(32px, 9vw, 72px); line-height: 1.05; overflow-wrap: anywhere;
             text-shadow: -3px -3px 0 black, 0 -3px 0 black, 3px -3px 0 black, -3px 0 0 black, 3px 0 0 black, -3px 3px 0 black, 0 3px 0 black, 3px 3px 0 black; }
+        .board-turn-coin { height: 1em; width: auto; vertical-align: -0.12em; }
         #board-turn-num { font-weight: bold; font-size: clamp(20px, 5vw, 36px); line-height: 1.1; color: #fff;
             text-shadow: -2px -2px 0 black, 0 -2px 0 black, 2px -2px 0 black, -2px 0 0 black, 2px 0 0 black, -2px 2px 0 black, 0 2px 0 black, 2px 2px 0 black; }
         @media (min-resolution: 1.25dppx), (-webkit-min-device-pixel-ratio: 1.25) {
@@ -46973,7 +46974,7 @@
             return { order, cur: cur ? cur.pid : null, curName: cur ? cur.name : '', curHex: cur ? cur.hex : '#ffffff', curN: cur ? cur.n : 0 };
         }
         // Stores the state, shows it here, and sends it to the guests. `announce` pops the "[Name]'s Turn" banner on every device.
-        function turnsCommit(announce) {
+        function turnsCommit(announce, fresh) {
             const t = turnAuth;
             if (!t) return;
             const view = turnsBuildView(), save = turnsSave();
@@ -46982,21 +46983,23 @@
                 try { persistGameSaves(); } catch (e) { /* storage full: the turn still runs */ }
             }
             turnViewSig = JSON.stringify(view);
-            turnsApplyView(view, announce);
+            const coin = !!(announce && fresh && isPokeCoinsEnabledForActiveSave()); // a brand-new turn, with the Poké Coin rule on: +1 for whoever's turn it is
+            turnsApplyView(view, announce, coin);
             if (lobbyState.role === 'host') {
-                lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send({ type: 'turn-state', view, announce: !!announce }); });
+                lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send({ type: 'turn-state', view, announce: !!announce, coin }); });
             }
         }
         function turnsPublicView() { return lobbyState.role === 'host' && turnAuth ? turnsBuildView() : null; }
-        function turnsApplyView(view, announce) {
+        function turnsApplyView(view, announce, coin) {
             turnView = (view && Array.isArray(view.order)) ? view : null;
-            turnsRender(!!announce);
+            if (announce && coin && turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host') && isPokeCoinsEnabledForActiveSave() && !isActiveSaveReadOnly()) adjustPokeCoins(1); // each device adds to its own player's total
+            turnsRender(!!announce, !!coin);
         }
-        function turnsRender(announce) {
+        function turnsRender(announce, coin) {
             try { if (boardCtrl && boardCtrl.setTurn) boardCtrl.setTurn(turnView ? turnView.cur : null); } catch (e) { /* board not built yet: turnsRenderBoard() runs once it is */ }
             try { turnsUpdateButton(); } catch (e) { /* bar not built yet */ }
             if (announce && turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host')) setTimeout(() => { try { boardBeginRevivePick(); } catch (e) { /* not ready */ } }, 1200); // no usable Pok\u00e9mon: revive 2
-            if (announce && turnView && turnView.curName) turnsShowBanner(turnView);
+            if (announce && turnView && turnView.curName) turnsShowBanner(turnView, coin);
             else if (!turnView) turnsHideBanner();
         }
         function turnsRenderBoard() {
@@ -47009,12 +47012,13 @@
             const box = document.getElementById('board-turn-banner');
             if (box) box.classList.remove('visible', 'fading');
         }
-        function turnsShowBanner(v) {
+        function turnsShowBanner(v, coin) {
             const box = document.getElementById('board-turn-banner'), nm = document.getElementById('board-turn-name'), num = document.getElementById('board-turn-num');
             if (!box || !nm || !num) return;
             nm.textContent = (v.curName === 'You' ? 'Your' : v.curName + '’s') + ' Turn';
             nm.style.color = /^#[0-9a-f]{3,8}$/i.test(v.curHex) ? v.curHex : '#ffffff';
             num.textContent = 'Turn ' + v.curN;
+            if (coin) { num.appendChild(document.createTextNode(' (+1 ')); const im = document.createElement('img'); im.src = 'https://dl.dropboxusercontent.com/scl/fi/o63sd5nvfxkf6xj3yokv9/pokecoin-sm.png?rlkey=u9o5o0sz8trg9lnb1zbyeftmm&st=oso6uy1c&dl=1'; im.alt = 'Poké Coin'; im.className = 'board-turn-coin'; num.appendChild(im); num.appendChild(document.createTextNode(')')); }
             clearTimeout(turnBannerFade); clearTimeout(turnBannerHide);
             box.classList.remove('visible', 'fading');
             void box.offsetWidth; // restart the pop animation when turns follow each other quickly
@@ -47022,7 +47026,7 @@
             turnBannerFade = setTimeout(() => box.classList.add('fading'), TURN_BANNER_MS);
             turnBannerHide = setTimeout(() => box.classList.remove('visible', 'fading'), TURN_BANNER_MS + 500);
         }
-        var TURN_BANNER_MS = 2400;
+        var TURN_BANNER_MS = 3800;
         function turnsShuffle(list) {
             const a = list.slice();
             for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
@@ -47048,7 +47052,7 @@
                 for (let k = 1; k <= n && !next; k++) { const c = t.order[(from + k + n) % n]; if (present.has(c)) next = c; }
                 t.cur = next || t.order[0];
                 t.counts[t.cur] = (t.counts[t.cur] || 0) + 1;
-                turnsCommit(true);
+                turnsCommit(true, true);
             }
         }
         // A host that took over a game already under way picks the turns up from the save it was handed.
@@ -47078,7 +47082,7 @@
             turnLastAdvanceAt = Date.now();
             t.cur = next;
             t.counts[next] = (t.counts[next] || 0) + 1;
-            turnsCommit(true);
+            turnsCommit(true, true);
         }
         // The current player may end their turn. A host may also end it when its player isn't in the lobby, or when the host isn't playing.
         function turnsCanEnd() {
@@ -51025,7 +51029,7 @@
                 } else if (data.type === 'blackout-set') {
                     boardApplyBlackedOut(data.list);
                 } else if (data.type === 'turn-state') {
-                    turnsApplyView(data.view && typeof data.view === 'object' ? data.view : null, !!data.announce);
+                    turnsApplyView(data.view && typeof data.view === 'object' ? data.view : null, !!data.announce, !!data.coin);
                 } else if (data.type === 'game-started') {
                     // The host pressed Start Game -- see
                     // finalizeLobbyGameStart().
