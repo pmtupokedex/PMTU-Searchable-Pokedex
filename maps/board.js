@@ -550,16 +550,22 @@ function placeAct(){const b=$('actbar');if(!b||b.hidden)return;
  // The start (in [lo,hi]) nearest to `want` for a span of `size` that overlaps none of the blocked [a,b] stretches; null if there is no room.
  const fit=(lo,hi,size,want,blk)=>{if(hi<lo)return null;const cand=[Math.max(lo,Math.min(hi,want))];blk.forEach(([a,c])=>{cand.push(a-size,c)});let best=null;
   for(const t of cand){if(t<lo-.5||t>hi+.5)continue;const tt=Math.max(lo,Math.min(hi,t));if(blk.some(([a,c])=>tt<c-.5&&tt+size>a+.5))continue;if(best===null||Math.abs(tt-want)<Math.abs(best-want))best=tt}return best};
- // mode 2: clear of every zone; 1: clear of the hard ones only (data-actbar-avoid="soft", the roll numbers, may be covered); 0: ignore them all (nothing else fits)
- const tryPlace=(s,mode)=>{const Z=mode?AV.filter(v=>mode===2||!v.soft):[];
-  if(s==='r'||s==='l'){shrink(Bt-T-2*G);const lf=s==='r'?ax+rad+gap:ax-rad-gap-W;
-   const tp=fit(T+G,Bt-G-h,h,ay-h/2,Z.filter(v=>v.r>lf&&v.l<lf+W).map(v=>[v.t,v.b]));return tp===null?null:{left:lf,top:tp,c:ay-tp}}
-  shrink(s==='b'?roomB:roomT);const tp=s==='b'?ay+rad+gap:ay-rad-gap-h;
-  const lf=fit(L+G,Rt-G-W,W,ax-W/2,Z.filter(v=>v.b>tp&&v.t<tp+h).map(v=>[v.l,v.r]));return lf===null?null:{left:lf,top:tp,c:ax-lf}};
- const sides=[];for(const s of(actSide==='l'?['l','r']:['r','l']))if((s==='r'?roomR:roomL)>=W)sides.push(s);
- for(const s of(actSide==='t'?['t','b']:['b','t']))if((s==='b'?roomB:roomT)>=h)sides.push(s);
- if(!sides.length)sides.push(roomB>=roomT?'b':'t');
- let side=null,pl=null;for(const mode of[2,1,0]){for(const s of sides){pl=tryPlace(s,mode);if(pl){side=s;break}}if(pl)break}
+ // The box goes on whichever side of the marker puts it NEAREST to the marker (straight-line distance from the marker to the box, x and y together),
+ // after the keep-clear zones are respected. mode 2: clear of every zone; 1: clear of the hard ones only (data-actbar-avoid="soft", the roll numbers, may
+ // be covered); 0: ignore them all (nothing else fits). The side used last gets a small head start so the box doesn't flip back and forth.
+ const h0=h,tall=s=>(s==='r'||s==='l')?Bt-T-2*G:(s==='b'?roomB:roomT);
+ const hFor=(s,real)=>{const room=tall(s);if(h0<=room)return h0;if(real){shrink(room);return h}return Math.max(78,room)}; // (an estimate while comparing: no DOM work)
+ const tryPlace=(s,mode,hh)=>{const Z=mode?AV.filter(v=>mode===2||!v.soft):[];
+  if(s==='r'||s==='l'){const lf=s==='r'?ax+rad+gap:ax-rad-gap-W;
+   const tp=fit(T+G,Bt-G-hh,hh,ay-hh/2,Z.filter(v=>v.r>lf&&v.l<lf+W).map(v=>[v.t,v.b]));return tp===null?null:{side:s,left:lf,top:tp,c:ay-tp,h:hh}}
+  const tp=s==='b'?ay+rad+gap:ay-rad-gap-hh;
+  const lf=fit(L+G,Rt-G-W,W,ax-W/2,Z.filter(v=>v.b>tp&&v.t<tp+hh).map(v=>[v.l,v.r]));return lf===null?null:{side:s,left:lf,top:tp,c:ax-lf,h:hh}};
+ const dist=p=>Math.hypot(Math.max(p.left-ax,0,ax-(p.left+W)),Math.max(p.top-ay,0,ay-(p.top+p.h)));
+ const feas=s=>s==='r'?roomR>=W:s==='l'?roomL>=W:s==='b'?roomB>=h0:roomT>=h0;
+ let sides=['r','l','b','t'].filter(feas);if(!sides.length)sides=[roomB>=roomT?'b':'t'];
+ let pl=null,usedMode=0;
+ for(const mode of[2,1,0]){let bd=1e9;for(const s of sides){const p=tryPlace(s,mode,hFor(s,false));if(!p)continue;const d=dist(p)-(s===actSide?12:0);if(d<bd){bd=d;pl=p}}if(pl){usedMode=mode;break}}
+ const side=pl.side;pl=tryPlace(side,usedMode,hFor(side,true))||pl; // now for real: shrink the box if it has to be shorter than it wants to be
  let left=pl.left,top=pl.top,c=pl.c;
  let cs=side; // which edge carries the pointer: normally the one facing the marker; docked, it still points toward where the marker is, off the map
  if(!on){const dx=cx-(left+W/2),dy=cy-(top+h/2);if(Math.abs(dx)*h>=Math.abs(dy)*W){cs=dx<0?'r':'l';c=h/2+dy/Math.max(1,Math.abs(dx))*(W/2)}else{cs=dy<0?'b':'t';c=W/2+dx/Math.max(1,Math.abs(dy))*(h/2)}}
