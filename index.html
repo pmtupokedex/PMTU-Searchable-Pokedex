@@ -41369,10 +41369,24 @@
                 pendingBadgeSlotKey = award.slotKey;
                 gymBadgeAwardShowing = true;
                 document.getElementById('game-confirm-title').textContent = getEarnedBadgeTitle(award, options.length === 1 ? options[0] : null);
-                // Poké Coins rule: every Badge earned also pays 5 Poké Coins now and a card from the Item Deck once this message is closed.
-                const rewardOn = isPokeCoinsEnabledForActiveSave() && !isActiveSaveReadOnly();
-                if (rewardOn && !award.rewarded) { award.rewarded = true; adjustPokeCoins(5); }
-                const rewardLine = rewardOn ? `<p class=\"game-confirm-subtext game-badge-reward-line\">(+5 <img class=\"badge-reward-icon\" src=\"https://dl.dropboxusercontent.com/scl/fi/o63sd5nvfxkf6xj3yokv9/pokecoin-sm.png?rlkey=u9o5o0sz8trg9lnb1zbyeftmm&st=oso6uy1c&dl=1\" alt=\"Poké Coins\">, +1 <img class=\"badge-reward-icon\" src=\"https://dl.dropboxusercontent.com/scl/fi/a9c0ewwfrxfqpcsa1k1ur/thumb_item-card.png?rlkey=42ej7a3tavbqyohv0kzo4r1l4&st=u4eo2r0p&dl=1\" alt=\"Item Card\">)</p>` : '';
+                // Rewards for earning a Badge, shown whether or not virtual decks are on (on paper the message is the reminder):
+                // +1 Item Card always; +5 Poké Coins with the Poké Coins rule; and +1 Master Ball (that player's own first Villain Badge).
+                // With virtual decks on the cards go to the hand: the Master Ball as the message appears, the Item Card once it is closed.
+                const canReward = !isActiveSaveReadOnly();
+                const coinsOn = canReward && isPokeCoinsEnabledForActiveSave();
+                if (coinsOn && !award.rewarded) { award.rewarded = true; adjustPokeCoins(5); }
+                if (award.masterBall === undefined) award.masterBall = canReward && boardMasterBallDue(award) ? 'pending' : null;
+                if (award.masterBall === 'pending') {
+                    award.masterBall = 'given';
+                    boardMarkVillainRewardClaimed();
+                    const mb = isVirtualDecksEnabledForActiveSave() ? boardMasterBallRewardCard() : null;
+                    if (mb) requestGainReward('Reward Item Deck', mb.id);
+                }
+                const rewardParts = [];
+                if (coinsOn) rewardParts.push('+5 <img class="badge-reward-icon" src="https://dl.dropboxusercontent.com/scl/fi/o63sd5nvfxkf6xj3yokv9/pokecoin-sm.png?rlkey=u9o5o0sz8trg9lnb1zbyeftmm&st=oso6uy1c&dl=1" alt="Poké Coins">');
+                if (canReward) rewardParts.push('+1 <img class="badge-reward-icon" src="https://dl.dropboxusercontent.com/scl/fi/a9c0ewwfrxfqpcsa1k1ur/thumb_item-card.png?rlkey=42ej7a3tavbqyohv0kzo4r1l4&st=u4eo2r0p&dl=1" alt="Item Card">');
+                if (award.masterBall === 'given') rewardParts.push('+1 <img class="badge-reward-icon" src="https://dl.dropboxusercontent.com/scl/fi/usfre34nyxe4gxzkwiwmp/master_ball.png?rlkey=wpwihvyklhffz53el4yg0xros&st=g6qna8k4&dl=1" alt="Master Ball">');
+                const rewardLine = rewardParts.length ? `<p class="game-confirm-subtext game-badge-reward-line">(${rewardParts.join(', ')})</p>` : '';
                 document.getElementById('game-badge-confirm-options').innerHTML = options.length === 1 ? `
                     ${buildGymCoinMarkup(options[0])}
                     <p class=\"game-confirm-subtext\">${options[0].name}</p>
@@ -41436,12 +41450,36 @@
             }, 400);
         }
 
+        // A Villain team's Badge gives the Master Ball once per player. It's tracked in the player's own save (so paper players get the
+        // reminder only the first time too); with virtual decks the card's own one-time claim counts as well.
+        function boardMasterBallDue(award) {
+            if (!award) return false;
+            const leader = GYM_LEADERS_BY_ID[award.leaderId];
+            if (!leader || leader.category !== 'villain') return false;
+            const data = getActiveSaveData();
+            if (data && data.villainRewardClaimed) return false;
+            if (isVirtualDecksEnabledForActiveSave()) {
+                const card = boardMasterBallRewardCard();
+                if (card && card.oneTime === 'yes' && getLocalOneTimeClaims('Reward Item Deck').includes(card.id)) return false;
+            }
+            return true;
+        }
+        function boardMarkVillainRewardClaimed() {
+            const data = getActiveSaveData();
+            if (!data || data.villainRewardClaimed) return;
+            data.villainRewardClaimed = true;
+            if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves();
+        }
+        function boardMasterBallRewardCard() {
+            const key = boardCardNameKey('Master Ball');
+            return Object.values(CARDS_BY_ID).find(c => c.cardDeck === 'Reward Item Deck' && cardMatchesActiveRegion(c) && boardCardNameKey(c.name) === key) || null;
+        }
         // The Item Card half of a Badge's reward, once its message is closed: drawn like the Poké Mart does (virtual decks), or a reminder.
         function boardBadgeRewardDraw(award) {
-            if (!award || !award.rewarded || award.itemDrawn || !isPokeCoinsEnabledForActiveSave()) return;
+            if (!award || award.itemDrawn || isActiveSaveReadOnly()) return;
             award.itemDrawn = true;
-            if (isVirtualDecksEnabledForActiveSave()) boardUsePokeMart();
-            else showGameToast('Badge reward: draw a card from your physical Item deck.');
+            if (isVirtualDecksEnabledForActiveSave()) boardUsePokeMart(); // draws from the Item Deck and shows the hand (with any Master Ball in it)
+            else showGameToast('Badge reward: draw a card from your physical Item deck' + (award.masterBall === 'given' ? ' and take your Master Ball' : '') + '.');
         }
 
         // Places every pending Badge right now, no overlay -- for any
