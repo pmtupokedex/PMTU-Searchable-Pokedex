@@ -28,7 +28,7 @@
    circleScale sizes every round space (Catch 'Em and Event alike), and a space flagged start is where everyone begins.
    controller: resolveEncounter(spaceId,'caught'|'defeated'|'abandon'), showAction(a), hideAction(),
                loadBoard(editorJson), setImage(url), handleMessage(msg),
-               resend(), restoreSnapshot(snapString, [{id,c}]) [host: resume a game from a previous host's last board-state; players matched by color c], fit(), restoreView() [until the player zooms by hand: fills the frame's height; afterwards keeps the zoom; centers on this player's token], setView(v), setPlayers(list), setStatus(t), getStatus(), destroy()
+               resend(), restoreSnapshot(snapString, [{id,c}]) [host: resume a game from a previous host's last board-state; players matched by color c], fit(), restoreView() [until the player zooms by hand: fills the frame's height; afterwards keeps the zoom; centers on this player's token], setView(v), setPlayers(list), setTurn(playerId|null) [ring around that player's marker], setStatus(t), getStatus(), destroy()
    setKeepScale(on) -- on: when the frame is resized (e.g. a docked side panel opens) the map keeps the same on-screen scale and just
                shows more/less of itself, and the map is never allowed to get shorter than the frame; off (default): refit as before.
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
@@ -137,7 +137,7 @@ const COL={red:'#e03131',blue:'#2f4fd0',green:'#2f9e44',yellow:'#f5c211',orange:
 let PL=[{id:'p1',name:'Ash',c:'#ff5252'},{id:'p2',name:'Misty',c:'#42a5f5'},{id:'p3',name:'Brock',c:'#8d6e63'}];
 if(opts.players)PL=opts.players;
 const SAMPLE_NAMES={red:['Charmander','Vulpix','Growlithe','Ponyta','Magmar'],blue:['Squirtle','Psyduck','Slowpoke','Staryu','Lapras'],green:['Bulbasaur','Oddish','Bellsprout','Tangela','Scyther'],yellow:['Pikachu','Sandshrew','Geodude','Onix','Diglett'],orange:['Articuno','Zapdos','Moltres','Mewtwo']};
-let view='host',M={pos:{},home:{},spaces:{}},lastSnapStr='',SP=[],LK=[],W=1000,H=620,R=14,K=1,NAMES={},img=null,active='p1',pos={},home={},pools={},st={},drag=null,sync=0;
+let TURN=null,view='host',M={pos:{},home:{},spaces:{}},lastSnapStr='',SP=[],LK=[],W=1000,H=620,R=14,K=1,NAMES={},img=null,active='p1',pos={},home={},pools={},st={},drag=null,sync=0;
 let entry={};const curEntry=()=>mode==='guest'?(M.entry||{}):entry;const curPos=()=>mode==='guest'?M.pos:pos;const curHome=()=>mode==='guest'?(M.home||{}):home;
 const get=id=>SP.find(s=>s.id===id),shuf=a=>{for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a};
 const log=t=>$('log').insertAdjacentHTML('afterbegin',`<div>${t}</div>`);
@@ -384,6 +384,9 @@ function draw(){buildModel();let h=(img&&(bgFail||!canBmp))?`<image href="${img}
   if(u)h+=`<g data-tk="${xa(o.token)}" style="cursor:pointer"><image href="${xa(u)}" x="${s.x-rr+rr*2*TKX}" y="${s.y-rr-rr*2*TKY}" width="${rr*2}" height="${rr*2}" preserveAspectRatio="xMidYMid meet" pointer-events="all"/></g>`;
   else if(!sm&&tokFailed(o.token))h+=`<text x="${s.x+rr*2*TKX}" y="${s.y+R*.3-rr*2*TKY}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700" pointer-events="none">${o.token.slice(0,7)}</text>`}
  PL.forEach((q,i)=>{const c=get(M.home[q.id]);if(!c)return;const d=dims(c),cx=c.x-d.w/2+R*(.7+1.2*i),cy=c.y-d.h/2-R*.1;h+=`<polygon points="${cx},${cy-R*.55} ${cx+R*.55},${cy} ${cx+R*.55},${cy+R*.55} ${cx-R*.55},${cy+R*.55} ${cx-R*.55},${cy}" fill="${q.c}" stroke="#fff" stroke-width="${R*.12}" pointer-events="none"/>`});
+ // Whose turn it is (set by the app with setTurn): a pulsing ring in the player's color around their marker, under the marker itself.
+ if(TURN){const q=PL.find(o=>o.id===TURN);if(q&&get(M.pos[q.id])){const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
+  h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*1.7}" fill="none" stroke="${q.c}" stroke-width="${R*.4}" pointer-events="none"><animate attributeName="r" values="${R*1.55};${R*2.3};${R*1.55}" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;.3;1" dur="1.6s" repeatCount="indefinite"/></circle><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*1.45}" fill="none" stroke="#fff" stroke-width="${R*.16}" pointer-events="none"/>`}}
  for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
   h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}" pointer-events="none"/>`}
@@ -617,6 +620,7 @@ return{
  setKeepScale(on){keepScale=!!on;updEA();Z=clampZ(Z);clampView();applyView()},
  restoreView,placeAction:()=>{try{placeAct()}catch(e){}},
  setView:v=>setView(v),
+ setTurn(id){TURN=id||null;draw()}, // the player whose turn it is (their marker gets a pulsing ring), or null
  setPlayers(list){if(mode!=='guest'){const gone=PL.filter(o=>o.cid&&pos[o.id]&&!list.some(n=>n.id===o.id)&&!list.some(n=>n.cid===o.cid)&&!(restoreQ||[]).some(q=>q.cid===o.cid&&!q.done));
   if(gone.length){restoreQ=(restoreQ||[]).filter(q=>!q.done);gone.forEach(g=>restoreQ.push({c:g.c,cid:g.cid||null,pos:pos[g.id],home:home[g.id],entry:entry[g.id],from:g.id}))}}
  PL=list;if(mode!=='guest'){PL.forEach(p=>{if(!pos[p.id]&&startId){pos[p.id]=startId;if(get(startId)&&get(startId).type==='city')home[p.id]=startId}});restorePlayers();snapshot()}else draw();renderView()},
