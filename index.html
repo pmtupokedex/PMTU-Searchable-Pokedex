@@ -15342,7 +15342,7 @@
         @media (prefers-reduced-motion: reduce) { #board-turn-banner.visible { animation: none; } }
         #board-turn-name { font-weight: bold; font-size: clamp(32px, 9vw, 72px); line-height: 1.05; overflow-wrap: anywhere;
             text-shadow: -3px -3px 0 black, 0 -3px 0 black, 3px -3px 0 black, -3px 0 0 black, 3px 0 0 black, -3px 3px 0 black, 0 3px 0 black, 3px 3px 0 black; }
-        .board-turn-coin { height: 1.25em; width: auto; vertical-align: -0.35em; }
+        .board-turn-coin, .badge-reward-icon { height: 1.25em; width: auto; vertical-align: -0.35em; }
         #board-turn-num { font-weight: bold; font-size: clamp(20px, 5vw, 36px); line-height: 1.1; color: #fff;
             text-shadow: -2px -2px 0 black, 0 -2px 0 black, 2px -2px 0 black, -2px 0 0 black, 2px 0 0 black, -2px 2px 0 black, 0 2px 0 black, 2px 2px 0 black; }
         @media (min-resolution: 1.25dppx), (-webkit-min-device-pixel-ratio: 1.25) {
@@ -41369,14 +41369,20 @@
                 pendingBadgeSlotKey = award.slotKey;
                 gymBadgeAwardShowing = true;
                 document.getElementById('game-confirm-title').textContent = getEarnedBadgeTitle(award, options.length === 1 ? options[0] : null);
+                // Poké Coins rule: every Badge earned also pays 5 Poké Coins now and a card from the Item Deck once this message is closed.
+                const rewardOn = isPokeCoinsEnabledForActiveSave() && !isActiveSaveReadOnly();
+                if (rewardOn && !award.rewarded) { award.rewarded = true; adjustPokeCoins(5); }
+                const rewardLine = rewardOn ? `<p class=\"game-confirm-subtext game-badge-reward-line\">(+5 <img class=\"badge-reward-icon\" src=\"https://dl.dropboxusercontent.com/scl/fi/o63sd5nvfxkf6xj3yokv9/pokecoin-sm.png?rlkey=u9o5o0sz8trg9lnb1zbyeftmm&st=oso6uy1c&dl=1\" alt=\"Poké Coins\">, +1 <img class=\"badge-reward-icon\" src=\"https://dl.dropboxusercontent.com/scl/fi/a9c0ewwfrxfqpcsa1k1ur/thumb_item-card.png?rlkey=42ej7a3tavbqyohv0kzo4r1l4&st=u4eo2r0p&dl=1\" alt=\"Item Card\">)</p>` : '';
                 document.getElementById('game-badge-confirm-options').innerHTML = options.length === 1 ? `
                     ${buildGymCoinMarkup(options[0])}
                     <p class=\"game-confirm-subtext\">${options[0].name}</p>
+                    ${rewardLine}
                     <div class=\"game-save-slot-actions\">
                         <button class=\"filter-btn game-badge-confirm-single-btn\" data-option=\"${options[0].id}\">Continue</button>
                     </div>
                 ` : `
                     <p class=\"game-confirm-subtext\">Choose which Badge you earned.</p>
+                    ${rewardLine}
                     <div class=\"game-badge-choose-grid\">
                         ${options.map(o => `
                             <button class=\"filter-btn game-badge-choose-btn\" data-option=\"${o.id}\">
@@ -41425,8 +41431,17 @@
             gymBadgeFadeTimer = setTimeout(() => {
                 gymBadgeFadeTimer = null;
                 closeBadgeOverlay();
+                boardBadgeRewardDraw(award);
                 presentNextGymBadgeAward();
             }, 400);
+        }
+
+        // The Item Card half of a Badge's reward, once its message is closed: drawn like the Poké Mart does (virtual decks), or a reminder.
+        function boardBadgeRewardDraw(award) {
+            if (!award || !award.rewarded || award.itemDrawn || !isPokeCoinsEnabledForActiveSave()) return;
+            award.itemDrawn = true;
+            if (isVirtualDecksEnabledForActiveSave()) boardUsePokeMart();
+            else showGameToast('Badge reward: draw a card from your physical Item deck.');
         }
 
         // Places every pending Badge right now, no overlay -- for any
