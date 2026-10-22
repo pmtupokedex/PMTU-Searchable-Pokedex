@@ -15350,6 +15350,8 @@
             #board-turn-num { text-shadow: none; -webkit-text-stroke: 5px black; text-stroke: 5px black; paint-order: stroke fill; }
         }
         }
+        #board-endturn-btn[hidden] { display: none !important; }
+        .board-ability-btn.no-img.locked { color: rgba(255, 255, 255, 0.45); background: rgba(16, 20, 24, 0.85); }
         .board-ability-btn.no-img { color: #fff; font: 700 10px/1.1 sans-serif; padding: 2px; overflow-wrap: anywhere; }
         .board-ability-btn.locked { cursor: default; }
         .board-ability-btn.locked img { filter: grayscale(1) brightness(0.35); }
@@ -46983,7 +46985,7 @@
         }
         function turnsRender(announce) {
             try { if (boardCtrl && boardCtrl.setTurn) boardCtrl.setTurn(turnView ? turnView.cur : null); } catch (e) { /* board not built yet: turnsRenderBoard() runs once it is */ }
-            try { boardUpdateAbilityButtons(); } catch (e) { /* bar not built yet */ }
+            try { turnsUpdateButton(); } catch (e) { /* bar not built yet */ }
             if (announce && turnView && turnView.curName) turnsShowBanner(turnView);
             else if (!turnView) turnsHideBanner();
         }
@@ -47073,11 +47075,29 @@
             if (v.cur && v.cur === me) return true;
             return lobbyState.role === 'host' && (!lobbyState.hostIsPlayer || v.cur === null);
         }
+        // The End Turn button sits at the bottom of the left button stack (under Zoom Out). It is only there while turns are running, and
+        // greyed out when it isn't this player's turn.
+        function turnsUpdateButton() {
+            const b = document.getElementById('board-endturn-btn');
+            if (!b) return;
+            const show = !!turnView;
+            if (b.hidden === show) b.hidden = !show;
+            if (!show) return;
+            const can = turnsCanEnd(), tip = can ? 'End Turn' : 'End Turn \u2014 It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.';
+            if (b.classList.contains('locked') === can) b.classList.toggle('locked', !can);
+            if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', tip); }
+            b.setAttribute('aria-disabled', can ? 'false' : 'true');
+        }
         function turnsEndClick() {
             if (!turnView) return;
-            if (!turnsCanEnd()) { showGameToast('It’s ' + (turnView.curName || 'another player') + '’s turn.'); return; }
-            if (lobbyState.role === 'guest') boardSend({ type: 'turn-end' });
-            else turnsAdvance();
+            if (!turnsCanEnd()) { showGameToast('It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.'); return; }
+            const mine = turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host');
+            boardAskJump({
+                title: 'End your turn?',
+                text: mine ? 'This ends your turn and starts the next player\u2019s.' : 'This ends ' + (turnView.curName || 'their') + '\u2019s turn and starts the next player\u2019s.',
+                yesLabel: 'End Turn',
+                onYes: () => { if (lobbyState.role === 'guest') boardSend({ type: 'turn-end' }); else turnsAdvance(); }
+            });
         }
         function turnsHandleEnd(peerId) {
             if (turnAuth && turnView && turnView.cur && turnView.cur === peerId) turnsAdvance(); // who it was comes from the connection
@@ -47120,8 +47140,7 @@
             { id: 'dig', label: 'Dig', url: 'https://dl.dropboxusercontent.com/scl/fi/x40exjym9k60pf9xtsicm/ability_dig.png?rlkey=8yctsvjiwlt3gl1nvfxzqpu5o&st=21rzqg5v&dl=1' },
             { id: 'fly', label: 'Fly', url: 'https://dl.dropboxusercontent.com/scl/fi/p716lgvkmk9szoh0cy184/ability_fly.png?rlkey=ax3ekv8hvf885g6eqlwkh4kni&st=tvec9vtv&dl=1' },
             { id: 'surf', label: 'Surf', url: 'https://dl.dropboxusercontent.com/scl/fi/pw5mbamugkygoalajicxn/ability_surf.png?rlkey=40f2gdd1bohm14pymgqswzous&st=jmrvj1g1&dl=1' },
-            { id: 'teleport', label: 'Teleport', url: 'https://dl.dropboxusercontent.com/scl/fi/ym5ou8gjkxfey3dpc8669/ability_teleport.png?rlkey=s5bh2lomkkhqfsjw2y6vkgee8&st=y6t02i3a&dl=1' },
-		{ id: 'endturn', domId: 'board-endturn-btn', label: 'End Turn', url: 'https://dl.dropboxusercontent.com/scl/fi/emcsdvryf4r6jl7dnt7x4/board_end-turn.png?rlkey=xhh3901gj2d0wjvigg30es2bj&st=tkzvi6ml&dl=1' } 
+            { id: 'teleport', label: 'Teleport', url: 'https://dl.dropboxusercontent.com/scl/fi/ym5ou8gjkxfey3dpc8669/ability_teleport.png?rlkey=s5bh2lomkkhqfsjw2y6vkgee8&st=y6t02i3a&dl=1' }
         ];
         function boardUpdateAbilityButtons() {
             const bar = document.getElementById('board-ability-bar');
@@ -47143,11 +47162,6 @@
                 if (!b) return;
                 let why = null;
                 if (a.id === 'roll') why = null;
-                else if (a.id === 'endturn') {
-                    const showIt = !!turnView;
-                    if ((b.style.display === 'none') === showIt) b.style.display = showIt ? '' : 'none';
-                    why = !showIt ? null : (turnsCanEnd() ? null : 'It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.');
-                }
                 else if (a.id === 'stay') why = boardOnCitySpace() ? null : BOARD_STAY_MESSAGE;
                 else { try { why = boardGateCheck({ type: 'ability', value: a.id }); } catch (e) { why = 'Not available.'; } }
                 const locked = !!why;
@@ -49849,6 +49863,7 @@
             { id: 'mzf', label: 'Fit', url: 'https://dl.dropboxusercontent.com/scl/fi/13wvwh5bd0llhvt2y9kya/board_fit.png?rlkey=gq67v0u7chot6q0c3aw2oigqz&st=os9ff8if&dl=1' },
             { id: 'board-fs-btn', label: 'Fullscreen', url: 'https://dl.dropboxusercontent.com/scl/fi/8rni7585tg6fqtgk75efk/board_fullscreen.png?rlkey=i6ar2g6mmq7vsndjgzc1l3cdl&st=2o7ts9d9&dl=1',
               exitLabel: 'Exit Fullscreen', exitUrl: 'https://dl.dropboxusercontent.com/scl/fi/plcak6vf4tpzrxw0ep35h/board_fullscreen-exit.png?rlkey=5asuatxdxsa415a5us2f39146&st=plpf9aw5&dl=1' },
+            { id: 'board-endturn-btn', label: 'End Turn', url: 'https://dl.dropboxusercontent.com/scl/fi/emcsdvryf4r6jl7dnt7x4/board_end-turn.png?rlkey=xhh3901gj2d0wjvigg30es2bj&st=tkzvi6ml&dl=1' },
             { id: 'mme', label: 'Find Me', url: 'https://dl.dropboxusercontent.com/scl/fi/flreec8nuf4t71i30al2z/board_recenter-on-player.png?rlkey=q1ou9swud4purrfqdpiubzfcm&st=ilf84fw2&dl=1' }
         ];
         // Button layout. Horizontal: the map buttons in a row across the top (Find Me at the right end), the movement buttons in a row across
@@ -49861,8 +49876,8 @@
             set: 'https://dl.dropboxusercontent.com/scl/fi/l19ditcsmydpzod9cvbew/board_checkpoint-set.png?rlkey=0evpsjimtqkiuefhz2153u1n0&st=387oz4zs&dl=1',
             clear: 'https://dl.dropboxusercontent.com/scl/fi/lrjv6vhwsrl0v0szo6bdu/board_checkpoint-remove.png?rlkey=hj6nj4eddqilj1xd07avuicqv&st=c06nec32&dl=1'
         };
-        const BOARD_MAP_ORDER_H = ['mzi', 'mzo', 'mzf', 'board-fs-btn', 'mme'];
-        const BOARD_MAP_ORDER_V = ['mme', 'board-fs-btn', 'mzf', 'mzi', 'mzo'];
+        const BOARD_MAP_ORDER_H = ['mzi', 'mzo', 'mzf', 'board-fs-btn', 'mme', 'board-endturn-btn'];
+        const BOARD_MAP_ORDER_V = ['mme', 'board-fs-btn', 'mzf', 'mzi', 'mzo', 'board-endturn-btn']; // End Turn last: bottom of the left stack, below Zoom Out
         const BOARD_BAR_EDGE_NEAR = 60;   // px: the map's edge counts as "close" when it is this near the frame's edge...
         const BOARD_BAR_EDGE_COVER = 70;  // ...but only while the empty gap between them is smaller than a stack is wide (else nothing is covered)
         var boardBarsAtTop = false, boardNumsTop = false;
@@ -49972,6 +49987,14 @@
                 }
                 ctl.appendChild(b); // (re)appending puts them in order
             });
+            if (!document.getElementById('board-endturn-btn')) {
+                const b = document.createElement('button');
+                b.id = 'board-endturn-btn'; b.type = 'button'; b.className = 'board-ability-btn locked';
+                boardButtonImage(b, BOARD_MAP_BUTTONS.find(x => x.id === 'board-endturn-btn').url, 'End Turn');
+                b.title = 'End Turn'; b.setAttribute('aria-label', 'End Turn');
+                ctl.appendChild(b);
+            }
+            turnsUpdateButton();
             boardSyncFsButton();
             boardApplyBarLayout();
         }
@@ -49985,6 +50008,7 @@
         // board.js calls this after every redraw: the button bar (Stay, abilities) follows where the marker is and the team / badges.
         function boardUpdateStayButton() {
             boardUpdateAbilityButtons();
+            turnsUpdateButton();
         }
         // Asks the Host to run the landing prompt for the space this player is already standing on.
         function boardRequestLanding() {
