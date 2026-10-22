@@ -22429,6 +22429,8 @@
                 if (teamSwapPick) {
                     const left = teamSwapPick.max - teamSwapPick.picks.length;
                     sendToBattleBannerText.textContent = 'Tap ' + (left === 1 ? 'a Pok\u00e9mon' : 'up to ' + left + ' Pok\u00e9mon') + ' on your team to trade away.' + (teamSwapPick.picks.length ? ' (' + teamSwapPick.picks.length + ' chosen)' : '');
+                } else if (teamRevivePick) {
+                    sendToBattleBannerText.textContent = 'Blacked out \u2014 tap ' + (teamRevivePick.left === 1 ? 'a Fainted Pok\u00e9mon' : teamRevivePick.left + ' Fainted Pok\u00e9mon') + ' to Revive.';
                 } else if (teamLevelPick) {
                     sendToBattleBannerText.textContent = 'Tap a Pok\u00e9mon on your team to give it a Level.';
                 } else if (teamContestPick) {
@@ -23311,6 +23313,7 @@
         function exitTeamSendToBattleMode() {
             if (teamSwapPick) { clearTeamSwapPick(); return; } // Cancel on a card's trade pick
             if (teamLevelPick) { clearTeamLevelPick(); return; } // Cancel on a card's Level pick
+            if (teamRevivePick) { clearTeamRevivePick(); return; } // Cancel on the post-blackout Revive pick
             if (teamContestPick) { contestAbort(); return; } // Cancel on the Contest Hall's Contestant pick
             // Cancelling while setting up a Battle a Player challenge calls it off; that mode started from the Team Tracker's own
             // flow, not the Arena, so the player stays here rather than being sent back to the Arena.
@@ -29870,7 +29873,7 @@
                     } else if (cardShufflePick) {
                         optionsHtml = `<div class="game-hand-card-options-grid game-hand-pick-grid"><button class="filter-btn game-hand-pick-shuffle-btn" type="button" data-card-id="${escapeHtml(cardId)}">Shuffle into deck</button></div>`;
                     } else if (contestDiscardLeft > 0) {
-                        optionsHtml = `<div class="game-hand-card-options-grid game-hand-pick-grid"><button class="filter-btn game-hand-pick-contest-btn" type="button" data-card-id="${escapeHtml(cardId)}">Discard (Contest Hall)</button></div>`;
+                        optionsHtml = `<div class="game-hand-card-options-grid game-hand-pick-grid"><button class="filter-btn game-hand-pick-contest-btn" type="button" data-card-id="${escapeHtml(cardId)}">Discard (${escapeHtml(contestDiscardLabel)})</button></div>`;
                     } else if (safariPickActive) {
                         // Safari Zone: only Item cards can be discarded, each with a single option.
                         if (isSafariDiscardEligible(cardId)) {
@@ -37916,6 +37919,7 @@
         // A battle with nothing left in either half can't still be
         // "in progress", so that clears it here too.
         function renderBattleControls() {
+            if (boardBlackoutPending && !isBattleOngoingForZones()) setTimeout(boardRunBlackout, 0); // a blackout was waiting for the battle to end
             const beginBtn = document.getElementById('game-battle-begin-btn');
             const nextBtn = document.getElementById('game-battle-next-round-btn');
             const endBtn = document.getElementById('game-battle-end-btn');
@@ -43796,6 +43800,7 @@
                     // sense while still looking at Team Tracker, same
                     // reasoning as teamReleaseModeActive just above.
                     if (teamSwapPick) teamSwapPick = null; // leaving Team Tracker mid-pick calls the trade off (the card stays in the zone)
+                    if (teamRevivePick) teamRevivePick = null;
                     if (teamLevelPick) teamLevelPick = null; // leaving Team Tracker mid-pick calls off a card's Level pick (the card stays in the zone)
                     if (teamContestPick) contestAbort(); // leaving Team Tracker mid-pick backs out of the Contest Hall
                     boardPvpChooserClosed(); // leaving mid-pick calls a Battle a Player challenge off (a completed send has already cleared it)
@@ -45284,6 +45289,7 @@
                 // 'identify' handling for the backstop that still exists
                 // for the genuine-race case this can't catch on its own).
                 takenColors: getLobbyTakenColors(excludePeerId),
+                blackedOut: lobbyState.role === 'host' ? [...boardBlackedSet] : [],
                 turns: turnsPublicView(), // where the turn order stands, for a guest joining or re-syncing mid-game
             };
         }
@@ -45593,6 +45599,8 @@
                     boardHandleContestTake(conn.peer, data);
                 } else if (data.type === 'board-contest-music') {
                     boardHandleContestMusic(conn.peer, data);
+                } else if (data.type === 'blackout-flag') {
+                    boardBlackoutHostSet(conn.peer, !!data.out);
                 } else if (data.type === 'turn-end') {
                     turnsHandleEnd(conn.peer);
                 } else if (data.type === 'board-roll') {
@@ -46987,11 +46995,15 @@
         function turnsRender(announce) {
             try { if (boardCtrl && boardCtrl.setTurn) boardCtrl.setTurn(turnView ? turnView.cur : null); } catch (e) { /* board not built yet: turnsRenderBoard() runs once it is */ }
             try { turnsUpdateButton(); } catch (e) { /* bar not built yet */ }
+            if (announce && turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host')) setTimeout(() => { try { boardBeginRevivePick(); } catch (e) { /* not ready */ } }, 1200); // no usable Pok\u00e9mon: revive 2
             if (announce && turnView && turnView.curName) turnsShowBanner(turnView);
             else if (!turnView) turnsHideBanner();
         }
-        function turnsRenderBoard() { try { if (boardCtrl && boardCtrl.setTurn) boardCtrl.setTurn(turnView ? turnView.cur : null); } catch (e) { /* ignore */ } }
-        function turnsClear() { turnAuth = null; turnViewSig = ''; turnsApplyView(null, false); }
+        function turnsRenderBoard() {
+            try { if (boardCtrl && boardCtrl.setTurn) boardCtrl.setTurn(turnView ? turnView.cur : null); } catch (e) { /* ignore */ }
+            try { boardApplyBlackedOut(boardBlackedList); boardReportBlackout(); } catch (e) { /* ignore */ } // the board was just (re)built
+        }
+        function turnsClear() { try { boardBlackoutReset(); } catch (e) { /* ignore */ } turnAuth = null; turnViewSig = ''; turnsApplyView(null, false); }
         function turnsHideBanner() {
             clearTimeout(turnBannerFade); clearTimeout(turnBannerHide);
             const box = document.getElementById('board-turn-banner');
@@ -47097,8 +47109,12 @@
                 title: 'End your turn?',
                 text: mine ? 'This ends your turn and starts the next player\u2019s.' : 'This ends ' + (turnView.curName || 'their') + '\u2019s turn and starts the next player\u2019s.',
                 yesLabel: 'End Turn',
-                onYes: () => { if (lobbyState.role === 'guest') boardSend({ type: 'turn-end' }); else turnsAdvance(); }
+                onYes: turnsEndNow
             });
+        }
+        function turnsEndNow() {
+            if (lobbyState.role === 'guest') boardSend({ type: 'turn-end' });
+            else turnsAdvance();
         }
         function turnsHandleEnd(peerId) {
             if (turnAuth && turnView && turnView.cur && turnView.cur === peerId) turnsAdvance(); // who it was comes from the connection
@@ -47253,11 +47269,15 @@
             a.cfg.onYes(a.pick);
         }
         // ---- Blacked out ----
-        // When every Pok\u00e9mon on this player's team is Fainted or carrying an Overlay Card (none usable), their Trainer Figure goes straight
-        // back to their Current Home, with no actions box. It fires when the team BECOMES unusable (renderTeamGrid runs after every team
-        // change), not merely because a saved game that is already in that state was loaded or the player later walked away from home.
-        // A team with no Pok\u00e9mon at all has nothing to run out of. Each device handles its own player.
-        var boardBlackoutSeen = { key: null, out: false };
+        // When every Pokémon on this player's team is Fainted or carrying an Overlay Card (none usable), they black out: their Trainer Figure goes
+        // straight back to their Current Home (no actions box), they discard half their hand (rounded up, their choice), and their turn ends.
+        // It fires when the team BECOMES unusable (renderTeamGrid runs after every team change), not merely because a saved game already in
+        // that state was loaded, and it waits for a battle in progress to finish. While blacked out (until a Pokémon is usable again) the
+        // marker is see-through and the player doesn't count as being on a space for other players' Battle / Trade actions.
+        // The flag is kept in the player's own save (save.blackedOut); the Host keeps everyone's as a set and shares it (blackout-flag up,
+        // blackout-set down), and board.js draws it and leaves those players out of the landing prompt's "also here" list.
+        var boardBlackoutSeen = { key: null, out: false }, boardBlackoutPending = false;
+        var boardBlackedSet = new Set(), boardBlackedList = [];
         function boardTeamBlackedOut() {
             const members = ((getActiveSaveData().team || {}).members || []).filter(m => m);
             return members.length > 0 && members.every(m => m.fainted || m.overlayCardId);
@@ -47266,17 +47286,111 @@
             const key = String(activeSaveSlot) + '|' + String(activeGuestSaveId), out = boardTeamBlackedOut();
             const prev = boardBlackoutSeen;
             boardBlackoutSeen = { key, out };
+            const data = getActiveSaveData();
+            if (!out && data && data.blackedOut) { boardSetBlackedOut(false); } // a Pokémon is usable again
             if (prev.key !== key || !out || prev.out) return; // first look at this save, still usable, or already blacked out
-            setTimeout(boardBlackOut, 0);
+            boardBlackoutPending = true;
+            setTimeout(boardRunBlackout, 0);
         }
-        function boardBlackOut() {
-            if (!boardCtrl || isActiveSaveReadOnly() || !boardTeamBlackedOut()) return;
+        function boardSetBlackedOut(on) {
+            const data = getActiveSaveData();
+            if (!data || isActiveSaveReadOnly()) return;
+            if (!!data.blackedOut !== !!on) {
+                if (on) data.blackedOut = true; else delete data.blackedOut;
+                if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves();
+            }
+            boardReportBlackout();
+        }
+        function boardReportBlackout() {
+            const data = getActiveSaveData(), on = !!(data && data.blackedOut);
+            if (lobbyState.role === 'guest') boardSend({ type: 'blackout-flag', out: on });
+            else boardBlackoutHostSet(getMyLobbyPlayerId() || 'host', on);
+        }
+        function boardBlackoutHostSet(id, on) {
+            if (on === boardBlackedSet.has(id)) return;
+            if (on) boardBlackedSet.add(id); else boardBlackedSet.delete(id);
+            boardApplyBlackedOut([...boardBlackedSet]);
+            if (lobbyState.role === 'host') lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send({ type: 'blackout-set', list: [...boardBlackedSet] }); });
+        }
+        function boardApplyBlackedOut(list) {
+            boardBlackedList = Array.isArray(list) ? list.filter(x => typeof x === 'string') : [];
+            try { if (boardCtrl && boardCtrl.setBlackedOut) boardCtrl.setBlackedOut(boardBlackedList); } catch (e) { /* board not built yet: re-applied on mount */ }
+        }
+        function boardBlackoutReset() { boardBlackedSet = new Set(); boardBlackedList = []; boardBlackoutPending = false; boardApplyBlackedOut([]); }
+        // Runs the blackout, or waits (renderBattleControls calls this again when the battle ends) while a battle is on.
+        function boardRunBlackout() {
+            if (!boardBlackoutPending) return;
+            if (!boardCtrl || isActiveSaveReadOnly() || !boardTeamBlackedOut()) { boardBlackoutPending = false; return; }
+            if (isBattleOngoingForZones()) return;
+            boardBlackoutPending = false;
             const me = boardMyPlayer();
             if (!me) return;
             const home = boardCtrl.homeOf(me.id), here = boardCtrl.spaceOf(me.id);
-            if (!home || (here && here.id === home.id)) return;
-            boardDoJump('@home', false);
-            showGameToast('Blacked out! Your Trainer Figure returned to your Current Home' + (home.label ? ', ' + home.label : '') + '.');
+            if (home && !(here && here.id === home.id)) boardDoJump('@home', false);
+            boardSetBlackedOut(true);
+            showGameToast('Blacked out!' + (home ? ' Your Trainer Figure returned to your Current Home' + (home.label ? ', ' + home.label : '') + '.' : ''));
+            boardBlackoutDiscard();
+        }
+        // Half the hand (rounded up) goes, chosen by the player; the turn ends once they have.
+        function boardBlackoutDiscard() {
+            if (!isVirtualDecksEnabledForActiveSave()) { showGameToast('Blacked out! Discard half of your hand (rounded up).'); boardBlackoutEndTurn(); return; }
+            const hand = getLocalHandArray(), need = Math.ceil(hand.length / 2);
+            if (!need) { boardBlackoutEndTurn(); return; }
+            if (hand.length <= need) {
+                hand.slice().forEach(id => { const c = CARDS_BY_ID[id]; if (c) requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, id); });
+                boardShowHand();
+                showDecksNotice('Blacked out: discarded your hand.');
+                boardBlackoutEndTurn();
+                return;
+            }
+            contestDiscardLabel = 'Blacked out';
+            contestDiscardLeft = need;
+            boardShowHand();
+            showDecksNotice('Blacked out: choose ' + need + ' card' + (need === 1 ? '' : 's') + ' from your hand to discard (half, rounded up).');
+            if (typeof renderDecksScreen === 'function') renderDecksScreen();
+        }
+        function boardBlackoutEndTurn() {
+            if (turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host')) turnsEndNow();
+        }
+        // ---- Reviving after a blackout ----
+        // At the start of a turn with no usable Pokémon, the Team Tracker opens to choose 2 Fainted Pokémon to Revive (fewer if fewer are Fainted).
+        // It borrows the send-to-Battle mode's banner, like the Level pick.
+        var teamRevivePick = null; // { left }
+        function boardBeginRevivePick() {
+            if (isActiveSaveReadOnly() || teamRevivePick || !boardTeamBlackedOut()) return;
+            const fainted = boardTeamIndexes(m => m.fainted);
+            if (!fainted.length) { showGameToast('None of your Pokémon can be revived right now.'); return; }
+            if (teamReplacePendingMember || teamReleaseModeActive || teamSendToBattleModeActive || handAttachPendingCardId || isTradeNegotiationActive()) {
+                showGameToast('Finish what you are doing in Team Tracker, then revive 2 Pokémon.');
+                return;
+            }
+            openGamePanel();
+            setGameScreen('team');
+            teamRevivePick = { left: Math.min(2, fainted.length) };
+            teamSendToBattleModeActive = true;
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        function clearTeamRevivePick() {
+            if (!teamRevivePick) return;
+            teamRevivePick = null;
+            teamSendToBattleModeActive = false;
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        function boardRevivePickChoose(index) {
+            const pick = teamRevivePick, m = getTeamSlotMember(index);
+            if (!pick || !m) return;
+            if (!m.fainted) { showGameToast('That Pokémon isn’t Fainted — choose a Fainted one.'); return; }
+            const name = getBattleMemberDisplay(m).name || 'Pokémon';
+            reviveTeamMember(index);
+            pick.left--;
+            if (pick.left <= 0 || !boardTeamIndexes(x => x.fainted).length) { clearTeamRevivePick(); showGameToast(name + ' was revived.'); }
+            else { showGameToast(name + ' was revived. Choose ' + pick.left + ' more.'); renderTeamGrid(); }
+            try { boardCheckBlackout(); } catch (e) { /* ignore */ }
         }
         // Moves this player's marker straight to a City: `to` is a City's space id or '@home'; `land` shows that City's actions box.
         function boardDoJump(to, land) {
@@ -48529,6 +48643,7 @@
             const label = contestDiscardLabel;
             if (contestDiscardLeft > 0) showDecksNotice(label + ': choose ' + (contestDiscardLeft === 1 ? '1 more card' : contestDiscardLeft + ' more cards') + ' to discard.');
             else if (label === 'Contest Hall') { showDecksNotice('Contest Hall: penalty paid.'); contestEnd(); }
+            else if (label === 'Blacked out') { showDecksNotice('Blacked out: cards discarded.'); boardBlackoutEndTurn(); }
             else showDecksNotice(label + ': cards discarded.');
             if (typeof renderDecksScreen === 'function') setTimeout(renderDecksScreen, 450);
         }
@@ -49463,6 +49578,7 @@
         function boardPvpRoute(msg) {
             if (msg.type === 'board-pvp-invite') {
                 const a = boardCtrl && boardCtrl.where(msg.from), b = boardCtrl && boardCtrl.where(msg.to);
+                if (!msg.anySpace && (boardBlackedSet.has(msg.from) || boardBlackedSet.has(msg.to))) { boardPvpBounce(msg, 'is blacked out'); return; }
                 if (!msg.anySpace && a && b && a !== b) { boardPvpBounce(msg, 'is no longer on your space'); return; } // anySpace: a Let's Fight! card, which isn't tied to a space
                 if (boardPvpPairs.has(msg.from) || boardPvpPairs.has(msg.to)) { boardPvpBounce(msg, 'is busy right now'); return; }
                 boardPvpPairs.set(msg.from, msg.to);
@@ -50906,6 +51022,8 @@
                     // broadcastTrainerCardClaims().
                     lobbyState.trainerCardClaims = data.claims;
                     refreshTrainerCardPickerIfOpen();
+                } else if (data.type === 'blackout-set') {
+                    boardApplyBlackedOut(data.list);
                 } else if (data.type === 'turn-state') {
                     turnsApplyView(data.view && typeof data.view === 'object' ? data.view : null, !!data.announce);
                 } else if (data.type === 'game-started') {
@@ -51203,6 +51321,8 @@
             // Joining (or re-syncing) after Start Game was already pressed.
             lobbyState.gameOfficiallyStarted = !!data.gameStarted;
             turnsApplyView(data.turns && typeof data.turns === 'object' ? data.turns : null, false);
+            boardApplyBlackedOut(data.blackedOut);
+            try { boardReportBlackout(); } catch (e) { /* ignore */ }
             lobbyState.hostRuleset = {
                 region: data.region,
                 gameLength: data.gameLength,
@@ -52475,6 +52595,12 @@
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
                     swapPickMember(Number(teamSlot.dataset.index));
+                    return;
+                }
+                if (teamRevivePick) {
+                    if (isActiveSaveReadOnly()) return;
+                    if (teamSlot.dataset.filled !== 'true') return;
+                    boardRevivePickChoose(Number(teamSlot.dataset.index));
                     return;
                 }
                 if (teamLevelPick) {
