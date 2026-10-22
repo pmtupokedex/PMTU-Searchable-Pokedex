@@ -22329,6 +22329,7 @@
             // A Pok\u00e9mon in the Battle Arena that just got an Overlay Card
             // is recalled -- see ejectOverlayedBattleMembers().
             ejectOverlayedBattleMembers();
+            try { boardCheckBlackout(); } catch (e) { /* board / lobby not ready yet */ }
             // A roster change can add/remove the last able replacement, so
             // Next Round's visibility is re-derived. try/catch: this can
             // run once at load, before lobbyState exists.
@@ -47250,6 +47251,32 @@
             if (!a || ((a.cfg.choices || []).length && !a.pick)) return;
             boardCloseJumpAsk();
             a.cfg.onYes(a.pick);
+        }
+        // ---- Blacked out ----
+        // When every Pok\u00e9mon on this player's team is Fainted or carrying an Overlay Card (none usable), their Trainer Figure goes straight
+        // back to their Current Home, with no actions box. It fires when the team BECOMES unusable (renderTeamGrid runs after every team
+        // change), not merely because a saved game that is already in that state was loaded or the player later walked away from home.
+        // A team with no Pok\u00e9mon at all has nothing to run out of. Each device handles its own player.
+        var boardBlackoutSeen = { key: null, out: false };
+        function boardTeamBlackedOut() {
+            const members = ((getActiveSaveData().team || {}).members || []).filter(m => m);
+            return members.length > 0 && members.every(m => m.fainted || m.overlayCardId);
+        }
+        function boardCheckBlackout() {
+            const key = String(activeSaveSlot) + '|' + String(activeGuestSaveId), out = boardTeamBlackedOut();
+            const prev = boardBlackoutSeen;
+            boardBlackoutSeen = { key, out };
+            if (prev.key !== key || !out || prev.out) return; // first look at this save, still usable, or already blacked out
+            setTimeout(boardBlackOut, 0);
+        }
+        function boardBlackOut() {
+            if (!boardCtrl || isActiveSaveReadOnly() || !boardTeamBlackedOut()) return;
+            const me = boardMyPlayer();
+            if (!me) return;
+            const home = boardCtrl.homeOf(me.id), here = boardCtrl.spaceOf(me.id);
+            if (!home || (here && here.id === home.id)) return;
+            boardDoJump('@home', false);
+            showGameToast('Blacked out! Your Trainer Figure returned to your Current Home' + (home.label ? ', ' + home.label : '') + '.');
         }
         // Moves this player's marker straight to a City: `to` is a City's space id or '@home'; `land` shows that City's actions box.
         function boardDoJump(to, land) {
