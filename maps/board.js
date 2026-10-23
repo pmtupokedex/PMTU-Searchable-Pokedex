@@ -17,6 +17,10 @@
                                     already face-up); the player answers with message {type:'board-encounter'} to reveal it,
                                     which comes back as kind 'encounter' (token revealed)
             onPlace(playerId)    -- this device's player picked a marker up and put it down (any drop that was dragged, even back on the same space)
+            displayOnly          -- host display for a table that plays with physical tokens (the app's TV Table / Hybrid 2 modes): draws the map
+                                    picture only -- no player markers, home markers, turn ring or Pokémon tokens, no player list or action bar;
+                                    the map can still be panned and zoomed. Pair it with showMarkers:false (the picture carries the spaces);
+                                    if the picture can't be found, controller.setShowMarkers(true) draws the plain space shapes instead.
             onDraw()             -- the board was just redrawn (the app uses it to show/hide buttons that depend on where a marker is)
             onView({above,below}) -- the view moved or zoomed: px of map lying above / below the frame's visible area (negative = empty space between the
                                     map's edge and the frame's edge). The app uses it to move its button stacks between the top and bottom corners
@@ -29,6 +33,7 @@
    controller: resolveEncounter(spaceId,'caught'|'defeated'|'abandon'), showAction(a), hideAction(),
                loadBoard(editorJson), setImage(url), handleMessage(msg),
                resend(), restoreSnapshot(snapString, [{id,c}]) [host: resume a game from a previous host's last board-state; players matched by color c], fit(), restoreView() [until the player zooms by hand: fills the frame's height; afterwards keeps the zoom; centers on this player's token], setView(v), setPlayers(list), setTurn(playerId|null) [ring around that player's marker], setStatus(t), getStatus(), destroy()
+   setShowMarkers(on) -- changes the showMarkers option after mount and redraws (see displayOnly).
    setKeepScale(on) -- on: when the frame is resized (e.g. a docked side panel opens) the map keeps the same on-screen scale and just
                shows more/less of itself, and the map is never allowed to get shorter than the frame; off (default): refit as before.
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
@@ -66,7 +71,7 @@ cpBtn.addEventListener('click',e=>e.preventDefault());
 const onCpKey=e=>{if(drag&&(e.code==='Space'||e.key===' ')&&!e.repeat&&!editable(e)){e.preventDefault();toggleCp()}};
 document.addEventListener('keydown',onCpKey);
 
-const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={},pendingEnc={},CS=1,ES=1;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
+const DISPLAY=!!opts.displayOnly;const mode=opts.mode||'mock',send=opts.send||(()=>{});let startId=null,pendingHome={},pendingEnc={},CS=1,ES=1;const myId=opts.playerId;const omni=()=>view==='host'&&(mode==='mock'||myId===undefined);
 const $=id=>root.querySelector('#'+id),svg=$('b');
 // ---------- the map picture: a tiled image pyramid painted on a canvas ----------
 // A big <image> inside the SVG is decoded lazily, dropped again after a while, and re-rasterised whole on every zoom step.
@@ -354,7 +359,7 @@ function back(t){pools.orange.push(t);shuf(pools.orange);log(`host: ${t} returne
 function prompt(html,btns){const p=$('pr');p.innerHTML=html;(btns||[]).forEach(([t,f])=>{const b=document.createElement('button');b.textContent=t;b.onclick=f;p.appendChild(b)})}
 function renderHost(){$('host').innerHTML=Object.keys(NAMES).map(c=>`<div><span style="color:${COL[c]}">●</span> ${c}: ${pools[c].length} in pool</div>`).join('')+
  '<small>Face-down on map: '+SP.filter(s=>st[s.id]&&st[s.id].token&&!st[s.id].revealed).map(s=>s.id+'='+st[s.id].token).join(', ')+'</small>'}
-function renderPl(){$('pl').innerHTML=PL.map(q=>`<button class="${q.id===active?'on':''}" data-a="${q.id}"><span style="color:${q.c}">●</span> ${q.name} @ ${M.pos[q.id]} · 🏠 ${M.home[q.id]&&get(M.home[q.id])?(get(M.home[q.id]).label||M.home[q.id]):'—'}</button>`).join('');
+function renderPl(){if(DISPLAY)return;$('pl').innerHTML=PL.map(q=>`<button class="${q.id===active?'on':''}" data-a="${q.id}"><span style="color:${q.c}">●</span> ${q.name} @ ${M.pos[q.id]} · 🏠 ${M.home[q.id]&&get(M.home[q.id])?(get(M.home[q.id]).label||M.home[q.id]):'—'}</button>`).join('');
  $('pl').querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>{active=b.dataset.a;renderPl()})}
 const dims=s=>({w:s.w||80*K,h:s.h||40*K});
 function tokenXY(id){const s=get(id),here=PL.filter(q=>M.pos[q.id]===id);return q=>{const i=here.indexOf(q),n=here.length;if(n<2)return[s.x,s.y];
@@ -379,15 +384,15 @@ function draw(){buildModel();let h=(img&&(bgFail||!canBmp))?`<image href="${img}
   else if(s.type==='catch'){const em=o&&o.empty;h+=`<circle cx="${s.x}" cy="${s.y}" r="${R*1.5*CS}" fill="${COL[s.color]||'#999'}" opacity="${em?.25:fo}" stroke="#000" stroke-width="${R*.1}"/>`+
    (em?`<text x="${s.x}" y="${s.y+R*.4}" text-anchor="middle" font-size="${R*1.1}">✕</text>`:o.revealed?(tokUrl(o.token)?'':`<text x="${s.x}" y="${s.y+R*.3}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">${o.token.slice(0,7)}</text>`):`<text x="${s.x}" y="${s.y+R*.5}" text-anchor="middle" font-size="${R*1.4}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700">?</text>`+(M.peek&&o.token?`<text x="${s.x}" y="${s.y+R*2.5}" text-anchor="middle" font-size="${R*.7}" font-style="italic" fill="#fff" stroke="#000" stroke-width="${R*.15}" paint-order="stroke">${o.token}</text>`:''))+
    (o.boss?`<text x="${s.x+R*1.3*CS}" y="${s.y-R*CS}" font-size="${R*1.2}" fill="#ffd43b" stroke="#000" stroke-width="${R*.08}">★</text>`:'')}}
- for(const s of SP){if(s.type!=='catch')continue;const o=M.spaces[s.id];if(!o||!o.revealed||o.empty||!o.token)continue;
+ for(const s of SP){if(DISPLAY)break;if(s.type!=='catch')continue;const o=M.spaces[s.id];if(!o||!o.revealed||o.empty||!o.token)continue;
   const u=tokUrl(o.token),rr=R*1.5*CS*TKS;
   if(u)h+=`<g data-tk="${xa(o.token)}" style="cursor:pointer"><image href="${xa(u)}" x="${s.x-rr+rr*2*TKX}" y="${s.y-rr-rr*2*TKY}" width="${rr*2}" height="${rr*2}" preserveAspectRatio="xMidYMid meet" pointer-events="all"/></g>`;
   else if(!sm&&tokFailed(o.token))h+=`<text x="${s.x+rr*2*TKX}" y="${s.y+R*.3-rr*2*TKY}" text-anchor="middle" font-size="${R*.65}" fill="#fff" stroke="#000" stroke-width="${R*.12}" paint-order="stroke" font-weight="700" pointer-events="none">${o.token.slice(0,7)}</text>`}
- PL.forEach((q,i)=>{const c=get(M.home[q.id]);if(!c)return;const d=dims(c),cx=c.x-d.w/2+R*(.7+1.2*i),cy=c.y-d.h/2-R*.1;h+=`<polygon points="${cx},${cy-R*.55} ${cx+R*.55},${cy} ${cx+R*.55},${cy+R*.55} ${cx-R*.55},${cy+R*.55} ${cx-R*.55},${cy}" fill="${q.c}" stroke="#fff" stroke-width="${R*.12}" pointer-events="none"/>`});
+ if(!DISPLAY)PL.forEach((q,i)=>{const c=get(M.home[q.id]);if(!c)return;const d=dims(c),cx=c.x-d.w/2+R*(.7+1.2*i),cy=c.y-d.h/2-R*.1;h+=`<polygon points="${cx},${cy-R*.55} ${cx+R*.55},${cy} ${cx+R*.55},${cy+R*.55} ${cx-R*.55},${cy+R*.55} ${cx-R*.55},${cy}" fill="${q.c}" stroke="#fff" stroke-width="${R*.12}" pointer-events="none"/>`});
  // Whose turn it is (set by the app with setTurn): a pulsing ring in the player's color around their marker, under the marker itself.
- if(TURN){const q=PL.find(o=>o.id===TURN);if(q&&get(M.pos[q.id])){const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
+ if(TURN&&!DISPLAY){const q=PL.find(o=>o.id===TURN);if(q&&get(M.pos[q.id])){const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*1.7}" fill="none" stroke="${q.c}" stroke-width="${R*.4}" pointer-events="none"><animate attributeName="r" values="${R*1.55};${R*2.3};${R*1.55}" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;.3;1" dur="1.6s" repeatCount="indefinite"/></circle><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*1.45}" fill="none" stroke="#fff" stroke-width="${R*.16}" pointer-events="none"/>`}}
- for(const q of PL){if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
+ for(const q of PL){if(DISPLAY)break;if(!get(M.pos[q.id]))continue;const [x,y]=(drag&&drag.p===q.id)?[drag.x,drag.y]:tokenXY(M.pos[q.id])(q);
   const nh=PL.filter(o=>M.pos[o.id]===M.pos[q.id]).length;
   h+=`<circle data-p="${q.id}" cx="${x}" cy="${y}" r="${nh>1?R*1.4:R*2.2}" fill="transparent" style="cursor:grab"/><circle data-p="${q.id}" cx="${x}" cy="${y}" r="${R*.95}" fill="${q.c}" stroke="#fff" stroke-width="${R*.2}"${OUT.has(q.id)?' opacity=".35"':''} pointer-events="none"/>`}
  svg.innerHTML=h;cpSync();renderPl();try{placeAct()}catch(e){}if(opts.onDraw){try{opts.onDraw()}catch(e){}}}
@@ -554,7 +559,7 @@ function hideAction(){const b=$('actbar');b.hidden=true;b.classList.remove('anch
 // The prompt is a stack of buttons beside this player's marker (the bottom bar is the fallback when the marker can't be found). It is re-placed on every pan/zoom/resize/redraw, so it stays attached to the marker.
 // Side order: right, else left, else below/above the marker (the last side used is tried first, so it doesn't flip back and forth). If the marker is panned off the map the stack docks at the nearest edge so its buttons stay reachable.
 let actSide='';
-function placeAct(){const b=$('actbar');if(!b||b.hidden)return;
+function placeAct(){if(DISPLAY)return;const b=$('actbar');if(!b||b.hidden)return;
  const id=meId(),q=PL.find(o=>o.id===id),sp=id&&M.pos&&M.pos[id];
  const bar=()=>{b.classList.remove('anch','docked');b.style.left=b.style.top=b.style.width='';b.style.removeProperty('--ah')};
  if(!q||!sp||!get(sp)){bar();return}
@@ -605,6 +610,7 @@ if(mode==='guest')setView(view);else renderView();
 if(!opts.noSample&&mode!=='guest')sampleBoard();
 return{
  loadBoard:importBoard,
+ setShowMarkers(on){opts.showMarkers=on!==false;draw()},
  setImage:setImg,
  setStatus:t=>{$('jm').textContent=t},getStatus:()=>$('jm').textContent,
  handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to,m.path);else if(mode==='host'&&m.type==='board-stay')stayOnSpace(m.player);else if(mode==='host'&&m.type==='board-jump')hostJump(m.player,m.to,!!m.land);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-reroll')rerollEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw();if(autoFill&&!initCentered)fillView()}},
