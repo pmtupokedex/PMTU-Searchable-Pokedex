@@ -3505,12 +3505,101 @@
         }
 
         .game-save-slot[data-state="creating"] .game-save-new-form {
-            display: flex;
+            display: grid;
         }
 
-        .game-save-new-form {
+        /* Two-column layout shared by the New Save form and the Default
+           Save Settings body (see .game-save-field below). minmax(0, 1fr)
+           rather than plain 1fr so a long <select>/label can't push its
+           column wider than the other. */
+        .game-save-new-form,
+        #game-save-defaults-body {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px 12px;
+            align-items: end;
+        }
+
+        /* Full-width rows inside either grid: intro/notes, the Create/
+           Cancel buttons, and anything with long option text. */
+        .game-save-new-form > .game-save-slot-actions,
+        #game-save-defaults-body > p,
+        .game-save-field-wide {
+            grid-column: 1 / -1;
+        }
+
+        .game-save-field {
+            display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 4px;
+            min-width: 0;
+        }
+
+        /* Yes/No settings: label on the left, switch on the right, one
+           compact row per cell. The real <select> stays in the DOM
+           (hidden) so every existing read/write of its .value keeps
+           working -- see syncYesNoToggles() in the script. */
+        .game-save-field-toggle {
+            flex-direction: row;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 6px 8px;
+            background: rgba(0, 0, 0, 0.12);
+            border-radius: 8px;
+            cursor: pointer;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        .game-save-field-toggle label {
+            flex: 1 1 auto;
+            min-width: 0;
+            font-size: 12px;
+            line-height: 1.15;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .game-yn-select {
+            display: none;
+        }
+
+        .game-yn-toggle {
+            flex: 0 0 auto;
+            position: relative;
+            width: 44px;
+            height: 24px;
+            padding: 0;
+            border-radius: 12px;
+            border: 1px solid rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.35);
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .game-yn-toggle[aria-checked="true"] {
+            background: rgba(0, 153, 255, 0.85);
+        }
+
+        .game-yn-knob {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #FFF;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            transition: transform 0.2s ease;
+        }
+
+        .game-yn-toggle[aria-checked="true"] .game-yn-knob {
+            transform: translateX(20px);
+        }
+
+        .game-yn-toggle:focus-visible {
+            outline: 2px solid #FFF;
+            outline-offset: 2px;
         }
         .game-save-new-form select,
         .game-save-defaults-card select,
@@ -3552,14 +3641,12 @@
         }
 
         #game-save-defaults-body {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
+            display: grid;
             margin-top: 10px;
         }
 
         .game-save-defaults-card .game-save-slot-meta {
-            margin: 0 0 6px;
+            margin: 0;
         }
 
         /* Tool menu -- stacked full-width buttons for now (see
@@ -7808,10 +7895,12 @@
 
         /* Starter picker (virtual-token games) -- same overlay and list look as the Trainer Card picker. */
         #game-starter-picker-overlay { display: none; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); align-items: center; justify-content: center;
-            z-index: 20; padding: 20px; box-sizing: border-box; }
+            z-index: 21; padding: 20px; box-sizing: border-box; }
         #game-starter-picker-overlay.visible { display: flex; }
         /* one Pokémon per row, art at the Safari Zone picker's size */
-        #game-starter-picker-list { grid-template-columns: 1fr; }
+        /* sized like the Safari Zone picker: the standard 320px card that scrolls as a whole (no inner list scroll) */
+        #game-starter-picker-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
+        #game-starter-picker-list { grid-template-columns: 1fr; max-height: none; overflow: visible; margin: 8px 0 12px; }
         #game-starter-picker-list .game-gym-leader-picker-img { width: 250px; max-width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; }
         /* the forced setup pick (no starter yet) can only be answered by choosing one */
         #game-starter-picker-overlay.forced #game-starter-picker-cancel-btn { display: none; }
@@ -16577,77 +16666,105 @@
                             <button class="filter-btn game-new-btn" data-slot="0">+ New Save</button>
                         </div>
                         <div class="game-save-new-form" data-slot="0">
-                            <label for="game-new-name-0">Save Name</label>
-                            <input type="text" id="game-new-name-0" class="game-new-name-input" placeholder="My Game" maxlength="24">
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-new-name-0">Save Name</label>
+                                <input type="text" id="game-new-name-0" class="game-new-name-input" placeholder="My Game" maxlength="24">
+                            </div>
     
-                            <label for="game-new-region-0">Region</label>
-                            <select id="game-new-region-0" class="game-new-region-select">
-                                <option value="" disabled selected>Loading Regions&hellip;</option>
-                            </select>
+                            <div class="game-save-field">
+                                <label for="game-new-region-0">Region</label>
+                                <select id="game-new-region-0" class="game-new-region-select">
+                                                            <option value="" disabled selected>Loading Regions&hellip;</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-length-0">Game Length</label>
-                            <select id="game-new-length-0" class="game-new-length-select">
-                                <option value="short">Short</option>
-                                <option value="medium" selected>Medium</option>
-                                <option value="long">Long</option>
-                            </select>
+                            <div class="game-save-field">
+                                <label for="game-new-length-0">Game Length</label>
+                                <select id="game-new-length-0" class="game-new-length-select">
+                                                            <option value="short">Short</option>
+                                                            <option value="medium" selected>Medium</option>
+                                                            <option value="long">Long</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-type-rule-0">Type Effectiveness Rule</label>
-                            <select id="game-new-type-rule-0" class="game-new-type-rule-select">
-                                <option value="main">Main Type Only</option>
-                                <option value="main-immunities">Main Type + Immunities</option>
-                                <option value="all">All Types</option>
-                                <option value="all-immunities">All Types + Immunities</option>
-                            </select>
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-new-type-rule-0">Type Effectiveness Rule</label>
+                                <select id="game-new-type-rule-0" class="game-new-type-rule-select">
+                                                            <option value="main">Main Type Only</option>
+                                                            <option value="main-immunities">Main Type + Immunities</option>
+                                                            <option value="all">All Types</option>
+                                                            <option value="all-immunities">All Types + Immunities</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-hp-rule-0">Hit Points Rule</label>
-                            <select id="game-new-hp-rule-0" class="game-new-hp-rule-select">
-                                <option value="standard">Standard Hit Points</option>
-                                <option value="alt1">Alternate Hit Points 1</option>
-                                <option value="alt2">Alternate Hit Points 2</option>
-                            </select>
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-new-hp-rule-0">Hit Points Rule</label>
+                                <select id="game-new-hp-rule-0" class="game-new-hp-rule-select">
+                                                            <option value="standard">Standard Hit Points</option>
+                                                            <option value="alt1">Alternate Hit Points 1</option>
+                                                            <option value="alt2">Alternate Hit Points 2</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-pokecoins-enabled-0">Use Pok&eacute; Coins?</label>
-                            <select id="game-new-pokecoins-enabled-0" class="game-new-pokecoins-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-pokecoins-enabled-0-label">Use Pok&eacute; Coins?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-pokecoins-enabled-0-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-pokecoins-enabled-0" class="game-new-pokecoins-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-natures-enabled-0">Use Nature Cards?</label>
-                            <select id="game-new-natures-enabled-0" class="game-new-natures-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-natures-enabled-0-label">Use Nature Cards?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-natures-enabled-0-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-natures-enabled-0" class="game-new-natures-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-virtual-decks-enabled-0">Use Virtual Decks?</label>
-                            <select id="game-new-virtual-decks-enabled-0" class="game-new-virtual-decks-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-virtual-decks-enabled-0-label">Use Virtual Decks?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-virtual-decks-enabled-0-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-virtual-decks-enabled-0" class="game-new-virtual-decks-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-tiered-tm-decks-enabled-0">Use Tiered TM Decks?</label>
-                            <select id="game-new-tiered-tm-decks-enabled-0" class="game-new-tiered-tm-decks-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-tiered-tm-decks-enabled-0-label">Use Tiered TM Decks?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-tiered-tm-decks-enabled-0-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-tiered-tm-decks-enabled-0" class="game-new-tiered-tm-decks-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-trainer-cards-enabled-0">Use Trainer Cards?</label>
-                            <select id="game-new-trainer-cards-enabled-0" class="game-new-trainer-cards-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-trainer-cards-enabled-0-label">Use Trainer Cards?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-trainer-cards-enabled-0-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-trainer-cards-enabled-0" class="game-new-trainer-cards-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
                             
-                            <label for="game-new-region-map-enabled-0">Use In-App Region Map?</label>
-                            <select id="game-new-region-map-enabled-0" class="game-new-region-map-enabled-select game-region-map-enabled-select">
-                                <option value="yes" selected>Yes</option>
-                                <option value="no">No</option>
-                            </select>
-                            <div class="game-region-map-style-row" style="display: contents;">
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-region-map-enabled-0-label">Use In-App Region Map?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="true" aria-labelledby="game-new-region-map-enabled-0-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-region-map-enabled-0" class="game-new-region-map-enabled-select game-region-map-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="yes" selected>Yes</option>
+                                                            <option value="no">No</option>
+                                                        </select>
+                            </div>
+                            <div class="game-save-field game-save-field-wide game-region-map-style-row">
                                 <label for="game-new-region-map-style-0">Which Style?</label>
                                 <select id="game-new-region-map-style-0" class="game-new-region-map-style-select">
-                                    <option value="condensed" selected>Condensed for use with Virtual Tokens</option>
-                                    <option value="full">Full-Size for use with Physical Tokens</option>
-                                </select>
+                                                                <option value="condensed" selected>Condensed for use with Virtual Tokens</option>
+                                                                <option value="full">Full-Size for use with Physical Tokens</option>
+                                                            </select>
                             </div>
     
                             <div class="game-save-slot-actions">
@@ -16670,77 +16787,105 @@
                             <button class="filter-btn game-new-btn" data-slot="1">+ New Save</button>
                         </div>
                         <div class="game-save-new-form" data-slot="1">
-                            <label for="game-new-name-1">Save Name</label>
-                            <input type="text" id="game-new-name-1" class="game-new-name-input" placeholder="My Game" maxlength="24">
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-new-name-1">Save Name</label>
+                                <input type="text" id="game-new-name-1" class="game-new-name-input" placeholder="My Game" maxlength="24">
+                            </div>
     
-                            <label for="game-new-region-1">Region</label>
-                            <select id="game-new-region-1" class="game-new-region-select">
-                                <option value="" disabled selected>Loading Regions&hellip;</option>
-                            </select>
+                            <div class="game-save-field">
+                                <label for="game-new-region-1">Region</label>
+                                <select id="game-new-region-1" class="game-new-region-select">
+                                                            <option value="" disabled selected>Loading Regions&hellip;</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-length-1">Game Length</label>
-                            <select id="game-new-length-1" class="game-new-length-select">
-                                <option value="short">Short</option>
-                                <option value="medium" selected>Medium</option>
-                                <option value="long">Long</option>
-                            </select>
+                            <div class="game-save-field">
+                                <label for="game-new-length-1">Game Length</label>
+                                <select id="game-new-length-1" class="game-new-length-select">
+                                                            <option value="short">Short</option>
+                                                            <option value="medium" selected>Medium</option>
+                                                            <option value="long">Long</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-type-rule-1">Type Effectiveness Rule</label>
-                            <select id="game-new-type-rule-1" class="game-new-type-rule-select">
-                                <option value="main">Main Type Only</option>
-                                <option value="main-immunities">Main Type + Immunities</option>
-                                <option value="all">All Types</option>
-                                <option value="all-immunities">All Types + Immunities</option>
-                            </select>
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-new-type-rule-1">Type Effectiveness Rule</label>
+                                <select id="game-new-type-rule-1" class="game-new-type-rule-select">
+                                                            <option value="main">Main Type Only</option>
+                                                            <option value="main-immunities">Main Type + Immunities</option>
+                                                            <option value="all">All Types</option>
+                                                            <option value="all-immunities">All Types + Immunities</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-hp-rule-1">Hit Points Rule</label>
-                            <select id="game-new-hp-rule-1" class="game-new-hp-rule-select">
-                                <option value="standard">Standard Hit Points</option>
-                                <option value="alt1">Alternate Hit Points 1</option>
-                                <option value="alt2">Alternate Hit Points 2</option>
-                            </select>
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-new-hp-rule-1">Hit Points Rule</label>
+                                <select id="game-new-hp-rule-1" class="game-new-hp-rule-select">
+                                                            <option value="standard">Standard Hit Points</option>
+                                                            <option value="alt1">Alternate Hit Points 1</option>
+                                                            <option value="alt2">Alternate Hit Points 2</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-pokecoins-enabled-1">Use Pok&eacute; Coins?</label>
-                            <select id="game-new-pokecoins-enabled-1" class="game-new-pokecoins-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-pokecoins-enabled-1-label">Use Pok&eacute; Coins?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-pokecoins-enabled-1-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-pokecoins-enabled-1" class="game-new-pokecoins-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-natures-enabled-1">Use Nature Cards?</label>
-                            <select id="game-new-natures-enabled-1" class="game-new-natures-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-natures-enabled-1-label">Use Nature Cards?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-natures-enabled-1-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-natures-enabled-1" class="game-new-natures-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-virtual-decks-enabled-1">Use Virtual Decks?</label>
-                            <select id="game-new-virtual-decks-enabled-1" class="game-new-virtual-decks-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-virtual-decks-enabled-1-label">Use Virtual Decks?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-virtual-decks-enabled-1-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-virtual-decks-enabled-1" class="game-new-virtual-decks-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-tiered-tm-decks-enabled-1">Use Tiered TM Decks?</label>
-                            <select id="game-new-tiered-tm-decks-enabled-1" class="game-new-tiered-tm-decks-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-tiered-tm-decks-enabled-1-label">Use Tiered TM Decks?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-tiered-tm-decks-enabled-1-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-tiered-tm-decks-enabled-1" class="game-new-tiered-tm-decks-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-trainer-cards-enabled-1">Use Trainer Cards?</label>
-                            <select id="game-new-trainer-cards-enabled-1" class="game-new-trainer-cards-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-trainer-cards-enabled-1-label">Use Trainer Cards?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-trainer-cards-enabled-1-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-trainer-cards-enabled-1" class="game-new-trainer-cards-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
                             
-                            <label for="game-new-region-map-enabled-1">Use In-App Region Map?</label>
-                            <select id="game-new-region-map-enabled-1" class="game-new-region-map-enabled-select game-region-map-enabled-select">
-                                <option value="yes" selected>Yes</option>
-                                <option value="no">No</option>
-                            </select>
-                            <div class="game-region-map-style-row" style="display: contents;">
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-region-map-enabled-1-label">Use In-App Region Map?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="true" aria-labelledby="game-new-region-map-enabled-1-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-region-map-enabled-1" class="game-new-region-map-enabled-select game-region-map-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="yes" selected>Yes</option>
+                                                            <option value="no">No</option>
+                                                        </select>
+                            </div>
+                            <div class="game-save-field game-save-field-wide game-region-map-style-row">
                                 <label for="game-new-region-map-style-1">Which Style?</label>
                                 <select id="game-new-region-map-style-1" class="game-new-region-map-style-select">
-                                    <option value="condensed" selected>Condensed for use with Virtual Tokens</option>
-                                    <option value="full">Full-Size for use with Physical Tokens</option>
-                                </select>
+                                                                <option value="condensed" selected>Condensed for use with Virtual Tokens</option>
+                                                                <option value="full">Full-Size for use with Physical Tokens</option>
+                                                            </select>
                             </div>
     
                             <div class="game-save-slot-actions">
@@ -16763,77 +16908,105 @@
                             <button class="filter-btn game-new-btn" data-slot="2">+ New Save</button>
                         </div>
                         <div class="game-save-new-form" data-slot="2">
-                            <label for="game-new-name-2">Save Name</label>
-                            <input type="text" id="game-new-name-2" class="game-new-name-input" placeholder="My Game" maxlength="24">
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-new-name-2">Save Name</label>
+                                <input type="text" id="game-new-name-2" class="game-new-name-input" placeholder="My Game" maxlength="24">
+                            </div>
     
-                            <label for="game-new-region-2">Region</label>
-                            <select id="game-new-region-2" class="game-new-region-select">
-                                <option value="" disabled selected>Loading Regions&hellip;</option>
-                            </select>
+                            <div class="game-save-field">
+                                <label for="game-new-region-2">Region</label>
+                                <select id="game-new-region-2" class="game-new-region-select">
+                                                            <option value="" disabled selected>Loading Regions&hellip;</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-length-2">Game Length</label>
-                            <select id="game-new-length-2" class="game-new-length-select">
-                                <option value="short">Short</option>
-                                <option value="medium" selected>Medium</option>
-                                <option value="long">Long</option>
-                            </select>
+                            <div class="game-save-field">
+                                <label for="game-new-length-2">Game Length</label>
+                                <select id="game-new-length-2" class="game-new-length-select">
+                                                            <option value="short">Short</option>
+                                                            <option value="medium" selected>Medium</option>
+                                                            <option value="long">Long</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-type-rule-2">Type Effectiveness Rule</label>
-                            <select id="game-new-type-rule-2" class="game-new-type-rule-select">
-                                <option value="main">Main Type Only</option>
-                                <option value="main-immunities">Main Type + Immunities</option>
-                                <option value="all">All Types</option>
-                                <option value="all-immunities">All Types + Immunities</option>
-                            </select>
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-new-type-rule-2">Type Effectiveness Rule</label>
+                                <select id="game-new-type-rule-2" class="game-new-type-rule-select">
+                                                            <option value="main">Main Type Only</option>
+                                                            <option value="main-immunities">Main Type + Immunities</option>
+                                                            <option value="all">All Types</option>
+                                                            <option value="all-immunities">All Types + Immunities</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-hp-rule-2">Hit Points Rule</label>
-                            <select id="game-new-hp-rule-2" class="game-new-hp-rule-select">
-                                <option value="standard">Standard Hit Points</option>
-                                <option value="alt1">Alternate Hit Points 1</option>
-                                <option value="alt2">Alternate Hit Points 2</option>
-                            </select>
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-new-hp-rule-2">Hit Points Rule</label>
+                                <select id="game-new-hp-rule-2" class="game-new-hp-rule-select">
+                                                            <option value="standard">Standard Hit Points</option>
+                                                            <option value="alt1">Alternate Hit Points 1</option>
+                                                            <option value="alt2">Alternate Hit Points 2</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-pokecoins-enabled-2">Use Pok&eacute; Coins?</label>
-                            <select id="game-new-pokecoins-enabled-2" class="game-new-pokecoins-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-pokecoins-enabled-2-label">Use Pok&eacute; Coins?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-pokecoins-enabled-2-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-pokecoins-enabled-2" class="game-new-pokecoins-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-natures-enabled-2">Use Nature Cards?</label>
-                            <select id="game-new-natures-enabled-2" class="game-new-natures-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-natures-enabled-2-label">Use Nature Cards?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-natures-enabled-2-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-natures-enabled-2" class="game-new-natures-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-virtual-decks-enabled-2">Use Virtual Decks?</label>
-                            <select id="game-new-virtual-decks-enabled-2" class="game-new-virtual-decks-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-virtual-decks-enabled-2-label">Use Virtual Decks?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-virtual-decks-enabled-2-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-virtual-decks-enabled-2" class="game-new-virtual-decks-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-tiered-tm-decks-enabled-2">Use Tiered TM Decks?</label>
-                            <select id="game-new-tiered-tm-decks-enabled-2" class="game-new-tiered-tm-decks-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-tiered-tm-decks-enabled-2-label">Use Tiered TM Decks?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-tiered-tm-decks-enabled-2-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-tiered-tm-decks-enabled-2" class="game-new-tiered-tm-decks-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-new-trainer-cards-enabled-2">Use Trainer Cards?</label>
-                            <select id="game-new-trainer-cards-enabled-2" class="game-new-trainer-cards-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-trainer-cards-enabled-2-label">Use Trainer Cards?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-new-trainer-cards-enabled-2-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-trainer-cards-enabled-2" class="game-new-trainer-cards-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
                             
-                            <label for="game-new-region-map-enabled-2">Use In-App Region Map?</label>
-                            <select id="game-new-region-map-enabled-2" class="game-new-region-map-enabled-select game-region-map-enabled-select">
-                                <option value="yes" selected>Yes</option>
-                                <option value="no">No</option>
-                            </select>
-                            <div class="game-region-map-style-row" style="display: contents;">
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-new-region-map-enabled-2-label">Use In-App Region Map?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="true" aria-labelledby="game-new-region-map-enabled-2-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-new-region-map-enabled-2" class="game-new-region-map-enabled-select game-region-map-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="yes" selected>Yes</option>
+                                                            <option value="no">No</option>
+                                                        </select>
+                            </div>
+                            <div class="game-save-field game-save-field-wide game-region-map-style-row">
                                 <label for="game-new-region-map-style-2">Which Style?</label>
                                 <select id="game-new-region-map-style-2" class="game-new-region-map-style-select">
-                                    <option value="condensed" selected>Condensed for use with Virtual Tokens</option>
-                                    <option value="full">Full-Size for use with Physical Tokens</option>
-                                </select>
+                                                                <option value="condensed" selected>Condensed for use with Virtual Tokens</option>
+                                                                <option value="full">Full-Size for use with Physical Tokens</option>
+                                                            </select>
                             </div>
     
                             <div class="game-save-slot-actions">
@@ -16872,73 +17045,99 @@
                         <div id="game-save-defaults-body">
                             <p class="game-save-slot-meta">Applied automatically to new saves below &mdash; still changeable per-save at creation time.</p>
     
-                            <label for="game-save-default-preferred-name">Preferred Name</label>
-                            <input type="text" id="game-save-default-preferred-name" class="game-save-default-preferred-name-input" placeholder="Trainer" maxlength="20" autocomplete="off" spellcheck="false">
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-save-default-preferred-name">Preferred Name</label>
+                                <input type="text" id="game-save-default-preferred-name" class="game-save-default-preferred-name-input" placeholder="Trainer" maxlength="20" autocomplete="off" spellcheck="false">
+                            </div>
                             <p class="game-save-slot-meta">Fills in automatically whenever you're asked for your name &mdash; still changeable each time.</p>
     
-                            <label for="game-save-default-length">Game Length</label>
-                            <select id="game-save-default-length" class="game-save-default-length-select">
-                                <option value="short">Short</option>
-                                <option value="medium" selected>Medium</option>
-                                <option value="long">Long</option>
-                            </select>
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-save-default-length">Game Length</label>
+                                <select id="game-save-default-length" class="game-save-default-length-select">
+                                                            <option value="short">Short</option>
+                                                            <option value="medium" selected>Medium</option>
+                                                            <option value="long">Long</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-save-default-type-rule">Type Effectiveness Rule</label>
-                            <select id="game-save-default-type-rule" class="game-save-default-type-rule-select">
-                                <option value="main">Main Type Only</option>
-                                <option value="main-immunities">Main Type + Immunities</option>
-                                <option value="all">All Types</option>
-                                <option value="all-immunities">All Types + Immunities</option>
-                            </select>
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-save-default-type-rule">Type Effectiveness Rule</label>
+                                <select id="game-save-default-type-rule" class="game-save-default-type-rule-select">
+                                                            <option value="main">Main Type Only</option>
+                                                            <option value="main-immunities">Main Type + Immunities</option>
+                                                            <option value="all">All Types</option>
+                                                            <option value="all-immunities">All Types + Immunities</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-save-default-hp-rule">Hit Points Rule</label>
-                            <select id="game-save-default-hp-rule" class="game-save-default-hp-rule-select">
-                                <option value="standard">Standard Hit Points</option>
-                                <option value="alt1">Alternate Hit Points 1</option>
-                                <option value="alt2">Alternate Hit Points 2</option>
-                            </select>
+                            <div class="game-save-field game-save-field-wide">
+                                <label for="game-save-default-hp-rule">Hit Points Rule</label>
+                                <select id="game-save-default-hp-rule" class="game-save-default-hp-rule-select">
+                                                            <option value="standard">Standard Hit Points</option>
+                                                            <option value="alt1">Alternate Hit Points 1</option>
+                                                            <option value="alt2">Alternate Hit Points 2</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-save-default-pokecoins-enabled">Use Pok&eacute; Coins?</label>
-                            <select id="game-save-default-pokecoins-enabled" class="game-save-default-pokecoins-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-save-default-pokecoins-enabled-label">Use Pok&eacute; Coins?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-save-default-pokecoins-enabled-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-save-default-pokecoins-enabled" class="game-save-default-pokecoins-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-save-default-natures-enabled">Use Nature Cards?</label>
-                            <select id="game-save-default-natures-enabled" class="game-save-default-natures-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-save-default-natures-enabled-label">Use Nature Cards?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-save-default-natures-enabled-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-save-default-natures-enabled" class="game-save-default-natures-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-save-default-virtual-decks-enabled">Use Virtual Decks?</label>
-                            <select id="game-save-default-virtual-decks-enabled" class="game-save-default-virtual-decks-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-save-default-virtual-decks-enabled-label">Use Virtual Decks?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-save-default-virtual-decks-enabled-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-save-default-virtual-decks-enabled" class="game-save-default-virtual-decks-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-save-default-tiered-tm-decks-enabled">Use Tiered TM Decks?</label>
-                            <select id="game-save-default-tiered-tm-decks-enabled" class="game-save-default-tiered-tm-decks-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-save-default-tiered-tm-decks-enabled-label">Use Tiered TM Decks?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-save-default-tiered-tm-decks-enabled-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-save-default-tiered-tm-decks-enabled" class="game-save-default-tiered-tm-decks-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
     
-                            <label for="game-save-default-trainer-cards-enabled">Use Trainer Cards?</label>
-                            <select id="game-save-default-trainer-cards-enabled" class="game-save-default-trainer-cards-enabled-select">
-                                <option value="no" selected>No</option>
-                                <option value="yes">Yes</option>
-                            </select>
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-save-default-trainer-cards-enabled-label">Use Trainer Cards?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="false" aria-labelledby="game-save-default-trainer-cards-enabled-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-save-default-trainer-cards-enabled" class="game-save-default-trainer-cards-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="no" selected>No</option>
+                                                            <option value="yes">Yes</option>
+                                                        </select>
+                            </div>
                             
-                            <label for="game-save-default-region-map-enabled">Use In-App Region Map?</label>
-                            <select id="game-save-default-region-map-enabled" class="game-save-default-region-map-enabled-select game-region-map-enabled-select">
-                                <option value="yes" selected>Yes</option>
-                                <option value="no">No</option>
-                            </select>
-                            <div class="game-region-map-style-row" style="display: contents;">
+                            <div class="game-save-field game-save-field-toggle">
+                                <label id="game-save-default-region-map-enabled-label">Use In-App Region Map?</label>
+                                <button type="button" class="game-yn-toggle" role="switch" aria-checked="true" aria-labelledby="game-save-default-region-map-enabled-label"><span class="game-yn-knob"></span></button>
+                                <select id="game-save-default-region-map-enabled" class="game-save-default-region-map-enabled-select game-region-map-enabled-select game-yn-select" tabindex="-1" aria-hidden="true">
+                                                            <option value="yes" selected>Yes</option>
+                                                            <option value="no">No</option>
+                                                        </select>
+                            </div>
+                            <div class="game-save-field game-save-field-wide game-region-map-style-row">
                                 <label for="game-save-default-region-map-style">Which Style?</label>
                                 <select id="game-save-default-region-map-style" class="game-save-default-region-map-style-select">
-                                    <option value="condensed" selected>Condensed for use with Virtual Tokens</option>
-                                    <option value="full">Full-Size for use with Physical Tokens</option>
-                                </select>
+                                                                <option value="condensed" selected>Condensed for use with Virtual Tokens</option>
+                                                                <option value="full">Full-Size for use with Physical Tokens</option>
+                                                            </select>
                             </div>
                         </div>
                     </div>
@@ -17383,7 +17582,7 @@
              players can't pick the same one. Lists every starter; one another player already holds is dimmed and can't be picked.
              See openStarterPicker()/pickStarter(). -->
         <div id="game-starter-picker-overlay">
-            <div class="game-confirm-card game-battle-picker-card">
+            <div class="game-confirm-card">
                 <p class="game-confirm-title">Choose Your Starter</p>
                 <div class="game-gym-leader-picker-filters">
                     <input type="search" id="game-starter-picker-search" placeholder="Search by name" aria-label="Search by name" autocomplete="off">
@@ -47044,10 +47243,34 @@
         // Shows "Which Style?" only while "Use In-App Region Map?" is Yes (in every form that has the pair).
         function syncRegionMapStyleRows() {
             document.querySelectorAll('.game-region-map-enabled-select').forEach(sel => {
-                const row = sel.nextElementSibling;
-                if (row && row.classList.contains('game-region-map-style-row')) row.style.display = sel.value === 'yes' ? 'contents' : 'none';
+                // The style row is the next grid cell after the toggle's own .game-save-field wrapper.
+                const field = sel.closest('.game-save-field');
+                const row = field && field.nextElementSibling;
+                if (row && row.classList.contains('game-region-map-style-row')) row.style.display = sel.value === 'yes' ? '' : 'none';
+            });
+            syncYesNoToggles();
+        }
+        // Yes/No settings are shown as switches (.game-yn-toggle) but the hidden <select> beside each
+        // is still the source of truth, so every existing .value read/write keeps working. This just
+        // mirrors each select's value onto its switch. Called from syncRegionMapStyleRows() (which the
+        // form/default-population code already calls after setting values) and after every toggle click.
+        function syncYesNoToggles() {
+            document.querySelectorAll('.game-save-field-toggle').forEach(field => {
+                const sel = field.querySelector('select');
+                const btn = field.querySelector('.game-yn-toggle');
+                if (sel && btn) btn.setAttribute('aria-checked', sel.value === 'yes' ? 'true' : 'false');
             });
         }
+        document.addEventListener('click', (e) => {
+            const field = e.target.closest && e.target.closest('.game-save-field-toggle');
+            if (!field) return;
+            const sel = field.querySelector('select');
+            if (!sel || sel.disabled) return;
+            sel.value = sel.value === 'yes' ? 'no' : 'yes';
+            // Fires the same 'change' listeners the dropdown did (Default Save Settings persistence, region-map style row, etc.).
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            syncYesNoToggles();
+        });
         document.addEventListener('change', (e) => {
             if (e.target && e.target.classList && e.target.classList.contains('game-region-map-enabled-select')) syncRegionMapStyleRows();
         });
