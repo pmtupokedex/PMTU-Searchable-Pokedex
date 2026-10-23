@@ -8860,7 +8860,8 @@
            it keeps the plain 20px padding. */
         @media (max-width: 663.98px) {
             #game-catch-overlay,
-            #game-safari-overlay {
+            #game-safari-overlay,
+            #game-starter-picker-overlay {
                 padding: calc(var(--real-vh, 100dvh) * 0.12 + 12px) 20px calc(var(--real-vh, 100dvh) * 0.13 + 12px);
             }
         }
@@ -20939,7 +20940,7 @@
             // would just have it silently still open, off-screen, ready
             // to reappear the moment the panel reopens somewhere else
             // entirely.
-            closeTeamAddPromptOverlay();
+            if (!isStarterSetupHoldActive()) closeTeamAddPromptOverlay(); // during starter setup the prompt is still there when the panel comes back
             closeTeamStatusOverlay();
             resetGameScreen();
             refreshBackButtonState();
@@ -24949,8 +24950,12 @@
         function isStarterSetupHoldActive() {
             if (!starterSetupHold) return false;
             const data = getActiveSaveData();
-            const stillHeld = isPlaySessionActive() && starterPickerApplies() && !isTrainerCardHostNotPlaying() && !isActiveSaveReadOnly()
-                && !isGameOfficiallyStarted() && !!data && (!isStarterLocked() || !!data.starterNatureOwed);
+            // Before the game starts: until the starter is locked in and any Nature Card is placed. A player who joins (or has to re-pick) after
+            // it has started has no Lock In step, so they're held only until a starter is chosen.
+            const members = data ? ((data.team.members) || []).length : 0;
+            // (Without the starter picker -- gallery games -- only the pre-start setup holds; later the gallery is free to browse.)
+            const pending = !data ? false : (isGameOfficiallyStarted() ? (starterPickerApplies() && members === 0) : (!isStarterLocked() || !!data.starterNatureOwed));
+            const stillHeld = isPlaySessionActive() && !isTrainerCardHostNotPlaying() && !isActiveSaveReadOnly() && pending;
             if (!stillHeld) starterSetupHold = false;
             return stillHeld;
         }
@@ -24959,14 +24964,14 @@
         }
         // Returns false (doing nothing) when there's nothing to hold for.
         function beginStarterSetup() {
-            if (!starterPickerApplies() || isActiveSaveReadOnly() || isTrainerCardHostNotPlaying()) return false;
-            if (((getActiveSaveData().team.members) || []).length === 0 || !isStarterLocked()) {
-                starterSetupHold = !isGameOfficiallyStarted();
-            }
+            if (isActiveSaveReadOnly() || isTrainerCardHostNotPlaying()) return false;
+            starterSetupHold = true; // lets go by itself if there turns out to be nothing to hold for (see isStarterSetupHoldActive())
+            if (!isStarterSetupHoldActive()) return false;
             openGamePanel();
             setGameScreen('team');
-            if (((getActiveSaveData().team.members) || []).length === 0) openStarterPicker();
-            return true;
+            const picker = starterPickerApplies();
+            if (picker && ((getActiveSaveData().team.members) || []).length === 0) openStarterPicker();
+            return picker; // gallery games go on to show the "Add a Pok\u00e9mon?" prompt, with the hold already in place
         }
         // renderTeamGrid() calls this after every team change: a starter released before it was locked in gives its pick back.
         function starterReconcileClaim() {
@@ -35217,7 +35222,7 @@
 
         function openTeamAddPromptOverlay() {
             // Virtual-token games skip the prompt: the starter picker opens straight away.
-            if (starterPickerApplies() && !isActiveSaveReadOnly() && ((getActiveSaveData().team.members) || []).length === 0 && beginStarterSetup()) return;
+            if (!isActiveSaveReadOnly() && ((getActiveSaveData().team.members) || []).length === 0 && beginStarterSetup()) return;
             const overlay = document.getElementById('game-team-add-prompt-overlay');
             if (overlay) overlay.classList.add('visible');
         }
