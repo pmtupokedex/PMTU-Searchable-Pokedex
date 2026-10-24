@@ -21103,6 +21103,15 @@
             return normalizePlayMode(s.playMode) || playModeRules(s).playMode;
         }
         function getActivePlayModeInfo() { return PLAY_MODES[getActivePlayMode()]; }
+        // ---- Display-host modes (TV Table / Hybrid 2): the save belongs to the one device that first hosted it ----
+        // That device always hosts without playing, on the same room code every time (so guests waiting for it find it again);
+        // nobody else can host the game (no hand-off, no automatic failover), and guests simply wait for it to come back.
+        const DISPLAY_HOST_WAIT_MS = 12 * 60 * 60 * 1000;   // how long a guest keeps trying to reach the original host
+        const DISPLAY_HOST_REHOST_GRACE_MS = 120000;        // how long the host retries its own room code while the broker lets go of it
+        const DISPLAY_HOST_NO_SOLO_MESSAGE = 'Solo play isn\u2019t available in the TV Table and Hybrid 2 play modes \u2014 they need a separate device to host the game and show the map.';
+        const DISPLAY_HOST_OTHER_DEVICE_MESSAGE = 'In this play mode a save can only be hosted from the device that first hosted it.';
+        const DISPLAY_HOST_NO_TRANSFER_MESSAGE = 'Hosting can\u2019t be handed off in this play mode \u2014 the game needs its original host device.';
+        const DISPLAY_HOST_WAITING_MESSAGE = 'The host dropped. Waiting for the original host to come back \u2014 the game can\u2019t continue without them.';
         // True when this save plays with virtual tokens (Pokemon token pools, landing prompts). The map being on is NOT the same
         // thing: TV Table and Hybrid 2 show the map but use physical tokens.
         function usesVirtualTokensForActiveSave() { return getActivePlayMode() === 'virtual'; }
@@ -24228,7 +24237,7 @@
 
         function openGymLeaderPicker(slot) {
             if (isActiveSaveReadOnly()) return;
-            if (!canUseBattleArena()) { showBattleArenaGateToast(); return; }
+            if (!isPlaySessionActive()) { showBattleArenaGateToast(); return; } // a setup step: needs a session, not the Arena
             gymLeaderPickerSlot = slot;
             const asArray = v => (Array.isArray(v) ? v : (v == null ? [] : [v]));
             const title = document.getElementById('game-battle-gym-leader-picker-title');
@@ -24604,7 +24613,7 @@
 
         function openTrainerCardPicker() {
             if (isActiveSaveReadOnly() || !isTrainerCardsEnabledForActiveSave()) return;
-            if (!canUseBattleArena()) { showBattleArenaGateToast(); return; }
+            if (!isPlaySessionActive()) { showBattleArenaGateToast(); return; } // a setup step: needs a session, not the Arena
             if (isTrainerCardHostNotPlaying() || isTrainerCardLocked()) return;
             const search = document.getElementById('game-trainer-card-picker-search');
             if (search) search.value = '';
@@ -24642,7 +24651,7 @@
         // A tap on a card in the picker.
         function pickTrainerCard(cardId) {
             if (isActiveSaveReadOnly() || !isTrainerCardsEnabledForActiveSave()) return;
-            if (!canUseBattleArena()) { showBattleArenaGateToast(); return; }
+            if (!isPlaySessionActive()) { showBattleArenaGateToast(); return; } // a setup step: needs a session, not the Arena
             if (isTrainerCardHostNotPlaying() || isTrainerCardLocked()) return;
             if (!TRAINER_CARDS_BY_ID[cardId]) return;
             // Re-picking the card already held (while changing) is a no-op.
@@ -44777,6 +44786,7 @@
                 if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
                 return;
             }
+            if (isDisplayHostModeForActiveSave()) { setLobbyStatus(DISPLAY_HOST_NO_SOLO_MESSAGE, 'error'); return; }
             clearSaveRequiredLobbyStatus();
             const save = gameSaves[activeSaveSlot];
             const savedColor = save && save.hostPlayerColor;
@@ -44795,7 +44805,7 @@
 
         function startSoloSession(color) {
             stopRejoinAttempts(); // backstop: nothing may retry a join over a solo session
-            if (lobbyState.role !== null || activeSaveSlot === null) return;
+            if (lobbyState.role !== null || activeSaveSlot === null || isDisplayHostModeForActiveSave()) return;
             const save = gameSaves[activeSaveSlot];
             if (save) { save.hostPlayerColor = color; persistGameSaves(); }
             const data = getActiveSaveData();
@@ -45095,11 +45105,11 @@
             // "Room not found" right away isn't final: keep retrying the
             // same code for a while before giving up.
             if (!hostTransferRejoinTimer) {
-                hostTransferGraceUntil = Math.max(hostTransferGraceUntil, Date.now() + (getHostBackup() ? FAILOVER_WINDOW_MS : 20000));
+                hostTransferGraceUntil = Math.max(hostTransferGraceUntil, Date.now() + (isDisplayHostModeForActiveSave() ? DISPLAY_HOST_WAIT_MS : (getHostBackup() ? FAILOVER_WINDOW_MS : 20000)));
                 startHostTransferRejoinLoop(code, lobbyState.hostConn);
             }
             scheduleFailoverPromotion(code);
-            setLobbyStatus('Lost contact \u2014 reconnecting\u2026', 'pending');
+            setLobbyStatus(isDisplayHostModeForActiveSave() ? DISPLAY_HOST_WAITING_MESSAGE : 'Lost contact \u2014 reconnecting\u2026', 'pending');
             joinLobbyByCode(code); // resets lobbyState itself; nothing more to clean up first
         }
 
@@ -45535,7 +45545,7 @@
                     <span class="game-lobby-player-name">${p.color ? `<span class="game-player-color-dot game-player-color-dot--${p.color}"></span>` : ''}${escapeHtml(p.name)}</span>
                     ${p.isHost ? '<span class="game-lobby-player-tag">Host</span>' : ''}
                     ${(!p.isHost && lobbyState.role === 'host') ? `<button class="filter-btn exclude game-lobby-kick-btn" type="button" data-peer-id="${escapeHtml(p.id)}">Kick</button>` : ''}
-                    ${(!p.isHost && lobbyState.role === 'host') ? `<button class="filter-btn game-lobby-kick-btn game-lobby-make-host-btn" type="button" data-peer-id="${escapeHtml(p.id)}">Make Host</button>` : ''}
+                    ${(!p.isHost && lobbyState.role === 'host' && !isDisplayHostModeForActiveSave()) ? `<button class="filter-btn game-lobby-kick-btn game-lobby-make-host-btn" type="button" data-peer-id="${escapeHtml(p.id)}">Make Host</button>` : ''}
                 </div>
             `).join('');
             syncBattleHalfThemes();
@@ -45617,6 +45627,8 @@
                 if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
                 return;
             }
+            // TV Table / Hybrid 2: the host only hosts, so there is no "I'll be playing too" choice to make.
+            if (isDisplayHostModeForActiveSave()) { chooseHostOnly(); return; }
             document.getElementById('game-lobby').dataset.state = 'host-role';
         }
 
@@ -45697,6 +45709,24 @@
                 if (emptyIndex !== -1) beginCreatingSave(emptyIndex);
                 return;
             }
+            if (isDisplayHostModeForActiveSave()) {
+                // TV Table / Hybrid 2: only the device that first hosted this save may host it, always as a non-playing host, and always
+                // on the same room code (so guests who are waiting for the host reconnect on their own). The room code may still be held
+                // by the broker for a little while after a crash; attemptHostPeerCreation() keeps retrying it for the grace window.
+                const hs = gameSaves[activeSaveSlot];
+                const me = getOrCreateGuestClientId();
+                if (hs.originalHostClientId && hs.originalHostClientId !== me) {
+                    setLobbyStatus(DISPLAY_HOST_OTHER_DEVICE_MESSAGE, 'error');
+                    return;
+                }
+                if (!hs.originalHostClientId) { hs.originalHostClientId = me; persistGameSaves(); }
+                isPlayer = false;
+                color = null;
+                if (/^[A-Z0-9]{5}$/.test(hs.displayHostRoomCode || '')) {
+                    forcedHostRoomCode = hs.displayHostRoomCode;
+                    hostTransferGraceUntil = Date.now() + DISPLAY_HOST_REHOST_GRACE_MS;
+                }
+            }
             // Host Transfer takeover (see completeHostTakeover()): the old host may not have released the room code yet, and
             // attemptHostPeerCreation() keeps retrying it only while hostTransferGraceUntil is in the future. Stopping the
             // rejoin attempts zeroes that window, so it's carried across the call -- without this the very first "code is
@@ -45775,6 +45805,10 @@
                 recomputeLobbyLeadingStage();
                 if (pendingTakeoverNotice) { setLobbyStatus(pendingTakeoverNotice, ''); pendingTakeoverNotice = null; }
                 if (activeSaveSlot !== null && gameSaves[activeSaveSlot]) rememberLobbySession('host', code, gameSaves[activeSaveSlot].hostSaveId);
+                if (isDisplayHostModeForActiveSave() && activeSaveSlot !== null && gameSaves[activeSaveSlot] && gameSaves[activeSaveSlot].displayHostRoomCode !== code) {
+                    gameSaves[activeSaveSlot].displayHostRoomCode = code; // this save's room code from now on
+                    persistGameSaves();
+                }
                 scheduleHostBackup();
             };
             if (claimedPeer && claimedPeer.open) onHostPeerOpen(); else peer.on('open', onHostPeerOpen);
@@ -46378,7 +46412,7 @@
             'playMode', 'virtualDecksEnabled', 'tieredTMDecksEnabled', 'trainerCardsEnabled',
             'regionMapEnabled', 'regionMapStyle', 'stage', 'decks', 'guestHands',
             'guestPermanentCards', 'guestOneTimeClaims', 'trainerCardClaims', 'starterClaims', 'starterNatureDraws', 'activeCard',
-            'hostDisplayName', 'hostPlayerColor', 'hostEpoch', 'hostWasPlayer',
+            'hostDisplayName', 'hostPlayerColor', 'hostEpoch', 'hostWasPlayer', 'originalHostClientId', 'displayHostRoomCode',
             // guest-save-only identity fields
             'playerName', 'playerColor', 'hostNameCache',
             // transient battle bookkeeping -- not worth carrying across
@@ -46591,15 +46625,32 @@
         // go back in. A reloaded HOST rejoins as a guest too -- if nobody
         // has taken over yet it keeps retrying through the failover window
         // (and its old host save is adopted as its Guest Save on welcome).
+        // TV Table / Hybrid 2, after a reload or crash of the host device: nobody else may take the room over, so the original host
+        // device hosts its own save again right away (same room code; guests that were waiting reconnect by themselves).
+        function resumeDisplayHostLobby(sess) {
+            const idx = gameSaves.findIndex(s => s && s.hostSaveId === sess.hostSaveId);
+            if (idx === -1 || activeSaveSlot !== idx || !isDisplayHostModeForActiveSave()) return false;
+            const hs = gameSaves[idx];
+            if (hs.originalHostClientId && hs.originalHostClientId !== getOrCreateGuestClientId()) return false;
+            if (!requireLobbyLibs()) return false;
+            htTrace('display-host mode: the original host is back, hosting ' + sess.code + ' again');
+            openGamePanel();
+            setGameScreen('lobby');
+            chooseHostOnly();
+            return true;
+        }
+
         function maybeResumeLastLobby() {
             if (lobbyState.role !== null) return;
             const sess = getRecentLobbySession();
             if (!sess) return;
+            if (sess.role === 'host' && resumeDisplayHostLobby(sess)) return;
             const codeInput = document.querySelector('.game-lobby-join-code');
             if (codeInput) codeInput.value = sess.code;
             resumingLastLobby = true;
             htTrace('resuming last lobby ' + sess.code + ' (was ' + sess.role + ')');
-            hostTransferGraceUntil = Date.now() + FAILOVER_WINDOW_MS;
+            const waitsForHost = sess.hostSaveId && gameGuestSaves[sess.hostSaveId] && PLAY_MODES[playModeRules(gameGuestSaves[sess.hostSaveId]).playMode].displayHost;
+            hostTransferGraceUntil = Date.now() + (waitsForHost ? DISPLAY_HOST_WAIT_MS : FAILOVER_WINDOW_MS);
             startHostTransferRejoinLoop(sess.code, null);
             openGamePanel();
             setGameScreen('lobby');
@@ -46737,6 +46788,7 @@
             if (failoverTimer || failoverProbe) return;
             const backup = getHostBackup();
             if (!backup || backup.code !== code) { htTrace('failover: no usable backup'); return; }
+            if (PLAY_MODES[playModeRules(backup.save).playMode].displayHost) { htTrace('failover: display-host mode, waiting for the original host'); return; }
             if (!gameGuestSaves[backup.save.hostSaveId]) { htTrace('failover: no guest save for this game'); return; }
             const order = (backup.succession || []).filter(id => id !== backup.oldHostClientId);
             const rank = order.indexOf(getOrCreateGuestClientId());
@@ -46888,6 +46940,7 @@
         // ---- Old host ----
         function requestHostTransfer(peerId) {
             if (lobbyState.role !== 'host' || activeSaveSlot === null || !gameSaves[activeSaveSlot]) return;
+            if (isDisplayHostModeForActiveSave()) { setLobbyStatus(DISPLAY_HOST_NO_TRANSFER_MESSAGE, 'error'); return; }
             const entry = lobbyState.connections.get(peerId);
             if (!entry || !entry.conn || !entry.conn.open || !entry.guestClientId) {
                 setLobbyStatus('That player isn\u2019t fully connected yet \u2014 try again in a moment.', 'error');
@@ -47003,6 +47056,8 @@
         // Pure: builds the save this device would host with, or {error}.
         function buildHostTakeoverSave(offer) {
             const S = cloneJSON(offer.save);
+            // TV Table / Hybrid 2 (hand-off and automatic failover both come through here): only the original host device can host.
+            if (PLAY_MODES[playModeRules(S).playMode].displayHost) return { error: 'In this play mode only the original host device can host the game.' };
             const G = gameGuestSaves[S.hostSaveId];
             if (!G) return { error: 'You need to have joined this game first to take over hosting.' };
             let slotIndex = gameSaves.findIndex(sv => sv && sv.hostSaveId === S.hostSaveId);
