@@ -21052,11 +21052,11 @@
         //   displayHost  : the map is shown on a separate host device that is not playing (no solo play)
         //   arena        : Battle Arena is open       virtualDice : the app rolls the dice (movement die, Arena dice)
         const PLAY_MODES = {
-            paper:   { label: 'Paper',    desc: 'Physical Tokens, Cards, and Game Board',            note: '', virtualCards: false, map: false, style: 'condensed', displayHost: false, arena: false, virtualDice: false },
-            tv:      { label: 'TV Table', desc: 'Physical Tokens and Cards; Virtual Game Board',     note: 'Needs a separate host device to display the map (no solo play).', virtualCards: false, map: true,  style: 'full',      displayHost: true,  arena: false, virtualDice: false },
-            hybrid1: { label: 'Hybrid 1', desc: 'Physical Tokens and Game Board; Virtual Cards',     note: '', virtualCards: true,  map: false, style: 'condensed', displayHost: false, arena: false, virtualDice: false },
-            hybrid2: { label: 'Hybrid 2', desc: 'Physical Tokens; Virtual Cards and Game Board',     note: 'Needs a separate host device to display the map (no solo play).', virtualCards: true,  map: true,  style: 'full',      displayHost: true,  arena: false, virtualDice: false },
-            virtual: { label: 'Virtual',  desc: 'Virtual Tokens, Cards, and Game Board',             note: '', virtualCards: true,  map: true,  style: 'condensed', displayHost: false, arena: true,  virtualDice: true  },
+            paper:   { label: 'Paper',    desc: 'Physical Tokens, Cards, and Game Board',            note: 'Use this app\'s trackers to save table space, and play situation-appropriate music during the game.', virtualCards: false, map: false, style: 'condensed', displayHost: false, arena: false, virtualDice: false },
+            tv:      { label: 'TV Table', desc: 'Physical Tokens and Cards; Virtual Game Board',     note: 'This device will display the map and play the music. Each player needs their own device (no solo play).', virtualCards: false, map: true,  style: 'full',      displayHost: true,  arena: false, virtualDice: false },
+            hybrid1: { label: 'Hybrid 1', desc: 'Physical Tokens and Game Board; Virtual Cards',     note: 'When you get a physical token, add it in the app, and use a full suite of virtual cards in place of physical cards.', virtualCards: true,  map: false, style: 'condensed', displayHost: false, arena: false, virtualDice: false },
+            hybrid2: { label: 'Hybrid 2', desc: 'Physical Tokens; Virtual Cards and Game Board',     note: 'This device will display the map and play the music. Each player needs their own device (no solo play). When you get a physical token, add it in the app, and use a full suite of virtual cards in place of physical cards.', virtualCards: true,  map: true,  style: 'full',      displayHost: true,  arena: false, virtualDice: false },
+            virtual: { label: 'Virtual',  desc: 'Virtual Tokens, Cards, and Game Board',             note: 'Play a fully-virtual game of PMTU on the go straight from your web browser.', virtualCards: true,  map: true,  style: 'condensed', displayHost: false, arena: true,  virtualDice: true  },
         };
         const DEFAULT_PLAY_MODE = 'paper';
         function normalizePlayMode(v) {
@@ -41975,10 +41975,25 @@
 
         // A Villain team's Badge gives the Master Ball once per player. It's tracked in the player's own save (so paper players get the
         // reminder only the first time too); with virtual decks the card's own one-time claim counts as well.
-        function boardMasterBallDue(award) {
+        // Two kinds of award come through here: one earned in the Battle Arena (it knows its card, so award.leaderId) and one the
+        // player collected by hand in the Badge Tracker (no card, only the slot it fills -- the ONLY route in the play modes
+        // where the Arena is closed). Both must recognise the Villain Badge. By hand it follows the Badge Tracker's own Master Ball
+        // icon rule: the Villain slot, or the first Starfall Street badge (those land in the next open position, whichever slot
+        // was tapped, so "first" means nothing has been collected from that set yet).
+        function boardAwardIsVillainBadge(award) {
             if (!award) return false;
-            const leader = GYM_LEADERS_BY_ID[award.leaderId];
-            if (!leader || leader.category !== 'villain') return false;
+            const leader = award.leaderId ? GYM_LEADERS_BY_ID[award.leaderId] : null;
+            if (leader) return leader.category === 'villain';
+            if (award.category === 'villain') return true;
+            if (award.category === 'starfall-street') {
+                const data = getActiveSaveData();
+                const collected = data && data.badges && data.badges.collectedExtras && data.badges.collectedExtras['starfall-street'];
+                return !collected || collected.length === 0;
+            }
+            return false;
+        }
+        function boardMasterBallDue(award) {
+            if (!boardAwardIsVillainBadge(award)) return false;
             const data = getActiveSaveData();
             if (data && data.villainRewardClaimed) return false;
             if (isVirtualDecksEnabledForActiveSave()) {
@@ -42015,8 +42030,26 @@
             awards.forEach(a => {
                 let ids = [];
                 try { ids = getOpenGymAwardOptionIds(a); } catch (e) { /* not ready */ }
-                if (ids.length) collectBadge(a.category, a.slotKey, ids[0], !!a.jinglePlayed);
+                if (ids.length) {
+                    grantBadgeRewardsWithoutCelebration(a); // before the badge lands: "first Starfall Street badge" is judged on what's collected so far
+                    collectBadge(a.category, a.slotKey, ids[0], !!a.jinglePlayed);
+                }
             });
+        }
+
+        // An award placed by flushGymBadgeAwards() before its celebration ever showed (leaving the Badge Tracker, or closing the page,
+        // with another award still showing) never reached the reward step in presentNextGymBadgeAward(). Give the rewards that need no
+        // screen -- the Pok\u00e9 Coins and the one-time Master Ball -- so they aren't lost for good. (An award whose message did
+        // show has masterBall set, null or 'given', so it is skipped here.)
+        function grantBadgeRewardsWithoutCelebration(award) {
+            if (!award || award.masterBall !== undefined || isActiveSaveReadOnly()) return;
+            if (isPokeCoinsEnabledForActiveSave() && !award.rewarded) { award.rewarded = true; adjustPokeCoins(5); }
+            if (boardMasterBallDue(award)) {
+                award.masterBall = 'given';
+                boardMarkVillainRewardClaimed();
+                const mb = isVirtualDecksEnabledForActiveSave() ? boardMasterBallRewardCard() : null;
+                if (mb) requestGainReward('Reward Item Deck', mb.id);
+            }
         }
 
         window.addEventListener('pagehide', flushGymBadgeAwards);
