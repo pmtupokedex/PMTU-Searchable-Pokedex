@@ -21106,6 +21106,12 @@
         // ---- Display-host modes (TV Table / Hybrid 2): the save belongs to the one device that first hosted it ----
         // That device always hosts without playing, on the same room code every time (so guests waiting for it find it again);
         // nobody else can host the game (no hand-off, no automatic failover), and guests simply wait for it to come back.
+        // What a host that is only hosting (not playing) is called: it has no player to name, so it is never asked.
+        const HOST_ONLY_NAME = 'Host';
+        // A device that is only hosting (a lobby's host that isn't playing): no player of its own, so none of the personal tools.
+        function isHostOnlyDevice() { return lobbyState.role === 'host' && !lobbyState.hostIsPlayer; }
+        const HOST_ONLY_HIDDEN_SCREENS = ['team', 'decks', 'badges', 'trainer-card'];
+        function isHostOnlyHiddenScreen(screenId) { return HOST_ONLY_HIDDEN_SCREENS.includes(screenId) && isHostOnlyDevice(); }
         const DISPLAY_HOST_WAIT_MS = 12 * 60 * 60 * 1000;   // how long a guest keeps trying to reach the original host
         const DISPLAY_HOST_REHOST_GRACE_MS = 120000;        // how long the host retries its own room code while the broker lets go of it
         const DISPLAY_HOST_NO_SOLO_MESSAGE = 'Solo play isn\u2019t available in the TV Table and Hybrid 2 play modes \u2014 one device hosts the game, displays the map, and plays the music. Each player needs their own device connected to the host.';
@@ -27265,7 +27271,8 @@
                     discardPile: deck.discardPile.slice(),
                 };
             });
-            const handCounts = { host: getLocalHandArray().length };
+            const handCounts = {};
+            if (lobbyState.role !== 'host' || lobbyState.hostIsPlayer) handCounts.host = getLocalHandArray().length; // a host that is only hosting has no hand
             if (lobbyState.connections) {
                 lobbyState.connections.forEach((entry, peerId) => {
                     handCounts[peerId] = (getPeerHandArray(peerId) || []).length;
@@ -30423,7 +30430,8 @@
                 } else if (isGuest) {
                     const counts = (guestDeckStateCache && guestDeckStateCache.handCounts) || {};
                     const selfId = lobbyState.peer ? lobbyState.peer.id : null;
-                    const rows = (lobbyState.players || []).filter(p => p.id !== selfId).map(p => {
+                    // (a host's roster entry carries a color exactly when it is playing; one that is only hosting has no hand to show)
+                    const rows = (lobbyState.players || []).filter(p => p.id !== selfId && (p.id !== 'host' || !!p.color)).map(p => {
                         const count = counts[p.id] || 0;
                         const dot = p.color ? `<span class="game-player-color-dot game-player-color-dot--${p.color}"></span>` : '';
                         return `<div class="game-other-hand-row">${dot}<span class="game-card-back"></span><span class="game-other-hand-name">${escapeHtml(p.name)}</span><span>${count}</span></div>`;
@@ -37331,6 +37339,7 @@
         function syncMenuTileLocks() {
             try { syncBoardToggleUi(); } catch (err) { /* the board's own state isn't set up yet */ } // the Game Board tile depends on the active save too
             document.querySelectorAll('.game-menu-tiles .game-menu-tile').forEach(tile => {
+                tile.style.display = isHostOnlyHiddenScreen(tile.dataset.target) ? 'none' : ''; // Team Tracker, Hand & Decks, Badge Tracker, Trainer Card: nothing for a host that isn't playing
                 const locked = isMenuTileLocked(tile);
                 tile.classList.toggle('game-menu-tile-locked', locked);
                 if (tile.hasAttribute('data-requires-session')) tile.setAttribute('aria-disabled', locked ? 'true' : 'false');
@@ -43410,6 +43419,14 @@
                 return;
             }
 
+            // A device that is only hosting has no coins of its own: the counter goes, the PokCoin Rules section stays.
+            const controlsEl = sectionEl && sectionEl.querySelector('.game-pokecoins-controls');
+            if (controlsEl) controlsEl.style.display = isHostOnlyDevice() ? 'none' : '';
+            if (isHostOnlyDevice()) {
+                if (pokeCoinsEditing) cancelPokeCoinsEdit();
+                return;
+            }
+
             const data = getActiveSaveData();
             const value = typeof data.pokeCoins === 'number' ? data.pokeCoins : 3;
             const valueEl = document.getElementById('game-pokecoins-value');
@@ -44346,7 +44363,9 @@
             // Backstop for anything that navigates here directly: the
             // Arena never opens without a hosted save or a lobby (the
             // menu tile and Team Tracker's send button check first).
-            if (isScreenLockedByGate(screenId)) {
+            if (isHostOnlyHiddenScreen(screenId)) {
+                screenId = 'main'; // a device that is only hosting has no player tools to open
+            } else if (isScreenLockedByGate(screenId)) {
                 showBattleArenaGateToast();
                 screenId = 'main';
             } else if (isDecksLockedBySetting(screenId)) {
@@ -45062,6 +45081,7 @@
             }
             applyGamePanelPlayerTheme();
             syncMusicUIForLobbyRole();
+            try { syncMenuTileLocks(); renderPokeCoins(); } catch (err) { /* not ready yet */ } // a host that is only hosting loses the personal tools
             startLobbyHeartbeat();
             acquireLobbyWakeLock();
             // Trade a Pok\u00e9mon's button visibility depends on
@@ -45676,9 +45696,10 @@
         }
 
         function chooseHostOnly() {
+            // Only hosting means no player to name: start right away, under the name this save already hosted with
+            // (if it ever hosted as a player) or just "Host". Nothing is asked.
             const known = getRememberedHostIdentity();
-            if (known.name) { startHostingLobby(known.name, false, null); return; } // nothing left to ask
-            openHostSetup(false);
+            startHostingLobby(known.name || HOST_ONLY_NAME, false, null);
         }
 
         function chooseHostAsPlayer() {
@@ -45782,7 +45803,7 @@
             // same treatment (also read back there), and is left untouched -- not cleared --
             // when hosting only, so choosing to play again later still
             // remembers it.
-            gameSaves[activeSaveSlot].hostDisplayName = lobbyState.hostName;
+            if (isPlayer || lobbyState.hostName !== HOST_ONLY_NAME) gameSaves[activeSaveSlot].hostDisplayName = lobbyState.hostName;
             // hostPlayerColor outlives a host-only session on purpose (see
             // above), so it can't say whether the host is playing THIS time.
             gameSaves[activeSaveSlot].hostWasPlayer = !!isPlayer;
