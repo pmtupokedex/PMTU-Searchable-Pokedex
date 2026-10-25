@@ -6851,6 +6851,10 @@
            badge pulses white until it's resolved or removed. Only
            box-shadow/background animate, so the badge's own transform
            (see .game-team-slot-cards) is never overridden. */
+        /* Squad battle (Secret Base): a Pok\u00e9mon being chosen is outlined; once the battle is under way, every Pok\u00e9mon that was not chosen is
+           darkened until it ends. */
+        .game-team-slot.squad-picked { outline: 4px solid #ffd54a; outline-offset: -4px; border-radius: 12px; }
+        .game-team-slot.squad-out { filter: brightness(0.35); transition: filter 0.3s ease; }
         .game-team-slot-cards.needs-resolve {
             animation: game-cards-resolve-pulse 1.4s ease-in-out infinite;
         }
@@ -16546,6 +16550,7 @@
                      -- this never removes anything from the roster. -->
                 <div class="game-team-release-banner" id="game-team-send-to-battle-banner">
                     <span id="game-team-send-to-battle-banner-text">Tap a Pok&eacute;mon on your team to send it to the Battle Arena.</span>
+                    <button class="filter-btn include" id="game-team-squad-confirm-btn" style="display: none;">Confirm</button>
                     <button class="filter-btn exclude" id="game-team-send-to-battle-cancel-btn">Cancel</button>
                 </div>
                 <!-- The Pok&eacute;mon in the other Arena half, shown read-only
@@ -22783,6 +22788,8 @@
                     sendToBattleBannerText.textContent = 'Blacked out \u2014 tap ' + (teamRevivePick.left === 1 ? 'a Fainted Pok\u00e9mon' : teamRevivePick.left + ' Fainted Pok\u00e9mon') + ' to Revive.';
                 } else if (teamLevelPick) {
                     sendToBattleBannerText.textContent = 'Tap a Pok\u00e9mon on your team to give it a Level.';
+                } else if (teamSquadPick) {
+                    sendToBattleBannerText.textContent = teamSquadPick.title + ' \u2014 tap ' + teamSquadPick.need + ' Pok\u00e9mon on your team to battle with (' + teamSquadPick.chosen.size + ' of ' + teamSquadPick.need + ' chosen), then Confirm. They are the only ones you can use.';
                 } else if (teamContestPick) {
                     sendToBattleBannerText.textContent = 'Contest Hall \u2014 tap a Pok\u00e9mon on your team to enter it as your Contestant.';
                 } else
@@ -22793,6 +22800,13 @@
                     : 'Tap a Pok\u00e9mon on your team to send it to the Battle Arena.')
                     + ' Pok\u00e9mon with an Overlay Card can\u2019t be sent.';
             }
+            const squadConfirmBtn = document.getElementById('game-team-squad-confirm-btn');
+            if (squadConfirmBtn) {
+                squadConfirmBtn.style.display = teamSquadPick ? '' : 'none';
+                squadConfirmBtn.disabled = !!(teamSquadPick && teamSquadPick.chosen.size !== teamSquadPick.need);
+            }
+            const sendToBattleCancelBtn = document.getElementById('game-team-send-to-battle-cancel-btn');
+            if (sendToBattleCancelBtn) sendToBattleCancelBtn.style.display = (teamSquadPick && !teamSquadPick.onCancel) ? 'none' : ''; // the challenged player can't back out here
             renderTeamOpponentPreview(sendingToBattle);
             const tradeSelectBanner = document.getElementById('game-team-trade-select-banner');
             if (tradeSelectBanner) tradeSelectBanner.classList.toggle('visible', selectingTradeOffer);
@@ -22828,6 +22842,8 @@
                 const slot = document.createElement('div');
                 slot.className = 'game-team-slot';
                 slot.dataset.filled = member ? 'true' : 'false';
+                if (member && teamSquadPick && member.uid && teamSquadPick.chosen.has(member.uid)) slot.classList.add('squad-picked');
+                if (member && isOutsideBattleSquad(member)) slot.classList.add('squad-out'); // not chosen for the squad battle under way
                 slot.dataset.index = i;
                 // Not read by anything yet -- a plain DOM-level flag for
                 // a future tool (see the chat this was added in) that'll
@@ -23670,6 +23686,7 @@
         // answering Attacker/Defender/Cancel on it) -- same "one place
         // unwinds everything" shape as exitTeamReleaseMode().
         function exitTeamSendToBattleMode() {
+            if (teamSquadPick) { squadPickCancel(); return; } // Cancel on a squad battle's Pok\u00e9mon pick
             if (teamSwapPick) { clearTeamSwapPick(); return; } // Cancel on a card's trade pick
             if (teamLevelPick) { clearTeamLevelPick(); return; } // Cancel on a card's Level pick
             if (teamRevivePick) { clearTeamRevivePick(); return; } // Cancel on the post-blackout Revive pick
@@ -37817,7 +37834,7 @@
         // "no replacement left" once they have fainted (see hasBattleReplacementFor()). The choice is local to each device and
         // ends with the battle (see watchBattleSquad()).
         var battleSquad = null; // { uids: [member uids], started: bool } on this device, or null
-        var squadPick = null;   // the chooser in progress: { need, chosen: Set of uids, title, onConfirm, onCancel }
+        var teamSquadPick = null; // the Team Tracker pick in progress: { need, chosen: Set of uids, title, onConfirm, onCancel }
         const SQUAD_BLOCK_MESSAGE = 'Only the Pok\u00e9mon you chose for this battle can be used.';
         function isOutsideBattleSquad(member) {
             if (!battleSquad || !member) return false;
@@ -37831,15 +37848,19 @@
         function watchBattleSquad() {
             if (!battleSquad) return;
             if (battleInProgress) { battleSquad.started = true; return; }
-            if (battleSquad.started) { battleSquad = null; return; }
-            if (!boardPvp && !squadPick && !getBattleSlotMember('attacker') && !getBattleSlotMember('defender')) battleSquad = null;
+            if (battleSquad.started) { battleSquad = null; renderTeamGrid(); return; } // Pok\u00e9mon that were darkened return to normal
+            if (!boardPvp && !teamSquadPick && !getBattleSlotMember('attacker') && !getBattleSlotMember('defender')) { battleSquad = null; renderTeamGrid(); }
         }
-        // Asks this player for their `count` Pok\u00e9mon, then calls onConfirm (battleSquad is set by then). onCancel (optional) adds
-        // a Cancel button. Returns without asking when there is nothing to choose: one Pok\u00e9mon (or as many as are allowed) is
-        // just taken; none that can battle says so and calls onCancel.
-        function chooseBattleSquad(count, title, onConfirm, onCancel) {
+        // Asks this player for their `count` Pok\u00e9mon, straight from the Team Tracker (it borrows the send-to-battle mode and
+        // banner, like the card Level / trade picks: tap Pok\u00e9mon to mark them, then Confirm), then calls onConfirm (battleSquad is
+        // set by then). onCancel (optional) gives the banner a Cancel button. Nothing is asked when there is nothing to choose: one
+        // Pok\u00e9mon (or no more than are allowed) is just taken; none that can battle says so and calls onCancel.
+        function getSquadEligibleMembers() {
             const members = (getActiveSaveData().team && getActiveSaveData().team.members) || [];
-            const eligible = members.filter(m => m && !m.fainted && !m.overlayCardId);
+            return members.filter(m => m && !m.fainted && !m.overlayCardId);
+        }
+        function chooseBattleSquad(count, title, onConfirm, onCancel) {
+            const eligible = getSquadEligibleMembers();
             eligible.forEach(ensureMemberUid);
             if (!eligible.length) {
                 showGameToast('None of your Pok\u00e9mon can battle right now.');
@@ -37848,50 +37869,74 @@
             }
             if (eligible.length <= count) {
                 battleSquad = { uids: eligible.map(m => m.uid), started: false };
+                renderTeamGrid();
                 showGameToast(eligible.length === 1
                     ? (getBattleMemberDisplay(eligible[0]).name || 'Your Pok\u00e9mon') + ' is your only Pok\u00e9mon that can battle \u2014 it\u2019s your squad.'
                     : 'All ' + eligible.length + ' of your Pok\u00e9mon that can battle are your squad.');
                 onConfirm();
                 return;
             }
-            squadPick = { need: count, chosen: new Set(), title, onConfirm, onCancel, eligible };
-            renderSquadPicker();
-        }
-        function renderSquadPicker() {
-            const p = squadPick;
-            if (!p) return;
-            const buttons = p.eligible.map(m => {
-                const on = p.chosen.has(m.uid), d = getBattleMemberDisplay(m);
-                return `<button class="filter-btn game-squad-btn${on ? ' include' : ''}" type="button" data-uid="${escapeHtml(m.uid)}">${on ? '\u2713 ' : ''}${escapeHtml(d.name || 'Pok\u00e9mon')} (Lv ${boardFrontierTotalLevel(m)})</button>`;
-            }).join('')
-                + `<button class="filter-btn include game-squad-confirm-btn" type="button" ${p.chosen.size === p.need ? '' : 'disabled'}>Confirm</button>`
-                + (p.onCancel ? `<button class="filter-btn exclude game-squad-cancel-btn" type="button">Cancel</button>` : '');
-            boardFrontierShow(p.title, 'Choose ' + p.need + ' Pok\u00e9mon from your team to battle with. They are the only ones you can use. (' + p.chosen.size + ' of ' + p.need + ' chosen)', buttons);
-        }
-        function squadPickerClick(btn) {
-            const p = squadPick;
-            if (!p) return;
-            if (btn.classList.contains('game-squad-btn')) {
-                const uid = btn.dataset.uid;
-                if (p.chosen.has(uid)) p.chosen.delete(uid);
-                else if (p.chosen.size < p.need) p.chosen.add(uid);
-                renderSquadPicker();
-            } else if (btn.classList.contains('game-squad-confirm-btn')) {
-                if (p.chosen.size !== p.need) return;
-                squadPick = null;
-                battleSquad = { uids: Array.from(p.chosen), started: false };
-                closeFrontierOverlay();
-                p.onConfirm();
-            } else if (btn.classList.contains('game-squad-cancel-btn')) {
-                squadPick = null;
-                closeFrontierOverlay();
-                if (p.onCancel) p.onCancel();
+            const squad = { need: count, chosen: new Set(), title, onConfirm, onCancel };
+            // Team Tracker busy with something else: take the first Pok\u00e9mon rather than leave the battle without a squad.
+            if (teamReplacePendingMember || teamReleaseModeActive || teamSendToBattleModeActive || handAttachPendingCardId || isTradeNegotiationActive()) {
+                showGameToast('Team Tracker was busy, so your first ' + count + ' Pok\u00e9mon that can battle were chosen.');
+                squadAutoPick(squad, eligible);
+                return;
             }
+            openGamePanel();
+            setGameScreen('team');
+            teamSquadPick = squad;
+            teamSendToBattleModeActive = true; // borrows the send-to-battle mode and its banner
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        function squadAutoPick(p, eligible) {
+            const picked = (eligible || getSquadEligibleMembers()).slice(0, p.need);
+            picked.forEach(ensureMemberUid);
+            battleSquad = { uids: picked.map(m => m.uid), started: false };
+            renderTeamGrid();
+            p.onConfirm();
+        }
+        function endSquadPickMode() {
+            teamSquadPick = null;
+            teamSendToBattleModeActive = false;
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        // A Pok\u00e9mon in the Team Tracker was tapped while choosing.
+        function squadPickToggle(index) {
+            const p = teamSquadPick, m = getTeamSlotMember(index);
+            if (!p || !m) return;
+            if (m.fainted || m.overlayCardId) { showGameToast(m.fainted ? 'That Pok\u00e9mon has fainted \u2014 choose one that can still battle.' : BATTLE_OVERLAY_BLOCK_MESSAGE); return; }
+            const uid = ensureMemberUid(m);
+            if (p.chosen.has(uid)) p.chosen.delete(uid);
+            else if (p.chosen.size < p.need) p.chosen.add(uid);
+            else { showGameToast('You have already chosen ' + p.need + ' \u2014 tap one to take it back first.'); return; }
+            renderTeamGrid();
+        }
+        function squadPickConfirm() {
+            const p = teamSquadPick;
+            if (!p || p.chosen.size !== p.need) return;
+            battleSquad = { uids: Array.from(p.chosen), started: false };
+            endSquadPickMode();
+            p.onConfirm();
+        }
+        // Cancel, or leaving Team Tracker mid-pick. A pick that can be called off is; one that can't (the player who was challenged)
+        // takes their first Pok\u00e9mon so the battle still has a squad.
+        function squadPickCancel() {
+            const p = teamSquadPick;
+            if (!p) return;
+            endSquadPickMode();
+            if (p.onCancel) p.onCancel(); else squadAutoPick(p);
         }
         // The other player called the challenge off while this one was still choosing.
         function abandonSquadPick() {
-            if (squadPick) { squadPick = null; closeFrontierOverlay(); }
+            if (teamSquadPick) endSquadPickMode();
             battleSquad = null;
+            renderTeamGrid();
         }
 
         // If a Pok\u00e9mon already in the Arena picks up an Overlay Card
@@ -44943,6 +44988,7 @@
                     // been made -- either way, this mode only makes
                     // sense while still looking at Team Tracker, same
                     // reasoning as teamReleaseModeActive just above.
+                    if (teamSquadPick) { const sp = teamSquadPick; teamSquadPick = null; if (sp.onCancel) sp.onCancel(); else squadAutoPick(sp); } // leaving mid-pick: called off, or the first Pok\u00e9mon are taken
                     if (teamSwapPick) teamSwapPick = null; // leaving Team Tracker mid-pick calls the trade off (the card stays in the zone)
                     if (teamRevivePick) teamRevivePick = null;
                     if (teamLevelPick) teamLevelPick = null; // leaving Team Tracker mid-pick calls off a card's Level pick (the card stays in the zone)
@@ -50463,8 +50509,6 @@
                 }
                 return;
             }
-            const squadBtn = e.target.closest('.game-squad-btn, .game-squad-confirm-btn, .game-squad-cancel-btn');
-            if (squadBtn) { squadPickerClick(squadBtn); return; }
             const pvpRewardBtn = e.target.closest('.game-pvpreward-btn');
             if (pvpRewardBtn) { pvpRewardChoose(pvpRewardBtn.dataset.act); return; }
             const pvpBtn = e.target.closest('.game-pvpcard-btn');
@@ -53672,6 +53716,10 @@
             // The one way out of send-to-Battle-Arena mode besides
             // actually tapping a slot below -- see
             // exitTeamSendToBattleMode() in the script.
+            if (e.target.closest('#game-team-squad-confirm-btn')) {
+                squadPickConfirm();
+                return;
+            }
             const teamSendToBattleCancelBtn = e.target.closest('#game-team-send-to-battle-cancel-btn');
             if (teamSendToBattleCancelBtn) {
                 exitTeamSendToBattleMode();
@@ -53899,6 +53947,12 @@
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
                     openTeamReleaseConfirmOverlay(Number(teamSlot.dataset.index));
+                    return;
+                }
+                if (teamSquadPick) {
+                    if (isActiveSaveReadOnly()) return;
+                    if (teamSlot.dataset.filled !== 'true') return;
+                    squadPickToggle(Number(teamSlot.dataset.index));
                     return;
                 }
                 if (teamSwapPick) {
