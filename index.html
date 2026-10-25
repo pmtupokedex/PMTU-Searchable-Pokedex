@@ -27305,6 +27305,16 @@
         // Sent to every connected guest, and applied locally so the
         // Host's own screen redraws off the exact same data a guest
         // would see.
+        // The decks live inside the Host's own save (see ensureHostDeckStore()), but a deck-only change -- Shuffle into Deck, a
+        // reshuffle, Look at Top, a card put back on a pile -- touches no hand, so nothing else saved it and a reload brought the
+        // old piles back. Every deck change ends in broadcastDeckState(), so it writes the save here. (A save with no slot --
+        // unsavedDeckState -- has nothing to write to, and a read-only save is never written.)
+        function persistHostDeckState() {
+            if (lobbyState.role === 'guest' || activeSaveSlot === null || !gameSaves[activeSaveSlot] || isActiveSaveReadOnly()) return;
+            try { localStorage.setItem(GAME_SAVES_KEY, JSON.stringify(gameSaves)); } catch (err) { console.warn('Could not save the deck state:', err); }
+            scheduleHostBackup(); // the Host's backup should carry the new piles too
+        }
+
         function broadcastDeckState() {
             if (lobbyState.role === 'guest') return; // guests only ever receive this, never originate it
             const store = ensureHostDeckStore();
@@ -27331,6 +27341,7 @@
                 lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send(payload); });
             }
             guestDeckStateCache = payload; // so renderDecksScreen() has one code path for host and guest alike
+            persistHostDeckState();
             renderDecksScreen();
         }
 
