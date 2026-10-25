@@ -15557,6 +15557,9 @@
         #board-roll-display { position: relative; margin-right: 4px; transform-origin: top right; display: none; flex-direction: column; align-items: flex-end; pointer-events: none; }
         #board-roll-display.visible { display: flex; animation: board-roll-pop 0.28s ease-out; }
         #board-roll-display.fading { opacity: 0; transition: opacity 0.4s ease; }
+        /* Blimp Ride: confirms the move is over. The roll box itself ignores the pointer, this button does not. */
+        #board-blimp-done-btn { pointer-events: auto; margin: 8px 0 0; }
+        #board-blimp-done-btn[hidden] { display: none; }
         @keyframes board-roll-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         @media (prefers-reduced-motion: reduce) { #board-roll-display.visible { animation: none; } }
         #board-roll-num { font-weight: bold; font-size: 72px; line-height: 1; color: #fff;
@@ -18810,7 +18813,7 @@
         <div id="game-board-frame">
             <div id="game-board-mount"></div>
             <div id="board-roll-controls" data-actbar-avoid="soft">
-                <div id="board-roll-row"><span id="board-walk-count" aria-hidden="true" title="Spaces in the move so far"></span><div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div></div>
+                <div id="board-roll-row"><span id="board-walk-count" aria-hidden="true" title="Spaces in the move so far"></span><div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span><button class="filter-btn include" id="board-blimp-done-btn" type="button" hidden>Done Moving</button></div></div>
             </div>
             <div id="board-ability-bar" role="group" aria-label="Movement abilities" data-actbar-avoid></div>
             <div id="board-jump-overlay" hidden>
@@ -30846,6 +30849,7 @@
                     <div class="game-active-card-view actor"${themeAttr}>
                         ${imgTag}
                         <div class="game-active-card-actions"><div class="game-active-card-buttons">
+                            ${(!readOnly && cardRollsMovement(card)) ? `<button class="filter-btn include game-active-card-roll-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Roll</button>` : ''}
                             ${(!readOnly && cardIsLegendaryEncounter(card)) ? `<button class="filter-btn game-active-card-legend-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Find the Legendary</button><button class="filter-btn game-active-card-legend-decline-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Don&rsquo;t Find It</button>` : ''}
                             ${(!readOnly && cardHasScaledOpponents(card) && canUseBattleArena()) ? `<button class="filter-btn include game-active-card-scaled-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Begin Battle</button>` : ''}
                             ${(!readOnly && cardEffectLabel(card)) ? `<button class="filter-btn include game-active-card-effect-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">${escapeHtml(cardEffectLabel(card))}</button>` : ''}
@@ -36173,6 +36177,51 @@
                 }
             }
             if (card.declineShuffleBack === 'yes') requestActiveCardShuffle(); else requestActiveCardDiscard();
+        }
+
+        // ---- Roll for movement (Blimp Ride) ----
+        //   rollMovement: "yes"   puts a Roll button at the top of the card's buttons in the Active Card zone.
+        // In the Virtual play mode (the in-app map), Roll brings up the board if it isn't already, centers it on this player's marker
+        // (same as its Find Me button), and rolls the Movement Die automatically. The card is discarded. Landing prompts (the
+        // Actions box) are held back for the whole move, since other effects can change how far the player may go: the move ends when
+        // they press Done Moving under the roll, or end their turn. In the other play modes that have virtual cards, a toast tells
+        // the player to roll their own die and move.
+        var boardBlimp = null; // { cardId } while a Blimp Ride move is under way on this device
+        function cardRollsMovement(card) { return !!card && card.rollMovement === 'yes'; }
+        function useRollMovementCard(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (isActiveSaveReadOnly() || !cardRollsMovement(card)) return;
+            if (!usesVirtualTokensForActiveSave()) {
+                showGameToast(card.name + ': roll the Movement Die and move that many spaces.');
+                cardEffectDone(cardId);
+                return;
+            }
+            if (!boardMyPlayer()) { showGameToast('Only players can roll for movement.'); return; }
+            cardEffectDone(cardId);
+            boardBlimp = { cardId };
+            enterBoardMode(); // no-op when the board is already up
+            if (!desktopFilterQuery.matches) closeGamePanel(); // on a phone the panel would cover the board
+            if (!boardModeActive) { boardBlimp = null; return; }
+            boardEnsureBoard().then(() => {
+                // after the board's own settle-and-refit (see initBoardScreen()), so Find Me has the last word
+                setTimeout(() => {
+                    if (!boardBlimp) return;
+                    const find = document.getElementById('mme');
+                    if (find) find.click(); // exactly the Find Me button: zoom to and center on this player's marker
+                    boardRollMovement();
+                    const done = document.getElementById('board-blimp-done-btn');
+                    if (done) done.hidden = false;
+                }, 500);
+            }).catch(() => { boardBlimp = null; });
+        }
+        // The move is over (Done Moving, or the turn ended): landing prompts work as normal again and the roll winds down.
+        function boardBlimpFinish() {
+            if (!boardBlimp) return;
+            boardBlimp = null;
+            const done = document.getElementById('board-blimp-done-btn');
+            if (done) done.hidden = true;
+            const me = boardMyPlayer();
+            if (me) boardAnnounceRollSettled(me);
         }
 
         // ---- cards.json effect keywords (reusable on any card) ----
@@ -48041,6 +48090,7 @@
         function turnsPublicView() { return lobbyState.role === 'host' && turnAuth ? turnsBuildView() : null; }
         function turnsApplyView(view, announce, coin) {
             turnView = (view && Array.isArray(view.order)) ? view : null;
+            if (boardBlimp && turnView && turnView.cur && turnView.cur !== (getMyLobbyPlayerId() || 'host')) boardBlimpFinish(); // the turn moved on
             if (announce && coin && turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host') && isPokeCoinsEnabledForActiveSave() && !isActiveSaveReadOnly()) adjustPokeCoins(1); // each device adds to its own player's total
             turnsRender(!!announce, !!coin);
         }
@@ -48166,6 +48216,7 @@
             });
         }
         function turnsEndNow() {
+            boardBlimpFinish(); // ending the turn ends a Blimp Ride move too
             if (lobbyState.role === 'guest') boardSend({ type: 'turn-end' });
             else turnsAdvance();
         }
@@ -48873,6 +48924,7 @@
         }
         function boardDeliverLanding(info) {
             if (!boardCtrl || !info || !info.space) return;
+            if (boardBlimp) return; // a Blimp Ride move: no Actions box until the player says they are done (see boardBlimpFinish())
             const buttons = [];
             let text, plainSpace = false;
             const spaceColor = c => (c === 'orange' ? 'Legendary' : c ? c.charAt(0).toUpperCase() + c.slice(1) : '');
@@ -51266,6 +51318,9 @@
             const box = document.getElementById('board-roll-display');
             if (!box) return;
             clearTimeout(boardRollFadeTimer); clearTimeout(boardRollHideTimer);
+            // This player's own roll stays on screen for the whole Blimp Ride move; boardBlimpFinish() lets it fade.
+            const mine = boardMyPlayer();
+            if (boardBlimp && mine && typeof mine.c === 'string' && mine.c.toLowerCase() === boardRollOwner) return;
             boardRollFadeTimer = setTimeout(() => box.classList.add('fading'), fadeAfterMs);
             boardRollHideTimer = setTimeout(() => box.classList.remove('visible', 'fading'), fadeAfterMs + 400);
         }
@@ -51354,6 +51409,7 @@
                 if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
                 else if (frame && frame.requestFullscreen) frame.requestFullscreen().catch(() => {});
             }
+            else if (t.closest('#board-blimp-done-btn')) boardBlimpFinish();
             else if (t.closest('#board-roll-btn')) boardRollMovement();
             else if (t.closest('#board-stay-btn')) boardStayOnSpace();
             else if (t.closest('#board-endturn-btn')) turnsEndClick();
@@ -52948,6 +53004,11 @@
             const activeCardScaledBtn = e.target.closest('.game-active-card-scaled-btn');
             if (activeCardScaledBtn) {
                 beginScaledOpponentsBattle(activeCardScaledBtn.dataset.cardId);
+                return;
+            }
+            const activeCardRollBtn = e.target.closest('.game-active-card-roll-btn');
+            if (activeCardRollBtn) {
+                useRollMovementCard(activeCardRollBtn.dataset.cardId);
                 return;
             }
             const activeCardEffectBtn = e.target.closest('.game-active-card-effect-btn');
