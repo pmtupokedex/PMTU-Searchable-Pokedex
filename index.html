@@ -6845,6 +6845,23 @@
             flex-direction: column;
         }
 
+        /* A oneTime card (Pok\u00e9rus, Shiny, Held Item, Egg Move -- anything
+           with a oneTimeEffect) is waiting in this badge's Attach/Nature
+           slot for the player to press Resolve One-Time Effect: the
+           badge pulses white until it's resolved or removed. Only
+           box-shadow/background animate, so the badge's own transform
+           (see .game-team-slot-cards) is never overridden. */
+        .game-team-slot-cards.needs-resolve {
+            animation: game-cards-resolve-pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes game-cards-resolve-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.85), 0 0 4px 1px rgba(255, 255, 255, 0.6); background: rgba(50, 50, 50, 1); }
+            50% { box-shadow: 0 0 0 7px rgba(255, 255, 255, 0), 0 0 14px 5px rgba(255, 255, 255, 0.95); background: rgba(150, 150, 150, 1); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .game-team-slot-cards.needs-resolve { animation: none; box-shadow: 0 0 12px 4px rgba(255, 255, 255, 0.9); }
+        }
+
         .game-team-slot-cards-img {
             width: 100%;
             aspect-ratio: 1 / 1;
@@ -22545,13 +22562,22 @@
             return hpBadge;
         }
 
+        // True while a card with a oneTimeEffect (see getCardOneTimeEffect())
+        // sits in either slot of a Pok\u00e9mon the player can resolve it on
+        // -- virtual decks only, never in the read-only spectator view.
+        function memberHasUnresolvedOneTimeCard(member, index) {
+            if (!member || index === 'readonly' || !isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return false;
+            return [member.attachCardId, member.natureCardId].some(id => id && getCardOneTimeEffect(CARDS_BY_ID[id]));
+        }
+
         // Attach/Nature Cards badge builder -- same "pulled out for
         // reuse by the Wild Pokémon slot" reasoning as buildHpBadge()
         // just above.
         function buildCardsBadge(member, index, naturesEnabled) {
             const cardsState = computeTeamCardsState(member, naturesEnabled);
             const cardsBadge = document.createElement('div');
-            cardsBadge.className = 'game-team-slot-cards' + (cardsState.pill ? ' pill' : '');
+            cardsBadge.className = 'game-team-slot-cards' + (cardsState.pill ? ' pill' : '')
+                + (memberHasUnresolvedOneTimeCard(member, index) ? ' needs-resolve' : '');
             cardsBadge.dataset.index = index;
             cardsBadge.innerHTML = cardsState.images
                 .map(img => {
