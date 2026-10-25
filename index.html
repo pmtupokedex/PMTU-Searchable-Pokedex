@@ -23777,7 +23777,7 @@
             const index = pendingBattleSlotChoiceIndex;
             if (isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) {
                 closeBattleSlotChoiceOverlay();
-                showGameToast(BATTLE_OVERLAY_BLOCK_MESSAGE);
+                showGameToast(battleIneligibleMessage((getActiveSaveData().team.members || [])[index]));
                 return;
             }
             // The slot-choice overlay stays open underneath while the
@@ -27887,6 +27887,7 @@
             }
             let gymBadgeDelivery = null;
             let pvpOutcome = null; // player-vs-player result of an ended battle: { winnerId, loserId }
+            let secretBaseWin = null; // a squad battle (Secret Base) the challenger won: its own reward, not the usual one
             if (action === 'begin') {
                 if (!st.inProgress) {
                     if (!st.attacker || !st.defender) {
@@ -27940,6 +27941,12 @@
                 // for every player who had a Pok\u00e9mon in this battle
                 // (read before the arena is cleared below).
                 pvpOutcome = hostPvpOutcome(st, opts && opts.forfeit ? peerKey : null); // read before the halves are cleared below
+                const sb = hostSecretBase;
+                if (sb && st.inProgress && st.attacker && st.defender && st.attacker.ownerId === sb.initiatorId && st.defender.ownerId === sb.partnerId) {
+                    hostSecretBase = null;
+                    secretBaseWin = (pvpOutcome && pvpOutcome.winnerId === sb.initiatorId) ? sb : null;
+                    pvpOutcome = null; // only the challenger is ever rewarded for a Secret Base battle
+                }
                 const gd = st.defender;
                 if (st.inProgress && !isHostAttackerSideSpent(st) && gd && !gd.ownerId && gd.member && gd.member.gymLeaderId && gd.member.fainted
                     && !(gd.member.gymLeaderQueue && gd.member.gymLeaderQueue.length)) {
@@ -27974,6 +27981,7 @@
             }
             broadcastBattleArenaState();
             if (pvpOutcome) hostDeliverPvpReward(pvpOutcome);
+            if (secretBaseWin) hostDeliverSecretBaseReward(secretBaseWin);
             if (gymBadgeDelivery) {
                 gymBadgeDelivery.owners.forEach(ownerId => {
                     if (ownerId === 'host') { queueGymBadgeAward(gymBadgeDelivery.leaderId); return; }
@@ -28018,6 +28026,32 @@
             hostPendingPvpRewards.set(o.winnerId, o);
             const msg = { type: 'pvp-reward', loserId: o.loserId, loserName: boardPlayerName(o.loserId), forfeit: !!o.forfeit };
             if (o.winnerId === 'host') showPvpReward(msg); else hostSendToPlayer(o.winnerId, msg);
+        }
+        function hostDeliverSecretBaseReward(sb) {
+            const msg = { type: 'secret-base-reward', cardId: sb.cardId, loserName: boardPlayerName(sb.partnerId) };
+            if (sb.initiatorId === 'host') applySecretBaseReward(msg); else hostSendToPlayer(sb.initiatorId, msg);
+        }
+        // The winner's side of a squad battle: the card's victoryGainItem (from the Shop deck, via the same path as a board Gain Item
+        // action) and victoryDraw cards from victoryDrawDeck (default Item Deck).
+        function applySecretBaseReward(msg) {
+            const card = CARDS_BY_ID[msg && msg.cardId];
+            if (!card || isActiveSaveReadOnly()) return;
+            const parts = [];
+            if (typeof card.victoryGainItem === 'string' && card.victoryGainItem) {
+                const out = boardGrantItem(card.victoryGainItem);
+                if (out) parts.push(out.text);
+            }
+            const draw = Math.max(0, parseInt(card.victoryDraw, 10) || 0), deck = card.victoryDrawDeck || 'Item Deck';
+            if (draw) {
+                if (isVirtualDecksEnabledForActiveSave()) {
+                    for (let i = 0; i < draw; i++) requestDrawCard(deck);
+                    parts.push('Drew ' + draw + ' card' + (draw === 1 ? '' : 's') + ' from the ' + deck + '.');
+                } else {
+                    parts.push('Draw ' + draw + ' card' + (draw === 1 ? '' : 's') + ' from your physical ' + deck + '.');
+                }
+            }
+            if (isVirtualDecksEnabledForActiveSave()) boardShowHand();
+            showGameToast(card.name + ': you beat ' + (msg.loserName || 'your opponent') + '! ' + parts.join(' '));
         }
         function hostPvpNote(key, text, showHand) {
             if (key === 'host') { showGameToast(text); if (showHand) boardShowHand(); }
@@ -36107,6 +36141,7 @@
             }
         }
         function watchCardBattle() {
+            watchBattleSquad();
             const p = cardBattlePending;
             if (!p) return;
             if (battleInProgress) {
@@ -37773,7 +37808,90 @@
         const BATTLE_OVERLAY_BLOCK_MESSAGE = 'A Pok\u00e9mon with an Overlay Card on it can\u2019t go in the Battle Arena.';
 
         function isBattleIneligibleMember(member) {
-            return !!(member && member.overlayCardId);
+            return !!(member && (member.overlayCardId || isOutsideBattleSquad(member)));
+        }
+
+        // ---- Squad battles (Secret Base) ----
+        // A card with "battleSquad": N has each player choose N Pok\u00e9mon from their own team (all of them, if they have N or
+        // fewer that can battle) before the battle; those are the only ones that player can send into the Arena, so they count as
+        // "no replacement left" once they have fainted (see hasBattleReplacementFor()). The choice is local to each device and
+        // ends with the battle (see watchBattleSquad()).
+        var battleSquad = null; // { uids: [member uids], started: bool } on this device, or null
+        var squadPick = null;   // the chooser in progress: { need, chosen: Set of uids, title, onConfirm, onCancel }
+        const SQUAD_BLOCK_MESSAGE = 'Only the Pok\u00e9mon you chose for this battle can be used.';
+        function isOutsideBattleSquad(member) {
+            if (!battleSquad || !member) return false;
+            const mine = (getActiveSaveData().team && getActiveSaveData().team.members) || [];
+            return mine.includes(member) && !battleSquad.uids.includes(member.uid);
+        }
+        function battleIneligibleMessage(member) {
+            return (member && member.overlayCardId) ? BATTLE_OVERLAY_BLOCK_MESSAGE : SQUAD_BLOCK_MESSAGE;
+        }
+        // Ends the squad once the battle it was for is over (or never got going: the Arena is empty and no challenge is pending).
+        function watchBattleSquad() {
+            if (!battleSquad) return;
+            if (battleInProgress) { battleSquad.started = true; return; }
+            if (battleSquad.started) { battleSquad = null; return; }
+            if (!boardPvp && !squadPick && !getBattleSlotMember('attacker') && !getBattleSlotMember('defender')) battleSquad = null;
+        }
+        // Asks this player for their `count` Pok\u00e9mon, then calls onConfirm (battleSquad is set by then). onCancel (optional) adds
+        // a Cancel button. Returns without asking when there is nothing to choose: one Pok\u00e9mon (or as many as are allowed) is
+        // just taken; none that can battle says so and calls onCancel.
+        function chooseBattleSquad(count, title, onConfirm, onCancel) {
+            const members = (getActiveSaveData().team && getActiveSaveData().team.members) || [];
+            const eligible = members.filter(m => m && !m.fainted && !m.overlayCardId);
+            eligible.forEach(ensureMemberUid);
+            if (!eligible.length) {
+                showGameToast('None of your Pok\u00e9mon can battle right now.');
+                if (onCancel) onCancel();
+                return;
+            }
+            if (eligible.length <= count) {
+                battleSquad = { uids: eligible.map(m => m.uid), started: false };
+                showGameToast(eligible.length === 1
+                    ? (getBattleMemberDisplay(eligible[0]).name || 'Your Pok\u00e9mon') + ' is your only Pok\u00e9mon that can battle \u2014 it\u2019s your squad.'
+                    : 'All ' + eligible.length + ' of your Pok\u00e9mon that can battle are your squad.');
+                onConfirm();
+                return;
+            }
+            squadPick = { need: count, chosen: new Set(), title, onConfirm, onCancel, eligible };
+            renderSquadPicker();
+        }
+        function renderSquadPicker() {
+            const p = squadPick;
+            if (!p) return;
+            const buttons = p.eligible.map(m => {
+                const on = p.chosen.has(m.uid), d = getBattleMemberDisplay(m);
+                return `<button class="filter-btn game-squad-btn${on ? ' include' : ''}" type="button" data-uid="${escapeHtml(m.uid)}">${on ? '\u2713 ' : ''}${escapeHtml(d.name || 'Pok\u00e9mon')} (Lv ${boardFrontierTotalLevel(m)})</button>`;
+            }).join('')
+                + `<button class="filter-btn include game-squad-confirm-btn" type="button" ${p.chosen.size === p.need ? '' : 'disabled'}>Confirm</button>`
+                + (p.onCancel ? `<button class="filter-btn exclude game-squad-cancel-btn" type="button">Cancel</button>` : '');
+            boardFrontierShow(p.title, 'Choose ' + p.need + ' Pok\u00e9mon from your team to battle with. They are the only ones you can use. (' + p.chosen.size + ' of ' + p.need + ' chosen)', buttons);
+        }
+        function squadPickerClick(btn) {
+            const p = squadPick;
+            if (!p) return;
+            if (btn.classList.contains('game-squad-btn')) {
+                const uid = btn.dataset.uid;
+                if (p.chosen.has(uid)) p.chosen.delete(uid);
+                else if (p.chosen.size < p.need) p.chosen.add(uid);
+                renderSquadPicker();
+            } else if (btn.classList.contains('game-squad-confirm-btn')) {
+                if (p.chosen.size !== p.need) return;
+                squadPick = null;
+                battleSquad = { uids: Array.from(p.chosen), started: false };
+                closeFrontierOverlay();
+                p.onConfirm();
+            } else if (btn.classList.contains('game-squad-cancel-btn')) {
+                squadPick = null;
+                closeFrontierOverlay();
+                if (p.onCancel) p.onCancel();
+            }
+        }
+        // The other player called the challenge off while this one was still choosing.
+        function abandonSquadPick() {
+            if (squadPick) { squadPick = null; closeFrontierOverlay(); }
+            battleSquad = null;
         }
 
         // If a Pok\u00e9mon already in the Arena picks up an Overlay Card
@@ -40758,7 +40876,7 @@
                 // own current pick -- reselecting that one is a no-op.
                 const ineligible = isBattleIneligibleMember(member);
                 const badge = ineligible
-                    ? '<span class="game-battle-picker-item-badge">Overlay Card</span>'
+                    ? '<span class="game-battle-picker-item-badge">' + (member.overlayCardId ? 'Overlay Card' : 'Not Chosen') + '</span>'
                     : (index === battleDefenderMemberIndex
                         ? '<span class="game-battle-picker-item-badge">Defender</span>'
                         : '');
@@ -40851,7 +40969,7 @@
 
         function selectBattleAttacker(index) {
             if (isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) {
-                showBattleArenaNotice(BATTLE_OVERLAY_BLOCK_MESSAGE);
+                showBattleArenaNotice(battleIneligibleMessage((getActiveSaveData().team.members || [])[index]));
                 return;
             }
             confirmBattleSlotReplace('attacker', () => applyBattleAttackerSelection(index));
@@ -41291,7 +41409,7 @@
                 // individual is currently the Attacker instead.
                 const ineligible = isBattleIneligibleMember(member);
                 const badge = ineligible
-                    ? '<span class="game-battle-picker-item-badge">Overlay Card</span>'
+                    ? '<span class="game-battle-picker-item-badge">' + (member.overlayCardId ? 'Overlay Card' : 'Not Chosen') + '</span>'
                     : (index === battleAttackerMemberIndex
                         ? '<span class="game-battle-picker-item-badge">Attacker</span>'
                         : '');
@@ -41323,7 +41441,7 @@
 
         function selectBattleDefender(index) {
             if (isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) {
-                showBattleArenaNotice(BATTLE_OVERLAY_BLOCK_MESSAGE);
+                showBattleArenaNotice(battleIneligibleMessage((getActiveSaveData().team.members || [])[index]));
                 return;
             }
             confirmBattleSlotReplace('defender', () => applyBattleDefenderSelection(index));
@@ -50345,6 +50463,8 @@
                 }
                 return;
             }
+            const squadBtn = e.target.closest('.game-squad-btn, .game-squad-confirm-btn, .game-squad-cancel-btn');
+            if (squadBtn) { squadPickerClick(squadBtn); return; }
             const pvpRewardBtn = e.target.closest('.game-pvpreward-btn');
             if (pvpRewardBtn) { pvpRewardChoose(pvpRewardBtn.dataset.act); return; }
             const pvpBtn = e.target.closest('.game-pvpcard-btn');
@@ -50666,8 +50786,12 @@
             if (!isGameOfficiallyStarted()) { showGameToast('The Battle Arena unlocks once the host starts the game.'); return; }
             if (!(((getActiveSaveData().team && getActiveSaveData().team.members) || []).length)) { showGameToast('You have no Pok\u00e9mon on your team to Battle with.'); return; }
             if (boardPlayerArenaBusy()) return;
-            boardPvp = { partnerId, partnerName: name, incoming: false, phase: 'invited' };
-            boardPvpSend(partnerId, { type: 'board-pvp-invite', fromName: getOwnLobbyDisplayName(), anySpace: !!fromCard });
+            // A card with battleSquad (Secret Base): each player will choose that many Pok\u00e9mon before the battle.
+            const cardInfo = fromCard ? getActiveCardInfo() : null;
+            const squadCard = cardInfo && CARDS_BY_ID[cardInfo.cardId];
+            const squad = squadCard ? Math.max(0, parseInt(squadCard.battleSquad, 10) || 0) : 0;
+            boardPvp = { partnerId, partnerName: name, incoming: false, phase: 'invited', squad };
+            boardPvpSend(partnerId, { type: 'board-pvp-invite', fromName: getOwnLobbyDisplayName(), anySpace: !!fromCard, squad, cardId: squad ? cardInfo.cardId : undefined });
             boardPvpRender();
         }
 
@@ -50710,8 +50834,13 @@
         }
         // Host: every board-pvp-* message passes through here, from a Guest (with `from` set from its connection, never trusted
         // from the message) or from the Host's own player.
+        // Host: the squad-battle (Secret Base) challenge that is out or under way, { initiatorId, partnerId, cardId }. Its winner gets the
+        // card's own reward instead of the usual player-battle one -- see hostDeliverSecretBaseReward().
+        let hostSecretBase = null;
         function boardPvpRoute(msg) {
             if (msg.type === 'board-pvp-invite') {
+                hostSecretBase = (msg.squad && typeof msg.cardId === 'string' && CARDS_BY_ID[msg.cardId] && CARDS_BY_ID[msg.cardId].battleSquad)
+                    ? { initiatorId: msg.from, partnerId: msg.to, cardId: msg.cardId } : null;
                 const a = boardCtrl && boardCtrl.where(msg.from), b = boardCtrl && boardCtrl.where(msg.to);
                 if (!msg.anySpace && (boardBlackedSet.has(msg.from) || boardBlackedSet.has(msg.to))) { boardPvpBounce(msg, 'is blacked out'); return; }
                 if (!msg.anySpace && a && b && a !== b) { boardPvpBounce(msg, 'is no longer on your space'); return; } // anySpace: a Let's Fight! card, which isn't tied to a space
@@ -50729,12 +50858,14 @@
             // out, so a disconnect in between can still call the challenge off for the other player.
             if (msg.type === 'board-pvp-response' && msg.accepted) { boardPvpDeliver(msg); return; }
             // anything else (a decline, a cancel, the challenger's Pok\u00e9mon being out) ends it (only if it is the pairing they are in)
+            if (msg.type === 'board-pvp-cancel' || msg.type === 'board-pvp-response') hostSecretBase = null; // called off: no squad battle to reward
             if (boardPvpPairs.get(msg.from) === msg.to) { boardPvpPairs.delete(msg.from); boardPvpPairs.delete(msg.to); }
             boardPvpDeliver(msg);
         }
         function boardPvpPeerDropped(peerId) { // Host: a player left mid-challenge
             const partner = boardPvpPairs.get(peerId);
             boardPvpPairs.delete(peerId);
+            if (hostSecretBase && (hostSecretBase.initiatorId === peerId || hostSecretBase.partnerId === peerId)) hostSecretBase = null;
             if (!partner) return;
             boardPvpPairs.delete(partner);
             boardPvpDeliver({ type: 'board-pvp-cancel', to: partner, from: peerId, reason: 'disconnected' });
@@ -50746,14 +50877,14 @@
                     boardPvpSend(msg.from, { type: 'board-pvp-response', accepted: false, reason: 'is busy right now' });
                     return;
                 }
-                boardPvp = { partnerId: msg.from, partnerName: msg.fromName || boardPlayerName(msg.from), incoming: true, phase: 'invited' };
+                boardPvp = { partnerId: msg.from, partnerName: msg.fromName || boardPlayerName(msg.from), incoming: true, phase: 'invited', squad: Math.max(0, Math.min(6, parseInt(msg.squad, 10) || 0)) };
                 boardPvpRender();
             } else if (msg.type === 'board-pvp-response') {
                 if (!boardPvp || boardPvp.incoming || boardPvp.phase !== 'invited' || boardPvp.partnerId !== msg.from) return;
                 if (msg.accepted) { // step 2: the challenger goes to their Team Tracker to send a Pok\u00e9mon out first
                     boardPvp.phase = 'choosing';
                     boardPvpRender();
-                    boardPvpChoose();
+                    boardPvpStartChoosing();
                     return;
                 }
                 const p = boardPvp;
@@ -50766,11 +50897,11 @@
                 const p = boardPvp;
                 boardPvp = null;
                 boardPvpRender();
-                boardPvpDefend(p.partnerName);
+                boardPvpDefend(p.partnerName, p.squad);
             } else if (msg.type === 'board-pvp-cancel') {
                 if (!boardPvp || boardPvp.partnerId !== msg.from) return;
                 const p = boardPvp;
-                if (p.phase === 'choosing') boardPvpEndSendMode(); // they were mid-pick in the Team Tracker
+                if (p.phase === 'choosing') { abandonSquadPick(); boardPvpEndSendMode(); } // they were mid-pick in the Team Tracker
                 boardPvp = null;
                 boardPvpRender();
                 showGameToast(p.partnerName + ' ' + (msg.reason || 'withdrew the battle challenge') + '.');
@@ -50779,6 +50910,19 @@
         // The challenger, challenge accepted: the Team Tracker's send-to-battle mode aimed at the Attacker half (the same flow as the
         // Arena's Choose Pok\u00e9mon button). If it can't open -- no Pok\u00e9mon, a read-only save, another Team Tracker mode busy -- there is
         // nothing to wait for, so the challenge is called off rather than leaving the other player waiting.
+        // The challenger's next step once accepted: a squad battle (Secret Base) has them choose their Pok\u00e9mon first.
+        function boardPvpStartChoosing() {
+            const p = boardPvp;
+            if (!p) return;
+            if (!p.squad) { boardPvpChoose(); return; }
+            chooseBattleSquad(p.squad, 'Secret Base', () => { if (boardPvp === p) boardPvpChoose(); }, () => {
+                if (boardPvp !== p) return;
+                boardPvpSend(p.partnerId, { type: 'board-pvp-cancel', reason: 'called off the battle' });
+                boardPvp = null;
+                boardPvpRender();
+                showGameToast('You called off the battle with ' + p.partnerName + '.');
+            });
+        }
         function boardPvpChoose() {
             const p = boardPvp;
             if (!p) return;
@@ -50812,6 +50956,7 @@
             if (!p || p.incoming || p.phase !== 'choosing') return false;
             boardPvpSend(p.partnerId, { type: 'board-pvp-cancel', reason: 'called off the battle' });
             boardPvp = null;
+            battleSquad = null;
             boardPvpRender();
             showGameToast('You called off the battle with ' + p.partnerName + '.');
             return true;
@@ -50828,7 +50973,11 @@
         }
         // The other player, the challenger's Pok\u00e9mon now in the Arena: their own Team Tracker, aimed at the Defender half, so the
         // challenger's Pok\u00e9mon shows in the opponent preview under the banner.
-        function boardPvpDefend(partnerName) {
+        function boardPvpDefend(partnerName, squad) {
+            if (squad) { // Secret Base: choose the squad before choosing a Defender from it
+                chooseBattleSquad(squad, 'Secret Base', () => boardPvpDefend(partnerName, 0), null);
+                return;
+            }
             openGamePanel();
             const sent = getBattleSlotMember('attacker');
             const sentName = sent ? getBattleMemberDisplay(sent).name : '';
@@ -52378,6 +52527,8 @@
                 } else if (data.type === 'battle-arena-state') {
                     guestBattleArenaCache = data;
                     applyIncomingArenaState(data);
+                } else if (data.type === 'secret-base-reward' && typeof data.cardId === 'string') {
+                    applySecretBaseReward(data);
                 } else if (data.type === 'pvp-reward' || data.type === 'pvp-reward-empty') {
                     showPvpReward(data);
                 } else if (data.type === 'pvp-reward-note' && typeof data.text === 'string') {
@@ -53778,8 +53929,9 @@
                 if (teamSendToBattleModeActive) {
                     if (isActiveSaveReadOnly()) return;
                     if (teamSlot.dataset.filled !== 'true') return;
-                    if (teamSlot.dataset.hasOverlay === 'true') {
-                        showGameToast(BATTLE_OVERLAY_BLOCK_MESSAGE);
+                    const blockMember = (getActiveSaveData().team.members || [])[Number(teamSlot.dataset.index)];
+                    if (teamSlot.dataset.hasOverlay === 'true' || isBattleIneligibleMember(blockMember)) {
+                        showGameToast(battleIneligibleMessage(blockMember));
                         return;
                     }
                     if (teamSendToBattleFaintSlot) {
