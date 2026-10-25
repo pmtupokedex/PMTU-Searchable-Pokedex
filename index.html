@@ -23342,6 +23342,8 @@
                 if (outgoing.natureCardId) discardUnattachedCard(outgoing.natureCardId);
             }
             data.team.members[index] = teamReplacePendingMember;
+            fireOwedTeamDraws(teamReplacePendingMember);
+            settleSpawnNature(teamReplacePendingMember, index);
             teamReplacePendingMember = null;
             closeTeamReplaceConfirmOverlay();
             if (teamReplacePendingSourceInstanceId) {
@@ -25312,7 +25314,10 @@
         function attachStarterNature(cardId) {
             const data = getActiveSaveData();
             const starter = (data.team.members || [])[0];
-            if (starter && starter.natureCardId !== cardId) commitTeamMemberCard(0, 'nature', cardId);
+            if (starter && starter.natureCardId !== cardId) {
+                commitTeamMemberCard(0, 'nature', cardId);
+                runOnAttachEffects(0, cardId); // Pok\u00e9rus / Held Item on the starter
+            }
             data.starterNatureOwed = false;
             persistStarterData();
             closeStarterNatureOverlay();
@@ -27792,6 +27797,7 @@
             if (!st.rerolls) st.rerolls = { attacker: 0, defender: 0 };
             st.rerolls.attacker = 0;
             playMemberCry(next); // Host's device -- see the solo twin above
+            setTimeout(() => requestSpawnNature('trainer'), 0); // the next one in the line-up gets its Nature as it is sent out
             const message = `The Trainer sent out ${getBattleMemberDisplay(next).name || 'its next Pok\u00e9mon'}!`;
             showBattleArenaNotice(message);
             if (lobbyState.connections) lobbyState.connections.forEach(({ conn }) => { if (conn.open) conn.send({ type: 'battle-notice', reason: message }); });
@@ -29779,7 +29785,7 @@
             // A card that does something when it lands on a Pok\u00e9mon
             // (Egg Move) -- only when it actually became attached, not
             // when the Pok\u00e9mon was already carrying this same card.
-            if (member && previousCardId !== cardId) runOnAttachTopCardEffect(memberIndex, cardId);
+            if (member && previousCardId !== cardId) runOnAttachEffects(memberIndex, cardId);
             exitAttachFromHandMode();
         }
 
@@ -29817,6 +29823,55 @@
             return [deckName];
         }
 
+        // Everything that happens automatically when `cardId` lands on a
+        // Pok\u00e9mon (roster index, or 'wild' etc.): a Level bonus
+        // (onAttachLevelUp, Pok\u00e9rus) and/or a top-of-deck draw
+        // (onAttachTopCard, Egg Move). Callers only invoke this when the
+        // card actually became attached (not when the Pok\u00e9mon was
+        // already carrying it).
+        function runOnAttachEffects(memberIndex, cardId) {
+            runOnAttachLevelEffect(memberIndex, cardId);
+            runOnAttachTeamDrawEffect(memberIndex, cardId);
+            runOnAttachTopCardEffect(memberIndex, cardId);
+        }
+
+        // "onAttachLevelUp": N -- the Pok\u00e9mon the card lands on gains
+        // N Levels (capped at 6 like any Level change, and skipped for a
+        // Gym Leader's printed level -- see adjustTeamMemberLevel()).
+        // Virtual-decks saves only: on paper cards the player levels up
+        // by hand, same gate as every other on-attach effect.
+        function runOnAttachLevelEffect(memberIndex, cardId) {
+            const card = CARDS_BY_ID[cardId];
+            const amount = card ? parseInt(card.onAttachLevelUp, 10) : 0;
+            if (!(amount >= 1)) return;
+            if (!isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return;
+            const member = getTeamSlotMember(memberIndex);
+            if (!member || member.gymLeaderId) return;
+            const before = member.level || 0;
+            adjustTeamMemberLevel(memberIndex, amount);
+            if ((member.level || 0) > before) {
+                showGameToast(`${card.name} raised ${member.name || 'your Pok\u00e9mon'}\u2019s Level to ${member.level}.`);
+            }
+        }
+
+        // Sends the "draw from `decks` and attach it to this Pok\u00e9mon"
+        // request -- straight to the Host's own code when this device is
+        // the Host, over the connection when it's a guest. skipOneTime
+        // makes the Host reveal down the deck past any oneTime:'yes'
+        // card (see hostApplyDrawForAttach()).
+        function requestDrawForAttach(member, decks, sourceCardId, skipOneTime) {
+            const memberUid = ensureMemberUid(member);
+            if (lobbyState.role === 'guest') {
+                if (lobbyState.hostConn && lobbyState.hostConn.open) {
+                    lobbyState.hostConn.send({ type: 'deck-draw-attach', decks, memberUid, sourceCardId, skipOneTime: !!skipOneTime });
+                } else {
+                    showGameToast('Can\u2019t reach the Host right now \u2014 the top card wasn\u2019t drawn.');
+                }
+            } else {
+                hostApplyDrawForAttach('host', decks, memberUid, sourceCardId, !!skipOneTime);
+            }
+        }
+
         function runOnAttachTopCardEffect(memberIndex, cardId) {
             const spec = getCardOnAttachTopCard(CARDS_BY_ID[cardId]);
             if (!spec || spec.action !== 'attach') return;
@@ -29827,34 +29882,244 @@
             // (getTeamSlotMember() resolves both).
             const member = getTeamSlotMember(memberIndex);
             if (!member) return;
-            const memberUid = ensureMemberUid(member);
             const decks = getOnAttachDeckCandidates(spec.deck);
             if (!decks.length) return;
-            if (lobbyState.role === 'guest') {
-                if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                    lobbyState.hostConn.send({ type: 'deck-draw-attach', decks, memberUid, sourceCardId: cardId });
-                } else {
-                    showGameToast('Can\u2019t reach the Host right now \u2014 the top card wasn\u2019t drawn.');
-                }
-            } else {
-                hostApplyDrawForAttach('host', decks, memberUid, cardId);
+            requestDrawForAttach(member, decks, cardId, false);
+        }
+
+        // ---- "Resolve One-Time Effect" (Pok\u00e9rus, Shiny, Held Item, Egg Move) ----
+        //
+        // The one button every oneTime Nature card gets while it's
+        // equipped (virtual decks only). What it does is spelled out by
+        // the card's own cards.json field:
+        //   "oneTimeEffect": {
+        //     "attachTopCard": { "deck": "TM Deck" },                 (optional)
+        //     "replace": { "deck": "Nature Deck", "skipOneTime": true }, (optional)
+        //     "then": "permanent" | "shuffle" | "discard"
+        //   }
+        // Run in this order, after the card comes off its Pok\u00e9mon:
+        //   attachTopCard  the top card of that deck is attached to the
+        //                  same Pok\u00e9mon (its own slot -- a TM goes in
+        //                  Attach, replacing whatever was there).
+        //   replace        the Host reveals cards off the top of the
+        //                  deck until it finds one NOT tagged
+        //                  oneTime:'yes' (when skipOneTime), and that
+        //                  card is attached in the card's own slot. The
+        //                  oneTime cards passed over are shuffled back
+        //                  into the deck.
+        //   then           what happens to the resolved card itself:
+        //                  "permanent" -> this player's Permanent Cards
+        //                  (needs canPermanentFromAttach), "shuffle" ->
+        //                  the card's own shuffleDiscardPile/
+        //                  shuffleIntoDeck behavior, "discard" -> its
+        //                  deck's discard pile. It always goes last, so
+        //                  a reshuffle during the reveal can't deal the
+        //                  card itself back.
+        // A card with a oneTimeEffect shows this button INSTEAD of Send
+        // to Permanent / Shuffle Discards into Deck (those still work
+        // for any card that has the old fields but no oneTimeEffect).
+        // The draw-and-attach steps ride on the same Host round trip as
+        // hostApplyDrawForAttach()/finishDrawnCardAttach().
+        function getCardOneTimeEffect(card) {
+            const spec = card && card.oneTimeEffect;
+            if (!spec || typeof spec !== 'object') return null;
+            const deckSpec = o => (o && typeof o === 'object' && typeof o.deck === 'string') ? o : null;
+            const attach = deckSpec(spec.attachTopCard);
+            const replace = deckSpec(spec.replace);
+            return {
+                attachTopCard: attach ? { deck: attach.deck } : null,
+                replace: replace ? { deck: replace.deck, skipOneTime: replace.skipOneTime === true || replace.skipOneTime === 'yes' } : null,
+                then: (spec.then === 'permanent' || spec.then === 'shuffle') ? spec.then : 'discard'
+            };
+        }
+
+        function resolveEquippedOneTimeEffect(index, slot) {
+            if (index === null || (slot !== 'attach' && slot !== 'nature')) return;
+            if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
+            if (!isVirtualDecksEnabledForActiveSave()) return;
+            const member = getTeamSlotMember(index);
+            if (!member) return;
+            const cardId = slot === 'attach' ? member.attachCardId : member.natureCardId;
+            const card = cardId ? CARDS_BY_ID[cardId] : null;
+            const fx = getCardOneTimeEffect(card);
+            if (!fx) return;
+            if (fx.then === 'permanent' && !cardCanPermanentFromAttach(card)) return;
+            if (fx.then === 'shuffle' && !cardHasDiscardShuffle(card)) return;
+            if (lobbyState.role === 'guest' && !(lobbyState.hostConn && lobbyState.hostConn.open)) {
+                showGameToast('Can\u2019t reach the Host right now \u2014 try again in a moment.');
+                return;
             }
+            commitTeamMemberCard(index, slot, null);
+            if (fx.attachTopCard) {
+                const decks = getOnAttachDeckCandidates(fx.attachTopCard.deck);
+                if (decks.length) requestDrawForAttach(member, decks, cardId, false);
+            }
+            if (fx.replace) requestDrawForAttach(member, [fx.replace.deck], cardId, fx.replace.skipOneTime);
+            if (fx.then === 'permanent') requestPermanentFromAttach(cardId);
+            else if (fx.then === 'shuffle') requestShuffleDiscardsIntoDeck(cardId, false);
+            else discardUnattachedCard(cardId);
+            showGameToast(`${card.name} was resolved.`);
+        }
+
+        function resolveTeamCardsOverlayOneTimeEffect(slot) {
+            if (teamCardsOverlayIndex === null) return;
+            resolveEquippedOneTimeEffect(teamCardsOverlayIndex, slot);
+            renderTeamCardsOverlay();
+        }
+
+        function resolveTeamDetailOneTimeEffect(slot) {
+            if (teamDetailIndex === null) return;
+            resolveEquippedOneTimeEffect(teamDetailIndex, slot);
+            renderTeamDetailCardsSection();
+            renderTeamDetailHeader();
+            renderTeamDetailHpSection();
+            renderTeamDetailEvolutionSection();
+        }
+
+        // ---- Draw when the Pok\u00e9mon is on the team (Held Item) ----------
+        //
+        //   "drawOnJoinTeam": { "deck": "Item Deck" }
+        // When the card lands on a Pok\u00e9mon already on this player's
+        // roster, a card is drawn from that deck straight into their
+        // hand. When it lands on one that isn't on the roster yet (the
+        // Wild Pok\u00e9mon in the Arena, say), the draw is recorded on the
+        // Pok\u00e9mon itself (member.teamDrawsOwed) and paid out the moment
+        // that Pok\u00e9mon joins the team -- caught, added by an effect, or
+        // taken in a replace -- even if the card has been resolved and
+        // swapped for another Nature by then. See fireOwedTeamDraws().
+        function getCardDrawOnJoinTeam(card) {
+            const spec = card && card.drawOnJoinTeam;
+            return (spec && typeof spec === 'object' && typeof spec.deck === 'string') ? { deck: spec.deck } : null;
+        }
+
+        function drawForJoinedTeam(deckName, member) {
+            if (!getDeckToolList().includes(deckName)) return;
+            requestDrawCard(deckName);
+            showGameToast(`${member && member.name ? member.name : 'Your Pok\u00e9mon'} drew a card from the ${deckName}.`);
+        }
+
+        function runOnAttachTeamDrawEffect(memberIndex, cardId) {
+            const spec = getCardDrawOnJoinTeam(CARDS_BY_ID[cardId]);
+            if (!spec) return;
+            if (!isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return;
+            const member = getTeamSlotMember(memberIndex);
+            if (!member) return;
+            if (typeof memberIndex === 'number') {
+                drawForJoinedTeam(spec.deck, member);
+            } else {
+                if (!Array.isArray(member.teamDrawsOwed)) member.teamDrawsOwed = [];
+                member.teamDrawsOwed.push(spec.deck);
+                persistTeamSlotChange(memberIndex);
+            }
+        }
+
+        // Called the moment a Pok\u00e9mon lands on this player's roster.
+        function fireOwedTeamDraws(member) {
+            if (!member || !Array.isArray(member.teamDrawsOwed) || !member.teamDrawsOwed.length) return;
+            const owed = member.teamDrawsOwed;
+            delete member.teamDrawsOwed;
+            if (!isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return;
+            owed.forEach(deckName => drawForJoinedTeam(deckName, member));
+        }
+
+        // Held Item's owed draw is cancelled when the card comes off with
+        // Remove Card (as opposed to Resolve One-Time Effect) -- Remove
+        // is the "that was a mistake" button. Call BEFORE the card is
+        // unequipped so the change is saved with it.
+        function cancelOwedTeamDrawForCard(member, cardId) {
+            const spec = getCardDrawOnJoinTeam(CARDS_BY_ID[cardId]);
+            if (!spec || !member || !Array.isArray(member.teamDrawsOwed)) return;
+            const i = member.teamDrawsOwed.indexOf(spec.deck);
+            if (i >= 0) member.teamDrawsOwed.splice(i, 1);
+            if (!member.teamDrawsOwed.length) delete member.teamDrawsOwed;
+        }
+
+        // ---- A Nature for every Pok\u00e9mon that spawns ----------------
+        //
+        // With Use Natures AND Use Virtual Cards both on, every Pok\u00e9mon
+        // that spawns is dealt the top card of the Nature Deck, attached
+        // the same way any other draw-and-attach is (see
+        // hostApplyDrawForAttach()), and that card's on-attach effects
+        // run (Pok\u00e9rus' Level, Held Item's draw, ...). Spawns covered:
+        // a Wild Pok\u00e9mon sent to the Defender slot, an NPC Trainer's
+        // Pok\u00e9mon sent out (including the next one in the line-up), a
+        // Safari Zone / Contest Pok\u00e9mon placed in the Catch dialog,
+        // and every Pok\u00e9mon that joins the team without having been
+        // in the Arena first (Day Care, Egg, Fossil, pool gains, Wonder
+        // Trade...) -- except the very first Pok\u00e9mon, the starter,
+        // which gets its own pick of three (see attachStarterNature()).
+        // A Pok\u00e9mon that already carries a Nature (one played onto it
+        // from a hand, a caught Pok\u00e9mon keeping its own) never draws
+        // another, and a Gym Leader's Pok\u00e9mon never get one. A Wild
+        // Pok\u00e9mon sent back to the Arena is a brand new spawn, so it
+        // draws a fresh Nature (the old one went to the discard pile
+        // when it left).
+        function isSpawnNatureActive() {
+            return isNaturesEnabledForActiveSave() && isVirtualDecksEnabledForActiveSave()
+                && !isActiveSaveReadOnly() && getDeckToolList().includes('Nature Deck');
+        }
+
+        // memberIndex is anything getTeamSlotMember() understands.
+        function requestSpawnNature(memberIndex) {
+            if (!isSpawnNatureActive()) return;
+            const member = getTeamSlotMember(memberIndex);
+            if (!member || member.gymLeaderId || member.natureCardId) return;
+            requestDrawForAttach(member, ['Nature Deck'], null, false);
+        }
+
+        // For a Pok\u00e9mon that will land on the roster later: marks it,
+        // and settleSpawnNature() deals the Nature once it is there.
+        function markSpawnNature(member) {
+            if (member && isSpawnNatureActive() && !member.natureCardId && !member.gymLeaderId) member.spawnNatureOwed = true;
+            return member;
+        }
+
+        function settleSpawnNature(member, rosterIndex) {
+            if (!member || !member.spawnNatureOwed) return;
+            delete member.spawnNatureOwed;
+            setTimeout(() => requestSpawnNature(rosterIndex), 0);
+        }
+
+        // Host side of skipOneTime: draws until a card that isn't
+        // oneTime:'yes' turns up (null when the deck, reshuffle
+        // included, runs out). The passed-over cards are held aside
+        // while drawing -- so a reshuffle can't deal them straight back
+        // -- and only then shuffled back into the deck's draw pile.
+        function drawFromHostDeckSkippingOneTime(deckName) {
+            const skipped = [];
+            let found = null;
+            for (;;) {
+                const id = drawFromHostDeck(deckName);
+                if (id === null) break;
+                const c = CARDS_BY_ID[id];
+                if (c && c.oneTime === 'yes') { skipped.push(id); continue; }
+                found = id;
+                break;
+            }
+            if (skipped.length) {
+                const store = ensureHostDeckStore();
+                if (store && store[deckName]) {
+                    store[deckName].drawPile.push(...skipped);
+                    shuffleArray(store[deckName].drawPile);
+                }
+            }
+            return found;
         }
 
         // Host side: draws the top card of the first of `decks` that has
         // one, and hands it to whoever asked -- straight to the code that
         // attaches it for the Host's own player, or in a 'deck-draw-
         // attach-result' message for a guest. Never touches a hand.
-        function hostApplyDrawForAttach(peerKey, decks, memberUid, sourceCardId) {
+        function hostApplyDrawForAttach(peerKey, decks, memberUid, sourceCardId, skipOneTime) {
             if (!Array.isArray(decks)) return;
             const valid = getDeckToolList();
             let drawnId = null, drawnDeck = null;
             for (const deckName of decks) {
                 if (typeof deckName !== 'string' || !valid.includes(deckName)) continue;
-                const id = drawFromHostDeck(deckName);
+                const id = skipOneTime ? drawFromHostDeckSkippingOneTime(deckName) : drawFromHostDeck(deckName);
                 if (id !== null) { drawnId = id; drawnDeck = deckName; break; }
             }
-            if (drawnId !== null) {
+            if (drawnId !== null || skipOneTime) {
                 broadcastDeckState();
                 renderDecksScreen();
             }
@@ -29878,7 +30143,7 @@
         function finishDrawnCardAttach(drawnId, memberUid, sourceCardId) {
             const source = CARDS_BY_ID[sourceCardId];
             if (drawnId === null || drawnId === undefined) {
-                showGameToast(`${source ? source.name : 'The card'} found nothing \u2014 that deck is empty.`);
+                showGameToast(source ? `${source.name} found nothing \u2014 that deck is empty.` : 'The Nature Deck is empty \u2014 no Nature was drawn.');
                 return;
             }
             const card = CARDS_BY_ID[drawnId];
@@ -29903,10 +30168,22 @@
                 return;
             }
             const member = getTeamSlotMember(index);
-            const previousCardId = member.attachCardId;
-            commitTeamMemberCard(index, 'attach', drawnId);
+            // The drawn card goes into its own slot (a TM into Attach, a
+            // Nature card into Nature -- see getAttachSlotForCard()).
+            const slot = getAttachSlotForCard(drawnId);
+            // A Nature card that can't be attached (canAttach: "no") has
+            // nowhere to go -- discard it rather than force it on.
+            if (slot === 'nature' && card.canAttach !== 'yes') {
+                discardUnattachedCard(drawnId);
+                showGameToast(`${card.name} was drawn, but it can\u2019t be attached \u2014 it went to the discard pile.`);
+                return;
+            }
+            const previousCardId = slot === 'nature' ? member.natureCardId : member.attachCardId;
+            commitTeamMemberCard(index, slot, drawnId);
             if (previousCardId && previousCardId !== drawnId) discardUnattachedCard(previousCardId);
             showGameToast(`${card.name} was attached to ${member.name || 'your Pok\u00e9mon'}.`);
+            // Same on-attach effects any other attach of this card has.
+            if (previousCardId !== drawnId) runOnAttachEffects(index, drawnId);
             if (teamCardsOverlayIndex === index) renderTeamCardsOverlay();
             if (teamDetailIndex === index) {
                 renderTeamDetailCardsSection();
@@ -32318,8 +32595,9 @@
                             </div>
                         </div>
                     ` : ''}
-                    ${(cardHasDiscardShuffle(card) && isVirtualDecksEnabledForActiveSave()) ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-shuffle-discards-btn" type="button" data-slot="${slot}" title="Shuffles this card and the ${escapeHtml(card.shuffleDiscardPile)} discard pile into the ${escapeHtml(card.shuffleIntoDeck)}." ${isActiveSaveReadOnly() ? 'disabled' : ''}>Shuffle Discards into Deck</button>` : ''}
-                    ${(cardCanPermanentFromAttach(card) && isVirtualDecksEnabledForActiveSave()) ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-to-permanent-btn" type="button" data-slot="${slot}">Send to Permanent</button>` : ''}
+                    ${(getCardOneTimeEffect(card) && isVirtualDecksEnabledForActiveSave()) ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-one-time-btn" type="button" data-slot="${slot}" ${isActiveSaveReadOnly() ? 'disabled' : ''}>Resolve One-Time Effect</button>` : ''}
+                    ${(cardHasDiscardShuffle(card) && !getCardOneTimeEffect(card) && isVirtualDecksEnabledForActiveSave()) ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-shuffle-discards-btn" type="button" data-slot="${slot}" title="Shuffles this card and the ${escapeHtml(card.shuffleDiscardPile)} discard pile into the ${escapeHtml(card.shuffleIntoDeck)}." ${isActiveSaveReadOnly() ? 'disabled' : ''}>Shuffle Discards into Deck</button>` : ''}
+                    ${(cardCanPermanentFromAttach(card) && !getCardOneTimeEffect(card) && isVirtualDecksEnabledForActiveSave()) ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-to-permanent-btn" type="button" data-slot="${slot}">Send to Permanent</button>` : ''}
                     <button class="filter-btn exclude game-team-cards-card-btn game-team-cards-remove-btn" type="button" data-slot="${slot}">Remove Card</button>
                 `;
                 return;
@@ -32475,6 +32753,7 @@
             if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             const member = getTeamSlotMember(teamCardsOverlayIndex);
             const previousCardId = member ? (slot === 'attach' ? member.attachCardId : member.natureCardId) : null;
+            if (previousCardId && slot === 'nature') cancelOwedTeamDrawForCard(member, previousCardId);
             commitTeamMemberCard(teamCardsOverlayIndex, slot, null);
             if (previousCardId && isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(previousCardId);
             renderTeamCardsOverlay();
@@ -34074,6 +34353,7 @@
             if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             const member = (getActiveSaveData().team.members || [])[teamDetailIndex];
             const previousCardId = member ? (slot === 'attach' ? member.attachCardId : member.natureCardId) : null;
+            if (previousCardId && slot === 'nature') cancelOwedTeamDrawForCard(member, previousCardId);
             commitTeamMemberCard(teamDetailIndex, slot, null);
             if (previousCardId && isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(previousCardId);
             renderTeamDetailCardsSection();
@@ -34307,7 +34587,7 @@
             showGameToast(`${card.name} was attached to ${member.name || 'your Pok\u00e9mon'}.`);
             // Same on-attach effect any other attach of this card has
             // (Egg Move) -- see commitAttachFromHandToMember().
-            if (previousCardId !== drawnId) runOnAttachTopCardEffect(index, drawnId);
+            if (previousCardId !== drawnId) runOnAttachEffects(index, drawnId);
             if (teamCardsOverlayIndex === index) renderTeamCardsOverlay();
             if (teamDetailIndex === index) {
                 renderTeamDetailCardsSection();
@@ -35969,7 +36249,7 @@
                 if (!name) { showGameToast('There are no ' + color + ' Pok\u00e9mon left in the pool.'); return; }
                 const entry = POKEMON_BY_NAME[name];
                 if (!entry) { boardSafariSettle(name, 'returned'); showGameToast('Could not find ' + name + ' in the Pok\u00e9mon data.'); return; }
-                const member = buildWildPokemonMember({ dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false });
+                const member = markSpawnNature(buildWildPokemonMember({ dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false }));
                 boardSafariSettle(name, 'caught'); // the token leaves the pool and joins the team
                 applyCaughtWildMember(member);
                 openGamePanel();
@@ -36159,7 +36439,7 @@
             good.forEach(r => {
                 const e = POKEMON_BY_NAME[r.name];
                 boardSafariSettle(r.name, 'caught');
-                applyCaughtWildMember(buildWildPokemonMember({ dex: (e.tags && e.tags[0]) || '', name: e.name, src: e.src, shinysrc: e.shinysrc || '', shiny: false }));
+                applyCaughtWildMember(markSpawnNature(buildWildPokemonMember({ dex: (e.tags && e.tags[0]) || '', name: e.name, src: e.src, shinysrc: e.shinysrc || '', shiny: false })));
                 joined.push(e.name);
             });
             boardReportCaught(true); // the traded-in tokens go back to their pools
@@ -36549,7 +36829,7 @@
                     // same effect as attaching it to one already there
                     // (see commitAttachFromHandToMember()). A no-op for
                     // every card without an onAttachTopCard.
-                    runOnAttachTopCardEffect('wild', attachContext.cardId);
+                    runOnAttachEffects('wild', attachContext.cardId);
                 }
             });
         }
@@ -36719,8 +36999,11 @@
             // before the push below so the check isn't fooled by the
             // member that's about to land in it.
             const wasRosterEmpty = data.team.members.length === 0;
+            if (!wasRosterEmpty) markSpawnNature(member); // the starter gets a pick of three instead (see attachStarterNature())
             if (data.team.members.length < 6) {
                 data.team.members.push(member);
+                fireOwedTeamDraws(member);
+                settleSpawnNature(member, data.team.members.length - 1);
                 if (activeSaveSlot !== null) persistGameSaves();
                 else if (activeGuestSaveId !== null) persistGameGuestSaves();
                 markUnsavedProgressChanged();
@@ -37213,6 +37496,7 @@
             // Once a Lobby session exists this sets the ownerless Wild
             // Pokémon in the ONE shared Defender half. A no-op solo.
             requestBattleSetSlot('defender', member, true);
+            setTimeout(() => requestSpawnNature('wild'), 0); // a new spawn gets a Nature (see requestSpawnNature())
         }
 
         // The one authoritative way to point Attacker at an NPC Trainer's
@@ -37243,6 +37527,7 @@
                 battleTrainerTotal = 1 + battleTrainerQueue.length;
             }
             requestBattleSetSlot('attacker', member, true, true, Array.isArray(queue) ? queue : undefined);
+            setTimeout(() => requestSpawnNature('trainer'), 0); // a new spawn gets a Nature (see requestSpawnNature())
         }
 
         // Whether picking a new Attacker from whatever team is active
@@ -38573,6 +38858,7 @@
             battleRerollsUsed.attacker = 0;
             playMemberCry(next);
             showBattleArenaNotice(`The Trainer sent out ${getBattleMemberDisplay(next).name || 'its next Pok\u00e9mon'}!`);
+            setTimeout(() => requestSpawnNature('trainer'), 0); // the next one in the line-up gets its Nature as it is sent out
             return true;
         }
 
@@ -41070,6 +41356,8 @@
             const wasRosterEmpty = data.team.members.length === 0;
             if (data.team.members.length < 6) {
                 data.team.members.push(member);
+                fireOwedTeamDraws(member);
+                settleSpawnNature(member, data.team.members.length - 1);
                 if (activeSaveSlot !== null) persistGameSaves();
                 else if (activeGuestSaveId !== null) persistGameGuestSaves();
                 markUnsavedProgressChanged();
@@ -46314,7 +46602,7 @@
                 } else if (data.type === 'deck-draw-attach' && Array.isArray(data.decks) && typeof data.memberUid === 'string') {
                     // An on-attach top-card effect (Egg Move) -- see
                     // hostApplyDrawForAttach().
-                    hostApplyDrawForAttach(conn.peer, data.decks.slice(0, 3), data.memberUid, data.sourceCardId);
+                    hostApplyDrawForAttach(conn.peer, data.decks.slice(0, 3), data.memberUid, data.sourceCardId, data.skipOneTime === true);
                 } else if (data.type === 'deck-draw-nature-attach' && typeof data.memberUid === 'string') {
                     // The Pok\u00e9mon panels' own Attach Nature Card button
                     // (draw half) -- see hostApplyDrawNatureAttach().
@@ -49773,6 +50061,7 @@
             openGamePanel();
             setGameScreen('battle');
             showCatchOverlay();
+            setTimeout(() => requestSpawnNature('safari'), 0); // a Safari Zone / Contest Pok\u00e9mon gets a Nature as it is placed in the Catch dialog
         }
         document.getElementById('game-safari-overlay').addEventListener('click', (e) => {
             const tok = e.target.closest('.game-safari-token');
@@ -51845,7 +52134,7 @@
                     // just won't be 'yes' for those.
                     if (typeof data.deck === 'string') {
                         const card = CARDS_BY_ID[data.cardId];
-                        if (card && card.oneTime === 'yes') {
+                        if (card && card.oneTime === 'yes' && DECK_GAIN_REWARD_MENU[data.deck]) {
                             const claims = getLocalOneTimeClaims(data.deck);
                             if (!claims.includes(data.cardId)) claims.push(data.cardId);
                             persistLocalOneTimeClaims();
@@ -54160,6 +54449,11 @@
                 sendTeamCardsOverlayCardToPermanent(cardToPermanentBtn.dataset.slot);
                 return;
             }
+            const cardOneTimeBtn = e.target.closest('.game-team-cards-one-time-btn');
+            if (cardOneTimeBtn) {
+                resolveTeamCardsOverlayOneTimeEffect(cardOneTimeBtn.dataset.slot);
+                return;
+            }
             if (e.target.closest('.game-team-cards-nature-attach-btn')) {
                 attachNatureCardFromOverlay();
                 return;
@@ -55126,6 +55420,11 @@
             const cardToPermanentBtn = e.target.closest('.game-team-cards-to-permanent-btn');
             if (cardToPermanentBtn) {
                 sendTeamDetailCardToPermanent(cardToPermanentBtn.dataset.slot);
+                return;
+            }
+            const cardOneTimeBtn = e.target.closest('.game-team-cards-one-time-btn');
+            if (cardOneTimeBtn) {
+                resolveTeamDetailOneTimeEffect(cardOneTimeBtn.dataset.slot);
                 return;
             }
             if (e.target.closest('.game-team-cards-nature-attach-btn')) {
