@@ -30351,9 +30351,19 @@
         // target at all right now; the player needs to Discard the
         // existing one (see requestOverlayDiscard()) before placing a
         // new one.
+        // An Overlay Card can't go on a Pok\u00e9mon if that Pok\u00e9mon is the team's last one that's neither Fainted nor already carrying
+        // an Overlay Card (the same "usable" test boardTeamBlackedOut() uses) -- that would black the player out.
+        function overlayWouldLeaveNoUsable(memberIndex) {
+            const members = (getActiveSaveData().team.members || []).filter(m => m);
+            const target = (getActiveSaveData().team.members || [])[memberIndex];
+            const usable = m => !m.fainted && !m.overlayCardId;
+            return !!target && usable(target) && members.filter(usable).length === 1;
+        }
+        const OVERLAY_LAST_USABLE_MESSAGE = 'That\u2019s your last Pok\u00e9mon that isn\u2019t Fainted or under an Overlay Card, so it can\u2019t take this one.';
         function performOverlayFromActiveCardToSlot(memberIndex) {
             const member = (getActiveSaveData().team.members || [])[memberIndex];
             if (!member || member.overlayCardId) return;
+            if (overlayWouldLeaveNoUsable(memberIndex)) { showGameToast(OVERLAY_LAST_USABLE_MESSAGE); return; } // the card stays pending: pick another Pok\u00e9mon or cancel
             commitOverlayToMember(memberIndex);
         }
 
@@ -34470,6 +34480,7 @@
             if (slot === 'overlay') {
                 const member = (getActiveSaveData().team.members || [])[teamDetailIndex];
                 if (!member || member.overlayCardId) return;
+                if (overlayWouldLeaveNoUsable(teamDetailIndex)) { showGameToast(OVERLAY_LAST_USABLE_MESSAGE); return; }
                 member.overlayCardId = cardId;
                 member.overlayCounter = getDefaultOverlayCounter(CARDS_BY_ID[cardId]);
                 if (activeSaveSlot !== null) persistGameSaves();
