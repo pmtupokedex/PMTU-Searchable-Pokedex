@@ -15594,6 +15594,8 @@
         /* Blimp Ride: confirms the move is over. The roll box itself ignores the pointer, this button does not. */
         #board-blimp-done-btn { pointer-events: auto; margin: 8px 0 0; }
         #board-blimp-done-btn[hidden] { display: none; }
+        #board-roll-cancel-btn { pointer-events: auto; margin: 6px 0 0; }
+        #board-roll-cancel-btn[hidden] { display: none; }
         /* The step count and the roll sit in #board-roll-top, which adds no box of its own (display: contents) except during a Blimp Ride move:
            then the row stacks it above the button, and the button is centered in the dark row, so it stays put when the step count appears.
            The numbers keep the side they always had (right; left in the top-left corner; centered in the vertical layout). */
@@ -18863,7 +18865,7 @@
         <div id="game-board-frame">
             <div id="game-board-mount"></div>
             <div id="board-roll-controls" data-actbar-avoid="soft">
-                <div id="board-roll-row"><div id="board-roll-top"><span id="board-walk-count" aria-hidden="true" title="Spaces in the move so far"></span><div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div></div><button class="filter-btn include" id="board-blimp-done-btn" type="button" hidden>Done Moving</button></div>
+                <div id="board-roll-row"><div id="board-roll-top"><span id="board-walk-count" aria-hidden="true" title="Spaces in the move so far"></span><div id="board-roll-display" role="status" aria-live="polite"><span id="board-roll-sr"></span><span id="board-roll-num"></span><span id="board-roll-note"></span></div></div><button class="filter-btn include" id="board-blimp-done-btn" type="button" hidden>Done Moving</button><button class="filter-btn exclude" id="board-roll-cancel-btn" type="button" hidden title="Take the roll back (only before the marker has moved). Rolling again this turn gives the same number.">Cancel Roll</button></div>
             </div>
             <div id="board-ability-bar" role="group" aria-label="Movement abilities" data-actbar-avoid></div>
             <div id="board-jump-overlay" hidden>
@@ -31062,6 +31064,49 @@
             document.getElementById('game-note-color-overlay').classList.remove('visible');
         }
 
+        // ---- Space-color detection (reusable) ----
+        // detectSpaceColor() -> the color of the space this player's marker is standing on, or null when that can't be told: no virtual map
+        // (virtual cards only, or a TV Table / Hybrid host whose map is display-only), the marker isn't on the board yet, the space has no
+        // color (a City), or its color isn't one the caller can use. allowed: the colors the caller accepts (default: the swatch picker's own,
+        // NOTE_COLORS -- pass e.g. BOARD_FRONTIER_COLORS' ids to accept the orange Legendary space too).
+        // chooseSpaceColor(purpose, cardName) -> what a card that needs "the space's color" calls instead of openNoteColorPicker(purpose):
+        // a detected color is used straight away (same result as tapping that swatch, so purpose works exactly as it does for the picker --
+        // see noteColorChosen()); if nothing can be detected the swatch picker opens as before.
+        function detectSpaceColor(allowed) {
+            try {
+                if (!boardCtrl || !boardCtrl.spaceOf || !boardCtrl.spaceColor) return null;
+                const me = boardMyPlayer();
+                const sp = me && boardCtrl.spaceOf(me.id);
+                if (!sp) return null;
+                const color = String(boardCtrl.spaceColor(sp.id) || '').toLowerCase();
+                return (allowed || NOTE_COLORS).includes(color) ? color : null;
+            } catch (e) {
+                return null; // the board isn't built yet / was just torn down: fall back to asking
+            }
+        }
+        function chooseSpaceColor(purpose, cardName) {
+            const color = detectSpaceColor();
+            if (!color) { openNoteColorPicker(purpose); return; }
+            showGameToast((cardName || 'This card') + ': you\u2019re on a ' + color.charAt(0).toUpperCase() + color.slice(1) + ' space.');
+            noteColorChosen(purpose, color);
+        }
+        // A color has been settled on, by a swatch tap or by detectSpaceColor(): hands it to whatever opened the picker.
+        function noteColorChosen(purpose, color) {
+            if (purpose && purpose.swapUid) {
+                swapColorChosen(purpose.swapUid, color);
+            } else if (purpose && purpose.gainCardId) {
+                cardPoolGain(purpose.gainCardId, color);
+            } else if (purpose && purpose.trainerPoolCardId) {
+                startTrainerBattleFromPool(purpose.trainerPoolCardId, color);
+            } else if (purpose && purpose.trainerCardId) {
+                startTrainerBattleCardPick(purpose.trainerCardId, color);
+            } else if (purpose && purpose.rivalCardId) {
+                startRivalBattleFromCard(purpose.rivalCardId, color);
+            } else {
+                requestActiveCardPermanent(color);
+            }
+        }
+
         // Which deck's pile is currently shown in
         // #game-discard-viewer-overlay -- null while it's closed. Kept
         // as its own variable (rather than reading the overlay's own
@@ -32330,6 +32375,7 @@
             if (max !== null) member.hp = max;
             persistTeamSlotChange(index);
             reportBattleFaint(member, true, index === 'wild' || index === 'trainer');
+            if (typeof index === 'number') boardRevivePickRevived(member); // a start-of-turn revive pick counts it, however it was done
         }
 
         // Yes on the revive confirm routes here -- just closes the
@@ -36367,12 +36413,40 @@
             const done = document.getElementById('board-blimp-done-btn'), row = document.getElementById('board-roll-row');
             if (done) done.hidden = !on;
             if (row) row.classList.toggle('blimp-on', !!on);
+            boardRollCancelSync();
+        }
+        // Cancel Roll shows while the turn's regular move is open and the marker hasn't gone anywhere (no net steps).
+        function boardRollCancelSync() {
+            const btn = document.getElementById('board-roll-cancel-btn');
+            if (!btn) return;
+            let show = false;
+            if (boardBlimp && boardMoveGated()) {
+                const w = boardMoveState().window;
+                show = !!(w && w.type === 'regular' && usesVirtualDiceForActiveSave() && !boardWindowRoute(w).length);
+            }
+            if (btn.hidden === show) btn.hidden = !show;
+        }
+        // The roll was a misclick: the move isn't spent and the number stays on record, so the next Roll this turn gives it again.
+        function boardRollCancel() {
+            if (!boardMoveGated() || !boardBlimp) return;
+            const st = boardMoveState(), w = st.window;
+            if (!w || w.type !== 'regular' || boardWindowRoute(w).length) return;
+            st.window = null;
+            upkeepPersist();
+            boardBlimp = null;
+            boardBlimpShowDone(false);
+            boardWalkCount(null);
+            const me = boardMyPlayer();
+            if (me) boardAnnounceRollSettled(me); // the number on screen winds down for everyone
+            showGameToast('Roll cancelled. Your move is still unused \u2014 rolling again this turn gives the same result.');
         }
         // The move is over (Done Moving, or the turn ended): landing prompts work as normal again and the roll winds down.
         function boardBlimpFinish() {
             if (!boardBlimp) return;
             boardBlimp = null;
             boardBlimpShowDone(false);
+            const wc = document.getElementById('board-walk-count');
+            if (wc && wc.classList.contains('visible') && wc.textContent) boardWalkCount(parseInt(wc.textContent, 10), true); // the total fades like a die
             const me = boardMyPlayer();
             if (me) boardAnnounceRollSettled(me);
         }
@@ -36383,10 +36457,17 @@
         // open, landing prompts are held back (the same hold a Blimp Ride always had), and Done Moving (or ending the turn) closes it and
         // brings up the prompt for the space the marker finished on. A Blimp Ride opens a window of its own on top of that, which is why a
         // turn can hold two moves. With a physical Movement Die the first walk of the turn opens the window by itself.
-        // The state lives in the save (data.moveState = { turn, regularUsed, window: { type: 'regular' | 'blimp', startId, visited: [space ids walked] } }), keyed by this
+        // The state lives in the save (data.moveState = { turn, regularUsed, window: { type: 'regular' | 'blimp', startId, route: [the spaces from startId to where the marker is now] }, roll: { value, raw, penalty } }), keyed by this
         // player's own turn count, so a reload mid-turn picks up where it was and a new turn starts clean.
         // A move counts for "moves to a new space" upkeep (Pokémon Egg) when its window closes on a different space than it opened on.
         // Stay / Dig / Fly / Teleport use up the regular move but never count as moving. Without turns running none of this applies.
+        // A move window is ONE move however many times the marker is picked up: putting it down is only a checkpoint, and the move is settled
+        // by Done Moving. window.route is the net path from where the window opened (see boardRouteApply()): stepping back onto the space
+        // the marker just came from takes that step back (the step count goes down), anything else adds a step (so a loop in the map can be
+        // walked round). The step count shown, the Cities passed through (selectable as Current Home), the colors walked (upkeep) and whether
+        // it counted as a move all come from that route. Roll: a roll taken back with Cancel Roll (only while the marker hasn't moved) leaves the
+        // move unspent, and rolling again that turn shows the stored result (window.roll) so it can't be used to re-roll.
+        // Rolling and the movement abilities are only for the player's own turn.
                 function boardMoveGated() { return !!(turnView && upkeepIsMyTurn() && !isActiveSaveReadOnly() && boardMyPlayer()); }
         function boardMoveState() {
             const data = getActiveSaveData(), n = upkeepMyTurnNumber();
@@ -36395,12 +36476,31 @@
             return data.moveState;
         }
         function boardMoveWindowOpen() { return !!boardMoveState().window; }
+        // The net path of an open move (windows saved before routes existed carried `visited`, a plain list of everything walked).
+        function boardWindowRoute(w) { return Array.isArray(w && w.route) ? w.route : (w && Array.isArray(w.visited) ? w.visited : []); }
+        // Adds a walked path (path[0] = where the marker was picked up) to a route: a step back onto the space just left takes that step off
+        // again, any other step is added. startId = where the window opened.
+        function boardRouteApply(route, startId, path) {
+            (path || []).slice(1).forEach(id => {
+                const back = route.length >= 2 ? route[route.length - 2] : startId;
+                if (route.length && id === back) route.pop(); else route.push(id);
+            });
+        }
+        // The step count to show for a move: the open window's route, plus the path being planned with the marker in hand (null = no window).
+        function boardWalkNet(path) {
+            const w = boardMoveGated() ? boardMoveState().window : null;
+            if (!w) return null;
+            const route = boardWindowRoute(w).slice();
+            if (path && path.length > 1) boardRouteApply(route, w.startId, path);
+            return route.length;
+        }
+        function boardOffTurn() { return !!(turnView && !isActiveSaveReadOnly() && boardMyPlayer() && !upkeepIsMyTurn()); }
         // True while this turn's regular move hasn't been used at all (no roll, no Stay / ability).
         function boardMoveIdleThisTurn() { if (!boardMoveGated()) return false; const st = boardMoveState(); return !st.window && !st.regularUsed; }
         function boardMoveOpen(type, cardId, startId) {
             if (boardMoveGated()) {
                 const me = boardMyPlayer(), sp = me && boardCtrl && boardCtrl.spaceOf ? boardCtrl.spaceOf(me.id) : null;
-                boardMoveState().window = { type, startId: startId || (sp ? sp.id : null) };
+                boardMoveState().window = { type, startId: startId || (sp ? sp.id : null), route: [] };
                 upkeepPersist();
             }
             boardBlimp = { cardId: cardId || type };
@@ -36424,6 +36524,7 @@
         }
         // May a Roll / Stay / Dig / Fly / Teleport be used now? One per turn, and not while a move is still open.
         function boardMoveActionGuard() {
+            if (boardOffTurn()) { showGameToast('You can only roll the Movement Die or use a movement ability on your own turn.'); return false; }
             if (!boardMoveGated()) return true;
             const st = boardMoveState();
             if (st.window) { showGameToast('Press Done Moving before using another movement action.'); return false; }
@@ -36449,13 +36550,19 @@
                 upkeepPersist();
             }
             const me = boardMyPlayer(), sp = me && boardCtrl && boardCtrl.spaceOf ? boardCtrl.spaceOf(me.id) : null;
+            // The net route of the move. If the marker ended somewhere the route never heard of (a jump), that space is its end.
+            const route = w ? boardWindowRoute(w).slice() : [];
+            if (w && sp && w.startId && (route.length ? route[route.length - 1] : w.startId) !== sp.id) route.push(sp.id);
             // Moved = it ended somewhere else, or it left and came back (at least one other space walked on the way).
-            const moved = !!(w && sp && w.startId && (sp.id !== w.startId || (w.visited || []).some(id => id !== w.startId)));
+            const moved = !!(w && sp && w.startId && (sp.id !== w.startId || route.some(id => id !== w.startId)));
+            // Cities the move went through (not the one it ends on, which the prompt offers anyway): they can be chosen as Current Home.
+            const cityIds = new Set(boardCtrl && boardCtrl.cities ? boardCtrl.cities().map(c => c.id) : []);
+            const passed = sp ? [...new Set(route.slice(0, -1).filter(id => cityIds.has(id) && id !== sp.id))] : [];
             boardBlimpFinish();
             // Only the turn's regular move shows the landing prompt (the Actions box); a Blimp Ride never does.
-            if (!atTurnEnd && moved && w.type === 'regular') boardRequestLanding();
+            if (!atTurnEnd && moved && w.type === 'regular') boardRequestLanding(passed);
             if (!gated || !w) return [];
-            const colors = [...new Set((w.visited || []).map(id => boardCtrl && boardCtrl.spaceColor ? boardCtrl.spaceColor(id) : null).filter(Boolean))];
+            const colors = [...new Set(route.map(id => boardCtrl && boardCtrl.spaceColor ? boardCtrl.spaceColor(id) : null).filter(Boolean))];
             return upkeepOnMoveEnd(moved, colors);
         }
 
@@ -41808,10 +41915,15 @@
             // A catch ends the battle: hide the moves and recall both
             // halves before the caught Pokémon lands on the roster.
             if (lobbyState.role === null) endBattle();
+            // In a Lobby a Guest's catch is confirmed by the Host, so this runs AFTER the Catch dialog has already shown its
+            // "Gotcha!" result (see resolveCatchAttempt()). Leaving the Battle screen drops a resolved attempt and hides the
+            // dialog, so it is put back afterwards, on top of the Team screen -- which is how a solo catch ends up too.
+            const shownResult = (catchAttempt && catchAttempt.resolved === 'caught' && !catchAttempt.safari) ? catchAttempt : null;
             applyCaughtWildMember(member);
             openGamePanel();
             setGameScreen('team');
             renderTeamGrid();
+            if (shownResult && !catchAttempt) { catchAttempt = shownResult; showCatchOverlay(); }
         }
 
         // "Catch This Pokémon" -- hands battleWildPokemon off to Team
@@ -46965,7 +47077,7 @@
                 } else if (data.type === 'board-reroll') {
                     boardHandleReroll(conn.peer);
                 } else if (data.type === 'board-stay') {
-                    boardHandleStay(conn.peer);
+                    boardHandleStay(conn.peer, data);
                 } else if (data.type === 'board-jump' && typeof data.to === 'string') {
                     boardHandleJumpFromGuest(conn.peer, data);
                 } else if (data.type === 'board-roll-placed') {
@@ -48555,7 +48667,8 @@
             const show = !!turnView;
             if (b.hidden === show) b.hidden = !show;
             if (!show) return;
-            const can = turnsCanEnd(), tip = can ? 'End Turn' : 'End Turn \u2014 It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.';
+            const owing = boardBlackoutDiscardPending() && upkeepIsMyTurn();
+            const can = turnsCanEnd() && !owing, tip = owing ? 'End Turn \u2014 discard half your hand first.' : can ? 'End Turn' : 'End Turn \u2014 It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.';
             if (b.classList.contains('locked') === can) b.classList.toggle('locked', !can);
             if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', tip); }
             b.setAttribute('aria-disabled', can ? 'false' : 'true');
@@ -48563,6 +48676,7 @@
         function turnsEndClick() {
             if (!turnView) return;
             if (!turnsCanEnd()) { showGameToast('It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.'); return; }
+            if (boardBlackoutDiscardPending()) { showGameToast('Blacked out: discard half of your hand (rounded up) before your turn can end.'); return; }
             const mine = turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host');
             boardAskJump({
                 title: 'End your turn?',
@@ -48574,6 +48688,7 @@
         // Ending a turn first gives every card with turn-end upkeep its moment (see upkeepBeginTurnEnd()); the turn really ends once
         // the player has been through each of them.
         function turnsEndNow() {
+            if (boardBlackoutDiscardPending()) { showGameToast('Blacked out: discard half of your hand (rounded up) before your turn can end.'); return; }
             const extra = (boardBlimp && upkeepIsMyTurn()) ? boardMoveDone(true) : []; // a move window still open ends with the turn, and counts
             if (upkeepBeginTurnEnd(turnsEndNowFinal, extra)) return;
             turnsEndNowFinal();
@@ -48865,6 +48980,7 @@
                 if (a.id === 'roll') why = null;
                 else if (a.id === 'stay') why = boardOnCitySpace() ? null : BOARD_STAY_MESSAGE;
                 else { try { why = boardGateCheck({ type: 'ability', value: a.id }); } catch (e) { why = 'Not available.'; } }
+                if (!why && a.id !== 'surf' && boardOffTurn()) why = 'Wait for your turn.'; // Roll and the movement abilities are for your own turn
                 const locked = !!why;
                 if (b.classList.contains('locked') !== locked) b.classList.toggle('locked', locked);
                 const tip = locked ? a.label + ' \u2014 ' + why : a.label;
@@ -48894,10 +49010,18 @@
         function boardOnTravel(playerId, path) {
             if (playerId === (getMyLobbyPlayerId() || 'host')) {
                 boardNoteVisited(path);
-                const walkedWindow = () => { const w = boardMoveGated() && boardMoveState().window; if (w && path && path.length > 1) { w.visited = (w.visited || []).concat(path.slice(1)); upkeepPersist(); } };
+                const walkedWindow = () => {
+                    const w = boardMoveGated() && boardMoveState().window;
+                    if (!w || !path || path.length < 2) return;
+                    const route = boardWindowRoute(w).slice();
+                    boardRouteApply(route, w.startId, path); // putting the marker down is a checkpoint: the move's net route is what counts
+                    w.route = route; delete w.visited;
+                    upkeepPersist();
+                    boardRollCancelSync();
+                };
                 // With a physical Movement Die nothing here is rolled, so the first walk of the turn opens the move on its own.
                 if (!usesVirtualDiceForActiveSave() && boardMoveGated() && !boardMoveWindowOpen()) boardMoveOpen('regular', null, path && path[0]);
-                walkedWindow(); // every space walked in the open move (the ones passed through count, the one it began on does not)
+                walkedWindow(); // the net route of the open move (the spaces passed through count, the one it began on does not)
             }
         }
         // Wherever this player's marker is standing (the start, a landing, a Black Out) counts too.
@@ -49037,8 +49161,11 @@
             contestDiscardLeft = need;
             boardShowHand();
             showDecksNotice('Blacked out: choose ' + need + ' card' + (need === 1 ? '' : 's') + ' from your hand to discard (half, rounded up).');
+            turnsUpdateButton(); // End Turn waits until they have
             if (typeof renderDecksScreen === 'function') renderDecksScreen();
         }
+        // True while this player still has cards to discard for blacking out: their turn can't be ended until they have.
+        function boardBlackoutDiscardPending() { return contestDiscardLeft > 0 && contestDiscardLabel === 'Blacked out'; }
         function boardBlackoutEndTurn() {
             if (turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host')) turnsEndNow();
         }
@@ -49076,7 +49203,13 @@
             if (!pick || !m) return;
             if (!m.fainted) { showGameToast('That Pokémon isn’t Fainted — choose a Fainted one.'); return; }
             const name = getBattleMemberDisplay(m).name || 'Pokémon';
-            reviveTeamMember(index);
+            reviveTeamMember(index); // counts itself against the pick (boardRevivePickRevived), exactly as a revive from a slot's corner badge does
+        }
+        // reviveTeamMember() reports every revive here, whichever way it was done (tapping the Pokémon, its HP corner badge, the detail view...).
+        function boardRevivePickRevived(member) {
+            const pick = teamRevivePick;
+            if (!pick) return;
+            const name = getBattleMemberDisplay(member).name || 'Pokémon';
             pick.left--;
             if (pick.left <= 0 || !boardTeamIndexes(x => x.fainted).length) { clearTeamRevivePick(); showGameToast(name + ' was revived.'); }
             else { showGameToast(name + ' was revived. Choose ' + pick.left + ' more.'); renderTeamGrid(); }
@@ -49187,16 +49320,20 @@
         // board.js reports the step count of the move being planned (null once the marker is put down).
         // While held the count is steady; once the marker is put down (settled) it stays a moment and fades exactly like the die result.
         var boardWalkFadeTimer = null, boardWalkHideTimer = null;
-        function boardWalkCount(n, settled) {
+        // path: the whole path being planned (from where the marker was picked up). During a move window the number shown is the total spaces
+        // moved since the window opened -- the window's net route plus that path (see boardRouteApply()) -- and it stays up until the move is done.
+        function boardWalkCount(n, settled, path) {
             const el = document.getElementById('board-walk-count');
             if (!el) return;
+            const win = n != null && boardMoveGated() && boardMoveState().window;
+            if (win) n = settled ? boardWindowRoute(win).length : boardWalkNet(path);
             if (n != null) boardNumbersSpawn();
             clearTimeout(boardWalkFadeTimer); clearTimeout(boardWalkHideTimer);
             el.classList.remove('fading');
             if (n == null) { el.classList.remove('visible'); el.textContent = ''; return; }
             el.textContent = String(n);
             el.classList.add('visible');
-            if (settled) {
+            if (settled && !win) {
                 boardWalkFadeTimer = setTimeout(() => el.classList.add('fading'), BOARD_ROLL_AFTER_PLACE_MS);
                 boardWalkHideTimer = setTimeout(() => { el.classList.remove('visible', 'fading'); el.textContent = ''; }, BOARD_ROLL_AFTER_PLACE_MS + 400);
             }
@@ -49266,9 +49403,10 @@
             boardEnsureBoard().then(c => c.handleMessage({ type: 'board-jump', player: peerId, to: data.to, land: !!data.land })).catch(() => {});
         }
         // The player (identified by their connection) stays on the space they are on: show them that space's prompt again.
-        function boardHandleStay(peerId) {
+        function boardHandleStay(peerId, data) {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
-            boardEnsureBoard().then(c => c.handleMessage({ type: 'board-stay', player: peerId })).catch(() => {});
+            const passed = data && Array.isArray(data.passed) ? data.passed.filter(x => typeof x === 'string').slice(0, 400) : undefined;
+            boardEnsureBoard().then(c => c.handleMessage({ type: 'board-stay', player: peerId, passed })).catch(() => {});
         }
         // A guest asked to look for a different Pok\u00e9mon on the space they're standing on.
         // The "i" beside an action: open this region's Explore Actions screen scrolled to that action's listing. The board stays up behind it.
@@ -50339,6 +50477,7 @@
             else if (label === 'Contest Hall') { showDecksNotice('Contest Hall: penalty paid.'); contestEnd(); }
             else if (label === 'Blacked out') { showDecksNotice('Blacked out: cards discarded.'); boardBlackoutEndTurn(); }
             else showDecksNotice(label + ': cards discarded.');
+            turnsUpdateButton();
             if (typeof renderDecksScreen === 'function') setTimeout(renderDecksScreen, 450);
         }
 
@@ -52136,29 +52275,49 @@
             turnsUpdateButton();
         }
         // Asks the Host to run the landing prompt for the space this player is already standing on.
-        function boardRequestLanding() {
+        // passed: ids of the Cities the move went through, so the prompt can offer them as Current Home (board.js checks they are Cities).
+        function boardRequestLanding(passed) {
             const myId = getMyLobbyPlayerId() || 'host';
-            if (lobbyState.role === 'guest') boardSend({ type: 'board-stay' });
-            else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-stay', player: myId });
+            const list = Array.isArray(passed) && passed.length ? passed.filter(x => typeof x === 'string').slice(0, 400) : undefined;
+            if (lobbyState.role === 'guest') boardSend(list ? { type: 'board-stay', passed: list } : { type: 'board-stay' });
+            else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-stay', player: myId, passed: list });
         }
         function boardStayOnSpace() {
             if (isActiveSaveReadOnly()) return;
             if (!boardOnCitySpace()) { showGameToast(BOARD_STAY_MESSAGE); return; }
             if (!boardMoveActionGuard()) return;
-            boardMoveActionUsed();
-            const me = boardMyPlayer();
-            if (!me) return;
-            boardAnnounceRollSettled(me); // the move is decided, so any roll still on screen can wind down
-            boardRequestLanding();
+            if (!boardMyPlayer()) return;
+            // Staying can't be taken back (it spends the turn's move), so it is asked about first.
+            boardAskJump({
+                title: 'Stay on this space?',
+                text: boardMoveGated() ? 'This uses your move for the turn \u2014 you won\u2019t roll or use another movement ability \u2014 and brings up this space\u2019s actions.' : 'This brings up this space\u2019s actions again.',
+                yesLabel: 'Stay on Space',
+                onYes: () => {
+                    if (!boardMoveActionGuard()) return; // things may have changed while the question was up
+                    boardMoveActionUsed();
+                    const me = boardMyPlayer();
+                    if (!me) return;
+                    boardAnnounceRollSettled(me); // the move is decided, so any roll still on screen can wind down
+                    boardRequestLanding();
+                }
+            });
         }
         function boardRollMovement(isBlimp) {
             if (isActiveSaveReadOnly() || !usesVirtualDiceForActiveSave()) return;
             const me = boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host'));
             if (!me) { showGameToast('Only players can roll for movement.'); return; } // e.g. a host who isn't playing
             if (!isBlimp && !boardMoveActionGuard()) return; // this turn's move is already rolled for, or spent
-            const raw = 1 + Math.floor(Math.random() * 6), penalty = boardMovePenalty();
-            const value = Math.max(0, raw - penalty);
-            if (penalty) boardSetMovePenalty(0); // taken off this roll, whatever is left over is dropped
+            let raw, penalty, value;
+            const mst = (!isBlimp && boardMoveGated()) ? boardMoveState() : null;
+            if (mst && mst.roll) { // this turn's roll was cancelled: the same result again, never a fresh one
+                raw = mst.roll.raw; penalty = mst.roll.penalty; value = mst.roll.value;
+                showGameToast('Same roll as before \u2014 a cancelled roll stands.');
+            } else {
+                raw = 1 + Math.floor(Math.random() * 6); penalty = boardMovePenalty();
+                value = Math.max(0, raw - penalty);
+                if (penalty) boardSetMovePenalty(0); // taken off this roll, whatever is left over is dropped
+                if (mst) { mst.roll = { value, raw, penalty }; upkeepPersist(); }
+            }
             const shown = { type: 'board-roll-shown', c: me.c, name: me.name, value, raw, penalty };
             boardShowRoll(shown);
             if (lobbyState.role === 'guest') boardSend({ type: 'board-roll', value, raw, penalty }); // the Host fills in who rolled
@@ -52276,6 +52435,7 @@
                 if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
                 else if (frame && frame.requestFullscreen) frame.requestFullscreen().catch(() => {});
             }
+            else if (t.closest('#board-roll-cancel-btn')) boardRollCancel();
             else if (t.closest('#board-blimp-done-btn')) { const moveItems = boardMoveDone(false); if (moveItems.length) upkeepPresent(moveItems); }
             else if (t.closest('#board-roll-btn')) boardRollMovement();
             else if (t.closest('#board-stay-btn')) boardStayOnSpace();
@@ -52287,7 +52447,7 @@
         });
         // The ability buttons depend on this player's team and Gym Badges, which change in other screens or panels without the map
         // being redrawn, so while the board is up they are re-checked a couple of times a second (it only touches the page when one changes).
-        setInterval(() => { if (boardModeActive && boardCtrl) boardUpdateAbilityButtons(); }, 400);
+        setInterval(() => { if (boardModeActive && boardCtrl) { boardUpdateAbilityButtons(); turnsUpdateButton(); } }, 400);
         document.addEventListener('fullscreenchange', () => {
             boardSyncFsButton();
             if (boardCtrl) requestAnimationFrame(() => boardCtrl.restoreView());
@@ -53846,7 +54006,7 @@
                     closeGamePanel();
                     beginPermanentPickMode(card.choosePokemon);
                 } else if (card && cardNeedsNoteColor(card)) {
-                    openNoteColorPicker();
+                    chooseSpaceColor(null, card.name); // on the virtual map the space's own color is used; otherwise the swatch picker opens
                 } else {
                     requestActiveCardPermanent();
                 }
@@ -56107,19 +56267,7 @@
                 const purpose = noteColorPickerPurpose;
                 const color = swatchBtn.dataset.color;
                 closeNoteColorPicker();
-                if (purpose && purpose.swapUid) {
-                    swapColorChosen(purpose.swapUid, color);
-                } else if (purpose && purpose.gainCardId) {
-                    cardPoolGain(purpose.gainCardId, color);
-                } else if (purpose && purpose.trainerPoolCardId) {
-                    startTrainerBattleFromPool(purpose.trainerPoolCardId, color);
-                } else if (purpose && purpose.trainerCardId) {
-                    startTrainerBattleCardPick(purpose.trainerCardId, color);
-                } else if (purpose && purpose.rivalCardId) {
-                    startRivalBattleFromCard(purpose.rivalCardId, color);
-                } else {
-                    requestActiveCardPermanent(color);
-                }
+                noteColorChosen(purpose, color);
             }
         });
 
