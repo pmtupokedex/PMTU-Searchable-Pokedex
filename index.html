@@ -2643,6 +2643,19 @@
             max-width: 220px;
         }
 
+        .game-team-opponent-preview-card.squad {
+            width: 100%;
+            max-width: none;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .game-team-opponent-preview-card.squad > div {
+            flex: 0 1 200px;
+            min-width: 0;
+        }
+
         .game-team-opponent-preview-card .game-team-slot {
             width: 100%;
             margin-bottom: 0;
@@ -22660,6 +22673,21 @@
             if (!panel || !card) return;
             let member = null;
             let isNpc = false;
+            card.classList.remove('squad');
+            if (!(active && teamSquadPick && teamSquadPick.preview)) { clearBattleReadonlyEvolutionTimer('preview0'); clearBattleReadonlyEvolutionTimer('preview1'); }
+            if (active && teamSquadPick && teamSquadPick.preview) { // the other player's chosen squad, shown while this player picks theirs
+                clearBattleReadonlyEvolutionTimer('preview');
+                card.innerHTML = '';
+                card.classList.add('squad');
+                teamSquadPick.preview.forEach((m, i) => {
+                    const cell = document.createElement('div');
+                    card.appendChild(cell);
+                    try { renderReadOnlyBattleSlot(cell, m, 'preview' + i); } catch (e) { cell.remove(); }
+                });
+                if (label) label.textContent = (teamSquadPick.previewName ? teamSquadPick.previewName + '\u2019s' : 'Opponent\u2019s') + ' chosen Pok\u00e9mon';
+                panel.classList.add('visible');
+                return;
+            }
             if (active && teamSendToBattleTargetSlot) {
                 const opposing = teamSendToBattleTargetSlot === 'attacker' ? 'defender' : 'attacker';
                 member = getBattleSlotMember(opposing);
@@ -37859,7 +37887,7 @@
             const members = (getActiveSaveData().team && getActiveSaveData().team.members) || [];
             return members.filter(m => m && !m.fainted && !m.overlayCardId);
         }
-        function chooseBattleSquad(count, title, onConfirm, onCancel) {
+        function chooseBattleSquad(count, title, onConfirm, onCancel, previewMembers, previewName) {
             const eligible = getSquadEligibleMembers();
             eligible.forEach(ensureMemberUid);
             if (!eligible.length) {
@@ -37876,7 +37904,7 @@
                 onConfirm();
                 return;
             }
-            const squad = { need: count, chosen: new Set(), title, onConfirm, onCancel };
+            const squad = { need: count, chosen: new Set(), title, onConfirm, onCancel, preview: previewMembers && previewMembers.length ? previewMembers : null, previewName: previewName || '' };
             // Team Tracker busy with something else: take the first Pok\u00e9mon rather than leave the battle without a squad.
             if (teamReplacePendingMember || teamReleaseModeActive || teamSendToBattleModeActive || handAttachPendingCardId || isTradeNegotiationActive()) {
                 showGameToast('Team Tracker was busy, so your first ' + count + ' Pok\u00e9mon that can battle were chosen.');
@@ -50900,7 +50928,7 @@
             }
             // An acceptance keeps the pairing: it lasts until the challenger has sent a Pok\u00e9mon out ('board-pvp-sent') or someone backs
             // out, so a disconnect in between can still call the challenge off for the other player.
-            if (msg.type === 'board-pvp-response' && msg.accepted) { boardPvpDeliver(msg); return; }
+            if ((msg.type === 'board-pvp-response' && msg.accepted) || msg.type === 'board-pvp-squad' || msg.type === 'board-pvp-squad-ready') { boardPvpDeliver(msg); return; }
             // anything else (a decline, a cancel, the challenger's Pok\u00e9mon being out) ends it (only if it is the pairing they are in)
             if (msg.type === 'board-pvp-cancel' || msg.type === 'board-pvp-response') hostSecretBase = null; // called off: no squad battle to reward
             if (boardPvpPairs.get(msg.from) === msg.to) { boardPvpPairs.delete(msg.from); boardPvpPairs.delete(msg.to); }
@@ -50935,17 +50963,37 @@
                 boardPvp = null;
                 boardPvpRender();
                 showGameToast(p.partnerName + ' ' + (msg.reason || 'declined your battle challenge') + '.');
+            } else if (msg.type === 'board-pvp-squad') {
+                // the challenger's squad is chosen: the other player now picks theirs, seeing it
+                if (!boardPvp || !boardPvp.incoming || boardPvp.phase !== 'waiting' || boardPvp.partnerId !== msg.from) return;
+                const p = boardPvp;
+                p.phase = 'picking';
+                boardPvpRender();
+                const theirs = Array.isArray(msg.members) ? msg.members.filter(m => m && typeof m === 'object') : [];
+                chooseBattleSquad(p.squad, 'Secret Base', () => {
+                    if (boardPvp !== p) return;
+                    p.phase = 'waiting';
+                    boardPvpSend(p.partnerId, { type: 'board-pvp-squad-ready' });
+                    boardPvpRender();
+                }, null, theirs, p.partnerName);
+            } else if (msg.type === 'board-pvp-squad-ready') {
+                // the other player's squad is chosen too: the challenger sends out their first Pok\u00e9mon
+                if (!boardPvp || boardPvp.incoming || boardPvp.phase !== 'squadwait' || boardPvp.partnerId !== msg.from) return;
+                boardPvp.phase = 'choosing';
+                boardPvpRender();
+                boardPvpChoose();
             } else if (msg.type === 'board-pvp-sent') {
                 // step 3 (the other player's side): the challenger's Pok\u00e9mon is in the Arena, so they choose theirs
                 if (!boardPvp || !boardPvp.incoming || boardPvp.phase !== 'waiting' || boardPvp.partnerId !== msg.from) return;
                 const p = boardPvp;
                 boardPvp = null;
                 boardPvpRender();
-                boardPvpDefend(p.partnerName, p.squad);
+                boardPvpDefend(p.partnerName, 0); // a squad battle's squads were chosen before this
             } else if (msg.type === 'board-pvp-cancel') {
                 if (!boardPvp || boardPvp.partnerId !== msg.from) return;
                 const p = boardPvp;
                 if (p.phase === 'choosing') { abandonSquadPick(); boardPvpEndSendMode(); } // they were mid-pick in the Team Tracker
+                else abandonSquadPick(); // a squad pick (or a chosen squad) that was waiting on the battle
                 boardPvp = null;
                 boardPvpRender();
                 showGameToast(p.partnerName + ' ' + (msg.reason || 'withdrew the battle challenge') + '.');
@@ -50959,7 +51007,14 @@
             const p = boardPvp;
             if (!p) return;
             if (!p.squad) { boardPvpChoose(); return; }
-            chooseBattleSquad(p.squad, 'Secret Base', () => { if (boardPvp === p) boardPvpChoose(); }, () => {
+            chooseBattleSquad(p.squad, 'Secret Base', () => {
+                if (boardPvp !== p) return;
+                // Squad choices are public: the other player sees these Pok\u00e9mon, then picks theirs, and only then does the first one go out.
+                const mine = (getActiveSaveData().team.members || []).filter(m => battleSquad && battleSquad.uids.includes(m.uid));
+                p.phase = 'squadwait';
+                boardPvpSend(p.partnerId, { type: 'board-pvp-squad', members: JSON.parse(JSON.stringify(mine)) });
+                boardPvpRender();
+            }, () => {
                 if (boardPvp !== p) return;
                 boardPvpSend(p.partnerId, { type: 'board-pvp-cancel', reason: 'called off the battle' });
                 boardPvp = null;
@@ -51038,13 +51093,17 @@
             const overlay = document.getElementById('game-pvp-overlay');
             const p = boardPvp;
             // the challenger is on the Team Tracker while choosing: no window then
-            if (!p || p.phase === 'choosing') { overlay.classList.remove('visible'); return; }
+            if (!p || p.phase === 'choosing' || p.phase === 'picking') { overlay.classList.remove('visible'); return; }
             let text, buttons;
             if (p.incoming && p.phase === 'invited') {
-                text = p.partnerName + ' challenges you to a Battle!';
-                buttons = '<button class="filter-btn include game-pvp-accept-btn" type="button">Accept</button><button class="filter-btn exclude game-pvp-decline-btn" type="button">Decline</button>';
+                const canBattle = getSquadEligibleMembers().length > 0;
+                text = p.partnerName + ' challenges you to a Battle!' + (canBattle ? '' : ' You have no Pok\u00e9mon that can battle right now, so you can\u2019t accept.');
+                buttons = '<button class="filter-btn include game-pvp-accept-btn" type="button"' + (canBattle ? '' : ' disabled') + '>Accept</button><button class="filter-btn exclude game-pvp-decline-btn" type="button">Decline</button>';
             } else if (p.incoming) { // accepted: the window stays up until the challenger has sent a Pok\u00e9mon out
                 text = 'Waiting for challenger to send out a Pok\u00e9mon.';
+                buttons = '<button class="filter-btn exclude game-pvp-cancel-btn" type="button">Cancel</button>';
+            } else if (p.phase === 'squadwait') {
+                text = 'Waiting for ' + p.partnerName + ' to choose their Pok\u00e9mon\u2026';
                 buttons = '<button class="filter-btn exclude game-pvp-cancel-btn" type="button">Cancel</button>';
             } else {
                 text = 'Waiting for ' + p.partnerName + ' to accept\u2026';
@@ -51060,6 +51119,7 @@
             const p = boardPvp;
             if (!p) return;
             if (p.incoming && p.phase === 'invited' && e.target.closest('.game-pvp-accept-btn')) {
+                if (!getSquadEligibleMembers().length) { showGameToast('You have no Pok\u00e9mon that can battle right now.'); boardPvpRender(); return; }
                 boardPvpSend(p.partnerId, { type: 'board-pvp-response', accepted: true });
                 p.phase = 'waiting';
                 boardPvpRender();
@@ -51070,6 +51130,7 @@
             } else if (e.target.closest('.game-pvp-cancel-btn')) { // the challenger before an answer, or the other player while waiting
                 boardPvpSend(p.partnerId, { type: 'board-pvp-cancel', reason: p.incoming ? 'called off the battle' : undefined });
                 boardPvp = null;
+                abandonSquadPick(); // a squad chosen for a battle that isn't happening: everyone is back to normal
                 boardPvpRender();
             }
         });
