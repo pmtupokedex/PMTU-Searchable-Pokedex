@@ -18330,6 +18330,11 @@
                     <div class="game-save-slot-actions" id="game-permanent-card-attach-wild-row" style="display: none;">
                         <button class="filter-btn game-permanent-card-attach-wild-btn" type="button">Attach to Wild Pok&eacute;mon</button>
                     </div>
+                    <!-- Only shown while a Pokérus card still owes a Level (its counter was raised
+                         but no Pokémon has been chosen yet -- see pokerusPickBegin()). -->
+                    <div class="game-save-slot-actions" id="game-permanent-card-pokerus-row" style="display: none;">
+                        <button class="filter-btn include game-permanent-card-pokerus-btn" type="button">Choose a Pokémon to Level</button>
+                    </div>
                     <div class="game-save-slot-actions">
                         <button class="filter-btn exclude game-permanent-card-discard-btn" type="button">Discard</button>
                     </div>
@@ -22835,7 +22840,7 @@
                 } else if (teamRevivePick) {
                     sendToBattleBannerText.textContent = 'Blacked out \u2014 tap ' + (teamRevivePick.left === 1 ? 'a Fainted Pok\u00e9mon' : teamRevivePick.left + ' Fainted Pok\u00e9mon') + ' to Revive.';
                 } else if (teamLevelPick) {
-                    sendToBattleBannerText.textContent = 'Tap a Pok\u00e9mon on your team to give it a Level.';
+                    sendToBattleBannerText.textContent = teamLevelPick.pokerus ? pokerusPickBannerText() : 'Tap a Pok\u00e9mon on your team to give it a Level.';
                 } else if (teamSquadPick) {
                     sendToBattleBannerText.textContent = teamSquadPick.title + ' \u2014 tap ' + teamSquadPick.need + ' Pok\u00e9mon on your team to battle with (' + teamSquadPick.chosen.size + ' of ' + teamSquadPick.need + ' chosen), then Confirm. They are the only ones you can use.';
                 } else if (teamContestPick) {
@@ -26984,32 +26989,35 @@
         // canPermanentFromAttach can't need (see
         // cardCanPermanentFromAttach()). Re-checks the field itself
         // rather than trusting the request.
-        function hostApplyPermanentFromAttach(peerKey, cardId) {
+        function hostApplyPermanentFromAttach(peerKey, cardId, originUid) {
             const card = CARDS_BY_ID[cardId];
             if (!cardCanPermanentFromAttach(card)) return;
             const newEntry = { instanceId: generatePermanentInstanceId(), cardId, counter: getDefaultPermanentCounter(card), noteColor: null, pokemonPick: null };
             if (peerKey === 'host') {
                 getLocalPermanentArray().push(newEntry);
                 persistLocalPermanent();
+                pokerusRecordOrigin(newEntry.instanceId, originUid); // the Pokémon it came off (Pokérus: it already gained its Level)
             } else {
                 const permanent = getPeerPermanentArray(peerKey);
                 if (!permanent) return;
                 permanent.push(newEntry);
                 persistGameSaves();
                 const entry = lobbyState.connections.get(peerKey);
-                if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-added', entry: newEntry });
+                if (entry && entry.conn.open) entry.conn.send({ type: 'permanent-added', entry: newEntry, originUid: (typeof originUid === 'string' && originUid) ? originUid : null });
             }
             broadcastDeckState();
             renderDecksScreen();
         }
 
-        function requestPermanentFromAttach(cardId) {
+        // originUid: the uid of the Pokémon the card was on, for a card that needs to remember it (Pokérus -- see
+        // pokerusRecordOrigin()). It's that device's own team data, so it is only ever recorded on the device that owns the Pokémon.
+        function requestPermanentFromAttach(cardId, originUid) {
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
-                    lobbyState.hostConn.send({ type: 'permanent-from-attach', cardId });
+                    lobbyState.hostConn.send({ type: 'permanent-from-attach', cardId, originUid: originUid || null });
                 }
             } else {
-                hostApplyPermanentFromAttach('host', cardId);
+                hostApplyPermanentFromAttach('host', cardId, originUid);
             }
         }
 
@@ -30104,7 +30112,7 @@
                 if (decks.length) requestDrawForAttach(member, decks, cardId, false);
             }
             if (fx.replace) requestDrawForAttach(member, [fx.replace.deck], cardId, fx.replace.skipOneTime);
-            if (fx.then === 'permanent') requestPermanentFromAttach(cardId);
+            if (fx.then === 'permanent') requestPermanentFromAttach(cardId, cardHasPokerusEffect(card) ? ensureMemberUid(member) : null);
             else if (fx.then === 'shuffle') requestShuffleDiscardsIntoDeck(cardId, false);
             else discardUnattachedCard(cardId);
             showGameToast(`${card.name} was resolved.`);
@@ -31465,6 +31473,11 @@
             if (attachWildRowEl) attachWildRowEl.style.display = cardCanAttachWildFromPermanent(card) ? '' : 'none';
             const attachWildBtn = overlay.querySelector('.game-permanent-card-attach-wild-btn');
             if (attachWildBtn) attachWildBtn.disabled = readOnly;
+            // Pokérus that still owes a Level (see pokerusPickBegin()).
+            const pokerusRowEl = document.getElementById('game-permanent-card-pokerus-row');
+            if (pokerusRowEl) pokerusRowEl.style.display = (cardHasPokerusEffect(card) && pokerusOwedFor(permanentEntry.instanceId) > 0) ? '' : 'none';
+            const pokerusBtn = overlay.querySelector('.game-permanent-card-pokerus-btn');
+            if (pokerusBtn) pokerusBtn.disabled = readOnly;
             const counterEl = document.getElementById('game-permanent-card-viewer-counter');
             if (counterEl) counterEl.classList.toggle('game-permanent-card-viewer-counter--disabled', readOnly);
         }
@@ -34551,7 +34564,7 @@
                 return;
             }
             commitTeamMemberCard(index, slot, null);
-            requestPermanentFromAttach(cardId);
+            requestPermanentFromAttach(cardId, cardHasPokerusEffect(card) ? ensureMemberUid(member) : null);
             showGameToast(`${card.name} was sent to Permanent.`);
         }
 
@@ -36764,15 +36777,20 @@
             teamSendToBattleNote = null;
             renderTeamGrid();
         }
-        function clearTeamLevelPick() {
+        // completed: a Pokérus pick that gave its Level (anything else that ends the pick leaves that Level owed -- see pokerusPickAbandoned())
+        function clearTeamLevelPick(completed) {
             if (!teamLevelPick) return;
+            const pk = teamLevelPick.pokerus;
             teamLevelPick = null;
             teamSendToBattleModeActive = false;
             teamSendToBattleTargetSlot = null;
             teamSendToBattleNote = null;
             renderTeamGrid();
+            if (pk && completed !== true) pokerusPickAbandoned(pk.instanceId);
+            upkeepResumeIfDeferred();
         }
         function cardLevelGainChoose(index) {
+            if (teamLevelPick && teamLevelPick.pokerus) { pokerusChoose(index); return; }
             const pick = teamLevelPick;
             const card = pick && CARDS_BY_ID[pick.cardId];
             const m = getTeamSlotMember(index);
@@ -45138,7 +45156,7 @@
                     if (teamSquadPick) { const sp = teamSquadPick; teamSquadPick = null; if (sp.onCancel) sp.onCancel(); else squadAutoPick(sp); } // leaving mid-pick: called off, or the first Pok\u00e9mon are taken
                     if (teamSwapPick) teamSwapPick = null; // leaving Team Tracker mid-pick calls the trade off (the card stays in the zone)
                     if (teamRevivePick) teamRevivePick = null;
-                    if (teamLevelPick) teamLevelPick = null; // leaving Team Tracker mid-pick calls off a card's Level pick (the card stays in the zone)
+                    if (teamLevelPick) { const pkAbandoned = teamLevelPick.pokerus; teamLevelPick = null; if (pkAbandoned) pokerusPickAbandoned(pkAbandoned.instanceId); upkeepResumeIfDeferred(); } // leaving Team Tracker mid-pick calls off a card's Level pick (the card stays in the zone; a Pokérus Level stays owed)
                     if (teamContestPick) contestAbort(); // leaving Team Tracker mid-pick backs out of the Contest Hall
                     boardPvpChooserClosed(); // leaving mid-pick calls a Battle a Player challenge off (a completed send has already cleared it)
                     teamSendToBattleModeActive = false;
@@ -47050,7 +47068,7 @@
                 } else if (data.type === 'permanent-attach' && typeof data.instanceId === 'string') {
                     hostApplyPermanentAttach(conn.peer, data.instanceId);
                 } else if (data.type === 'permanent-from-attach' && typeof data.cardId === 'string') {
-                    hostApplyPermanentFromAttach(conn.peer, data.cardId);
+                    hostApplyPermanentFromAttach(conn.peer, data.cardId, typeof data.originUid === 'string' ? data.originUid.slice(0, 80) : null);
                 } else if (data.type === 'permanent-counter-adjust' && typeof data.instanceId === 'string' && typeof data.delta === 'number') {
                     hostApplyPermanentCounterAdjust(conn.peer, data.instanceId, data.delta);
                 } else if (data.type === 'active-card-shuffle') {
@@ -48708,8 +48726,16 @@
             upkeepNext();
         }
         var upkeepTotal = 0, upkeepShownCount = 0;
+        // While a Pokérus pick is open in the Team Tracker the queue waits, so the next card's viewer doesn't pull the player out of it.
+        // Judged from the live pick itself (not a counter that could get stuck); whatever ends the pick calls upkeepResumeIfDeferred().
+        var upkeepDeferred = false;
+        function upkeepOnHold() { return !!(teamLevelPick && teamLevelPick.pokerus); }
+        function upkeepResumeIfDeferred() {
+            if (upkeepDeferred && !upkeepOnHold()) { upkeepDeferred = false; setTimeout(upkeepNext, 250); }
+        }
         function upkeepNext() {
             upkeepCurrent = null;
+            if (upkeepOnHold()) { upkeepDeferred = true; return; }
             while (upkeepQueue.length) {
                 const it = upkeepQueue.shift();
                 if (!upkeepHolderStillThere(it.holder)) continue; // e.g. discarded in the meantime
@@ -50962,11 +50988,13 @@
         // is discarded once it has (see addOrQueueTeamMember()'s sourceInstanceId). The pool lives on the Host, so a guest asks it.
         let eggHatchCb = null;
         function permanentCounterChanged(instanceId, counter, delta) {
+            if (delta < 0 && !isActiveSaveReadOnly()) pokerusCounterLowered(instanceId, -delta); // a counter taken back off doesn't owe a Level any more
             if (delta <= 0 || isActiveSaveReadOnly()) return;
             const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
             const card = entry && CARDS_BY_ID[entry.cardId];
             const fx = card && card.permanentCounterEffect;
             if (fx && fx.effect === 'eggHatch' && counter === fx.at) eggHatchBegin(entry);
+            else if (fx && fx.effect === 'pokerusSpread') pokerusSpreadBegin(entry, delta);
         }
         function eggHatchBegin(entry) {
             const color = entry.noteColor, label = boardFrontierColorLabel(color);
@@ -51018,6 +51046,157 @@
             const reply = res => boardSendToPeer(peerId, { type: 'board-egg-hatched', name: res ? res.name : null, skipped: res ? res.skipped : 0 });
             if (!getRegionMapSettingsForActiveSave().enabled || !BOARD_FRONTIER_COLORS.some(k => k.id === color && k.id !== 'orange')) { reply(null); return; }
             boardEnsureBoard().then(c => reply(eggHatchHostDraw(c, color))).catch(() => reply(null));
+        }
+
+        // ---- Pokérus (see the chat this was designed in) ----
+        // A card with "permanentCounterEffect": { "effect": "pokerusSpread", "discardAt": N } (and "permanentCounters") does this every time its Permanent
+        // counter is raised -- the turnStart upkeep rule asks the player to place one, but any raise counts: the player chooses a Pokémon on their team to
+        // gain a Level (picked in the Team Tracker, using the same Level pick as cardLevelGainPick()), and once that Level is given the card is discarded
+        // if its counter has reached discardAt.
+        // A Pokémon can gain a Level from one Pokérus card only once. Who already has is kept in this device's own save, data.pokerusState[instanceId] =
+        // { leveled: [member uids], owed: Levels the card still has to give }, not on the Permanent entry: entries are rebuilt from the Host's copy (and only
+        // lose unknown fields), while team data -- and the uids that tell its Pokémon apart -- never leave this device.
+        // The Pokémon the card was on counts as already Leveled (attaching it gave that Level -- onAttachLevelUp). That includes a wild Pokémon: it gets its
+        // uid when it enters the Arena and keeps it when it is caught, so it is still recognized on the team. The origin travels with the move to Permanent:
+        // requestPermanentFromAttach(cardId, originUid) -> pokerusRecordOrigin().
+        // A Level that is owed but not yet given (the pick was cancelled, or Team Tracker was busy) stays in the save, and the Permanent viewer offers
+        // "Choose a Pokémon to Level" until it is given. While a Pokérus pick is open the upkeep queue waits (see upkeepNext()) so the next card's viewer
+        // doesn't pull the player out of the Team Tracker.
+        function cardHasPokerusEffect(card) {
+            return !!card && !!card.permanentCounterEffect && card.permanentCounterEffect.effect === 'pokerusSpread';
+        }
+        function pokerusStateFor(instanceId, create) {
+            const data = getActiveSaveData();
+            if (!data) return null;
+            if (!data.pokerusState || typeof data.pokerusState !== 'object') {
+                if (!create) return null;
+                data.pokerusState = {};
+            }
+            let st = data.pokerusState[instanceId];
+            if (!st && create) st = data.pokerusState[instanceId] = { leveled: [], owed: 0 };
+            if (st && !Array.isArray(st.leveled)) st.leveled = [];
+            return st || null;
+        }
+        function pokerusOwedFor(instanceId) {
+            const st = pokerusStateFor(instanceId, false);
+            return st ? (parseInt(st.owed, 10) || 0) : 0;
+        }
+        function pokerusForget(instanceId) {
+            const data = getActiveSaveData();
+            if (data && data.pokerusState && data.pokerusState[instanceId]) { delete data.pokerusState[instanceId]; upkeepPersist(); }
+        }
+        // Drops the bookkeeping of Pokérus cards that have left the Permanent Zone (discarded by hand, say).
+        function pokerusPrune() {
+            const data = getActiveSaveData();
+            if (!data || !data.pokerusState) return;
+            const live = new Set(getLocalPermanentArray().map(e => e.instanceId));
+            Object.keys(data.pokerusState).forEach(k => { if (!live.has(k)) delete data.pokerusState[k]; });
+        }
+        // The Pokémon a Pokérus card was on has already gained its Level from it.
+        function pokerusRecordOrigin(instanceId, uid) {
+            if (typeof uid !== 'string' || !uid || uid.length > 80) return;
+            const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
+            if (!entry || !cardHasPokerusEffect(CARDS_BY_ID[entry.cardId])) return;
+            const st = pokerusStateFor(instanceId, true);
+            if (!st.leveled.includes(uid)) st.leveled.push(uid);
+            upkeepPersist();
+        }
+        // Team slots that could still gain a Level from this card: not a Gym Leader card, not at the Level cap, and not already Leveled by it.
+        function pokerusEligibleIndexes(instanceId) {
+            const st = pokerusStateFor(instanceId, false), done = st ? st.leveled : [];
+            return boardTeamIndexes(m => !m.gymLeaderId && (m.level || 0) < 6 && !(m.uid && done.includes(m.uid)));
+        }
+        function pokerusPickBannerText() {
+            const pk = teamLevelPick && teamLevelPick.pokerus;
+            const card = pk && CARDS_BY_ID[teamLevelPick.cardId];
+            const st = pk && pokerusStateFor(pk.instanceId, false);
+            const members = (getActiveSaveData().team && getActiveSaveData().team.members) || [];
+            const spent = st ? members.filter(m => m && m.uid && st.leveled.includes(m.uid)).map(m => getBattleMemberDisplay(m).name || m.name || 'Pokémon') : [];
+            return (card ? card.name : 'Pokérus') + ' — tap a Pokémon on your team to give it a Level.'
+                + (spent.length ? ' It has already Leveled ' + spent.join(', ') + ', so ' + (spent.length === 1 ? 'that Pokémon' : 'they') + ' can’t be chosen.' : '');
+        }
+        // The counter was raised: one more Level is owed. Starts the pick right away (unless one for this card is already open, which just carries on).
+        function pokerusSpreadBegin(entry, amount) {
+            pokerusPrune();
+            const st = pokerusStateFor(entry.instanceId, true);
+            st.owed = (parseInt(st.owed, 10) || 0) + Math.max(1, amount || 1);
+            upkeepPersist();
+            if (teamLevelPick && teamLevelPick.pokerus && teamLevelPick.pokerus.instanceId === entry.instanceId) return;
+            pokerusPickBegin(entry.instanceId);
+        }
+        // A counter was taken back off (a mis-tap undone): it no longer owes that Level. Levels already given stay given.
+        function pokerusCounterLowered(instanceId, amount) {
+            const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
+            if (!entry || !cardHasPokerusEffect(CARDS_BY_ID[entry.cardId])) return;
+            const st = pokerusStateFor(instanceId, false);
+            if (!st || !(st.owed > 0)) return;
+            st.owed = Math.max(0, st.owed - Math.max(1, amount || 1));
+            upkeepPersist();
+        }
+        // Opens the Team Tracker pick for one owed Level (also what the viewer's "Choose a Pokémon to Level" button does).
+        function pokerusPickBegin(instanceId) {
+            if (isActiveSaveReadOnly()) return;
+            const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
+            const card = entry && CARDS_BY_ID[entry.cardId];
+            if (!entry || !cardHasPokerusEffect(card) || !(pokerusOwedFor(instanceId) > 0)) return;
+            closePermanentCardViewer(); // (also what moves the upkeep queue on from this card; it then waits for the pick -- see upkeepNext())
+            if (!pokerusEligibleIndexes(instanceId).length) { // nobody left it can Level: nothing happens, and it may still be time to discard it
+                const st = pokerusStateFor(instanceId, true);
+                st.owed = 0;
+                upkeepPersist();
+                const discarded = pokerusFinish(instanceId);
+                showGameToast(card.name + ': none of your Pokémon can gain a Level from it.' + (discarded ? ' It has run its course and was discarded.' : ''));
+                return;
+            }
+            if (teamReplacePendingMember || teamReleaseModeActive || teamSendToBattleModeActive || handAttachPendingCardId || isTradeNegotiationActive()) {
+                showGameToast('Finish what you are doing in Team Tracker first, then open ' + card.name + ' in your Permanent Zone to choose a Pokémon.');
+                return;
+            }
+            openGamePanel();
+            setGameScreen('team');
+            teamLevelPick = { cardId: entry.cardId, pokerus: { instanceId } };
+            teamSendToBattleModeActive = true; // borrows the send-to-battle mode and its banner, like cardLevelGainPick()
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        // The player tapped a Pokémon (cardLevelGainChoose() hands Pokérus picks here).
+        function pokerusChoose(index) {
+            const pick = teamLevelPick;
+            const pk = pick && pick.pokerus;
+            const card = pick && CARDS_BY_ID[pick.cardId];
+            const m = getTeamSlotMember(index);
+            if (!pk || !card || !m) return;
+            const name = getBattleMemberDisplay(m).name || 'Pokémon';
+            if (m.gymLeaderId || (m.level || 0) >= 6) { showGameToast('That Pokémon can’t gain another Level — choose another.'); return; }
+            const uid = ensureMemberUid(m);
+            const st = pokerusStateFor(pk.instanceId, true);
+            if (st.leveled.includes(uid)) { showGameToast(card.name + ' already gave ' + name + ' a Level — choose another.'); return; }
+            const before = boardFrontierTotalLevel(m);
+            adjustTeamMemberLevel(index, 1);
+            st.leveled.push(uid);
+            st.owed = Math.max(0, (parseInt(st.owed, 10) || 0) - 1);
+            upkeepPersist();
+            clearTeamLevelPick(true);
+            const msg = card.name + ': ' + name + ' gained a Level (Lv ' + before + ' → ' + boardFrontierTotalLevel(m) + ').';
+            if (st.owed > 0) { showGameToast(msg); pokerusPickBegin(pk.instanceId); return; } // a second counter was raised meanwhile: another Level to give
+            const discarded = pokerusFinish(pk.instanceId);
+            showGameToast(msg + (discarded ? ' ' + card.name + ' has run its course and was discarded.' : ''));
+        }
+        // All owed Levels are given: discards the card once its counter has reached discardAt. Returns true if it did.
+        function pokerusFinish(instanceId) {
+            const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
+            const card = entry && CARDS_BY_ID[entry.cardId];
+            const limit = card && card.permanentCounterEffect ? parseInt(card.permanentCounterEffect.discardAt, 10) : 0;
+            if (!entry || !(limit >= 1) || (entry.counter || 0) < limit) return false;
+            pokerusForget(instanceId);
+            requestPermanentDiscard(instanceId);
+            return true;
+        }
+        // The pick was backed out of (Cancel, or Team Tracker left): the Level stays owed.
+        function pokerusPickAbandoned(instanceId) {
+            if (pokerusOwedFor(instanceId) > 0) showGameToast('Pokérus still has a Level to give. Open it in your Permanent Zone and tap “Choose a Pokémon to Level” when you’re ready.');
         }
 
         function boardHandleFrontierDraw(peerId, data) {
@@ -52959,6 +53138,7 @@
                     // the same way any other Guest Save field is.
                     getLocalPermanentArray().push(normalizePermanentEntry(data.entry));
                     persistLocalPermanent();
+                    if (typeof data.originUid === 'string' && typeof data.entry.instanceId === 'string') pokerusRecordOrigin(data.entry.instanceId, data.originUid);
                     renderDecksScreen();
                 } else if (data.type === 'permanent-removed' && typeof data.instanceId === 'string') {
                     // Mirror image of 'permanent-added' above -- a card
@@ -55859,6 +56039,11 @@
             const attachWildBtn = e.target.closest('.game-permanent-card-attach-wild-btn');
             if (attachWildBtn && permanentCardViewerInstanceId) {
                 requestAttachWildFromPermanent(permanentCardViewerInstanceId);
+                return;
+            }
+            const pokerusBtn = e.target.closest('.game-permanent-card-pokerus-btn');
+            if (pokerusBtn && permanentCardViewerInstanceId) {
+                pokerusPickBegin(permanentCardViewerInstanceId);
                 return;
             }
             const discardBtn = e.target.closest('.game-permanent-card-discard-btn');
