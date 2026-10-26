@@ -16,6 +16,9 @@
                                     kind 'catch' = a wild Pokémon is here and NOT yet revealed (token is null unless it was
                                     already face-up); the player answers with message {type:'board-encounter'} to reveal it,
                                     which comes back as kind 'encounter' (token revealed)
+            canMove(playerId)    -- optional: asked when this device's player touches their own marker; return null to let them pick it up, or a reason
+                                    (string) to keep it where it is (the reason goes to onMoveLocked(reason), and the touch pans the map instead)
+            onMoveLocked(reason) -- optional: see canMove
             onPlace(playerId)    -- this device's player picked a marker up and put it down (any drop that was dragged, even back on the same space)
             displayOnly          -- host display for a table that plays with physical tokens (the app's TV Table / Hybrid 2 modes): draws the map
                                     picture only -- no player markers, home markers, turn ring or Pokémon tokens, no player list or action bar;
@@ -40,6 +43,7 @@
    Host only: poolList(color) / takeFromPool(color,name) / settlePoolToken(name,'caught'|'returned') [Safari Zone: pick a token out
    of a pool, then keep it (caught) or put it back], where(playerId) [the id of the space a player's marker is on, or null -- the Host uses it to check two players really share a space], drawLegendary() [Roaming Legend: a random Legendary token from the orange pool, or off a random orange space when the pool is empty; settle it like drawFromPool()], drawFromPool(color) [Battle Frontier: take a RANDOM token out of a pool, returns its name or null; give it back with settlePoolToken(name,'returned')], movePlayer(playerId, spaceIdOrLabel|'@home') [moves a marker without a landing prompt ('@home' = their Current Home); returns the space's label, or '' if it could not], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
    for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
+   spaceColor(spaceId) -> the space's color name, or null.
    spaceOf(playerId) -> {id,type,label} of the space that player's marker is on (any role), or null.
    Messages: guest -> host {type:'board-move',player,to,path:[the spaces walked, start to end]}   {type:'board-stay'} [host: app sends it with player id -- re-runs the landing prompt for the space the player is already on]
              guest -> host {type:'board-jump',to:<City id | '@home'>,land:<bool>} [the Dig / Fly / Teleport buttons: straight to a City, with or without its landing prompt; the app sends it with the player id]
@@ -513,7 +517,10 @@ svg.onpointerdown=e=>{tap=null;svg.setPointerCapture(e.pointerId);ptrs.set(e.poi
  if(ptrs.size===2){if(drag){drag=null;draw()}pan=null;tap=null;startPinch();return}
  if(ptrs.size>2)return;
  const g=e.target.closest('[data-p]');
- if(g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId)){const off=e.pointerType==='touch'?30:0;const q0=pt({clientX:e.clientX,clientY:e.clientY-off});drag={p:g.dataset.p,id:e.pointerId,off,x:q0.x,y:q0.y}; // (spreading a DOMPoint copies nothing, which left x/y undefined until the first move)
+ const own=!!g&&(mode==='mock'?(view==='host'||g.dataset.p===view):g.dataset.p===myId);
+ let locked=null;if(own&&opts.canMove){try{locked=opts.canMove(g.dataset.p)||null}catch(er){}} // the app may keep a marker from being picked up yet
+ if(locked&&opts.onMoveLocked){try{opts.onMoveLocked(locked)}catch(er){}}
+ if(own&&!locked){const off=e.pointerType==='touch'?30:0;const q0=pt({clientX:e.clientX,clientY:e.clientY-off});drag={p:g.dataset.p,id:e.pointerId,off,x:q0.x,y:q0.y}; // (spreading a DOMPoint copies nothing, which left x/y undefined until the first move)
  active=g.dataset.p;lastPtr={clientX:e.clientX,clientY:e.clientY,x:e.clientX,y:e.clientY};gmemo=new Map();draw();svg.insertAdjacentHTML('beforeend',`<rect id="snapR" display="none" fill="none" stroke="#ffeb3b" stroke-width="${R*.35}" pointer-events="none"/><g id="dwellG" pointer-events="none"></g><g id="walkG" pointer-events="none"></g>`);drag.cps=[];drawWalk(null);dwellTick(drag)}
  else{pan={id:e.pointerId,x:e.clientX,y:e.clientY};const k=e.target.closest&&e.target.closest('[data-tk]');tap=k?{id:e.pointerId,x:e.clientX,y:e.clientY,n:k.dataset.tk}:null}};
 svg.onpointermove=e=>{if(!ptrs.has(e.pointerId))return;ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});if(tap&&tap.id===e.pointerId&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8)tap=null;
@@ -613,6 +620,7 @@ return{
  setShowMarkers(on){opts.showMarkers=on!==false;draw()},
  setImage:setImg,
  setStatus:t=>{$('jm').textContent=t},getStatus:()=>$('jm').textContent,
+ spaceColor(id){const s=get(id);return s&&s.color||null}, // the color of a space (null for none)
  handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to,m.path);else if(mode==='host'&&m.type==='board-stay')stayOnSpace(m.player);else if(mode==='host'&&m.type==='board-jump')hostJump(m.player,m.to,!!m.land);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-reroll')rerollEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw();if(autoFill&&!initCentered)fillView()}},
  showAction,hideAction,
  resolveEncounter(id,out){if(mode==='host'&&st[id]&&st[id].token)resolve(id,out)},
