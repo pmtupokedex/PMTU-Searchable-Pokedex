@@ -27030,6 +27030,7 @@
             target.counter = Math.max(0, target.counter + delta);
             if (peerKey === 'host') {
                 persistLocalPermanent();
+                permanentCounterChanged(instanceId, target.counter, delta);
             } else {
                 persistGameSaves();
                 const entry = lobbyState.connections.get(peerKey);
@@ -36320,20 +36321,22 @@
             }
             if (!boardMyPlayer()) { showGameToast('Only players can roll for movement.'); return; }
             cardEffectDone(cardId);
-            boardBlimp = { cardId };
+            const leftover = boardBlimp ? boardMoveDone(false) : []; // a move still open is finished (and counted) before the Blimp Ride's own
+            boardMoveOpen('blimp', cardId);
+            if (leftover.length) upkeepPresent(leftover);
             enterBoardMode(); // no-op when the board is already up
             if (!desktopFilterQuery.matches) closeGamePanel(); // on a phone the panel would cover the board
-            if (!boardModeActive) { boardBlimp = null; return; }
+            if (!boardModeActive) { boardMoveAbort(); return; }
             boardEnsureBoard().then(() => {
                 // after the board's own settle-and-refit (see initBoardScreen()), so Find Me has the last word
                 setTimeout(() => {
                     if (!boardBlimp) return;
                     const find = document.getElementById('mme');
                     if (find) find.click(); // exactly the Find Me button: zoom to and center on this player's marker
-                    boardRollMovement();
+                    boardRollMovement(true);
                     boardBlimpShowDone(true);
                 }, 500);
-            }).catch(() => { boardBlimp = null; });
+            }).catch(() => { boardMoveAbort(); });
         }
         // Shows / hides the Done Moving button (and the row layout that centers it under the numbers -- see #board-roll-top's CSS).
         function boardBlimpShowDone(on) {
@@ -36348,6 +36351,88 @@
             boardBlimpShowDone(false);
             const me = boardMyPlayer();
             if (me) boardAnnounceRollSettled(me);
+        }
+
+        // ---- The move action (see the chat this was designed in) ----
+        // While turns are running, a player's own turn has ONE regular move action: roll the Movement Die and walk, OR use Stay on Space,
+        // Dig, Fly or Teleport (Surf is a pass, not an action). Rolling opens a "move window": the marker can only be picked up while it is
+        // open, landing prompts are held back (the same hold a Blimp Ride always had), and Done Moving (or ending the turn) closes it and
+        // brings up the prompt for the space the marker finished on. A Blimp Ride opens a window of its own on top of that, which is why a
+        // turn can hold two moves. With a physical Movement Die the first walk of the turn opens the window by itself.
+        // The state lives in the save (data.moveState = { turn, regularUsed, window: { type: 'regular' | 'blimp', startId, visited: [space ids walked] } }), keyed by this
+        // player's own turn count, so a reload mid-turn picks up where it was and a new turn starts clean.
+        // A move counts for "moves to a new space" upkeep (Pokémon Egg) when its window closes on a different space than it opened on.
+        // Stay / Dig / Fly / Teleport use up the regular move but never count as moving. Without turns running none of this applies.
+                function boardMoveGated() { return !!(turnView && upkeepIsMyTurn() && !isActiveSaveReadOnly() && boardMyPlayer()); }
+        function boardMoveState() {
+            const data = getActiveSaveData(), n = upkeepMyTurnNumber();
+            if (!data || n === null) return { turn: null, regularUsed: false, window: null }; // not persisted: turns aren't running
+            if (!data.moveState || data.moveState.turn !== n) data.moveState = { turn: n, regularUsed: false, window: null };
+            return data.moveState;
+        }
+        function boardMoveWindowOpen() { return !!boardMoveState().window; }
+        // True while this turn's regular move hasn't been used at all (no roll, no Stay / ability).
+        function boardMoveIdleThisTurn() { if (!boardMoveGated()) return false; const st = boardMoveState(); return !st.window && !st.regularUsed; }
+        function boardMoveOpen(type, cardId, startId) {
+            if (boardMoveGated()) {
+                const me = boardMyPlayer(), sp = me && boardCtrl && boardCtrl.spaceOf ? boardCtrl.spaceOf(me.id) : null;
+                boardMoveState().window = { type, startId: startId || (sp ? sp.id : null) };
+                upkeepPersist();
+            }
+            boardBlimp = { cardId: cardId || type };
+            boardBlimpShowDone(true);
+        }
+        function boardMoveAbort() {
+            boardBlimp = null;
+            boardBlimpShowDone(false);
+            if (boardMoveGated()) { boardMoveState().window = null; upkeepPersist(); }
+        }
+        // After a reload or when the board is rebuilt: a window that was open comes back with its Done Moving button.
+        function boardMoveSync() {
+            if (!boardMoveGated()) return;
+            const st = boardMoveState();
+            if (st.window && !boardBlimp) { boardBlimp = { cardId: st.window.type }; boardBlimpShowDone(true); }
+        }
+        function boardMoveActionUsed() {
+            if (!boardMoveGated()) return;
+            boardMoveState().regularUsed = true;
+            upkeepPersist();
+        }
+        // May a Roll / Stay / Dig / Fly / Teleport be used now? One per turn, and not while a move is still open.
+        function boardMoveActionGuard() {
+            if (!boardMoveGated()) return true;
+            const st = boardMoveState();
+            if (st.window) { showGameToast('Press Done Moving before using another movement action.'); return false; }
+            if (st.regularUsed) { showGameToast('You have already used your move this turn.'); return false; }
+            return true;
+        }
+        // board.js asks this when the player touches their own marker (see canMove in board.js).
+        function boardCanMove(playerId) {
+            if (playerId !== upkeepMe() || !boardMoveGated()) return null;
+            const st = boardMoveState();
+            if (st.window) return null;
+            if (!usesVirtualDiceForActiveSave()) return st.regularUsed ? 'You have already moved this turn.' : null; // a physical die: the walk itself opens the move
+            return st.regularUsed ? 'You have already moved this turn.' : 'Roll the Movement Die first.';
+        }
+        // Closes the open move (Done Moving, a new Blimp Ride, or the end of the turn). Returns the upkeep items it set off (a card like
+        // Pokémon Egg after a move to a new space) for the caller to present. atTurnEnd: no landing prompt, the turn is over.
+        function boardMoveDone(atTurnEnd) {
+            if (!boardBlimp) return [];
+            const gated = boardMoveGated(), st = boardMoveState(), w = st.window;
+            if (gated && w) {
+                st.window = null;
+                if (w.type === 'regular') st.regularUsed = true;
+                upkeepPersist();
+            }
+            const me = boardMyPlayer(), sp = me && boardCtrl && boardCtrl.spaceOf ? boardCtrl.spaceOf(me.id) : null;
+            // Moved = it ended somewhere else, or it left and came back (at least one other space walked on the way).
+            const moved = !!(w && sp && w.startId && (sp.id !== w.startId || (w.visited || []).some(id => id !== w.startId)));
+            boardBlimpFinish();
+            // Only the turn's regular move shows the landing prompt (the Actions box); a Blimp Ride never does.
+            if (!atTurnEnd && moved && w.type === 'regular') boardRequestLanding();
+            if (!gated || !w) return [];
+            const colors = [...new Set((w.visited || []).map(id => boardCtrl && boardCtrl.spaceColor ? boardCtrl.spaceColor(id) : null).filter(Boolean))];
+            return upkeepOnMoveEnd(moved, colors);
         }
 
         // ---- cards.json effect keywords (reusable on any card) ----
@@ -37145,7 +37230,7 @@
                 // openTeamStatusOverlay() and adjustTeamMemberLevel()
                 // in the script for how each is edited afterward.
                 status: null,
-                level: 0,
+                level: (typeof memberSource.level === 'number' && memberSource.level > 0) ? Math.floor(memberSource.level) : 0, // (a hatched Pokémon Egg starts with one)
                 // fainted starts false, same "no data model yet"
                 // shape as status above. hp only actually means
                 // anything for the alt1/alt2 hpRules (see
@@ -46868,6 +46953,8 @@
                     boardHandleSafariSettle(conn.peer, data);
                 } else if (data.type === 'board-frontier-draw' && typeof data.color === 'string') {
                     boardHandleFrontierDraw(conn.peer, data);
+                } else if (data.type === 'board-egg-hatch' && typeof data.color === 'string') {
+                    boardHandleEggHatch(conn.peer, data);
                 } else if (data.type === 'board-contest-counts') {
                     boardHandleContestCounts(conn.peer);
                 } else if (data.type === 'board-contest-draw' && typeof data.color === 'string') {
@@ -48211,11 +48298,11 @@
                 const body = document.getElementById('game-board-mount');
                 body.innerHTML = '';
                 const players = boardPlayers();
-                const mountOpts = { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, onAction: boardOnAction, onPlace: boardOnPlace, onTravel: boardOnTravel, onView: boardOnView, checkpointImages: BOARD_CHECKPOINT_IMAGES, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, onDragState: boardDragState, gateCheck: boardGateCheck, spawnBypass: boardSpawnBypass, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS };
+                const mountOpts = { mode: guest ? 'guest' : 'host', playerId: guest ? myId : (hostPlays ? 'host' : undefined), players, noSample: true, send: boardSend, getPools: guest ? undefined : (cols) => boardPoolsFor(cols, cfg.region), onLanding: boardOnLanding, canMove: boardCanMove, onMoveLocked: showGameToast, onAction: boardOnAction, onPlace: boardOnPlace, onTravel: boardOnTravel, onView: boardOnView, checkpointImages: BOARD_CHECKPOINT_IMAGES, onDraw: boardUpdateStayButton, onWalk: boardWalkCount, onDragState: boardDragState, gateCheck: boardGateCheck, spawnBypass: boardSpawnBypass, onBlocked: boardGateBlocked, tokenImage: boardTokenImages, tokenArt: boardTokenArt, showMarkers: BOARD_SHOW_MARKERS };
                 if (displayOnly) {
                     // The picture carries the spaces; nothing else is drawn or answered (no markers, pools, landing prompts, actions).
                     Object.assign(mountOpts, { displayOnly: true, showMarkers: false, players: [] });
-                    ['onLanding', 'onAction', 'onPlace', 'onTravel', 'onDraw', 'onWalk', 'onDragState', 'gateCheck', 'spawnBypass', 'onBlocked',
+                    ['onLanding', 'canMove', 'onMoveLocked', 'onAction', 'onPlace', 'onTravel', 'onDraw', 'onWalk', 'onDragState', 'gateCheck', 'spawnBypass', 'onBlocked',
                      'tokenImage', 'tokenArt', 'getPools', 'checkpointImages'].forEach(k => { delete mountOpts[k]; });
                 }
                 boardCtrl = window.BoardMap.mount(body, mountOpts);
@@ -48343,6 +48430,7 @@
         function turnsRenderBoard() {
             try { if (boardCtrl && boardCtrl.setTurn) boardCtrl.setTurn(turnView ? turnView.cur : null); } catch (e) { /* ignore */ }
             try { boardApplyBlackedOut(boardBlackedList); boardReportBlackout(); } catch (e) { /* ignore */ } // the board was just (re)built
+            try { boardMoveSync(); } catch (e) { /* ignore */ }
         }
         function turnsClear() { try { boardBlackoutReset(); } catch (e) { /* ignore */ } turnAuth = null; turnViewSig = ''; turnsApplyView(null, false); }
         function turnsHideBanner() {
@@ -48449,7 +48537,7 @@
             const mine = turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host');
             boardAskJump({
                 title: 'End your turn?',
-                text: mine ? 'This ends your turn and starts the next player\u2019s.' : 'This ends ' + (turnView.curName || 'their') + '\u2019s turn and starts the next player\u2019s.',
+                text: mine ? (boardMoveIdleThisTurn() ? 'You haven\u2019t moved or used Stay, Dig, Fly or Teleport this turn. This ends your turn and starts the next player\u2019s.' : 'This ends your turn and starts the next player\u2019s.') : 'This ends ' + (turnView.curName || 'their') + '\u2019s turn and starts the next player\u2019s.',
                 yesLabel: 'End Turn',
                 onYes: turnsEndNow
             });
@@ -48457,7 +48545,8 @@
         // Ending a turn first gives every card with turn-end upkeep its moment (see upkeepBeginTurnEnd()); the turn really ends once
         // the player has been through each of them.
         function turnsEndNow() {
-            if (upkeepBeginTurnEnd(turnsEndNowFinal)) return;
+            const extra = (boardBlimp && upkeepIsMyTurn()) ? boardMoveDone(true) : []; // a move window still open ends with the turn, and counts
+            if (upkeepBeginTurnEnd(turnsEndNowFinal, extra)) return;
             turnsEndNowFinal();
         }
         function turnsEndNowFinal() {
@@ -48479,15 +48568,17 @@
         //
         //   trigger  turnStart    -- when this player's turn begins
         //            turnEnd      -- when this player ends their turn (the turn doesn't pass on until each card has been shown)
-        //            newSpace     -- the marker finished a move on a different space than it was on before
-        //            enterSpace   -- same, plus spaceColor must hold (below)
+        //            newSpace     -- a move (the turn's Movement Die move, or a Blimp Ride's) ended on a different space than it began on
+        //                            (Stay on Space, Dig, Fly and Teleport are not moves)
+        //            enterSpace   -- during a move, the marker walked onto (or through) a space whose color satisfies spaceColor (below)
         //   action   discard | counter | resolve -- only wording for now: the player does it with the viewer's own buttons
         //   message  shown on the note; {color} becomes the space's color
         //   afterOwnTurns  N   -- skip this rule until the player has started N more turns of their own since the card appeared
         //                         (placed during turn 3 with N = 1: first fires at the end of turn 4). Only meaningful with turnEnd/turnStart.
-        //   spaceColor     "match" -- the landing space's color must equal the card's chosen token color (entry.noteColor);
+        //   spaceColor     "match" -- some space walked during the move must have a color equal the card's chosen token color (entry.noteColor);
         //                  or a literal color name such as "red"
-        //   oncePerTurn    true -- fires at most once in any one of the player's turns (turnStart always behaves this way)
+        //   oncePerTurn    true -- fires at most once in any one of the player's turns (turnStart always behaves this way); leave it
+        //                  off for things that should happen every time, like a counter per move
         //
         // Needs the player turns above to be running (full virtual play), since "own turns" and "this turn" mean nothing otherwise.
         // Everything is judged on this player's own device: Permanent cards are in this device's save, team data never leaves it,
@@ -48496,7 +48587,7 @@
         // Bookkeeping that isn't part of the card itself lives in the save: data.upkeepStamps[instanceId] for Permanent entries and
         // member.overlayUpkeep for Overlay cards, each { placed: the player's own turn count when the card was first seen,
         // fired: { ruleIndex: turn number it last fired } }.
-        var upkeepQueue = [], upkeepCurrent = null, upkeepDone = null, upkeepEndPending = false, upkeepLastSpaceId = null;
+        var upkeepQueue = [], upkeepCurrent = null, upkeepDone = null, upkeepEndPending = false;
 
         function cardHasUpkeep(card) { return !!card && Array.isArray(card.upkeep) && card.upkeep.length > 0; }
         function upkeepMe() { return getMyLobbyPlayerId() || 'host'; }
@@ -48559,7 +48650,7 @@
                 }
             } catch (err) { /* never get in the way of a redraw */ }
         }
-        // The rules that apply right now for a trigger -> a list of things to show. ctx = { spaceColor } for the space triggers.
+        // The rules that apply right now for a trigger -> a list of things to show. ctx = { spaceColors: [names of the colors of the spaces walked] } for the space triggers.
         function upkeepCollect(trigger, ctx) {
             const items = [];
             const n = upkeepMyTurnNumber();
@@ -48573,14 +48664,14 @@
                     if (rule.afterOwnTurns && n < st.placed + rule.afterOwnTurns) return;
                     if (rule.spaceColor) {
                         const want = rule.spaceColor === 'match' ? h.noteColor : String(rule.spaceColor).toLowerCase();
-                        if (!want || !ctx || ctx.spaceColor !== want) return;
+                        if (!want || !ctx || !(ctx.spaceColors || []).includes(want)) return;
                     }
                     if (rule.oncePerTurn || trigger === 'turnStart') {
                         if (st.fired[i] === n) return;
                         st.fired[i] = n;
                         changed = true;
                     }
-                    const color = ctx && ctx.spaceColor ? ctx.spaceColor : '';
+                    const color = rule.spaceColor ? (rule.spaceColor === 'match' ? (h.noteColor || '') : String(rule.spaceColor).toLowerCase()) : '';
                     items.push({ holder: h, action: rule.action || '', message: String(rule.message || (h.card.name + ' needs attention.')).replace('{color}', color) });
                 });
             });
@@ -48647,34 +48738,29 @@
         // ---- the moments ----
         function upkeepOnTurnStart() {
             try {
-                const me = boardCtrl && boardCtrl.spaceOf ? boardCtrl.spaceOf(upkeepMe()) : null;
-                upkeepLastSpaceId = me ? me.id : null;
                 upkeepStampNew();
+                boardMoveSync();
                 const items = upkeepCollect('turnStart');
                 if (items.length) setTimeout(() => upkeepPresent(items), TURN_BANNER_MS + 500); // after the "Your Turn" banner
             } catch (err) { /* ignore */ }
         }
         // True when it took over the End Turn (the turn then ends through `finish` once the player has been through every card).
-        function upkeepBeginTurnEnd(finish) {
+        function upkeepBeginTurnEnd(finish, extra) {
             try {
                 if (upkeepEndPending) return true; // a second tap while the cards are still being shown
                 if (!upkeepIsMyTurn() || isActiveSaveReadOnly()) return false;
-                const items = upkeepCollect('turnEnd');
+                const items = (extra || []).concat(upkeepCollect('turnEnd'));
                 if (!items.length) return false;
                 upkeepEndPending = true;
                 upkeepPresent(items, () => { upkeepEndPending = false; finish(); });
                 return true;
             } catch (err) { upkeepEndPending = false; return false; }
         }
-        // Every landing on THIS device's own player (board.js only delivers those here).
-        function upkeepOnLanding(info) {
-            const prev = upkeepLastSpaceId;
-            upkeepLastSpaceId = info.space.id;
-            if (!upkeepIsMyTurn()) return;
-            if (prev !== null && prev === info.space.id) return; // stayed put (a Stay, or the same space's encounter prompt)
-            const ctx = { spaceColor: String(info.space.color || '').toLowerCase() };
-            const items = upkeepCollect('newSpace', ctx).concat(upkeepCollect('enterSpace', ctx));
-            if (items.length) setTimeout(() => upkeepPresent(items), 400);
+        // A move window closed (see boardMoveDone()): the things that trigger on moving to a new space (moved = it ended somewhere else than
+        // it began, or left and came back) or on walking over a color (colors = the colors of every space walked). Returns the items to show; the caller presents them. A Blimp Ride's window counts as its own move.
+        function upkeepOnMoveEnd(moved, colors) {
+            const ctx = { spaceColors: (colors || []).map(c => String(c || '').toLowerCase()).filter(Boolean) };
+            return (moved ? upkeepCollect('newSpace', ctx) : []).concat(ctx.spaceColors.length ? upkeepCollect('enterSpace', ctx) : []);
         }
         // ---- Gates on paths ----
         // board.js asks, for the player moving THEIR OWN marker on THIS device, whether they may cross a gated path. Every gate is
@@ -48769,7 +48855,13 @@
             if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves();
         }
         function boardOnTravel(playerId, path) {
-            if (playerId === (getMyLobbyPlayerId() || 'host')) boardNoteVisited(path);
+            if (playerId === (getMyLobbyPlayerId() || 'host')) {
+                boardNoteVisited(path);
+                const walkedWindow = () => { const w = boardMoveGated() && boardMoveState().window; if (w && path && path.length > 1) { w.visited = (w.visited || []).concat(path.slice(1)); upkeepPersist(); } };
+                // With a physical Movement Die nothing here is rolled, so the first walk of the turn opens the move on its own.
+                if (!usesVirtualDiceForActiveSave() && boardMoveGated() && !boardMoveWindowOpen()) boardMoveOpen('regular', null, path && path[0]);
+                walkedWindow(); // every space walked in the open move (the ones passed through count, the one it began on does not)
+            }
         }
         // Wherever this player's marker is standing (the start, a landing, a Black Out) counts too.
         function boardNoteCurrentCity() {
@@ -48973,6 +49065,7 @@
             if (isActiveSaveReadOnly() || !boardCtrl) return;
             const me = boardMyPlayer();
             if (!me) { showGameToast('Only players can use ' + def.label + '.'); return; }
+            if (!boardMoveActionGuard()) return;
             const here = boardCtrl.spaceOf(me.id);
             if (id === 'dig' || id === 'teleport') {
                 const home = boardCtrl.homeOf(me.id);
@@ -48982,7 +49075,7 @@
                     title: 'Use ' + def.label + '?',
                     text: 'Instead of rolling to move, your Trainer Figure will move straight to your Current Home' + (home.label ? ', ' + home.label : '') + '. '
                         + (id === 'teleport' ? 'You may complete an Explore Action on that space.' : 'Your turn ends immediately when you get there.'),
-                    onYes: () => boardDoJump('@home', id === 'teleport')
+                    onYes: () => { boardMoveActionUsed(); boardDoJump('@home', id === 'teleport'); }
                 });
                 return;
             }
@@ -48994,7 +49087,7 @@
                     text: 'Instead of rolling to move, choose a City space to Fly to. Your turn ends immediately when you get there.',
                     choices: dests.map(c => ({ id: c.id, label: c.label || c.id })),
                     yesLabel: 'Fly',
-                    onYes: city => boardDoJump(city, BOARD_FLY_SHOWS_ACTIONS)
+                    onYes: city => { boardMoveActionUsed(); boardDoJump(city, BOARD_FLY_SHOWS_ACTIONS); }
                 });
             }
         }
@@ -49377,7 +49470,6 @@
         }
         function boardDeliverLanding(info) {
             if (!boardCtrl || !info || !info.space) return;
-            try { upkeepOnLanding(info); } catch (err) { /* upkeep must never block a landing prompt */ }
             if (boardBlimp) return; // a Blimp Ride move: no Actions box until the player says they are done (see boardBlimpFinish())
             const buttons = [];
             let text, plainSpace = false;
@@ -50852,6 +50944,71 @@
             boardFrontiers[playerId] = { name, color, uid: null, roaming: !!roaming };
             return name;
         }
+        // ---- Pokémon Egg hatching (see the chat this was designed in) ----
+        // A card with "permanentCounterEffect": { "at": N, "effect": "eggHatch" } runs the effect when its Permanent counter is raised to N.
+        // eggHatch: draw tokens of the card's chosen color from the board's pool until a Stage 1 Pokémon (the gallery's "stage1" tag)
+        // comes up; the others drawn on the way go straight back to the pool, the Stage 1 joins the team with one Level, and the card
+        // is discarded once it has (see addOrQueueTeamMember()'s sourceInstanceId). The pool lives on the Host, so a guest asks it.
+        let eggHatchCb = null;
+        function permanentCounterChanged(instanceId, counter, delta) {
+            if (delta <= 0 || isActiveSaveReadOnly()) return;
+            const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
+            const card = entry && CARDS_BY_ID[entry.cardId];
+            const fx = card && card.permanentCounterEffect;
+            if (fx && fx.effect === 'eggHatch' && counter === fx.at) eggHatchBegin(entry);
+        }
+        function eggHatchBegin(entry) {
+            const color = entry.noteColor, label = boardFrontierColorLabel(color);
+            closePermanentCardViewer();
+            if (!BOARD_FRONTIER_COLORS.some(c => c.id === color && c.id !== 'orange')) { showGameToast('This Egg has no color chosen, so it can’t hatch.'); return; }
+            if (!usesVirtualTokensForActiveSave()) {
+                boardFrontierAck('Pokémon Egg', 'Your ' + label + ' Egg hatches! Draw ' + label + ' tokens until you draw a Stage 1 Pokémon (put the others back), add it to your team with one Level, then discard the Egg.', null);
+                return;
+            }
+            boardFrontierAck('Pokémon Egg', 'Your ' + label + ' Egg is ready to hatch! Tap OK to draw ' + label + ' tokens from the pool until a Stage 1 Pokémon turns up. It joins your team and gains a Level.', () => eggHatchDraw(entry.instanceId, color));
+        }
+        function eggHatchDraw(instanceId, color) {
+            const label = boardFrontierColorLabel(color);
+            eggHatchRequest(color, res => {
+                const entry = res && res.name ? POKEMON_BY_NAME[res.name] : null;
+                if (!entry) {
+                    boardFrontierAck('Pokémon Egg', 'No Stage 1 ' + label + ' Pokémon are left in the pool, so the Egg can’t hatch yet. It stays in your Permanent Zone.', null);
+                    return;
+                }
+                const skipped = res.skipped > 0 ? ' (' + res.skipped + ' other ' + label + ' token' + (res.skipped === 1 ? ' was' : 's were') + ' drawn first and went back to the pool.)' : '';
+                boardFrontierAck('Pokémon Egg', 'The Egg hatched into ' + entry.name + '!' + skipped + ' It joins your team and gains a Level.', () => {
+                    addOrQueueTeamMember({ dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false, level: 1 }, instanceId);
+                    openGamePanel();
+                    setGameScreen('team');
+                    renderTeamGrid();
+                });
+            });
+        }
+        function eggHatchRequest(color, cb) {
+            if (lobbyState.role === 'guest') { eggHatchCb = cb; boardSend({ type: 'board-egg-hatch', color }); return; }
+            boardEnsureBoard().then(c => cb(eggHatchHostDraw(c, color))).catch(() => cb(null));
+        }
+        // Host / solo: the draw itself.
+        function eggHatchHostDraw(c, color) {
+            const set = [];
+            let keeper = null;
+            for (let i = 0; i < 1000 && !keeper; i++) {
+                const name = c.drawFromPool(color);
+                if (!name) break;
+                const e = POKEMON_BY_NAME[name];
+                if (e && Array.isArray(e.tags) && e.tags.includes('stage1')) keeper = name; else set.push(name);
+            }
+            set.forEach(n => c.settlePoolToken(n, 'returned')); // only after the loop, so a returned token can't be drawn again
+            if (keeper) c.settlePoolToken(keeper, 'caught'); // it's on someone's team now, not in the pool
+            return { name: keeper, skipped: set.length };
+        }
+        function boardHandleEggHatch(peerId, data) {
+            const color = String(data.color || '');
+            const reply = res => boardSendToPeer(peerId, { type: 'board-egg-hatched', name: res ? res.name : null, skipped: res ? res.skipped : 0 });
+            if (!getRegionMapSettingsForActiveSave().enabled || !BOARD_FRONTIER_COLORS.some(k => k.id === color && k.id !== 'orange')) { reply(null); return; }
+            boardEnsureBoard().then(c => reply(eggHatchHostDraw(c, color))).catch(() => reply(null));
+        }
+
         function boardHandleFrontierDraw(peerId, data) {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
             const color = String(data.color || '');
@@ -51797,15 +51954,18 @@
         function boardStayOnSpace() {
             if (isActiveSaveReadOnly()) return;
             if (!boardOnCitySpace()) { showGameToast(BOARD_STAY_MESSAGE); return; }
+            if (!boardMoveActionGuard()) return;
+            boardMoveActionUsed();
             const me = boardMyPlayer();
             if (!me) return;
             boardAnnounceRollSettled(me); // the move is decided, so any roll still on screen can wind down
             boardRequestLanding();
         }
-        function boardRollMovement() {
+        function boardRollMovement(isBlimp) {
             if (isActiveSaveReadOnly() || !usesVirtualDiceForActiveSave()) return;
             const me = boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host'));
             if (!me) { showGameToast('Only players can roll for movement.'); return; } // e.g. a host who isn't playing
+            if (!isBlimp && !boardMoveActionGuard()) return; // this turn's move is already rolled for, or spent
             const raw = 1 + Math.floor(Math.random() * 6), penalty = boardMovePenalty();
             const value = Math.max(0, raw - penalty);
             if (penalty) boardSetMovePenalty(0); // taken off this roll, whatever is left over is dropped
@@ -51813,7 +51973,8 @@
             boardShowRoll(shown);
             if (lobbyState.role === 'guest') boardSend({ type: 'board-roll', value, raw, penalty }); // the Host fills in who rolled
             else if (lobbyState.role === 'host') boardSend(shown);
-            if (value === 0) boardRequestLanding(); // no movement: the space they are on counts as just landed on
+            if (!isBlimp && boardMoveGated()) { if (value === 0) boardMoveActionUsed(); else boardMoveOpen('regular'); } // a 0 uses the move without opening it
+            if (value === 0 && !isBlimp) boardRequestLanding(); // no movement: the space they are on counts as just landed on
         }
         // Host: a guest rolled. Who it was comes from the connection, never from the message.
         function boardHandleRollFromGuest(peerId, data) {
@@ -51925,7 +52086,7 @@
                 if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
                 else if (frame && frame.requestFullscreen) frame.requestFullscreen().catch(() => {});
             }
-            else if (t.closest('#board-blimp-done-btn')) boardBlimpFinish();
+            else if (t.closest('#board-blimp-done-btn')) { const moveItems = boardMoveDone(false); if (moveItems.length) upkeepPresent(moveItems); }
             else if (t.closest('#board-roll-btn')) boardRollMovement();
             else if (t.closest('#board-stay-btn')) boardStayOnSpace();
             else if (t.closest('#board-endturn-btn')) turnsEndClick();
@@ -52804,8 +52965,10 @@
                     // Permanent Cards viewer, confirmed by the Host (see
                     // hostApplyPermanentCounterAdjust()).
                     const target = getLocalPermanentArray().find(entry => entry.instanceId === data.instanceId);
+                    const counterBefore = target ? target.counter : 0;
                     if (target) target.counter = data.counter;
                     persistLocalPermanent();
+                    if (target) permanentCounterChanged(data.instanceId, data.counter, data.counter - counterBefore);
                     renderDecksScreen();
                     renderPermanentCardViewer(); // no-op unless this exact card's viewer is open
                 } else if (data.type === 'permanent-sync' && Array.isArray(data.cards)) {
@@ -52848,6 +53011,10 @@
                     const cb = contestCountsCb;
                     contestCountsCb = null;
                     if (cb) cb(data.counts);
+                } else if (data.type === 'board-egg-hatched') {
+                    const cb = eggHatchCb;
+                    eggHatchCb = null;
+                    if (cb) cb({ name: typeof data.name === 'string' ? data.name : null, skipped: Math.max(0, parseInt(data.skipped, 10) || 0) });
                 } else if (data.type === 'board-contest-drawn' && typeof data.color === 'string') {
                     const cb = contestDrawCb;
                     contestDrawCb = null;
