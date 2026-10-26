@@ -4230,6 +4230,24 @@
             display: flex;
         }
 
+        /* Card upkeep prompt (see the "Card upkeep" block in the script):
+           a short note shown above a card in either viewer while the upkeep
+           system has brought that viewer up for the player. */
+        .game-upkeep-note {
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 193, 7, 0.7);
+            background: rgba(255, 193, 7, 0.16);
+            font-size: 0.9em;
+            line-height: 1.35;
+            text-align: center;
+        }
+
+        .game-upkeep-note[hidden] {
+            display: none;
+        }
+
         /* ---- Note Color picker (see the chat this was designed in) ----
            Same overlay shape as #game-permanent-card-viewer-overlay
            right above -- backdrop dims the Decks screen, .game-confirm-card
@@ -18031,6 +18049,7 @@
         <div id="game-overlay-card-viewer-overlay">
             <div class="game-confirm-card">
                 <p class="game-confirm-title" id="game-overlay-card-viewer-title"></p>
+                <p class="game-upkeep-note" id="game-overlay-card-viewer-upkeep" hidden></p>
                 <!-- Same .game-team-cards-detail/-photo dark box Attach/
                      Nature cards get in both of their own panels (the
                      corner overlay and the details view) -- see the
@@ -18260,6 +18279,7 @@
         <div id="game-permanent-card-viewer-overlay">
             <div class="game-confirm-card">
                 <p class="game-confirm-title" id="game-permanent-card-viewer-title"></p>
+                <p class="game-upkeep-note" id="game-permanent-card-viewer-upkeep" hidden></p>
                 <!-- Same dark box the Team Tracker's own Attach Card
                      overlay (#game-overlay-card-viewer-overlay) puts
                      behind its own card image and buttons, via
@@ -22707,6 +22727,7 @@
         }
 
         function renderTeamGrid() {
+            upkeepStampNew();
             // A Pok\u00e9mon in the Battle Arena that just got an Overlay Card
             // is recalled -- see ejectOverlayedBattleMembers().
             ejectOverlayedBattleMembers();
@@ -29049,6 +29070,7 @@
         function closeOverlayCardViewer() {
             overlayCardViewerIndex = null;
             document.getElementById('game-overlay-card-viewer-overlay').classList.remove('visible');
+            upkeepViewerClosed('overlay');
         }
 
         // Fills in the viewer's own title/image/counter for whichever
@@ -30599,6 +30621,7 @@
         // throwing. Called on entering the screen (setGameScreen), and
         // after every local or networked state change.
         function renderDecksScreen() {
+            upkeepStampNew();
             const listEl = document.getElementById('game-decks-list');
             const handEl = document.getElementById('game-hand-stack');
             const othersHeaderEl = document.getElementById('game-other-hands-header');
@@ -31338,6 +31361,7 @@
         function closePermanentCardViewer() {
             permanentCardViewerInstanceId = null;
             document.getElementById('game-permanent-card-viewer-overlay').classList.remove('visible');
+            upkeepViewerClosed('permanent');
         }
 
         // Fills in the viewer's own title/image/counter for whichever
@@ -48304,6 +48328,7 @@
         function turnsPublicView() { return lobbyState.role === 'host' && turnAuth ? turnsBuildView() : null; }
         function turnsApplyView(view, announce, coin) {
             turnView = (view && Array.isArray(view.order)) ? view : null;
+            if (announce && turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host')) upkeepOnTurnStart();
             if (boardBlimp && turnView && turnView.cur && turnView.cur !== (getMyLobbyPlayerId() || 'host')) boardBlimpFinish(); // the turn moved on
             if (announce && coin && turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host') && isPokeCoinsEnabledForActiveSave() && !isActiveSaveReadOnly()) adjustPokeCoins(1); // each device adds to its own player's total
             turnsRender(!!announce, !!coin);
@@ -48429,13 +48454,227 @@
                 onYes: turnsEndNow
             });
         }
+        // Ending a turn first gives every card with turn-end upkeep its moment (see upkeepBeginTurnEnd()); the turn really ends once
+        // the player has been through each of them.
         function turnsEndNow() {
+            if (upkeepBeginTurnEnd(turnsEndNowFinal)) return;
+            turnsEndNowFinal();
+        }
+        function turnsEndNowFinal() {
             boardBlimpFinish(); // ending the turn ends a Blimp Ride move too
             if (lobbyState.role === 'guest') boardSend({ type: 'turn-end' });
             else turnsAdvance();
         }
         function turnsHandleEnd(peerId) {
             if (turnAuth && turnView && turnView.cur && turnView.cur === peerId) turnsAdvance(); // who it was comes from the connection
+        }
+        // ---- Card upkeep (see the chat this was designed in) ----
+        // Some cards sit in the Permanent Zone (or, for Overlay cards like Team Rocket, on a Pokémon) and need something done
+        // at a particular moment: add a counter, discard, resolve an effect. A card opts in with an `upkeep` array in cards.json;
+        // each rule says WHEN it applies and what the player is asked to do. When the moment comes, the card's own viewer (the same
+        // one a tap on it opens) is brought up with a short note on top saying what's needed. The player does the actual work with
+        // the viewer's normal buttons -- the system only brings the card to them. Closing the viewer moves on to the next card.
+        //
+        //   "upkeep": [ { "trigger": "...", "action": "...", "message": "...", ...options } ]
+        //
+        //   trigger  turnStart    -- when this player's turn begins
+        //            turnEnd      -- when this player ends their turn (the turn doesn't pass on until each card has been shown)
+        //            newSpace     -- the marker finished a move on a different space than it was on before
+        //            enterSpace   -- same, plus spaceColor must hold (below)
+        //   action   discard | counter | resolve -- only wording for now: the player does it with the viewer's own buttons
+        //   message  shown on the note; {color} becomes the space's color
+        //   afterOwnTurns  N   -- skip this rule until the player has started N more turns of their own since the card appeared
+        //                         (placed during turn 3 with N = 1: first fires at the end of turn 4). Only meaningful with turnEnd/turnStart.
+        //   spaceColor     "match" -- the landing space's color must equal the card's chosen token color (entry.noteColor);
+        //                  or a literal color name such as "red"
+        //   oncePerTurn    true -- fires at most once in any one of the player's turns (turnStart always behaves this way)
+        //
+        // Needs the player turns above to be running (full virtual play), since "own turns" and "this turn" mean nothing otherwise.
+        // Everything is judged on this player's own device: Permanent cards are in this device's save, team data never leaves it,
+        // and the board tells each device about its own player's landings.
+        //
+        // Bookkeeping that isn't part of the card itself lives in the save: data.upkeepStamps[instanceId] for Permanent entries and
+        // member.overlayUpkeep for Overlay cards, each { placed: the player's own turn count when the card was first seen,
+        // fired: { ruleIndex: turn number it last fired } }.
+        var upkeepQueue = [], upkeepCurrent = null, upkeepDone = null, upkeepEndPending = false, upkeepLastSpaceId = null;
+
+        function cardHasUpkeep(card) { return !!card && Array.isArray(card.upkeep) && card.upkeep.length > 0; }
+        function upkeepMe() { return getMyLobbyPlayerId() || 'host'; }
+        function upkeepIsMyTurn() { return !!(turnView && turnView.cur && turnView.cur === upkeepMe()); }
+        // This player's own turn count (how many turns they've started), or null while turns aren't running.
+        function upkeepMyTurnNumber() {
+            if (!turnView || !Array.isArray(turnView.order)) return null;
+            const row = turnView.order.find(o => o.pid === upkeepMe());
+            return row ? row.n : null;
+        }
+        function upkeepPersist() {
+            try {
+                if (activeGuestSaveId !== null) persistGameGuestSaves();
+                else if (activeSaveSlot !== null) persistGameSaves();
+            } catch (err) { /* storage full: bookkeeping is rebuilt next time */ }
+        }
+        function upkeepTeamMembers() {
+            const data = getActiveSaveData();
+            return (data && data.team && Array.isArray(data.team.members)) ? data.team.members : [];
+        }
+        // Every card currently on this device's player that has upkeep: { kind, card, entry|member, noteColor }.
+        function upkeepHolders() {
+            const out = [];
+            getLocalPermanentArray().forEach(entry => {
+                const card = CARDS_BY_ID[entry.cardId];
+                if (cardHasUpkeep(card)) out.push({ kind: 'permanent', card, entry, noteColor: entry.noteColor || null });
+            });
+            upkeepTeamMembers().forEach(member => {
+                const card = member && member.overlayCardId ? CARDS_BY_ID[member.overlayCardId] : null;
+                if (cardHasUpkeep(card)) out.push({ kind: 'overlay', card, member, noteColor: null });
+            });
+            return out;
+        }
+        // The holder's bookkeeping, created the first time the card is seen. Returns null while turns aren't running.
+        function upkeepStampFor(h, create) {
+            const n = upkeepMyTurnNumber();
+            if (n === null) return null;
+            if (h.kind === 'permanent') {
+                const data = getActiveSaveData();
+                if (!data.upkeepStamps || typeof data.upkeepStamps !== 'object') data.upkeepStamps = {};
+                let st = data.upkeepStamps[h.entry.instanceId];
+                if (!st && create) { st = data.upkeepStamps[h.entry.instanceId] = { placed: n, fired: {} }; upkeepPersist(); }
+                return st || null;
+            }
+            let st = h.member.overlayUpkeep;
+            if ((!st || st.card !== h.card.id) && create) { st = h.member.overlayUpkeep = { card: h.card.id, placed: n, fired: {} }; upkeepPersist(); }
+            return (st && st.card === h.card.id) ? st : null;
+        }
+        // Notices cards that have just arrived (called whenever the Hand & Decks or Team grids redraw, and at every turn boundary),
+        // so "the turn it was placed" is right even for a card that appeared during someone else's turn. Also drops the
+        // bookkeeping of Permanent cards that have left.
+        function upkeepStampNew() {
+            try {
+                if (upkeepMyTurnNumber() === null) return;
+                upkeepHolders().forEach(h => upkeepStampFor(h, true));
+                const data = getActiveSaveData();
+                if (data.upkeepStamps) {
+                    const live = new Set(getLocalPermanentArray().map(e => e.instanceId));
+                    Object.keys(data.upkeepStamps).forEach(k => { if (!live.has(k)) delete data.upkeepStamps[k]; });
+                }
+            } catch (err) { /* never get in the way of a redraw */ }
+        }
+        // The rules that apply right now for a trigger -> a list of things to show. ctx = { spaceColor } for the space triggers.
+        function upkeepCollect(trigger, ctx) {
+            const items = [];
+            const n = upkeepMyTurnNumber();
+            if (n === null || isActiveSaveReadOnly()) return items;
+            let changed = false;
+            upkeepHolders().forEach(h => {
+                const st = upkeepStampFor(h, true);
+                if (!st) return;
+                h.card.upkeep.forEach((rule, i) => {
+                    if (!rule || rule.trigger !== trigger) return;
+                    if (rule.afterOwnTurns && n < st.placed + rule.afterOwnTurns) return;
+                    if (rule.spaceColor) {
+                        const want = rule.spaceColor === 'match' ? h.noteColor : String(rule.spaceColor).toLowerCase();
+                        if (!want || !ctx || ctx.spaceColor !== want) return;
+                    }
+                    if (rule.oncePerTurn || trigger === 'turnStart') {
+                        if (st.fired[i] === n) return;
+                        st.fired[i] = n;
+                        changed = true;
+                    }
+                    const color = ctx && ctx.spaceColor ? ctx.spaceColor : '';
+                    items.push({ holder: h, action: rule.action || '', message: String(rule.message || (h.card.name + ' needs attention.')).replace('{color}', color) });
+                });
+            });
+            if (changed) upkeepPersist();
+            return items;
+        }
+        function upkeepHolderStillThere(h) {
+            if (h.kind === 'permanent') return getLocalPermanentArray().some(e => e.instanceId === h.entry.instanceId);
+            return upkeepTeamMembers().includes(h.member) && h.member.overlayCardId === h.card.id;
+        }
+        // Queues the items and starts showing them. If something's already being shown they join the end of its queue.
+        function upkeepPresent(items, onDone) {
+            if (!items.length) { if (onDone) onDone(); return; }
+            if (upkeepCurrent || upkeepQueue.length) {
+                upkeepQueue.push(...items);
+                if (onDone) { const prev = upkeepDone; upkeepDone = () => { if (prev) prev(); onDone(); }; }
+                return;
+            }
+            upkeepQueue = items.slice();
+            upkeepDone = onDone || null;
+            upkeepTotal = items.length;
+            upkeepShownCount = 0;
+            upkeepNext();
+        }
+        var upkeepTotal = 0, upkeepShownCount = 0;
+        function upkeepNext() {
+            upkeepCurrent = null;
+            while (upkeepQueue.length) {
+                const it = upkeepQueue.shift();
+                if (!upkeepHolderStillThere(it.holder)) continue; // e.g. discarded in the meantime
+                upkeepCurrent = it;
+                upkeepShownCount++;
+                upkeepShow(it);
+                return;
+            }
+            const done = upkeepDone;
+            upkeepDone = null;
+            upkeepTotal = upkeepShownCount = 0;
+            if (done) done();
+        }
+        function upkeepShow(it) {
+            const h = it.holder;
+            try { openGamePanel(); } catch (err) { /* panel not available */ }
+            try { setGameScreen(h.kind === 'permanent' ? 'decks' : 'team'); } catch (err) { /* stay where we are: the viewer sits over any screen */ }
+            const total = upkeepTotal + 0;
+            const text = it.message + (total > 1 ? ' (' + upkeepShownCount + ' of ' + total + ')' : '');
+            const bannerId = h.kind === 'permanent' ? 'game-permanent-card-viewer-upkeep' : 'game-overlay-card-viewer-upkeep';
+            if (h.kind === 'permanent') openPermanentCardViewer(h.entry.instanceId);
+            else openOverlayCardViewer(upkeepTeamMembers().indexOf(h.member));
+            const banner = document.getElementById(bannerId);
+            if (banner) { banner.textContent = text; banner.hidden = false; }
+        }
+        // Called by both viewers' close functions (however they were closed: Close, backdrop, Discard, Add to Team...).
+        function upkeepViewerClosed(kind) {
+            ['game-permanent-card-viewer-upkeep', 'game-overlay-card-viewer-upkeep'].forEach(id => {
+                const b = document.getElementById(id);
+                if (b) b.hidden = true;
+            });
+            if (upkeepCurrent && upkeepCurrent.holder.kind === kind) {
+                upkeepCurrent = null;
+                setTimeout(upkeepNext, 250); // lets whatever closed the viewer finish before the next one opens
+            }
+        }
+        // ---- the moments ----
+        function upkeepOnTurnStart() {
+            try {
+                const me = boardCtrl && boardCtrl.spaceOf ? boardCtrl.spaceOf(upkeepMe()) : null;
+                upkeepLastSpaceId = me ? me.id : null;
+                upkeepStampNew();
+                const items = upkeepCollect('turnStart');
+                if (items.length) setTimeout(() => upkeepPresent(items), TURN_BANNER_MS + 500); // after the "Your Turn" banner
+            } catch (err) { /* ignore */ }
+        }
+        // True when it took over the End Turn (the turn then ends through `finish` once the player has been through every card).
+        function upkeepBeginTurnEnd(finish) {
+            try {
+                if (upkeepEndPending) return true; // a second tap while the cards are still being shown
+                if (!upkeepIsMyTurn() || isActiveSaveReadOnly()) return false;
+                const items = upkeepCollect('turnEnd');
+                if (!items.length) return false;
+                upkeepEndPending = true;
+                upkeepPresent(items, () => { upkeepEndPending = false; finish(); });
+                return true;
+            } catch (err) { upkeepEndPending = false; return false; }
+        }
+        // Every landing on THIS device's own player (board.js only delivers those here).
+        function upkeepOnLanding(info) {
+            const prev = upkeepLastSpaceId;
+            upkeepLastSpaceId = info.space.id;
+            if (!upkeepIsMyTurn()) return;
+            if (prev !== null && prev === info.space.id) return; // stayed put (a Stay, or the same space's encounter prompt)
+            const ctx = { spaceColor: String(info.space.color || '').toLowerCase() };
+            const items = upkeepCollect('newSpace', ctx).concat(upkeepCollect('enterSpace', ctx));
+            if (items.length) setTimeout(() => upkeepPresent(items), 400);
         }
         // ---- Gates on paths ----
         // board.js asks, for the player moving THEIR OWN marker on THIS device, whether they may cross a gated path. Every gate is
@@ -49138,6 +49377,7 @@
         }
         function boardDeliverLanding(info) {
             if (!boardCtrl || !info || !info.space) return;
+            try { upkeepOnLanding(info); } catch (err) { /* upkeep must never block a landing prompt */ }
             if (boardBlimp) return; // a Blimp Ride move: no Actions box until the player says they are done (see boardBlimpFinish())
             const buttons = [];
             let text, plainSpace = false;
