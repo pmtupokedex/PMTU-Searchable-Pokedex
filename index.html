@@ -45395,24 +45395,33 @@
         // ICE servers for every PeerJS peer. PeerJS's built-in defaults
         // relied on a free shared TURN relay (eu-0.turn.peerjs.com) that no
         // longer resolves, so connections that can't go straight between
-        // two devices (firewall, NAT hairpin) had no fallback at all.
-        // Passing `config` REPLACES PeerJS's defaults, so STUN is listed here
-        // too. The TURN entries are the free public Open Relay servers
-        // (no account needed, shared and best-effort) -- swap in your own
-        // TURN host/credentials here later; this is the only place to change.
-        const LOBBY_PEER_OPTIONS = {
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun.cloudflare.com:3478' },
-                    { urls: 'stun:stun.relay.metered.ca:80' },
-                    { urls: 'turn:standard.relay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-                    { urls: 'turn:standard.relay.metered.ca:80?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-                    { urls: 'turn:standard.relay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-                    { urls: 'turns:standard.relay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-                ]
-            }
-        };
+        // two devices had no fallback. Passing `config` REPLACES PeerJS's
+        // defaults, so STUN is listed here too.
+        //
+        // >>> FILL IN THESE TWO VALUES (from your Metered dashboard:
+        // >>> TURN Server -> Credentials). While either is still the
+        // >>> placeholder text, the TURN entries are skipped and the app
+        // >>> falls back to STUN only (direct connections still work).
+        const METERED_TURN_USERNAME = '60ddfa8c269bb9731903a091';
+        const METERED_TURN_CREDENTIAL = 'WmpI9YnOZRJCn1kJ';
+        // Metered's global relay hostname (same for every account).
+        const METERED_TURN_HOST = 'global.relay.metered.ca';
+        const METERED_TURN_READY = !/^PASTE_/.test(METERED_TURN_USERNAME) && !/^PASTE_/.test(METERED_TURN_CREDENTIAL);
+        const LOBBY_ICE_SERVERS = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun.relay.metered.ca:80' }
+        ];
+        if (METERED_TURN_READY) {
+            LOBBY_ICE_SERVERS.push(
+                { urls: 'turn:' + METERED_TURN_HOST + ':80', username: METERED_TURN_USERNAME, credential: METERED_TURN_CREDENTIAL },
+                { urls: 'turn:' + METERED_TURN_HOST + ':80?transport=tcp', username: METERED_TURN_USERNAME, credential: METERED_TURN_CREDENTIAL },
+                { urls: 'turn:' + METERED_TURN_HOST + ':443', username: METERED_TURN_USERNAME, credential: METERED_TURN_CREDENTIAL },
+                { urls: 'turns:' + METERED_TURN_HOST + ':443?transport=tcp', username: METERED_TURN_USERNAME, credential: METERED_TURN_CREDENTIAL }
+            );
+        } else {
+            try { console.warn('[lobby] Metered TURN credentials not filled in -- running with STUN only'); } catch (err) { /* no console */ }
+        }
+        const LOBBY_PEER_OPTIONS = { config: { iceServers: LOBBY_ICE_SERVERS } };
         // Logs how a connection actually got established (or why not) into
         // the same trace that ends up in the "Could not reconnect" message:
         // ICE state changes plus, once connected, whether the chosen path is
