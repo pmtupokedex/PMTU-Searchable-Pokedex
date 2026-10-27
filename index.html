@@ -30994,6 +30994,7 @@
                             ${(!readOnly && cardIsLegendaryEncounter(card)) ? `<button class="filter-btn game-active-card-legend-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Find the Legendary</button><button class="filter-btn game-active-card-legend-decline-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Don&rsquo;t Find It</button>` : ''}
                             ${(!readOnly && cardHasScaledOpponents(card) && canUseBattleArena()) ? `<button class="filter-btn include game-active-card-scaled-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Begin Battle</button>` : ''}
                             ${(!readOnly && cardEffectLabel(card)) ? `<button class="filter-btn include game-active-card-effect-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">${escapeHtml(cardEffectLabel(card))}</button>` : ''}
+                            ${(!readOnly) ? cardPoolTierButtonsHtml(card, info.cardId) : ''}
                             ${(!readOnly && cardStartsPlayerBattle(card)) ? `<button class="filter-btn game-active-card-pvp-btn" type="button">Battle a Player</button>` : ''}
                             ${(!readOnly && cardStartsContest(card)) ? `<button class="filter-btn game-active-card-contest-btn" type="button">Begin Contest</button>` : ''}
                             ${canAttach ? `<button class="filter-btn game-active-card-attach-btn" type="button" data-card-id="${escapeHtml(info.cardId)}">Attach</button>` : ''}
@@ -36533,6 +36534,7 @@
         }
         // board.js asks this when the player touches their own marker (see canMove in board.js).
         function boardCanMove(playerId) {
+            if (playerId === upkeepMe() && boardOffTurn()) return 'Wait for your turn to move your marker.'; // a card that allows it off-turn would be coded in here
             if (playerId !== upkeepMe() || !boardMoveGated()) return null;
             const st = boardMoveState();
             if (st.window) return null;
@@ -36559,8 +36561,9 @@
             const cityIds = new Set(boardCtrl && boardCtrl.cities ? boardCtrl.cities().map(c => c.id) : []);
             const passed = sp ? [...new Set(route.slice(0, -1).filter(id => cityIds.has(id) && id !== sp.id))] : [];
             boardBlimpFinish();
-            // Only the turn's regular move shows the landing prompt (the Actions box); a Blimp Ride never does.
-            if (!atTurnEnd && moved && w.type === 'regular') boardRequestLanding(passed);
+            // Only the turn's regular move shows the landing prompt (the Actions box); a Blimp Ride never does. A roll that went nowhere
+            // still brings it up for the space the player is on (`moved` only matters to the upkeep below).
+            if (!atTurnEnd && w && sp && w.type === 'regular') boardRequestLanding(passed);
             if (!gated || !w) return [];
             const colors = [...new Set(route.map(id => boardCtrl && boardCtrl.spaceColor ? boardCtrl.spaceColor(id) : null).filter(Boolean))];
             return upkeepOnMoveEnd(moved, colors);
@@ -36571,6 +36574,9 @@
         //   drawCards: N               draw N cards (drawCardsDeck, default "Item Deck")             (Pick Up Item, Pok\u00e9Stop)
         //   shuffleToDraw: M           with drawCards: shuffle ONE hand card back into its deck to draw M instead of N (Pok\u00e9 Mart)
         // Each puts one button on the card; using it resolves the effect and discards the card.
+        //   poolGainByCopies: [{ copies: N, colors: [..] }]   draw a random token of one of those colors from the pool (the player's choice) to join
+        //                              the team, by playing N copies of the card together: the one in the Active zone plus N-1 more from the hand,
+        //                              which are discarded with it (Ribbon). One button per color goes on the card (see cardPoolTierButtonsHtml()).
         function cardEffectLabel(card) {
             if (!card) return '';
             const n = parseInt(card.drawCards, 10) || 0;
@@ -36656,9 +36662,63 @@
                 renderDecksScreen();
             }
         }
+        // ---- poolGainByCopies (Ribbon): more copies played together, a rarer token ----
+        // [{ color, copies }] for each color the card offers, in the order the card lists them (copies = the total played, the Active one included).
+        function cardPoolTiers(card) {
+            const out = [];
+            if (!card || !Array.isArray(card.poolGainByCopies)) return out;
+            card.poolGainByCopies.forEach(t => {
+                const copies = Math.max(1, parseInt(t && t.copies, 10) || 1);
+                (Array.isArray(t && t.colors) ? t.colors : []).forEach(c => { if (NOTE_COLORS.includes(String(c))) out.push({ color: String(c), copies }); });
+            });
+            return out;
+        }
+        function cardCopiesInHand(cardId) { return getLocalHandArray().filter(id => id === cardId).length; }
+        // One button per color: always there, greyed out (with the reason) until enough other copies are in the hand.
+        function cardPoolTierButtonsHtml(card, cardId) {
+            const tiers = cardPoolTiers(card);
+            if (!tiers.length) return '';
+            const inHand = cardCopiesInHand(cardId);
+            return tiers.map(t => {
+                const extra = t.copies - 1, ok = inHand >= extra;
+                const label = t.color.charAt(0).toUpperCase() + t.color.slice(1);
+                const tip = !extra ? 'Draw a random ' + label + ' Pok\u00e9mon from the pool'
+                    : ok ? 'Draw a random ' + label + ' Pok\u00e9mon \u2014 discards ' + extra + ' more ' + card.name + (extra === 1 ? '' : 's') + ' from your hand'
+                    : 'Needs ' + extra + ' more ' + card.name + (extra === 1 ? '' : 's') + ' in your hand';
+                return `<button class="filter-btn include game-active-card-poolcopies-btn" type="button" data-card-id="${escapeHtml(cardId)}" data-color="${escapeHtml(t.color)}" title="${escapeHtml(tip)}" ${ok ? '' : 'disabled'}>${escapeHtml(label)}</button>`;
+            }).join('');
+        }
+        function cardPoolCopiesChoose(cardId, color) {
+            const card = CARDS_BY_ID[cardId];
+            const tier = cardPoolTiers(card).find(t => t.color === color);
+            const info = getActiveCardInfo();
+            if (isActiveSaveReadOnly() || !card || !tier || !info || info.cardId !== cardId || !activeCardIsMine(info) || info.committed) return;
+            const extra = tier.copies - 1;
+            if (cardCopiesInHand(cardId) < extra) {
+                showGameToast(card.name + ': a ' + color + ' Pok\u00e9mon needs ' + extra + ' more ' + card.name + (extra === 1 ? '' : 's') + ' in your hand.');
+                renderActiveCardZone();
+                return;
+            }
+            if (!usesVirtualTokensForActiveSave()) { // a physical pool: the player draws, the cards are still spent
+                const gone = cardDiscardExtraCopies(cardId, extra);
+                showGameToast(card.name + ': take a random ' + color + ' Pok\u00e9mon token from your physical pool.' + (gone ? ' ' + gone + ' more ' + card.name + (gone === 1 ? '' : 's') + ' discarded.' : ''));
+                cardEffectDone(cardId);
+                return;
+            }
+            cardPoolGain(cardId, color, extra);
+        }
+        // Discards up to n more copies of the card from the hand; returns how many went.
+        function cardDiscardExtraCopies(cardId, n) {
+            const card = CARDS_BY_ID[cardId];
+            if (!card || !(n > 0)) return 0;
+            const count = Math.min(n, cardCopiesInHand(cardId)); // worked out first: the hand only catches up once the Host has applied each discard
+            for (let i = 0; i < count; i++) requestDiscardCard(getEffectiveCardDeck(card) || card.cardDeck, cardId);
+            return count;
+        }
         // poolGain: "pink" -- draw a random token of that color from the board's pool; it joins the team (a full team gets the
         // usual replace prompt). levelGain: N -- the Team Tracker opens to choose which Pok\u00e9mon gains the Level(s).
-        function cardPoolGain(cardId, spaceColor) {
+        // extraCopies (poolGainByCopies): that many more copies of the card are discarded from the hand, but only once a token was really drawn.
+        function cardPoolGain(cardId, spaceColor, extraCopies) {
             const card = CARDS_BY_ID[cardId];
             if (!card || isActiveSaveReadOnly()) return;
             const color = spaceColor || String(card.poolGain);
@@ -36672,7 +36732,8 @@
                 openGamePanel();
                 setGameScreen('team');
                 renderTeamGrid();
-                showGameToast(card.name + ': ' + entry.name + ' joined your team!');
+                const gone = cardDiscardExtraCopies(cardId, extraCopies);
+                showGameToast(card.name + ': ' + entry.name + ' joined your team!' + (gone ? ' ' + gone + ' more ' + card.name + (gone === 1 ? '' : 's') + ' discarded.' : ''));
                 cardEffectDone(cardId);
             });
         }
@@ -46841,6 +46902,7 @@
                 // for the genuine-race case this can't catch on its own).
                 takenColors: getLobbyTakenColors(excludePeerId),
                 blackedOut: lobbyState.role === 'host' ? [...boardBlackedSet] : [],
+                blackoutOwing: lobbyState.role === 'host' ? [...boardOwingSet] : [],
                 starterClaims: lobbyState.role === 'host' ? getStarterOwners() : {},
                 turns: turnsPublicView(), // where the turn order stands, for a guest joining or re-syncing mid-game
             };
@@ -47163,6 +47225,8 @@
                     boardHandleContestMusic(conn.peer, data);
                 } else if (data.type === 'blackout-flag') {
                     boardBlackoutHostSet(conn.peer, !!data.out);
+                } else if (data.type === 'blackout-owing') {
+                    boardOwingHostSet(conn.peer, !!data.owing);
                 } else if (data.type === 'turn-end') {
                     turnsHandleEnd(conn.peer);
                 } else if (data.type === 'board-roll') {
@@ -48104,6 +48168,7 @@
             if (contestMusicHolders.has(peerId)) contestMusicHolderSet(peerId, false); // its Contest music request goes with it
             delete lobbyState.playerProgress[peerId];
             delete lobbyState.starterChosen[peerId];
+            boardOwingHostSet(peerId, false); // a player who drops can't hold the turn order up
             releaseMusicDuck(peerId); // a guest who drops mid-jingle shouldn't leave the music ducked
             clearBattleArenaPlacementFor(peerId);
             try { boardPvpPeerDropped(peerId); } catch (err) { /* the board code isn't set up */ } // a pending battle challenge with them is cancelled
@@ -48611,9 +48676,19 @@
             }
         }
         function turnsPublicView() { return lobbyState.role === 'host' && turnAuth ? turnsBuildView() : null; }
+        // The Actions box (landing prompt) left open is lost when the turn that owned it ends, and anything already open when a turn starts is
+        // leftover. Either way it closes (along with whatever the Pokémon Center prompt was keeping track of).
+        function boardCloseActionBox() {
+            boardCenterSession = null;
+            try { if (boardCtrl) boardCtrl.hideAction(); } catch (e) { /* nothing showing */ }
+        }
         function turnsApplyView(view, announce, coin) {
+            const meId = getMyLobbyPlayerId() || 'host';
+            const wasMine = !!(turnView && turnView.cur && turnView.cur === meId);
             turnView = (view && Array.isArray(view.order)) ? view : null;
-            if (announce && turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host')) upkeepOnTurnStart();
+            const isMine = !!(turnView && turnView.cur && turnView.cur === meId);
+            if (wasMine && !isMine) boardCloseActionBox(); // my turn has passed on
+            if (announce && isMine) { boardCloseActionBox(); upkeepOnTurnStart(); } // my turn starts: anything still up is leftover
             if (boardBlimp && turnView && turnView.cur && turnView.cur !== (getMyLobbyPlayerId() || 'host')) boardBlimpFinish(); // the turn moved on
             if (announce && coin && turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host') && isPokeCoinsEnabledForActiveSave() && !isActiveSaveReadOnly()) adjustPokeCoins(1); // each device adds to its own player's total
             turnsRender(!!announce, !!coin);
@@ -48699,6 +48774,7 @@
             const t = turnAuth;
             if (!t || !t.order.length) return;
             if (Date.now() - turnLastAdvanceAt < 700) return; // a double tap must not skip a turn
+            if (turnsHoldReason()) return; // the Host is where the turn order really moves: someone still owes a blackout discard
             const present = new Set(turnsRoster().map(p => p.cid)), n = t.order.length, from = t.order.indexOf(t.cur);
             let next = null;
             for (let k = 1; k <= n && !next; k++) { const c = t.order[(from + k + n) % n]; if (present.has(c)) next = c; }
@@ -48724,8 +48800,8 @@
             const show = !!turnView;
             if (b.hidden === show) b.hidden = !show;
             if (!show) return;
-            const owing = boardBlackoutDiscardPending() && upkeepIsMyTurn();
-            const can = turnsCanEnd() && !owing, tip = owing ? 'End Turn \u2014 discard half your hand first.' : can ? 'End Turn' : 'End Turn \u2014 It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.';
+            const hold = turnsCanEnd() ? turnsHoldReason() : '';
+            const can = turnsCanEnd() && !hold, tip = hold ? 'End Turn \u2014 ' + hold : can ? 'End Turn' : 'End Turn \u2014 It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.';
             if (b.classList.contains('locked') === can) b.classList.toggle('locked', !can);
             if (b.title !== tip) { b.title = tip; b.setAttribute('aria-label', tip); }
             b.setAttribute('aria-disabled', can ? 'false' : 'true');
@@ -48733,7 +48809,7 @@
         function turnsEndClick() {
             if (!turnView) return;
             if (!turnsCanEnd()) { showGameToast('It\u2019s ' + (turnView.curName || 'another player') + '\u2019s turn.'); return; }
-            if (boardBlackoutDiscardPending()) { showGameToast('Blacked out: discard half of your hand (rounded up) before your turn can end.'); return; }
+            { const hold = turnsHoldReason(); if (hold) { showGameToast(hold); return; } }
             const mine = turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host');
             boardAskJump({
                 title: 'End your turn?',
@@ -48745,13 +48821,14 @@
         // Ending a turn first gives every card with turn-end upkeep its moment (see upkeepBeginTurnEnd()); the turn really ends once
         // the player has been through each of them.
         function turnsEndNow() {
-            if (boardBlackoutDiscardPending()) { showGameToast('Blacked out: discard half of your hand (rounded up) before your turn can end.'); return; }
+            { const hold = turnsHoldReason(); if (hold) { showGameToast(hold); return; } }
             const extra = (boardBlimp && upkeepIsMyTurn()) ? boardMoveDone(true) : []; // a move window still open ends with the turn, and counts
             if (upkeepBeginTurnEnd(turnsEndNowFinal, extra)) return;
             turnsEndNowFinal();
         }
         function turnsEndNowFinal() {
             boardBlimpFinish(); // ending the turn ends a Blimp Ride move too
+            boardCloseActionBox(); // whatever is still open in the Actions box is lost with the turn
             if (lobbyState.role === 'guest') boardSend({ type: 'turn-end' });
             else turnsAdvance();
         }
@@ -49187,7 +49264,7 @@
             boardBlackedList = Array.isArray(list) ? list.filter(x => typeof x === 'string') : [];
             try { if (boardCtrl && boardCtrl.setBlackedOut) boardCtrl.setBlackedOut(boardBlackedList); } catch (e) { /* board not built yet: re-applied on mount */ }
         }
-        function boardBlackoutReset() { boardBlackedSet = new Set(); boardBlackedList = []; boardBlackoutPending = false; boardApplyBlackedOut([]); }
+        function boardBlackoutReset() { boardBlackedSet = new Set(); boardBlackedList = []; boardBlackoutPending = false; boardApplyBlackedOut([]); boardOwingSet = new Set(); boardOwingList = []; boardOwingSent = null; boardBlackoutTurnNo = null; }
         // Runs the blackout, or waits (renderBattleControls calls this again when the battle ends) while a battle is on.
         function boardRunBlackout() {
             if (!boardBlackoutPending) return;
@@ -49196,6 +49273,7 @@
             boardBlackoutPending = false;
             const me = boardMyPlayer();
             if (!me) return;
+            boardBlackoutTurnNo = upkeepIsMyTurn() ? upkeepMyTurnNumber() : null; // did this blackout happen on my own turn?
             const home = boardCtrl.homeOf(me.id), here = boardCtrl.spaceOf(me.id);
             if (home && !(here && here.id === home.id)) boardDoJump('@home', false);
             boardSetBlackedOut(true);
@@ -49218,13 +49296,89 @@
             contestDiscardLeft = need;
             boardShowHand();
             showDecksNotice('Blacked out: choose ' + need + ' card' + (need === 1 ? '' : 's') + ' from your hand to discard (half, rounded up).');
-            turnsUpdateButton(); // End Turn waits until they have
+            boardSyncOwing(); // the Host holds the turn order until they have
+            turnsUpdateButton();
             if (typeof renderDecksScreen === 'function') renderDecksScreen();
         }
         // True while this player still has cards to discard for blacking out: their turn can't be ended until they have.
         function boardBlackoutDiscardPending() { return contestDiscardLeft > 0 && contestDiscardLabel === 'Blacked out'; }
+        // While anyone still owes their blackout discard the turn order doesn't move, whoever's turn it is (otherwise they could sit out the
+        // discard until play had moved on). The player says whether they owe (blackout-owing up); the Host keeps the set, shares it (blackout-owing-set
+        // down), forgets a player who disconnects, and turnsAdvance() refuses to pass the turn while the set isn't empty.
+        var boardOwingSet = new Set(), boardOwingList = [], boardOwingSent = null;
+        function boardApplyOwing(list) {
+            boardOwingList = Array.isArray(list) ? list.filter(x => typeof x === 'string') : [];
+            try { turnsUpdateButton(); } catch (e) { /* no turns yet */ }
+        }
+        function boardOwingHostSet(id, on) {
+            if (on === boardOwingSet.has(id)) return;
+            if (on) boardOwingSet.add(id); else boardOwingSet.delete(id);
+            boardApplyOwing([...boardOwingSet]);
+            if (lobbyState.role === 'host') lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send({ type: 'blackout-owing-set', list: [...boardOwingSet] }); });
+        }
+        // The debt is kept in the player's own save (save.blackoutOwed = { left, turnNo }), so reloading the page -- or dropping out of the
+        // lobby and back -- doesn't wipe the penalty. The first time a save is looked at it is read back in (and the hand opened to pay it);
+        // only after that does anything get written, so a fresh page load can't erase a debt before it has been restored.
+        var boardOwedKey = null;
+        function boardOwedEnsure() {
+            const data = getActiveSaveData();
+            if (!data || isActiveSaveReadOnly()) return false;
+            const key = String(activeSaveSlot) + '|' + String(activeGuestSaveId);
+            if (boardOwedKey === key) return true;
+            const prevKey = boardOwedKey;
+            boardOwedKey = key;
+            if (prevKey === null && boardBlackoutDiscardPending()) return true; // began this very session: it is this save's, nothing to restore
+            if (prevKey !== null && contestDiscardLabel === 'Blacked out') contestDiscardLeft = 0; // switched saves: the other save's debt, still in memory
+            const owed = data.blackoutOwed;
+            if (owed && isVirtualDecksEnabledForActiveSave()) {
+                const left = Math.min(parseInt(owed.left, 10) || 0, getLocalHandArray().length);
+                if (left > 0) {
+                    contestDiscardLabel = 'Blacked out';
+                    contestDiscardLeft = left;
+                    boardBlackoutTurnNo = Number.isInteger(owed.turnNo) ? owed.turnNo : null;
+                    showGameToast('You still owe your blackout discard.');
+                    showDecksNotice('Blacked out: choose ' + left + ' card' + (left === 1 ? '' : 's') + ' from your hand to discard (half, rounded up).');
+                    try { boardShowHand(); } catch (e) { /* the screens aren't up yet: the notice and the End Turn hold still apply */ }
+                    try { turnsUpdateButton(); } catch (e) { /* no turns yet */ }
+                }
+            }
+            return true;
+        }
+        function boardOwedPersist() {
+            const data = getActiveSaveData();
+            if (!data || isActiveSaveReadOnly() || !boardOwedEnsure()) return;
+            const want = boardBlackoutDiscardPending() ? { left: contestDiscardLeft, turnNo: boardBlackoutTurnNo } : null;
+            if (JSON.stringify(want) === JSON.stringify(data.blackoutOwed || null)) return;
+            if (want) data.blackoutOwed = want; else delete data.blackoutOwed;
+            try { if (activeGuestSaveId !== null) persistGameGuestSaves(); else persistGameSaves(); } catch (e) { /* storage full: the debt still holds this session */ }
+        }
+        // Tells the Host whether this player owes a discard, whenever that changes (and keeps the save's record of it current).
+        function boardSyncOwing() {
+            boardOwedPersist();
+            const on = boardBlackoutDiscardPending();
+            if (boardOwingSent === on) return;
+            boardOwingSent = on;
+            if (lobbyState.role === 'guest') boardSend({ type: 'blackout-owing', owing: on });
+            else boardOwingHostSet(getMyLobbyPlayerId() || 'host', on);
+        }
+        // Why the turn can't move on right now ('' if nothing is holding it). This player's own debt is judged from their own device,
+        // which knows it first; everyone else's comes from the Host's set.
+        function turnsHoldReason() {
+            const me = getMyLobbyPlayerId() || 'host';
+            const list = boardOwingList.filter(pid => pid !== me);
+            if (boardBlackoutDiscardPending()) list.unshift(me);
+            if (!list.length) return '';
+            if (list[0] === me) return 'Blacked out: discard half of your hand (rounded up) before the turn can move on.';
+            const names = list.map(pid => { const o = turnView && Array.isArray(turnView.order) ? turnView.order.find(x => x.pid === pid) : null; return o ? o.name : 'A player'; });
+            return names.join(' and ') + (names.length === 1 ? ' still has' : ' still have') + ' to discard after blacking out \u2014 the turn can\u2019t move on until then.';
+        }
+        // Only a blackout that began on the player's own turn ends that turn once the discard is done (boardBlackoutTurnNo = that turn).
+        var boardBlackoutTurnNo = null;
         function boardBlackoutEndTurn() {
-            if (turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host')) turnsEndNow();
+            const mineNow = !!(turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host'));
+            const began = boardBlackoutTurnNo;
+            boardBlackoutTurnNo = null;
+            if (mineNow && began !== null && began === upkeepMyTurnNumber()) turnsEndNow(); // never someone else's turn, or a later turn of their own
         }
         // ---- Reviving after a blackout ----
         // At the start of a turn with no usable Pokémon, the Team Tracker opens to choose 2 Fainted Pokémon to Revive (fewer if fewer are Fainted).
@@ -50529,6 +50683,7 @@
             requestDiscardCard(getEffectiveCardDeck(c) || c.cardDeck, cardId);
             contestDiscardLeft--;
             if (contestDiscardLeft > 0 && !getLocalHandArray().length) contestDiscardLeft = 0; // nothing left to discard
+            boardSyncOwing(); // before a blackout's end-of-turn below, so the hold is already lifted
             const label = contestDiscardLabel;
             if (contestDiscardLeft > 0) showDecksNotice(label + ': choose ' + (contestDiscardLeft === 1 ? '1 more card' : contestDiscardLeft + ' more cards') + ' to discard.');
             else if (label === 'Contest Hall') { showDecksNotice('Contest Hall: penalty paid.'); contestEnd(); }
@@ -52505,6 +52660,7 @@
         // The ability buttons depend on this player's team and Gym Badges, which change in other screens or panels without the map
         // being redrawn, so while the board is up they are re-checked a couple of times a second (it only touches the page when one changes).
         setInterval(() => { if (boardModeActive && boardCtrl) { boardUpdateAbilityButtons(); turnsUpdateButton(); } }, 400);
+        setInterval(() => { try { boardSyncOwing(); } catch (e) { /* ignore */ } }, 1000); // whatever changed the discard, the Host hears of it
         document.addEventListener('fullscreenchange', () => {
             boardSyncFsButton();
             if (boardCtrl) requestAnimationFrame(() => boardCtrl.restoreView());
@@ -53237,6 +53393,8 @@
                     refreshTrainerCardPickerIfOpen();
                 } else if (data.type === 'blackout-set') {
                     boardApplyBlackedOut(data.list);
+                } else if (data.type === 'blackout-owing-set') {
+                    boardApplyOwing(data.list);
                 } else if (data.type === 'turn-state') {
                     turnsApplyView(data.view && typeof data.view === 'object' ? data.view : null, !!data.announce, !!data.coin);
                 } else if (data.type === 'game-started') {
@@ -53544,6 +53702,9 @@
             lobbyState.gameOfficiallyStarted = !!data.gameStarted;
             turnsApplyView(data.turns && typeof data.turns === 'object' ? data.turns : null, false);
             boardApplyBlackedOut(data.blackedOut);
+            boardApplyOwing(data.blackoutOwing);
+            boardOwingSent = null; // (re)joining: tell the Host again whether this player owes a discard
+            try { boardSyncOwing(); } catch (e) { /* ignore */ }
             if (data.starterClaims && typeof data.starterClaims === 'object') lobbyState.starterPickClaims = data.starterClaims;
             try { boardReportBlackout(); } catch (e) { /* ignore */ }
             lobbyState.hostRuleset = {
@@ -54103,6 +54264,11 @@
             const activeCardRollBtn = e.target.closest('.game-active-card-roll-btn');
             if (activeCardRollBtn) {
                 useRollMovementCard(activeCardRollBtn.dataset.cardId);
+                return;
+            }
+            const activeCardPoolBtn = e.target.closest('.game-active-card-poolcopies-btn');
+            if (activeCardPoolBtn) {
+                if (!activeCardPoolBtn.disabled) cardPoolCopiesChoose(activeCardPoolBtn.dataset.cardId, activeCardPoolBtn.dataset.color);
                 return;
             }
             const activeCardEffectBtn = e.target.closest('.game-active-card-effect-btn');
