@@ -45392,6 +45392,53 @@
         // broker -- without it, someone else's unrelated 5-character
         // peer id could collide with a room code here.
         const LOBBY_ROOM_PREFIX = 'pmtu-lobby-';
+        // ICE servers for every PeerJS peer. PeerJS's built-in defaults
+        // relied on a free shared TURN relay (eu-0.turn.peerjs.com) that no
+        // longer resolves, so connections that can't go straight between
+        // two devices (firewall, NAT hairpin) had no fallback at all.
+        // Passing `config` REPLACES PeerJS's defaults, so STUN is listed here
+        // too. The TURN entries are the free public Open Relay servers
+        // (no account needed, shared and best-effort) -- swap in your own
+        // TURN host/credentials here later; this is the only place to change.
+        const LOBBY_PEER_OPTIONS = {
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun.cloudflare.com:3478' },
+                    { urls: 'stun:stun.relay.metered.ca:80' },
+                    { urls: 'turn:standard.relay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+                    { urls: 'turn:standard.relay.metered.ca:80?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+                    { urls: 'turn:standard.relay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+                    { urls: 'turns:standard.relay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+                ]
+            }
+        };
+        // Logs how a connection actually got established (or why not) into
+        // the same trace that ends up in the "Could not reconnect" message:
+        // ICE state changes plus, once connected, whether the chosen path is
+        // direct (host/srflx) or relayed through TURN.
+        function traceIceState(conn, label) {
+            setTimeout(() => {
+                try {
+                    const pc = conn && conn.peerConnection;
+                    if (!pc) { htTrace(label + ' ice: no peerConnection'); return; }
+                    const report = () => {
+                        if (pc.iceConnectionState !== 'connected' && pc.iceConnectionState !== 'completed') return;
+                        pc.getStats().then((stats) => {
+                            let pair = null;
+                            stats.forEach((r) => { if (r.type === 'transport' && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId); });
+                            if (!pair) stats.forEach((r) => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') pair = r; });
+                            if (pair) {
+                                const l = stats.get(pair.localCandidateId), rm = stats.get(pair.remoteCandidateId);
+                                htTrace(label + ' path ' + (l && l.candidateType) + '/' + (rm && rm.candidateType));
+                            }
+                        }).catch(() => {});
+                    };
+                    htTrace(label + ' ice ' + pc.iceConnectionState);
+                    pc.addEventListener('iceconnectionstatechange', () => { htTrace(label + ' ice ' + pc.iceConnectionState); report(); });
+                } catch (err) { /* tracing only */ }
+            }, 0);
+        }
         const LOBBY_CODE_LENGTH = 5;
         // 0/O and 1/I deliberately excluded -- easy to mix up when a
         // code's read off a screen and typed in by hand rather than
@@ -46656,7 +46703,7 @@
             // Failover: the room code was already claimed by a probe peer.
             const claimedPeer = claimedHostPeer;
             claimedHostPeer = null;
-            const peer = claimedPeer || new Peer(LOBBY_ROOM_PREFIX + code);
+            const peer = claimedPeer || new Peer(LOBBY_ROOM_PREFIX + code, LOBBY_PEER_OPTIONS);
             lobbyState.peer = peer;
             lobbyState.code = code;
             let hostPeerOpened = false;
@@ -46860,6 +46907,7 @@
         }
 
         function wireHostConnection(conn) {
+            traceIceState(conn, 'host');
             conn.on('open', () => {
                 // A guest that reconnects fast enough -- before the
                 // host's heartbeat has noticed the old connection is
@@ -47697,7 +47745,7 @@
                 failoverTimer = setTimeout(() => { failoverTimer = null; attemptFailoverClaim(backup); }, 5000);
             };
             let probeDone = false;
-            const probe = new Peer(LOBBY_ROOM_PREFIX + backup.code);
+            const probe = new Peer(LOBBY_ROOM_PREFIX + backup.code, LOBBY_PEER_OPTIONS);
             failoverProbe = probe;
             const finishProbe = () => { if (failoverProbe === probe) failoverProbe = null; };
             probe.on('open', () => {
@@ -52962,7 +53010,7 @@
                 ? (inReconnectWindow ? 'Reconnecting to the host\u2026 (try ' + Math.max(hostTransferTryCount, 1) + ')' + (getHostBackup() ? ' \u2014 a backup host will take over if needed' : '') : 'Connecting\u2026')
                 : 'Lost contact \u2014 reconnecting\u2026', 'pending');
 
-            const peer = new Peer();
+            const peer = new Peer(undefined, LOBBY_PEER_OPTIONS);
             lobbyState.peer = peer;
 
             peer.on('open', () => {
@@ -52980,6 +53028,7 @@
                 // matters for a fast reconnect.
                 const conn = peer.connect(LOBBY_ROOM_PREFIX + cleanCode, { reliable: true, metadata: { guestClientId: getOrCreateGuestClientId() } });
                 lobbyState.hostConn = conn;
+                traceIceState(conn, 'guest');
                 // Marks the handshake as done the moment the actual
                 // DataConnection opens -- deliberately ahead of
                 // wireGuestConnection()'s own listeners below, so this is
