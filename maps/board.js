@@ -45,7 +45,7 @@
    for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
    spaceColor(spaceId) -> the space's color name, or null.
    spaceOf(playerId) -> {id,type,label} of the space that player's marker is on (any role), or null.
-   Messages: guest -> host {type:'board-move',player,to,path:[the spaces walked, start to end]}   {type:'board-stay'} [host: app sends it with player id -- re-runs the landing prompt for the space the player is already on]
+   Messages: guest -> host {type:'board-move',player,to,path:[the spaces walked, start to end]}   {type:'board-stay',passed:[city ids walked through, optional]} [host: app sends it with player id -- re-runs the landing prompt for the space the player is already on; passed = the Cities the move went through, so they can be picked as Current Home]
              guest -> host {type:'board-jump',to:<City id | '@home'>,land:<bool>} [the Dig / Fly / Teleport buttons: straight to a City, with or without its landing prompt; the app sends it with the player id]
              host -> guests {type:'board-state',snap:<JSON string>} */
 (function(global){
@@ -242,7 +242,7 @@ function drawLegendary(){if(mode!=='host')return null;releaseStale();
 function movePlayer(p,target){if(mode!=='host'||pos[p]===undefined)return '';if(target==='@home')target=home[p]; // '@home' = the player's Current Home (a Black Out)
  let s=get(target);if(!s){const t=String(target||'').trim().toLowerCase();s=SP.find(x=>(x.label||'').trim().toLowerCase()===t)}if(!s)return '';const pl=PL.find(x=>x.id===p);pos[p]=s.id;delete entry[p];pendingEnc[p]=null;pendingHome[p]=[];log(`host: ${pl?pl.name:p} was moved to ${s.label||s.id}`);snapshot();return s.label||s.id}
 // The player stays where they are (a 0 Movement Roll, or choosing to stay on a City): bring up that space's prompt as if they had just landed.
-function stayOnSpace(p){if(mode!=='host'||pos[p]===undefined||!get(pos[p])||!PL.some(q=>q.id===p))return false;log(`host: ${PL.find(q=>q.id===p).name} stays on ${pos[p]}`);land(p,pos[p],[]);return true}
+function stayOnSpace(p,passed){if(mode!=='host'||pos[p]===undefined||!get(pos[p])||!PL.some(q=>q.id===p))return false;const thru=Array.isArray(passed)?[...new Set(passed.slice(0,400).filter(id=>typeof id==='string'&&id!==pos[p]&&get(id)&&get(id).type==='city'))]:[];log(`host: ${PL.find(q=>q.id===p).name} stays on ${pos[p]}`);land(p,pos[p],thru);return true}
 // A jump (the app's Dig / Fly / Teleport buttons): the marker goes straight to a City with no walking. to = a City's id, or '@home' (the player's
 // Current Home). land: true brings up that City's prompt as if the player had just arrived; false moves them quietly. Returns true if it moved.
 function hostJump(p,to,doLand){if(mode!=='host'||pos[p]===undefined||!PL.some(q=>q.id===p))return false;const id=to==='@home'?home[p]:to,s=id&&get(id);if(!s||s.type!=='city')return false;
@@ -463,7 +463,8 @@ function cpSync(){const on=!!drag,showBtn=on&&hasTouch();if(cpBtn.hidden===showB
  if(on&&opts.onDragState){const m=svg.getScreenCTM(),f=lastPtr;if(m){try{opts.onDragState({on:true,x:m.a*drag.x+m.e,y:m.d*drag.y+m.f,fx:f?f.x:undefined,fy:f?f.y:undefined})}catch(e){}}}
  // when a move is committed the final count is reported once more as settled, so the app can let it fade like the die
  let n=on?(drag.steps||0):null,settled=false;if(!on&&walkKeep!=null){n=walkKeep;settled=true;walkKeep=null}
- if(n!==lastWalkN||settled){lastWalkN=settled?null:n;if(opts.onWalk){try{opts.onWalk(n,settled)}catch(e){}}}}
+ const wpath=on?(drag.full||[]).slice():null,wsig=n+'|'+(wpath?wpath.join(','):''); // the path is part of the change test: one step back and one step on are both n=1
+ if(wsig!==lastWalkN||settled){lastWalkN=settled?null:wsig;if(opts.onWalk){try{opts.onWalk(n,settled,wpath)}catch(e){}}}}
 function toggleCp(){if(!drag)return;const d=drag,cps=d.cps=d.cps||[],s=d.hov&&get(d.hov);if(!s)return;
  if(isTopCp(d,s.id))cps.pop();
  else{const r=d.r;if(!r||!r.path||r.blocked||r.path.length<2)return;cps.push({id:s.id,leg:r.path})}
@@ -489,7 +490,7 @@ function spaceBox(s,col,sw,dash){const rc=s.type==='city'||s.type==='special',e=
 function drawWalk(r,to){const g=$('walkG');if(!g||!drag)return;const o=get(curPos()[drag.p]);let h='';
  const rcOf=q=>q.type==='city'||q.type==='special',hw=q=>rcOf(q)?dims(q).w/2:R*1.5*CS,hh=q=>rcOf(q)?dims(q).h/2:R*1.5*CS;
  if(o){h+=spaceBox(o,'#4ade80',R*.3,true);h+=`<text x="${o.x}" y="${o.y-hh(o)-R*1.2}" text-anchor="middle" font-size="${R*1.1}" font-weight="700" fill="#4ade80" stroke="#000" stroke-width="${R*.25}" paint-order="stroke">START</text>`}
- const lp=lockedOf(drag),leg=(r&&r.path&&r.path.length>1)?r.path:null,full=lp.length?(leg?lp.concat(leg.slice(1)):lp):(leg||[]);drag.steps=Math.max(0,full.length-1);
+ const lp=lockedOf(drag),leg=(r&&r.path&&r.path.length>1)?r.path:null,full=lp.length?(leg?lp.concat(leg.slice(1)):lp):(leg||[]);drag.steps=Math.max(0,full.length-1);drag.full=full.slice();
  const poly=(ids,col)=>`<polyline points="${ids.map(id=>{const q=get(id);return q.x+','+q.y}).join(' ')}" fill="none" stroke="${col}" stroke-width="${R*.5}" stroke-linejoin="round" stroke-linecap="round" opacity=".85"/>`;
  if(lp.length>1)h+=poly(lp,'#7dd3fc');if(leg)h+=poly(leg,'#ffeb3b');
  // an outline on every space of the route (the step count itself is shown by the app, not on each space)
@@ -621,7 +622,7 @@ return{
  setImage:setImg,
  setStatus:t=>{$('jm').textContent=t},getStatus:()=>$('jm').textContent,
  spaceColor(id){const s=get(id);return s&&s.color||null}, // the color of a space (null for none)
- handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to,m.path);else if(mode==='host'&&m.type==='board-stay')stayOnSpace(m.player);else if(mode==='host'&&m.type==='board-jump')hostJump(m.player,m.to,!!m.land);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-reroll')rerollEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw();if(autoFill&&!initCentered)fillView()}},
+ handleMessage(m){if(!m)return;if(mode==='host'&&m.type==='board-move')hostMove(m.player,m.to,m.path);else if(mode==='host'&&m.type==='board-stay')stayOnSpace(m.player,m.passed);else if(mode==='host'&&m.type==='board-jump')hostJump(m.player,m.to,!!m.land);else if(mode==='host'&&m.type==='board-encounter')acceptEncounter(m.player);else if(mode==='host'&&m.type==='board-reroll')rerollEncounter(m.player);else if(mode==='host'&&m.type==='board-sethome'){if((pendingHome[m.player]||[]).includes(m.city)){pendingHome[m.player]=[];setHome(m.player,m.city)}}else if(mode==='guest'&&m.type==='board-state'){lastSnapStr=m.snap;draw();if(autoFill&&!initCentered)fillView()}},
  showAction,hideAction,
  resolveEncounter(id,out){if(mode==='host'&&st[id]&&st[id].token)resolve(id,out)},
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
