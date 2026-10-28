@@ -31360,7 +31360,9 @@
 
         function closeShopMenu() {
             shopMenuDeckName = null;
+            shopMenuOak = null;
             document.getElementById('game-shop-menu-overlay').classList.remove('visible');
+            document.getElementById('game-shop-menu-overlay').style.zIndex = '';
         }
 
         // Rebuilds the menu's own grid for whichever deck
@@ -31381,7 +31383,9 @@
             if (!overlay || !titleEl || !gridEl || !shopMenuDeckName) return;
 
             const deckName = shopMenuDeckName;
-            titleEl.textContent = deckName;
+            titleEl.textContent = shopMenuOak ? 'Prof. Oak\u2019s Research \u2014 take one (' + OAK_SHOP_MAX_COST + ' Pok\u00e9 Coins or less)' : deckName;
+            const closeBtnEl = overlay.querySelector('.game-shop-menu-close-btn');
+            overlay.style.zIndex = shopMenuOak ? '23' : ''; // above a Catch result that may still be showing
 
             // Display-only Poké Coin tally in the footer -- placed ahead
             // of the empty-deck early return below so it's always right.
@@ -31397,8 +31401,10 @@
             }
 
             const cards = Object.values(CARDS_BY_ID)
-                .filter(c => c.cardDeck === deckName && cardMatchesActiveRegion(c))
+                .filter(c => c.cardDeck === deckName && cardMatchesActiveRegion(c) && (!shopMenuOak || (c.pokeCoinCost || 0) <= OAK_SHOP_MAX_COST))
                 .sort((a, b) => a.name.localeCompare(b.name));
+            if (closeBtnEl) closeBtnEl.hidden = !!(shopMenuOak && cards.length); // Oak's pick can't be walked away from
+            if (shopMenuOak && coinsEl) coinsEl.hidden = true;
 
             if (!cards.length) {
                 gridEl.innerHTML = `<p class="game-shop-menu-empty">No cards found for this deck.</p>`;
@@ -31406,7 +31412,7 @@
             }
 
             const readOnly = isActiveSaveReadOnly();
-            const coinsEnabled = isPokeCoinsEnabledForActiveSave();
+            const coinsEnabled = isPokeCoinsEnabledForActiveSave() && !shopMenuOak; // Oak's pick is free: no Buy button
             const saveData = getActiveSaveData();
             const balance = typeof saveData.pokeCoins === 'number' ? saveData.pokeCoins : 3;
 
@@ -42110,6 +42116,7 @@
             setGameScreen('team');
             renderTeamGrid();
             if (shownResult && !catchAttempt) { catchAttempt = shownResult; showCatchOverlay(); }
+            setTimeout(oakCatchReward, 500); // Prof. Oak's Research
         }
 
         // "Catch This Pokémon" -- hands battleWildPokemon off to Team
@@ -48988,6 +48995,7 @@
         //                         (placed during turn 3 with N = 1: first fires at the end of turn 4). Only meaningful with turnEnd/turnStart.
         //   spaceColor     "match" -- some space walked during the move must have a color equal the card's chosen token color (entry.noteColor);
         //                  or a literal color name such as "red"
+        //   condition      "noCounters" -- (Permanent cards) only while the card has no counters left on it
         //   oncePerTurn    true -- fires at most once in any one of the player's turns (turnStart always behaves this way); leave it
         //                  off for things that should happen every time, like a counter per move
         //
@@ -49073,6 +49081,7 @@
                 h.card.upkeep.forEach((rule, i) => {
                     if (!rule || rule.trigger !== trigger) return;
                     if (rule.afterOwnTurns && n < st.placed + rule.afterOwnTurns) return;
+                    if (rule.condition === 'noCounters' && h.kind === 'permanent' && (h.entry.counter || 0) > 0) return; // e.g. Prof. Oak's Research: only once its counters are gone
                     if (rule.spaceColor) {
                         const want = rule.spaceColor === 'match' ? h.noteColor : String(rule.spaceColor).toLowerCase();
                         if (!want || !ctx || !(ctx.spaceColors || []).includes(want)) return;
@@ -50852,6 +50861,90 @@
             boardShowHand(); // the drawn card shows up in the hand there
         }
 
+        // ---- Prof. Oak's Research ----
+        // cards.json: "upkeep": [turnStart: remove a counter, turnEnd + "condition": "noCounters": discard] and
+        // "permanentCounterEffect": { "effect": "oakResearch" }. While it's in the Permanent Zone, each of the player's catches (a wild battle
+        // or the Safari Zone / Battle Frontier / Contest catch dialog -- see oakCatchReward() calls) earns the next reward on a ladder:
+        //   1st catch: draw from the Item deck.   2nd: draw from the TM (a tier they've unlocked, with Tiered TM Decks), Pok\u00e9 Ball or
+        //   Type-Enhancer deck, their choice.   3rd: take a Shop card worth 12 Pok\u00e9 Coins or less for free (the Shop menu, filtered).
+        // Progress is kept per card in the save (data.oakCatches[instanceId]); a card that has left forgets it.
+        const OAK_SHOP_MAX_COST = 12;
+        let oakQueue = [], oakBusy = false, shopMenuOak = null; // shopMenuOak: { done } while the Shop menu is showing Oak's free pick
+        function oakCatchReward() {
+            try {
+                if (isActiveSaveReadOnly()) return;
+                const data = getActiveSaveData();
+                const cards = getLocalPermanentArray().filter(e => lullabyEffectOf(e) === 'oakResearch');
+                if (!data.oakCatches || typeof data.oakCatches !== 'object') data.oakCatches = {};
+                const live = new Set(getLocalPermanentArray().map(e => e.instanceId));
+                Object.keys(data.oakCatches).forEach(k => { if (!live.has(k)) delete data.oakCatches[k]; });
+                cards.forEach(e => {
+                    const n = (data.oakCatches[e.instanceId] || 0) + 1;
+                    if (n > 3) return;
+                    data.oakCatches[e.instanceId] = n;
+                    oakQueue.push({ instanceId: e.instanceId, n });
+                });
+                upkeepPersist();
+                oakNext();
+            } catch (err) { /* a catch must never be held up by this */ }
+        }
+        function oakNext() {
+            if (oakBusy) return;
+            const job = oakQueue.shift();
+            if (!job) return;
+            oakBusy = true;
+            const finish = () => { oakBusy = false; setTimeout(oakNext, 300); };
+            const title = 'Prof. Oak\u2019s Research';
+            const virtual = isVirtualDecksEnabledForActiveSave();
+            if (job.n === 1) {
+                boardFrontierAck(title, 'First catch! ' + (virtual ? 'You draw a card from the Item deck.' : 'Draw a card from your physical Item deck.'), () => {
+                    if (virtual) { requestDrawCard('Item Deck'); boardShowHand(); }
+                    finish();
+                });
+            } else if (job.n === 2) {
+                oakDone = finish;
+                boardFrontierShow(title, 'Second catch! Draw a card from the TM deck, the Pok\u00e9 Ball deck or the Type-Enhancer deck.',
+                    '<div class="game-frontier-choices">' + [['TM Deck', 'TM Deck'], ['Pok\u00e9 Ball Deck', 'Pok\u00e9 Ball Deck'], ['Type-Enhancer Deck', 'Type-Enhancer Deck']]
+                        .map(([d, l]) => `<button class="filter-btn include game-oak-btn" type="button" data-deck="${escapeHtml(d)}">${escapeHtml(l)}</button>`).join('') + '</div>');
+            } else {
+                if (!virtual) { boardFrontierAck(title, 'Third catch! Take any card from the Shop deck that costs ' + OAK_SHOP_MAX_COST + ' Pok\u00e9 Coins or less, for free.', finish); return; }
+                boardFrontierAck(title, 'Third catch! Take any card from the Shop deck that costs ' + OAK_SHOP_MAX_COST + ' Pok\u00e9 Coins or less, for free.', () => {
+                    shopMenuOak = { done: finish };
+                    openGamePanel();
+                    openShopMenu('Shop Deck');
+                });
+            }
+        }
+        let oakDone = null;
+        function oakChooseDeck(deck) {
+            const title = 'Prof. Oak\u2019s Research';
+            const virtual = isVirtualDecksEnabledForActiveSave();
+            if (deck === 'TM Deck' && virtual && isTieredTMDecksEnabledForActiveSave()) { // which tier? only the ones this player has unlocked
+                const tiers = [TM_TIER_DECK_NAMES.Novice, TM_TIER_DECK_NAMES.Advanced, TM_TIER_DECK_NAMES.Expert].filter(isTMDeckUnlockedForActiveSave);
+                if (tiers.length > 1) {
+                    boardFrontierShow(title, 'Choose which TM deck to draw from.', '<div class="game-frontier-choices">' + tiers.map(t => `<button class="filter-btn include game-oak-btn" type="button" data-deck="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('') + '</div>');
+                    return;
+                }
+                deck = tiers[0] || TM_TIER_DECK_NAMES.Novice;
+            }
+            closeFrontierOverlay();
+            if (virtual) { requestDrawCard(deck); boardShowHand(); }
+            else showGameToast(title + ': draw a card from your physical ' + deck + '.');
+            const done = oakDone; oakDone = null;
+            if (done) done();
+        }
+        // The Shop menu in Oak's mode: only cards worth OAK_SHOP_MAX_COST or less (their printed cost), no Buy, and no way out
+        // without taking one (unless there is nothing to take). Used by renderShopMenu() and its click handler.
+        function oakShopTake(cardId) {
+            const oak = shopMenuOak;
+            if (!oak) return false;
+            acquireShopCard('Shop Deck', cardId);
+            closeShopMenu();
+            boardShowHand();
+            oak.done();
+            return true;
+        }
+
         // Pokémon Center: removes every Status Condition on the team and revives up to boardPokemonCenterRevives()
         // Fainted Pokémon. A player with no more Fainted Pokémon than that has them all revived at once; with more,
         // they choose which ones, one at a time.
@@ -51376,6 +51469,8 @@
             if (fxBtn) { closeFrontierOverlay(); cardShopChoose(fxBtn.dataset.cardId, fxBtn.dataset.act); return; }
             const radioBtn = e.target.closest('.game-radio-btn');
             if (radioBtn) { boardRadioChoose(radioBtn.dataset.name); return; }
+            const oakBtn = e.target.closest('.game-oak-btn');
+            if (oakBtn) { oakChooseDeck(oakBtn.dataset.deck); return; }
             const modeBtn = e.target.closest('.game-trainermode-btn');
             if (modeBtn) {
                 closeFrontierOverlay();
@@ -56399,6 +56494,7 @@
                 openGamePanel();
                 setGameScreen('team');
                 renderTeamGrid();
+                setTimeout(oakCatchReward, 500); // Prof. Oak's Research
                 return;
             }
             if (!keepOverlay) closeCatchOverlay();
@@ -56615,7 +56711,10 @@
         // Nature Cards photo.
         document.getElementById('game-shop-menu-overlay').addEventListener('click', (e) => {
             if (e.target.id === 'game-shop-menu-overlay' || e.target.closest('.game-shop-menu-close-btn')) {
+                if (shopMenuOak && document.querySelector('#game-shop-menu-grid .game-shop-take-btn')) return; // Oak's pick: choose a card first
+                const oak = shopMenuOak;
                 closeShopMenu();
+                if (oak) oak.done(); // nothing was there to take
                 return;
             }
             const buyBtn = e.target.closest('.game-shop-buy-btn');
@@ -56625,6 +56724,7 @@
             }
             const takeBtn = e.target.closest('.game-shop-take-btn');
             if (takeBtn && !takeBtn.disabled) {
+                if (shopMenuOak) { oakShopTake(takeBtn.dataset.cardId); return; }
                 requestTakeShopCard(takeBtn.dataset.deck, takeBtn.dataset.cardId);
                 return;
             }
