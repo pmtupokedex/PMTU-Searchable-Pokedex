@@ -4386,6 +4386,7 @@
            .game-deck-utility-btns' own margin-top would just double it. */
         .game-deck-row--extra .game-deck-utility-btns {
             margin-top: 0;
+            gap: 8px; /* the same as the row's own gap, so Draw / Shuffle / Look at Top are evenly spaced */
         }
 
         /* A TM tier the current player hasn't unlocked yet (see
@@ -36648,6 +36649,7 @@
             if (!card) return '';
             const n = parseInt(card.drawCards, 10) || 0;
             if (card.gameCorner === 'yes') return 'Play Game Corner';
+            if (card.lookKeep && card.lookKeep.deck) return 'Look at Top ' + (parseInt(card.lookKeep.count, 10) || 3);
             if (card.healTeam === 'yes') return 'Heal Team';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
             if (card.poolGain === 'space') return 'Draw a Pok\u00e9mon';
@@ -36687,6 +36689,7 @@
                 return;
             }
             if (card.gameCorner === 'yes') { gameCornerBegin(cardId); return; }
+            if (card.lookKeep && card.lookKeep.deck) { cardLookKeepBegin(cardId); return; }
             if (parseInt(card.swapPokemon, 10) > 0) { beginPokemonSwap(cardId); return; }
             if (card.poolGain === 'space') { // poolGain: "space" -- the player says which color of space they are on
                 if (!usesVirtualTokensForActiveSave()) { showGameToast(card.name + ': this save\u2019s play mode uses physical tokens \u2014 take a token of your space\u2019s color from your physical pool.'); return; }
@@ -50979,6 +50982,40 @@
             return true;
         }
 
+        // ---- Look at the top cards of a deck, keep one (Tera Orb, Apricorn, Z-Ring, TM Case, Type-Enhancer) ----
+        // cards.json: "lookKeep": { "deck": "Tera Type Deck", "count": 3 } on an Item card. Its Play button in the Active Card zone looks at the top
+        // `count` cards of that deck in the Decks screen's keep-one viewer (the Department Store's and Battle Frontier's): one goes to the hand,
+        // the rest to the bottom of the deck. The card is discarded once a card has been kept; the viewer can't be closed without choosing.
+        // "TM Deck" with Tiered TM Decks on first asks which unlocked tier to look at.
+        function cardLookKeepBegin(cardId) {
+            const card = CARDS_BY_ID[cardId], spec = card && card.lookKeep;
+            if (isActiveSaveReadOnly() || !spec) return;
+            if (!isVirtualDecksEnabledForActiveSave()) { showGameToast(card.name + ': look at the top ' + (parseInt(spec.count, 10) || 3) + ' cards of your physical ' + spec.deck + ', keep one, and put the rest on the bottom.'); cardEffectDone(cardId); return; }
+            if (spec.deck === 'TM Deck' && isTieredTMDecksEnabledForActiveSave()) {
+                const tiers = [TM_TIER_DECK_NAMES.Novice, TM_TIER_DECK_NAMES.Advanced, TM_TIER_DECK_NAMES.Expert].filter(isTMDeckUnlockedForActiveSave);
+                if (tiers.length > 1) {
+                    const map = getDeckInfoMap();
+                    boardFrontierShow(card.name, 'Choose which TM deck to look at.', '<div class="game-frontier-choices">' + tiers.map(t => {
+                        const n = (map[t] && map[t].drawCount) || 0;
+                        return `<button class="filter-btn game-lookkeep-btn" type="button" data-deck="${escapeHtml(t)}" data-card-id="${escapeHtml(cardId)}" ${n > 0 ? '' : 'disabled'}>${escapeHtml(t)} (${n} left)</button>`;
+                    }).join('') + `<button class="filter-btn game-lookkeep-btn" type="button" data-deck="" data-card-id="${escapeHtml(cardId)}">Cancel</button></div>`);
+                    return;
+                }
+                cardLookKeepRun(cardId, tiers[0] || TM_TIER_DECK_NAMES.Novice);
+                return;
+            }
+            cardLookKeepRun(cardId, spec.deck);
+        }
+        function cardLookKeepRun(cardId, deck) {
+            const card = CARDS_BY_ID[cardId], spec = card && card.lookKeep;
+            if (!card || !spec || !deck) return;
+            const info = getDeckInfoMap()[deck];
+            if (!info || !(info.drawCount > 0)) { showGameToast(card.name + ': the ' + deck + ' is empty, so there is nothing to look at.'); return; }
+            boardShowHand(); // the kept card goes to the hand
+            deckLookPendingMode = { mode: 'keep-one', deck, at: Date.now(), label: card.name, required: true, onDone: () => cardEffectDone(cardId) };
+            requestLookAtTopCards(deck, parseInt(spec.count, 10) || 3);
+        }
+
         // ---- Game Corner ----
         // cards.json: "gameCorner": "yes" (an Event card with a Play button). The player wagers up to GAME_CORNER_MAX_BET Pok\u00e9 Coins they
         // have and picks two different numbers from 1-6, then three d6 are rolled. The wager is always spent; each die showing one of the two
@@ -51670,6 +51707,8 @@
             if (fxBtn) { closeFrontierOverlay(); cardShopChoose(fxBtn.dataset.cardId, fxBtn.dataset.act); return; }
             const radioBtn = e.target.closest('.game-radio-btn');
             if (radioBtn) { boardRadioChoose(radioBtn.dataset.name); return; }
+            const lkBtn = e.target.closest('.game-lookkeep-btn');
+            if (lkBtn) { if (lkBtn.disabled) return; closeFrontierOverlay(); if (lkBtn.dataset.deck) cardLookKeepRun(lkBtn.dataset.cardId, lkBtn.dataset.deck); return; }
             const gcBtn = e.target.closest('.game-gc-btn');
             if (gcBtn) { if (!gcBtn.disabled) gameCornerClick(gcBtn.dataset.gc, parseInt(gcBtn.dataset.n, 10)); return; }
             const waterBtn = e.target.closest('.game-vending-water-btn');
