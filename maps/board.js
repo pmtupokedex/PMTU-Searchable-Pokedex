@@ -40,7 +40,7 @@
    setKeepScale(on) -- on: when the frame is resized (e.g. a docked side panel opens) the map keeps the same on-screen scale and just
                shows more/less of itself, and the map is never allowed to get shorter than the frame; off (default): refit as before.
    setView('tv') makes a host display read-only with face-down Pokémon hidden.
-   Host only: poolList(color) / takeFromPool(color,name) / settlePoolToken(name,'caught'|'returned') [Safari Zone: pick a token out
+   Host only: radioOffer(playerId) / radioKeep(playerId,name) [Radio: PKMN March: after a face-down Pokémon on the player's space was just revealed (landing info kind 'encounter' with justRevealed:true), offer() draws up to two more tokens of its colour and returns {original,drawn}; keep() makes the chosen one the space's Pokémon, returns the rest to the pool and fires the 'encounter' landing again with it], poolList(color) / takeFromPool(color,name) / settlePoolToken(name,'caught'|'returned') [Safari Zone: pick a token out
    of a pool, then keep it (caught) or put it back], where(playerId) [the id of the space a player's marker is on, or null -- the Host uses it to check two players really share a space], drawLegendary() [Roaming Legend: a random Legendary token from the orange pool, or off a random orange space when the pool is empty; settle it like drawFromPool()], drawFromPool(color) [Battle Frontier: take a RANDOM token out of a pool, returns its name or null; give it back with settlePoolToken(name,'returned')], movePlayer(playerId, spaceIdOrLabel|'@home') [moves a marker without a landing prompt ('@home' = their Current Home); returns the space's label, or '' if it could not], setCaught(names) [every caught form on any team], exportState() / restoreState(s) [the full state,
    for the host backup], adoptPlayer(oldId,newId) [a guest rejoined under a new connection id]
    spaceColor(spaceId) -> the space's color name, or null.
@@ -319,15 +319,38 @@ function landEvent(p,id,passed,here){const s=get(id),homeOpts=[...passed.map(c=>
  opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind,token:(kind==='catch'&&o.revealed)?o.token:null,boss:kind==='catch'&&o.revealed&&!!o.boss,alsoHere:here,alsoHereIds:OUT.has(p)?[]:PL.filter(q=>q.id!==p&&pos[q.id]===id&&!OUT.has(q.id)).map(q=>({id:q.id,name:q.name})),homeOptions:homeOpts})}
 // The player chose to encounter the wild Pokémon on the space they are standing on: only now is it revealed.
 function acceptEncounter(p){const id=pendingEnc[p];if(!id||pos[p]!==id)return false;const o=st[id];if(!o||o.empty||!o.token)return false;pendingEnc[p]=null;
+ const fresh=!o.revealed; // it was face-down until now (justRevealed in the landing info: the app's Radio: PKMN March card listens for it)
  if(!o.revealed){o.revealed=true;log(`host: reveal ${id} (${o.token}) to everyone`);snapshot()}
- const s=get(id);opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind:'encounter',token:o.token,boss:!!o.boss,alsoHere:[],homeOptions:[]});return true}
+ const s=get(id);opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind:'encounter',token:o.token,boss:!!o.boss,justRevealed:fresh,alsoHere:[],homeOptions:[]});return true}
 // "Look For Other Pokémon": the face-up wild Pokémon on the player's space goes back to its pool, a different one of that color is dealt
 // face-up in its place, and the encounter starts with it. (Bosses/Legendaries have a fixed Pokémon, and an empty pool leaves it as is: noOthers.)
 function rerollEncounter(p){const id=pendingEnc[p];if(!id||pos[p]!==id)return false;const o=st[id];if(!o||o.empty||!o.token||o.boss||!o.revealed)return false;
  const s=get(id),c=o.home||s.color,pool=pools[c]||[],others=pool.filter(n=>n!==o.token),noOthers=!others.length;
  if(!noOthers){const n=others[Math.floor(Math.random()*others.length)],old=o.token;pool.splice(pool.indexOf(n),1);o.token=n;backToPool(old);log(`host: ${p} looked for another Pokémon on ${id}: ${old} back to the pool, ${n} dealt`);snapshot()}
  pendingEnc[p]=null;opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind:'encounter',token:o.token,boss:false,noOthers,alsoHere:[],homeOptions:[]});return true}
-function land(p,id,passed=[]){const s=get(id),here=OUT.has(p)?[]:PL.filter(q=>q.id!==p&&pos[q.id]===id&&!OUT.has(q.id)).map(q=>q.name),name=PL.find(q=>q.id===p).name;
+// ---------- Radio: PKMN March: a hidden Pokémon was just revealed on the player's space (host only) ----------
+// radioOffer(p) draws up to two more tokens of the space's pool colour (held out of the pool like any Safari / Frontier draw) and returns
+// {original,drawn}. radioKeep(p,name) makes the chosen one -- the revealed token, or one of the drawn -- the Pokémon on the space, puts the
+// other two back in their pool, and starts the encounter with it exactly as acceptEncounter() does. The offer is remembered here so a
+// player can only keep one of the three they were really shown; it is dropped (the drawn tokens go back) when they land somewhere else.
+// Only a Pokémon dealt from the space's own pool qualifies. A Boss's token is fixed (and always face-up), so it is refused; a face-down
+// Legendary on an ordinary orange space is dealt from the orange pool like any other and is fair game.
+const radioOffers={};
+function radioCancel(p){const r=radioOffers[p];if(!r)return;delete radioOffers[p];r.drawn.forEach(n=>settlePoolToken(n,'returned'))}
+function radioOffer(p){if(mode!=='host'||pos[p]===undefined)return null;radioCancel(p);
+ const id=pos[p],s=get(id),o=st[id];if(!s||s.type!=='catch'||!o||o.empty||!o.token||!o.revealed||o.boss)return null;
+ const c=o.home||s.color;if(!pools[c])return null;
+ const drawn=[];for(let i=0;i<2;i++){const n=drawFromPool(c);if(!n)break;drawn.push(n)}
+ radioOffers[p]={id,original:o.token,drawn};log(`host: ${p} used Radio on ${id}: ${o.token} + ${drawn.join(', ')||'nothing else left'}`);return{original:o.token,drawn:drawn.slice()}}
+function radioKeep(p,name){const r=radioOffers[p];if(mode!=='host'||!r||pos[p]!==r.id)return false;
+ const o=st[r.id];if(!o||!o.revealed||o.token!==r.original){radioCancel(p);return false}
+ if(name!==r.original&&!r.drawn.includes(name))return false;
+ delete radioOffers[p];
+ if(name!==r.original){if(!o.dup)backToPool(r.original);o.token=name;o.dup=false;held.delete(name)}
+ r.drawn.forEach(n=>{if(n!==name)settlePoolToken(n,'returned')});
+ log(`host: ${p} kept ${name} on ${r.id}`);snapshot();pendingEnc[p]=null;
+ const s=get(r.id);opts.onLanding({player:p,space:{id:s.id,type:s.type,label:s.label,color:s.color||null,actions:s.actions||[]},kind:'encounter',token:o.token,boss:false,alsoHere:[],homeOptions:[]});return true}
+function land(p,id,passed=[]){radioCancel(p);const s=get(id),here=OUT.has(p)?[]:PL.filter(q=>q.id!==p&&pos[q.id]===id&&!OUT.has(q.id)).map(q=>q.name),name=PL.find(q=>q.id===p).name;
  if(mode==='host'&&opts.onLanding){landEvent(p,id,passed,here);return}
  let h=`<b>${name}</b> landed on <b>${s.label||s.type+' '+s.id}</b>.`;
  const hm=$('hm');hm.innerHTML='';[...passed.map(c=>[c,' (passed through)']),...(s.type==='city'?[[id,'']]:[])].filter(([c])=>home[p]!==c).forEach(([c,w])=>{const b=document.createElement('button');b.textContent=`Set Current Home: ${get(c).label||c}${w}`;b.onclick=()=>{setHome(p,c);hm.innerHTML=''};hm.appendChild(b)});
@@ -628,7 +651,7 @@ return{
  resend(){if(mode==='host'&&lastSnapStr)send({type:'board-state',snap:lastSnapStr})},
  restoreSnapshot,
  setCaught,exportState,restoreState,adoptPlayer,
- poolList,takeFromPool,settlePoolToken,drawFromPool,drawLegendary,movePlayer,where,spaceOf,stayOnSpace,
+ poolList,takeFromPool,settlePoolToken,drawFromPool,drawLegendary,radioOffer,radioKeep,movePlayer,where,spaceOf,stayOnSpace,
  homeOf:p=>{const id=curHome()[p],s=id&&get(id);return s?{id:s.id,label:s.label||''}:null},
  cities:()=>SP.filter(s=>s.type==='city').map(s=>({id:s.id,label:s.label||'',fly:!!s.fly,actions:s.actions||[]})),
  fit:()=>fitView(),
