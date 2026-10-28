@@ -27996,6 +27996,11 @@
                     const record = getBattleRecordStore();
                     collectOnceBonusKeys().forEach(key => { record.spent[key] = true; });
                     record.round += 1;
+                    // Radio: PKMN Lullaby: whoever used a Move this round falls asleep. Wild / Trainer Pok\u00e9mon here; a player's own
+                    // is put to sleep by its owner's device from record.sleepNow (see applyIncomingArenaState()).
+                    record.sleepNow = lullabySleepers(record, slot => st[slot] && st[slot].member);
+                    ['attacker', 'defender'].forEach(slot => { if (record.sleepNow[slot] && st[slot] && !st[slot].ownerId) lullabyPutToSleep(st[slot].member); });
+                    record.moved = {};
                     // The Wild Pokémon lives here on the Host; every other
                     // Pokémon is reset by its own owner's device when the
                     // new round arrives (see applyIncomingArenaState()).
@@ -28228,6 +28233,8 @@
                 // Roll from the Host's own copy of the counters, which every
                 // screen mirrors, rather than trusting the sender's.
                 half.attack = generateBattleAttackRolls(sanitizeBattleDiceCounts(st.diceCounts[slot]));
+                if (!st.record) st.record = makeEmptyBattleRecord();
+                noteBattleMoveUsed(st.record, slot, st[slot] && st[slot].member); // this Pok\u00e9mon used a Move this round (Radio: PKMN Lullaby)
             } else if (req && req.action === 'roll-effect') {
                 half.effect = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
             } else if (req && req.action === 'roll-status') {
@@ -28505,6 +28512,20 @@
                     if (resetParalyzedSideAt(teamId, index, false)) persistTeamSlotChange(index);
                 }
             });
+            // Radio: PKMN Lullaby. This player's Lullaby card spends a counter once they're in the battle; and at Next Round
+            // their own Pok\u00e9mon that used a Move (the Host worked out which, in record.sleepNow) fall asleep.
+            if (payload.inProgress && payload.record && myId) lullabyBattleCheck(payload.record, myId);
+            if (nextRound && payload.record && payload.record.sleepNow && !isActiveSaveReadOnly()) {
+                [['attacker', battleAttackerTeamId, battleAttackerMemberIndex], ['defender', battleDefenderTeamId, battleDefenderMemberIndex]].forEach(([slot, teamId, index]) => {
+                    const uid = payload.record.sleepNow[slot];
+                    if (!uid || !payload[slot] || payload[slot].ownerId !== myId || typeof index !== 'number' || teamId !== getActiveTeamId()) return;
+                    const m = (getActiveSaveData().team.members || [])[index];
+                    if (m && m.uid === uid && lullabyPutToSleep(m)) {
+                        persistTeamSlotChange(index);
+                        showBattleArenaNotice((getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' fell asleep to the Radio: PKMN Lullaby!');
+                    }
+                });
+            }
             // Keep the Team Tracker's opponent preview current if the
             // other half changes while this player is still picking.
             if (teamSendToBattleModeActive && currentGameScreen === 'team') renderTeamGrid();
@@ -39190,6 +39211,7 @@
             const counts = sanitizeBattleDiceCounts(battleDiceCounts[slotName]);
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-attack', counts }); return; }
             battleDiceResults[slotName].attack = generateBattleAttackRolls(counts);
+            noteBattleMoveUsed(battleRecord, slotName, getBattleSlotMember(slotName)); // Radio: PKMN Lullaby
             refreshBattleDice(slotName);
         }
 
@@ -39462,6 +39484,14 @@
             // Once-per-battle bonuses in effect this round are spent.
             collectOnceBonusKeys().forEach(key => { battleRecord.spent[key] = true; });
             battleRecord.round += 1;
+            // Radio: PKMN Lullaby: whoever used a Move this round falls asleep.
+            const lullabyNow = lullabySleepers(battleRecord, slot => getBattleSlotMember(slot));
+            ['attacker', 'defender'].forEach(slot => {
+                const m = lullabyNow[slot] ? getBattleSlotMember(slot) : null;
+                const index = slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+                if (m && lullabyPutToSleep(m)) { persistTeamSlotChange(index); showBattleArenaNotice((getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' fell asleep to the Radio: PKMN Lullaby!'); }
+            });
+            battleRecord.moved = {};
             const trainerSwitched = advanceSoloTrainerIfFainted();
             const gymLeaderSwitched = advanceSoloGymLeaderIfFainted();
             resetParalyzedSideForRound(); // Paralyzed flips back to side 1
@@ -40045,7 +40075,9 @@
         // to the Host, who decides if it was a defeat. "Owner" is the
         // lobby player id, or 'solo'.
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {} };
+            // id: tells one battle from the next. lullaby / moved / sleepNow: Radio: PKMN Lullaby (see lullabyBattleCheck()).
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {},
+                id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
 
@@ -40086,6 +40118,81 @@
             ['attacker', 'defender'].forEach(slot => {
                 if (getBattleSlotOwnerId(slot) === 'solo') noteBattleParticipant(battleRecord, 'solo', getBattleSlotMember(slot));
             });
+            lullabyBattleCheck(battleRecord, 'solo');
+        }
+
+        // ---- Radio: PKMN Lullaby ----
+        // cards.json: "permanentCounterEffect": { "effect": "radioLullaby", "discardWhenEmpty": true } (2 Permanent counters).
+        // When this player's Pok\u00e9mon takes part in a Battle (their owner id is in the battle record's `seen`), the card loses a counter
+        // -- once per card per Battle -- and the Battle's record is marked `lullaby`. From then on, at every Next Round, each Pok\u00e9mon in the
+        // Arena that USED A MOVE in the round just ended falls asleep. "Used a Move" = its half's Attack Die was rolled while it held
+        // the half (record.moved[slot] is its uid; a Pok\u00e9mon swapped in afterwards, e.g. by a move that switches its user or opponent,
+        // hasn't used one). The card is discarded when its last counter goes, but the effect lasts for the rest of that Battle.
+        // Whoever owns the Pok\u00e9mon puts it to sleep on their own device (record.sleepNow, like Paralyzed's reset in applyIncomingArenaState());
+        // the Host does it for wild / Trainer Pok\u00e9mon and Gym Leader / Rival cards, solo does it in nextBattleRound(). Sleep is only added
+        // when there's no Status already. Only owners of a Pok\u00e9mon in the battle are participants (record.seen), so a player who merely
+        // controls the wild / Trainer / Gym Leader half neither spends their own card nor has their own Pok\u00e9mon affected.
+        let lullabySpent = { battle: null, ids: [] };
+        function lullabyEffectOf(entry) {
+            const c = entry && CARDS_BY_ID[entry.cardId];
+            return c && c.permanentCounterEffect ? c.permanentCounterEffect.effect : '';
+        }
+        function noteBattleMoveUsed(record, slot, member) {
+            if (!record || !member) return;
+            if (!record.moved || typeof record.moved !== 'object') record.moved = {};
+            record.moved[slot] = ensureMemberUid(member);
+        }
+        // Called on each device when the battle record arrives (and solo when a participant is noted). Takes a counter off each of THIS
+        // player's Lullaby cards the first time they're seen taking part in this battle.
+        function lullabyBattleCheck(record, ownerId) {
+            try {
+                if (!record || !record.id || isActiveSaveReadOnly()) return;
+                if (!(record.seen && Array.isArray(record.seen[ownerId]) && record.seen[ownerId].length)) return;
+                if (lullabySpent.battle !== record.id) lullabySpent = { battle: record.id, ids: [] };
+                const cards = getLocalPermanentArray().filter(e => lullabyEffectOf(e) === 'radioLullaby' && (e.counter || 0) > 0 && !lullabySpent.ids.includes(e.instanceId));
+                if (!cards.length) return;
+                cards.forEach(e => {
+                    lullabySpent.ids.push(e.instanceId);
+                    const left = (e.counter || 0) - 1;
+                    requestPermanentCounterAdjust(e.instanceId, -1);
+                    if (left <= 0) requestPermanentDiscard(e.instanceId);
+                });
+                if (lobbyState.role === 'guest') {
+                    if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-lullaby' });
+                } else if (lobbyState.role === 'host') hostApplyBattleLullaby('host');
+                else record.lullaby = true;
+                const name = (CARDS_BY_ID[cards[0].cardId] || {}).name || 'Radio: PKMN Lullaby';
+                showGameToast(name + ': a counter was spent. Pok\u00e9mon that use a Move this battle fall asleep at the next round.');
+            } catch (err) { /* never get in the way of the battle */ }
+        }
+        // Host: a participant's Lullaby is in play for this battle.
+        function hostApplyBattleLullaby(peerKey) {
+            const st = hostBattleArenaState;
+            if (!st.inProgress || !st.record || st.record.lullaby) return;
+            const seen = st.record.seen && st.record.seen[peerKey];
+            if (!Array.isArray(seen) || !seen.length) return; // only someone taking part can play it
+            st.record.lullaby = true;
+            broadcastBattleArenaState();
+        }
+        // Which halves fall asleep as the round ends: { attacker: uid|null, defender: uid|null }. memberOf(slot) is the Pok\u00e9mon in the half now.
+        function lullabySleepers(record, memberOf) {
+            const out = { attacker: null, defender: null };
+            if (!record || !record.lullaby || !record.moved) return out;
+            ['attacker', 'defender'].forEach(slot => {
+                const m = memberOf(slot);
+                if (m && !m.fainted && lullabyCanSleep(m) && record.moved[slot] && m.uid === record.moved[slot]) out[slot] = m.uid;
+            });
+            return out;
+        }
+        // Sleep is only ever added to a Pok\u00e9mon (or Gym Leader / Rival card) with no Status; it never replaces another one.
+        function lullabyCanSleep(member) { return !!member && !member.fainted && (!member.status || member.status === 'none'); }
+        function lullabyPutToSleep(member) {
+            if (!lullabyCanSleep(member)) return false;
+            const cfg = STATUS_COUNTER_CONFIG.sleep;
+            member.status = 'sleep';
+            member.statusCounter = cfg.default;
+            member.statusCardSide = 1;
+            return true;
         }
 
         function getSoloBattleEntries() {
@@ -47332,6 +47439,8 @@
                     hostApplyBattlePhase(conn.peer, data.action, { forfeit: !!data.forfeit });
                 } else if (data.type === 'battle-dice') {
                     hostApplyBattleDice(data.slot, conn.peer, data);
+                } else if (data.type === 'battle-lullaby') {
+                    hostApplyBattleLullaby(conn.peer);
                 } else if (data.type === 'host-transfer-accept' && conn.peer === pendingHostTransferTargetPeerId) {
                     onHostTransferAccepted(conn.peer);
                 } else if (data.type === 'host-transfer-decline' && conn.peer === pendingHostTransferTargetPeerId) {
