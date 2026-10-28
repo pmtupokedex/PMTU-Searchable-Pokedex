@@ -31439,7 +31439,7 @@
                         </span>
                         <div class="game-shop-menu-item-actions${coinsEnabled ? '' : ' game-shop-menu-item-actions--take-only'}">
                             ${buyBtn}
-                            <button class="filter-btn exclude game-shop-take-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(card.id)}" ${readOnly ? 'disabled' : ''} aria-label="Take ${escapeHtml(card.name)}">Take</button>
+                            <button class="filter-btn exclude game-shop-take-btn" type="button" data-deck="${escapeHtml(deckName)}" data-card-id="${escapeHtml(card.id)}" ${readOnly ? 'disabled' : ''} aria-label="Take ${escapeHtml(card.name)}${shopMenuOak ? ' (' + (card.pokeCoinCost || 0) + ' Pok\u00e9 Coins)' : ''}">${shopMenuOak ? '<span style="display:inline-flex;align-items:center;gap:0">Take (<img class="game-shop-buy-btn-icon" src="https://dl.dropboxusercontent.com/scl/fi/o63sd5nvfxkf6xj3yokv9/pokecoin-sm.png?rlkey=u9o5o0sz8trg9lnb1zbyeftmm&st=oso6uy1c&dl=1" alt=""><span>' + (card.pokeCoinCost || 0) + '</span>)</span>' : 'Take'}</button>
                         </div>
                     </div>
                 `;
@@ -36625,6 +36625,7 @@
         function cardEffectLabel(card) {
             if (!card) return '';
             const n = parseInt(card.drawCards, 10) || 0;
+            if (card.gameCorner === 'yes') return 'Play Game Corner';
             if (card.healTeam === 'yes') return 'Heal Team';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
             if (card.poolGain === 'space') return 'Draw a Pok\u00e9mon';
@@ -36663,6 +36664,7 @@
                 document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
                 return;
             }
+            if (card.gameCorner === 'yes') { gameCornerBegin(cardId); return; }
             if (parseInt(card.swapPokemon, 10) > 0) { beginPokemonSwap(cardId); return; }
             if (card.poolGain === 'space') { // poolGain: "space" -- the player says which color of space they are on
                 if (!usesVirtualTokensForActiveSave()) { showGameToast(card.name + ': this save\u2019s play mode uses physical tokens \u2014 take a token of your space\u2019s color from your physical pool.'); return; }
@@ -48808,9 +48810,9 @@
             }
             turnViewSig = JSON.stringify(view);
             const coin = !!(announce && fresh && isPokeCoinsEnabledForActiveSave()); // a brand-new turn, with the Poké Coin rule on: +1 for whoever's turn it is
-            turnsApplyView(view, announce, coin);
+            turnsApplyView(view, announce, coin, !!fresh);
             if (lobbyState.role === 'host') {
-                lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send({ type: 'turn-state', view, announce: !!announce, coin }); });
+                lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) entry.conn.send({ type: 'turn-state', view, announce: !!announce, coin, fresh: !!fresh }); });
             }
         }
         function turnsPublicView() { return lobbyState.role === 'host' && turnAuth ? turnsBuildView() : null; }
@@ -48820,13 +48822,14 @@
             boardCenterSession = null;
             try { if (boardCtrl) boardCtrl.hideAction(); } catch (e) { /* nothing showing */ }
         }
-        function turnsApplyView(view, announce, coin) {
+        // fresh: a brand-new turn really began (not a saved game picking its current turn back up): only then do turn-start upkeeps fire.
+        function turnsApplyView(view, announce, coin, fresh) {
             const meId = getMyLobbyPlayerId() || 'host';
             const wasMine = !!(turnView && turnView.cur && turnView.cur === meId);
             turnView = (view && Array.isArray(view.order)) ? view : null;
             const isMine = !!(turnView && turnView.cur && turnView.cur === meId);
             if (wasMine && !isMine) boardCloseActionBox(); // my turn has passed on
-            if (announce && isMine) { boardCloseActionBox(); upkeepOnTurnStart(); } // my turn starts: anything still up is leftover
+            if (announce && isMine) { boardCloseActionBox(); upkeepOnTurnStart(!!fresh); } // my turn starts: anything still up is leftover
             if (boardBlimp && turnView && turnView.cur && turnView.cur !== (getMyLobbyPlayerId() || 'host')) boardBlimpFinish(); // the turn moved on
             if (announce && coin && turnView && turnView.cur && turnView.cur === (getMyLobbyPlayerId() || 'host') && isPokeCoinsEnabledForActiveSave() && !isActiveSaveReadOnly()) adjustPokeCoins(1); // each device adds to its own player's total
             turnsRender(!!announce, !!coin);
@@ -49164,10 +49167,13 @@
             }
         }
         // ---- the moments ----
-        function upkeepOnTurnStart() {
+        // trueStart: a new turn really began. Resuming a saved game mid-turn also comes through here (announce, but not fresh) and must not
+        // fire turn-start upkeeps -- that turn started long ago, whatever has been placed since.
+        function upkeepOnTurnStart(trueStart) {
             try {
                 upkeepStampNew();
                 boardMoveSync();
+                if (!trueStart) return;
                 const items = upkeepCollect('turnStart');
                 if (items.length) setTimeout(() => upkeepPresent(items), TURN_BANNER_MS + 500); // after the "Your Turn" banner
             } catch (err) { /* ignore */ }
@@ -50945,6 +50951,83 @@
             return true;
         }
 
+        // ---- Game Corner ----
+        // cards.json: "gameCorner": "yes" (an Event card with a Play button). The player wagers up to GAME_CORNER_MAX_BET Pok\u00e9 Coins they
+        // have and picks two different numbers from 1-6, then three d6 are rolled. The wager is always spent; each die showing one of the two
+        // numbers wins them an amount equal to the wager (so one match breaks even, two or three profit). If all three dice show chosen numbers (1, 1, 2 for 1 and 2),
+        // or all three are the same number (even an unchosen one), they also take any one card from the Item deck into their hand, and the deck is
+        // shuffled. With the Pok\u00e9 Coin rule off nothing is tracked, so the result says what to do with the physical coins.
+        const GAME_CORNER_MAX_BET = 10;
+        let gameCorner = null; // { cardId, bet, maxBet, coinsOn, picks: [numbers] } while the wager window is open
+        function gameCornerBegin(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (isActiveSaveReadOnly() || !card) return;
+            const coinsOn = isPokeCoinsEnabledForActiveSave();
+            const data = getActiveSaveData();
+            const balance = typeof data.pokeCoins === 'number' ? data.pokeCoins : 3;
+            const maxBet = coinsOn ? Math.min(GAME_CORNER_MAX_BET, balance) : GAME_CORNER_MAX_BET;
+            if (maxBet < 1) { showGameToast(card.name + ': you have no Pok\u00e9 Coins to wager.'); return; }
+            gameCorner = { cardId, bet: 1, maxBet, coinsOn, picks: [] };
+            gameCornerRender();
+        }
+        function gameCornerRender() {
+            const g = gameCorner;
+            if (!g) return;
+            const card = CARDS_BY_ID[g.cardId];
+            const nums = [1, 2, 3, 4, 5, 6].map(n => `<button class="filter-btn game-gc-btn${g.picks.includes(n) ? ' include' : ''}" type="button" data-gc="num" data-n="${n}" style="min-width:44px">${n}</button>`).join('');
+            boardFrontierShow(card.name, 'Choose your wager' + (g.coinsOn ? ' (up to ' + g.maxBet + ' of your Pok\u00e9 Coins)' : ' (up to ' + g.maxBet + ')') + ' and pick two different numbers. Three dice are rolled: your wager is spent, and every die that matches one of your numbers wins you that much.',
+                `<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin:6px 0 10px;width:100%">
+                    <button class="filter-btn game-gc-btn" type="button" data-gc="bet-" ${g.bet <= 1 ? 'disabled' : ''}>\u2212</button>
+                    <span style="font-weight:bold;min-width:90px;text-align:center">Wager: ${g.bet}</span>
+                    <button class="filter-btn game-gc-btn" type="button" data-gc="bet+" ${g.bet >= g.maxBet ? 'disabled' : ''}>+</button>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-bottom:10px;width:100%">${nums}</div>
+                <div class="game-frontier-choices">
+                    <button class="filter-btn include game-gc-btn" type="button" data-gc="roll" ${g.picks.length === 2 ? '' : 'disabled'}>Roll the Dice</button>
+                    <button class="filter-btn exclude game-gc-btn" type="button" data-gc="cancel">Cancel</button>
+                </div>`);
+        }
+        function gameCornerClick(act, n) {
+            const g = gameCorner;
+            if (!g) return;
+            if (act === 'cancel') { gameCorner = null; closeFrontierOverlay(); return; }
+            if (act === 'bet-') g.bet = Math.max(1, g.bet - 1);
+            else if (act === 'bet+') g.bet = Math.min(g.maxBet, g.bet + 1);
+            else if (act === 'num') {
+                const i = g.picks.indexOf(n);
+                if (i >= 0) g.picks.splice(i, 1);
+                else { g.picks.push(n); if (g.picks.length > 2) g.picks.shift(); } // a third pick replaces the oldest
+            } else if (act === 'roll') { gameCornerRoll(); return; }
+            gameCornerRender();
+        }
+        function gameCornerRoll() {
+            const g = gameCorner;
+            if (!g || g.picks.length !== 2) return;
+            gameCorner = null;
+            const card = CARDS_BY_ID[g.cardId];
+            const dice = [0, 0, 0].map(() => 1 + Math.floor(Math.random() * 6));
+            const matches = dice.filter(d => g.picks.includes(d)).length;
+            const jackpot = dice.every(d => g.picks.includes(d)) || (dice[0] === dice[1] && dice[1] === dice[2]);
+            const winnings = g.bet * matches, net = winnings - g.bet; // the wager is always spent; each matching die pays it back once
+            const sgn = n => (n > 0 ? '+' : n < 0 ? '\u2212' : '') + Math.abs(n);
+            if (g.coinsOn) adjustPokeCoins(net);
+            cardEffectDone(g.cardId); // the card is used
+            const pickText = g.picks.slice().sort((a, b) => a - b).join(' and ');
+            let text = 'You chose ' + pickText + ' and rolled ' + dice.join(', ') + '.\n\n';
+            text += matches
+                ? matches + (matches === 1 ? ' die matches' : ' dice match') + ': you win ' + winnings + ' Pok\u00e9 Coin' + (winnings === 1 ? '' : 's') + ', and your wager of ' + g.bet + ' is spent (net ' + sgn(net) + ').'
+                : 'No die matches: you lose your wager of ' + g.bet + ' Pok\u00e9 Coin' + (g.bet === 1 ? '' : 's') + '.';
+            if (!g.coinsOn) text += ' (Pok\u00e9 Coins aren\u2019t tracked in this save \u2014 adjust your own coins.)';
+            const virtual = isVirtualDecksEnabledForActiveSave();
+            if (jackpot) text += '\n\nJackpot! ' + (virtual ? 'Choose any card from the Item deck to add to your hand; the deck is then shuffled.' : 'Choose any card from your physical Item deck to add to your hand, then shuffle the deck.');
+            boardFrontierAck(card.name, text, jackpot && virtual ? () => {
+                boardShowHand();
+                deckLookPendingMode = { mode: 'frontier-pick', deck: 'Item Deck', at: Date.now(), onDone: null, deckOnly: true, label: card.name };
+                requestLookAtTopCards('Item Deck', 100000); // clamped to the deck's size Host-side
+            } : null);
+            document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
+        }
+
         // Pokémon Center: removes every Status Condition on the team and revives up to boardPokemonCenterRevives()
         // Fainted Pokémon. A player with no more Fainted Pokémon than that has them all revived at once; with more,
         // they choose which ones, one at a time.
@@ -51469,6 +51552,8 @@
             if (fxBtn) { closeFrontierOverlay(); cardShopChoose(fxBtn.dataset.cardId, fxBtn.dataset.act); return; }
             const radioBtn = e.target.closest('.game-radio-btn');
             if (radioBtn) { boardRadioChoose(radioBtn.dataset.name); return; }
+            const gcBtn = e.target.closest('.game-gc-btn');
+            if (gcBtn) { if (!gcBtn.disabled) gameCornerClick(gcBtn.dataset.gc, parseInt(gcBtn.dataset.n, 10)); return; }
             const oakBtn = e.target.closest('.game-oak-btn');
             if (oakBtn) { oakChooseDeck(oakBtn.dataset.deck); return; }
             const modeBtn = e.target.closest('.game-trainermode-btn');
@@ -51979,11 +52064,16 @@
         }
         function boardFrontierOpenItemPicker(deckName, deckCards, pend) {
             const info = getDeckInfoMap()[deckName];
-            if (!deckCards.length && !((info && info.discardPile) || []).length) {
-                boardFrontierAck('Battle Frontier', 'The Item deck and the Item discard pile are both empty, so there is no card to take.', pend.onDone || null);
+            const deckOnly = !!pend.deckOnly; // Game Corner's jackpot: the deck alone, no discard pile, and it isn't the Legendary claim
+            if (!deckCards.length && (deckOnly || !((info && info.discardPile) || []).length)) {
+                boardFrontierAck(pend.label || 'Battle Frontier', deckOnly ? 'The Item deck is empty, so there is no card to take.' : 'The Item deck and the Item discard pile are both empty, so there is no card to take.', pend.onDone || null);
                 return;
             }
-            boardFrontierPick = { deck: deckName, deckCards: deckCards.slice(), onDone: pend.onDone || null };
+            boardFrontierPick = { deck: deckName, deckCards: deckCards.slice(), onDone: pend.onDone || null, deckOnly, label: pend.label || 'Battle Frontier' };
+            const ov = document.getElementById('game-frontier-pick-overlay');
+            const pt = ov.querySelector('.game-confirm-title'), ps = ov.querySelector('.game-confirm-subtext');
+            if (pt) pt.textContent = deckOnly ? pend.label : 'Battle Frontier \u2014 Legendary reward';
+            if (ps) ps.textContent = deckOnly ? 'Choose any one card from the Item deck. Tap a card, then Add to Hand. The deck is shuffled afterwards.' : 'Choose one Item card from the Item discard pile or the Item deck. Tap a card, then Add to Hand.';
             renderFrontierPicker();
             document.getElementById('game-frontier-pick-overlay').classList.add('visible');
         }
@@ -52014,7 +52104,7 @@
             const discard = (info && info.discardPile) || [];
             const nameOf = id => { const c = CARDS_BY_ID[id]; return c ? c.name : String(id); };
             const deck = st.deckCards.slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b))); // sorted, so the deck's order isn't shown
-            body.innerHTML = frontierPileHtml('Item Discard Pile', 'discard', discard) + frontierPileHtml('Item Deck', 'deck', deck);
+            body.innerHTML = (st.deckOnly ? '' : frontierPileHtml('Item Discard Pile', 'discard', discard)) + frontierPileHtml('Item Deck', 'deck', deck);
         }
         function boardFrontierTakeItem(source, cardId) {
             const st = boardFrontierPick;
@@ -52023,8 +52113,8 @@
             else { requestLookAddToHand(st.deck, cardId); requestShuffleDeck(st.deck); }
             const card = CARDS_BY_ID[cardId], done = st.onDone;
             closeFrontierPicker();
-            boardFrontierMarkLegendaryClaimed();
-            showGameToast('Battle Frontier: added ' + (card ? card.name : 'the card') + ' to your hand' + (source === 'deck' ? ' (the Item deck was shuffled).' : '.'));
+            if (!st.deckOnly) boardFrontierMarkLegendaryClaimed();
+            showGameToast((st.label || 'Battle Frontier') + ': added ' + (card ? card.name : 'the card') + ' to your hand' + (source === 'deck' ? ' (the Item deck was shuffled).' : '.'));
             if (done) done();
         }
         document.getElementById('game-frontier-pick-overlay').addEventListener('click', (e) => {
@@ -53730,7 +53820,7 @@
                 } else if (data.type === 'blackout-owing-set') {
                     boardApplyOwing(data.list);
                 } else if (data.type === 'turn-state') {
-                    turnsApplyView(data.view && typeof data.view === 'object' ? data.view : null, !!data.announce, !!data.coin);
+                    turnsApplyView(data.view && typeof data.view === 'object' ? data.view : null, !!data.announce, !!data.coin, !!data.fresh);
                 } else if (data.type === 'game-started') {
                     // The host pressed Start Game -- see
                     // finalizeLobbyGameStart().
