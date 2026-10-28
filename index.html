@@ -6892,7 +6892,12 @@
             0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.85), 0 0 4px 1px rgba(255, 255, 255, 0.6); background: rgba(50, 50, 50, 1); }
             50% { box-shadow: 0 0 0 7px rgba(255, 255, 255, 0), 0 0 14px 5px rgba(255, 255, 255, 0.95); background: rgba(150, 150, 150, 1); }
         }
+        /* A Status badge that was just applied by a card (Radio: PKMN Lullaby): the same white pulse, 3 x 0.83s = 2.5s, then it stops. */
+        .game-team-slot-status.status-attn-pulse {
+            animation: game-cards-resolve-pulse 0.83s ease-in-out 3;
+        }
         @media (prefers-reduced-motion: reduce) {
+            .game-team-slot-status.status-attn-pulse { animation: none; box-shadow: 0 0 12px 4px rgba(255, 255, 255, 0.9); }
             .game-team-slot-cards.needs-resolve { animation: none; box-shadow: 0 0 12px 4px rgba(255, 255, 255, 0.9); }
         }
 
@@ -22651,6 +22656,7 @@
         // in this file -- fine, since (like every other forward
         // reference in this doc) nothing here actually runs until a
         // render call happens well after the whole script has loaded.
+        const statusPulseSeen = {};
         function buildStatusBadge(member, index) {
             const status = STATUS_CONDITIONS.find(s => s.id === member.status) || null;
             const statusBadge = document.createElement('div');
@@ -22660,6 +22666,18 @@
             if (member.fainted) {
                 const statusImgEl = statusBadge.querySelector('img');
                 if (statusImgEl) statusImgEl.classList.add('game-team-corner-img-dimmed');
+            }
+            // Radio: PKMN Lullaby just put it to sleep: the badge pulses for 2.5 seconds. Each device times its own pulse from when it
+            // first draws it (so clock differences don't matter, and a redraw mid-pulse carries on rather than restarting); a stamp that's
+            // long out of date (a reloaded save) is ignored.
+            if (member.statusPulseAt && member.status === 'sleep' && Math.abs(Date.now() - member.statusPulseAt) < 30000) {
+                const key = (member.uid || member.name || '') + ':' + member.statusPulseAt;
+                if (!(key in statusPulseSeen)) statusPulseSeen[key] = Date.now();
+                const elapsed = Date.now() - statusPulseSeen[key];
+                if (elapsed < 2500) {
+                    statusBadge.classList.add('status-attn-pulse');
+                    statusBadge.style.animationDelay = '-' + elapsed + 'ms';
+                }
             }
             if (member.status && STATUS_COUNTER_CONFIG[member.status]) {
                 const countEl = document.createElement('span');
@@ -28522,7 +28540,7 @@
                     const m = (getActiveSaveData().team.members || [])[index];
                     if (m && m.uid === uid && lullabyPutToSleep(m)) {
                         persistTeamSlotChange(index);
-                        showBattleArenaNotice((getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' fell asleep to the Radio: PKMN Lullaby!');
+                        showBattleArenaNotice((getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' fell asleep to the Radio: PKMN Lullaby! (Sleep counters: ' + m.statusCounter + ')');
                     }
                 });
             }
@@ -39489,7 +39507,7 @@
             ['attacker', 'defender'].forEach(slot => {
                 const m = lullabyNow[slot] ? getBattleSlotMember(slot) : null;
                 const index = slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
-                if (m && lullabyPutToSleep(m)) { persistTeamSlotChange(index); showBattleArenaNotice((getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' fell asleep to the Radio: PKMN Lullaby!'); }
+                if (m && lullabyPutToSleep(m)) { persistTeamSlotChange(index); showBattleArenaNotice((getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' fell asleep to the Radio: PKMN Lullaby! (Sleep counters: ' + m.statusCounter + ')'); }
             });
             battleRecord.moved = {};
             const trainerSwitched = advanceSoloTrainerIfFainted();
@@ -40188,10 +40206,10 @@
         function lullabyCanSleep(member) { return !!member && !member.fainted && (!member.status || member.status === 'none'); }
         function lullabyPutToSleep(member) {
             if (!lullabyCanSleep(member)) return false;
-            const cfg = STATUS_COUNTER_CONFIG.sleep;
             member.status = 'sleep';
-            member.statusCounter = cfg.default;
+            member.statusCounter = 1 + Math.floor(Math.random() * 4); // the d4 the player would roll for Sleep: that many turns asleep
             member.statusCardSide = 1;
+            member.statusPulseAt = Date.now(); // the corner badge pulses for a moment (see buildStatusBadge())
             return true;
         }
 
