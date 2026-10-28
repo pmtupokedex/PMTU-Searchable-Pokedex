@@ -8897,6 +8897,12 @@
         }
         #game-frontier-overlay.visible, #game-frontier-pick-overlay.visible, #game-pvp-overlay.visible { display: flex; }
         #game-frontier-overlay .game-confirm-card, #game-frontier-pick-overlay .game-confirm-card, #game-pvp-overlay .game-confirm-card { max-height: 100%; overflow-y: auto; }
+        /* Item deck chooser: copies of that card left in the deck, in the card's top left corner. */
+        .game-frontier-copies-badge {
+            position: absolute; top: 6px; left: 6px; z-index: 2; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box;
+            display: flex; align-items: center; justify-content: center; border-radius: 13px;
+            background: rgba(50, 50, 50, 0.92); color: #fff; border: 2px solid #fff; font-size: 14px; font-weight: bold; pointer-events: none;
+        }
         .game-frontier-choices { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 8px 0 4px; }
         /* A level-up choice: the Pok\u00e9mon's read-only slot card above its "Lv N \u2192 N+1" label, the whole thing one button. */
         .game-frontier-level-btn { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px; font: inherit; color: inherit; background: rgba(255, 255, 255, 0.06); border: 2px solid rgba(255, 255, 255, 0.25); border-radius: 12px; cursor: pointer; }
@@ -50966,22 +50972,21 @@
             const data = getActiveSaveData();
             const balance = typeof data.pokeCoins === 'number' ? data.pokeCoins : 3;
             const maxBet = coinsOn ? Math.min(GAME_CORNER_MAX_BET, balance) : GAME_CORNER_MAX_BET;
-            if (maxBet < 1) { showGameToast(card.name + ': you have no Pok\u00e9 Coins to wager.'); return; }
-            gameCorner = { cardId, bet: 1, maxBet, coinsOn, picks: [] };
+            gameCorner = { cardId, bet: Math.min(1, maxBet), maxBet, coinsOn, picks: [] }; // a wager of 0 is allowed (even with no coins at all)
             gameCornerRender();
         }
         function gameCornerRender() {
             const g = gameCorner;
             if (!g) return;
             const card = CARDS_BY_ID[g.cardId];
-            const nums = [1, 2, 3, 4, 5, 6].map(n => `<button class="filter-btn game-gc-btn${g.picks.includes(n) ? ' include' : ''}" type="button" data-gc="num" data-n="${n}" style="min-width:44px">${n}</button>`).join('');
-            boardFrontierShow(card.name, 'Choose your wager' + (g.coinsOn ? ' (up to ' + g.maxBet + ' of your Pok\u00e9 Coins)' : ' (up to ' + g.maxBet + ')') + ' and pick two different numbers. Three dice are rolled: your wager is spent, and every die that matches one of your numbers wins you that much.',
+            const nums = [1, 2, 3, 4, 5, 6].map(n => `<button class="filter-btn game-gc-btn${g.picks.includes(n) ? ' include' : ''}" type="button" data-gc="num" data-n="${n}">${n}</button>`).join('');
+            boardFrontierShow(card.name, 'Choose your wager' + (g.coinsOn ? ' (0 to ' + g.maxBet + ' of your Pok\u00e9 Coins)' : ' (0 to ' + g.maxBet + ')') + ' and pick two different numbers. Three dice are rolled: your wager is spent, and every die that matches one of your numbers wins you that much.',
                 `<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin:6px 0 10px;width:100%">
-                    <button class="filter-btn game-gc-btn" type="button" data-gc="bet-" ${g.bet <= 1 ? 'disabled' : ''}>\u2212</button>
+                    <button class="filter-btn game-gc-btn" type="button" data-gc="bet-" ${g.bet <= 0 ? 'disabled' : ''}>\u2212</button>
                     <span style="font-weight:bold;min-width:90px;text-align:center">Wager: ${g.bet}</span>
                     <button class="filter-btn game-gc-btn" type="button" data-gc="bet+" ${g.bet >= g.maxBet ? 'disabled' : ''}>+</button>
                 </div>
-                <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-bottom:10px;width:100%">${nums}</div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;width:100%">${nums}</div>
                 <div class="game-frontier-choices">
                     <button class="filter-btn include game-gc-btn" type="button" data-gc="roll" ${g.picks.length === 2 ? '' : 'disabled'}>Roll the Dice</button>
                     <button class="filter-btn exclude game-gc-btn" type="button" data-gc="cancel">Cancel</button>
@@ -50991,7 +50996,7 @@
             const g = gameCorner;
             if (!g) return;
             if (act === 'cancel') { gameCorner = null; closeFrontierOverlay(); return; }
-            if (act === 'bet-') g.bet = Math.max(1, g.bet - 1);
+            if (act === 'bet-') g.bet = Math.max(0, g.bet - 1);
             else if (act === 'bet+') g.bet = Math.min(g.maxBet, g.bet + 1);
             else if (act === 'num') {
                 const i = g.picks.indexOf(n);
@@ -51014,7 +51019,8 @@
             cardEffectDone(g.cardId); // the card is used
             const pickText = g.picks.slice().sort((a, b) => a - b).join(' and ');
             let text = 'You chose ' + pickText + ' and rolled ' + dice.join(', ') + '.\n\n';
-            text += matches
+            text += !g.bet ? 'You wagered nothing, so no Pok\u00e9 Coins are won or lost.'
+                : matches
                 ? matches + (matches === 1 ? ' die matches' : ' dice match') + ': you win ' + winnings + ' Pok\u00e9 Coin' + (winnings === 1 ? '' : 's') + ', and your wager of ' + g.bet + ' is spent (net ' + sgn(net) + ').'
                 : 'No die matches: you lose your wager of ' + g.bet + ' Pok\u00e9 Coin' + (g.bet === 1 ? '' : 's') + '.';
             if (!g.coinsOn) text += ' (Pok\u00e9 Coins aren\u2019t tracked in this save \u2014 adjust your own coins.)';
@@ -52081,7 +52087,15 @@
             boardFrontierPick = null;
             document.getElementById('game-frontier-pick-overlay').classList.remove('visible');
         }
-        function frontierPileHtml(label, source, cards) {
+        function frontierPileHtml(label, source, cardsIn) {
+            // The deck is listed one card per different card, with a corner badge saying how many copies are left in it.
+            // (The discard pile stays a full list.)
+            const counts = {};
+            let cards = cardsIn;
+            if (source === 'deck') {
+                cardsIn.forEach(id => { counts[id] = (counts[id] || 0) + 1; });
+                cards = Object.keys(counts).sort((a, b) => ((CARDS_BY_ID[a] || {}).name || a).localeCompare((CARDS_BY_ID[b] || {}).name || b));
+            }
             if (!cards.length) return `<div class="game-frontier-pile"><p class="game-frontier-pile-label">${label} (0)</p><p class="game-deck-look-empty">This pile is empty.</p></div>`;
             const readOnly = isActiveSaveReadOnly();
             const height = HAND_CARD_OVERLAP * (cards.length - 1) + HAND_CARD_HEIGHT + DISCARD_OPTIONS_EXPAND_ROOM + STACK_TOP_GAP;
@@ -52092,10 +52106,10 @@
                     ? `<div class="game-deck-look-card-options-grid game-deck-look-card-options-grid--single"><span class="game-discard-key-item-note">Key Items can't be reclaimed from the discard pile.</span></div>`
                     : `<div class="game-deck-look-card-options-grid game-deck-look-card-options-grid--single"><button class="filter-btn exclude game-frontier-take-btn" type="button" data-source="${source}" data-card-id="${escapeHtml(cardId)}" ${readOnly ? 'disabled' : ''}>Add to Hand</button></div>`;
                 return `<div class="game-deck-look-card" style="top: ${i * HAND_CARD_OVERLAP + STACK_TOP_GAP}px; z-index: ${i + 1};" tabindex="0">`
-                    + `<div class="game-deck-look-card-face">${card && card.imageUrl ? `<img class="game-deck-look-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}</div>`
+                    + `<div class="game-deck-look-card-face">${card && card.imageUrl ? `<img class="game-deck-look-card-img" src="${card.imageUrl}" alt="${escapeHtml(name)}">` : ''}${counts[cardId] ? `<span class="game-frontier-copies-badge" title="${counts[cardId]} left in the deck" aria-label="${counts[cardId]} left in the deck">${counts[cardId]}</span>` : ''}</div>`
                     + `<div class="game-deck-look-card-options">${options}</div></div>`;
             }).join('');
-            return `<div class="game-frontier-pile"><p class="game-frontier-pile-label">${label} (${cards.length})</p><div class="game-deck-look-stack" style="height: ${height}px;">${items}</div></div>`;
+            return `<div class="game-frontier-pile"><p class="game-frontier-pile-label">${label} (${cardsIn.length}${source === 'deck' && cards.length !== cardsIn.length ? ' cards, ' + cards.length + ' different' : ''})</p><div class="game-deck-look-stack" style="height: ${height}px;">${items}</div></div>`;
         }
         function renderFrontierPicker() {
             const st = boardFrontierPick, body = document.getElementById('game-frontier-pick-body');
