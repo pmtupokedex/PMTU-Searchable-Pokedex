@@ -47223,6 +47223,10 @@
                     boardHandleContestTake(conn.peer, data);
                 } else if (data.type === 'board-contest-music') {
                     boardHandleContestMusic(conn.peer, data);
+                } else if (data.type === 'board-radio-offer') {
+                    boardHandleRadioOffer(conn.peer);
+                } else if (data.type === 'board-radio-keep' && typeof data.name === 'string') {
+                    boardHandleRadioKeep(conn.peer, data);
                 } else if (data.type === 'blackout-flag') {
                     boardBlackoutHostSet(conn.peer, !!data.out);
                 } else if (data.type === 'blackout-owing') {
@@ -48849,6 +48853,8 @@
         //            newSpace     -- a move (the turn's Movement Die move, or a Blimp Ride's) ended on a different space than it began on
         //                            (Stay on Space, Dig, Fly and Teleport are not moves)
         //            enterSpace   -- during a move, the marker walked onto (or through) a space whose color satisfies spaceColor (below)
+        //            revealPokemon -- a face-down Pokémon on this player's space was just revealed by their encounter (the card's viewer comes up
+        //                            BEFORE the encounter starts; {color} is the space's color). Radio: PKMN March -- see radioMarchBegin()
         //   action   discard | counter | resolve -- only wording for now: the player does it with the viewer's own buttons
         //   message  shown on the note; {color} becomes the space's color
         //   afterOwnTurns  N   -- skip this rule until the player has started N more turns of their own since the card appeared
@@ -48949,8 +48955,8 @@
                         st.fired[i] = n;
                         changed = true;
                     }
-                    const color = rule.spaceColor ? (rule.spaceColor === 'match' ? (h.noteColor || '') : String(rule.spaceColor).toLowerCase()) : '';
-                    items.push({ holder: h, action: rule.action || '', message: String(rule.message || (h.card.name + ' needs attention.')).replace('{color}', color) });
+                    const color = rule.spaceColor ? (rule.spaceColor === 'match' ? (h.noteColor || '') : String(rule.spaceColor).toLowerCase()) : (ctx && ctx.color ? (String(ctx.color).toLowerCase() === 'orange' ? 'Legendary' : String(ctx.color).toLowerCase()) : '');
+                    items.push({ holder: h, trigger, action: rule.action || '', message: String(rule.message || (h.card.name + ' needs attention.')).replace('{color}', color) });
                 });
             });
             if (changed) upkeepPersist();
@@ -49875,6 +49881,7 @@
             } else if (info.kind === 'encounter') {
                 // The encounter was chosen on the previous prompt: go straight to the Arena with this Pok\u00e9mon as the Defender.
                 if (info.noOthers) showGameToast('No other Pok\u00e9mon of that color are left \u2014 facing the same one.');
+                if (info.justRevealed && boardRadioTryBegin(info)) return; // a Radio card gets its say first; the encounter starts when it's settled
                 boardStartWildBattle(info);
                 return;
             } else if (info.kind === 'empty') {
@@ -51240,6 +51247,8 @@
             if (swapBtn) { closeFrontierOverlay(); swapOverlayChoose(swapBtn.dataset.act, swapBtn.dataset.gen); return; }
             const fxBtn = e.target.closest('.game-cardfx-btn');
             if (fxBtn) { closeFrontierOverlay(); cardShopChoose(fxBtn.dataset.cardId, fxBtn.dataset.act); return; }
+            const radioBtn = e.target.closest('.game-radio-btn');
+            if (radioBtn) { boardRadioChoose(radioBtn.dataset.name); return; }
             const modeBtn = e.target.closest('.game-trainermode-btn');
             if (modeBtn) {
                 closeFrontierOverlay();
@@ -51340,6 +51349,10 @@
         let eggHatchCb = null;
         function permanentCounterChanged(instanceId, counter, delta) {
             if (delta < 0 && !isActiveSaveReadOnly()) pokerusCounterLowered(instanceId, -delta); // a counter taken back off doesn't owe a Level any more
+            if (delta < 0 && !isActiveSaveReadOnly()) { // Radio: PKMN March spends a counter by taking it off
+                const re = getLocalPermanentArray().find(x => x.instanceId === instanceId), rc = re && CARDS_BY_ID[re.cardId];
+                if (rc && rc.permanentCounterEffect && rc.permanentCounterEffect.effect === 'radioMarch') radioMarchBegin(re);
+            }
             if (delta <= 0 || isActiveSaveReadOnly()) return;
             const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
             const card = entry && CARDS_BY_ID[entry.cardId];
@@ -51548,6 +51561,105 @@
         // The pick was backed out of (Cancel, or Team Tracker left): the Level stays owed.
         function pokerusPickAbandoned(instanceId) {
             if (pokerusOwedFor(instanceId) > 0) showGameToast('Pokérus still has a Level to give. Open it in your Permanent Zone and tap “Choose a Pokémon to Level” when you’re ready.');
+        }
+
+        // ---- Radio: PKMN March (see the chat this was designed in) ----
+        // cards.json: "upkeep": [{ "trigger": "revealPokemon", ... }] and "permanentCounterEffect": { "effect": "radioMarch", "discardWhenEmpty": true }.
+        // When the player's encounter reveals a face-down Pokémon (board.js acceptEncounter() marks the landing justRevealed), a Radio card in the
+        // Permanent Zone brings its viewer up BEFORE the encounter starts. Taking a counter off it spends it: the Host draws two more tokens of the
+        // space's color (board.js radioOffer()), the player picks which of the three stays -- the revealed one included -- the other two go back to
+        // the pool, and the encounter then starts with the one kept (radioKeep() fires the same 'encounter' landing), so the player gets the
+        // actions they always would. Closing the viewer instead leaves the reveal as it was; only one Radio is used per reveal. The card is
+        // discarded when its last counter is gone ("discardWhenEmpty").
+        // Like every upkeep this needs the player turns to be running; a Guest's offer and choice go through the Host (board-radio-*).
+        var boardRadioPending = null; // { info: the encounter landing being held, used, at, offer: { original, drawn }, instanceId, cardName }
+        let radioOfferCb = null, radioKeepCb = null; // a Guest's request in flight
+        function boardRadioTryBegin(info) {
+            // A Boss is always dealt face-up with a fixed Pok\u00e9mon, so it never gets here as a fresh reveal; a face-down Legendary does, and qualifies.
+            if (isActiveSaveReadOnly() || info.boss) return false;
+            if (boardRadioPending && Date.now() - boardRadioPending.at < 600000) return false; // one at a time (an older one that never finished is dropped)
+            boardRadioPending = null;
+            let items = [];
+            try { items = upkeepCollect('revealPokemon', { color: info.space && info.space.color }); } catch (e) { items = []; }
+            if (!items.length) return false;
+            const pend = boardRadioPending = { info, used: false, at: Date.now(), offer: null, instanceId: null, cardName: items[0].holder.card.name };
+            upkeepPresent(items, () => { // every Radio card has been looked at: nobody used one, so the reveal stands
+                if (boardRadioPending === pend && !pend.used) { boardRadioPending = null; boardStartWildBattle(pend.info); }
+            });
+            return true;
+        }
+        function radioMarchBegin(entry) {
+            const pend = boardRadioPending;
+            if (!pend || pend.used) return; // no reveal is waiting: taking a counter off by hand just does that
+            pend.used = true;
+            pend.instanceId = entry.instanceId;
+            upkeepQueue = upkeepQueue.filter(it => it.trigger !== 'revealPokemon'); // one Radio per reveal
+            closePermanentCardViewer();
+            boardRadioRequestOffer(offer => {
+                if (boardRadioPending !== pend) return;
+                if (!offer || !offer.original) {
+                    showGameToast(pend.cardName + ': the Pok\u00e9mon on this space can\u2019t be swapped.');
+                    boardRadioPending = null;
+                    boardRadioDiscardIfEmpty(pend.instanceId);
+                    boardStartWildBattle(pend.info);
+                    return;
+                }
+                pend.offer = offer;
+                if (!offer.drawn.length) {
+                    showGameToast(pend.cardName + ': no other Pok\u00e9mon of that color are left in the pool \u2014 the revealed one stays.');
+                    boardRadioKeep(pend, offer.original);
+                    return;
+                }
+                boardRadioShowChoice(pend);
+            });
+        }
+        function boardRadioRequestOffer(cb) {
+            if (lobbyState.role === 'guest') { radioOfferCb = cb; boardSend({ type: 'board-radio-offer' }); return; }
+            boardEnsureBoard().then(c => cb(c.radioOffer(upkeepMe()))).catch(() => cb(null));
+        }
+        function boardHandleRadioOffer(peerId) {
+            const reply = offer => boardSendToPeer(peerId, { type: 'board-radio-offered', offer });
+            if (!getRegionMapSettingsForActiveSave().enabled) { reply(null); return; }
+            boardEnsureBoard().then(c => reply(c.radioOffer(peerId))).catch(() => reply(null));
+        }
+        function boardHandleRadioKeep(peerId, data) {
+            const reply = ok => boardSendToPeer(peerId, { type: 'board-radio-kept', ok: !!ok });
+            if (!getRegionMapSettingsForActiveSave().enabled) { reply(false); return; }
+            boardEnsureBoard().then(c => reply(c.radioKeep(peerId, String(data.name || '')))).catch(() => reply(false));
+        }
+        // The three tokens as pictures to tap, the revealed one first. The dialog has no way out but a choice, so the encounter can't be left hanging.
+        function boardRadioShowChoice(pend) {
+            const names = [pend.offer.original].concat(pend.offer.drawn);
+            const btn = (n, tag) => {
+                const e = POKEMON_BY_NAME[n];
+                const img = e && e.src ? `<img src="${escapeHtml(e.src)}" alt="" style="width:72px;height:72px;object-fit:contain;display:block;margin:0 auto 4px">` : '';
+                return `<button class="filter-btn include game-radio-btn" type="button" data-name="${escapeHtml(n)}" style="display:flex;flex-direction:column;align-items:center;min-width:96px">${img}<span>${escapeHtml(n)}</span>${tag ? `<small>${tag}</small>` : ''}</button>`;
+            };
+            boardFrontierShow(pend.cardName, 'Choose the Pok\u00e9mon that stays on this space. The other two go back to the pool.', names.map((n, i) => btn(n, i === 0 ? 'revealed' : '')).join(''));
+        }
+        function boardRadioChoose(name) {
+            const pend = boardRadioPending;
+            if (!pend || !pend.offer) return;
+            closeFrontierOverlay();
+            boardRadioKeep(pend, name);
+        }
+        // The choice is made: the Host swaps it onto the space and the encounter starts again with it (arriving as an ordinary 'encounter' landing).
+        function boardRadioKeep(pend, name) {
+            if (!pend.offer || (name !== pend.offer.original && !pend.offer.drawn.includes(name))) return;
+            boardRadioPending = null;
+            boardRadioDiscardIfEmpty(pend.instanceId);
+            const fallback = () => { showGameToast(pend.cardName + ': couldn\u2019t swap the Pok\u00e9mon \u2014 carrying on with the revealed one.'); boardStartWildBattle(pend.info); };
+            if (lobbyState.role === 'guest') {
+                radioKeepCb = ok => { if (!ok) fallback(); };
+                boardSend({ type: 'board-radio-keep', name });
+                return;
+            }
+            boardEnsureBoard().then(c => { if (!c.radioKeep(upkeepMe(), name)) fallback(); }).catch(fallback);
+        }
+        function boardRadioDiscardIfEmpty(instanceId) {
+            const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
+            const fx = entry && CARDS_BY_ID[entry.cardId] && CARDS_BY_ID[entry.cardId].permanentCounterEffect;
+            if (entry && fx && fx.discardWhenEmpty && (entry.counter || 0) <= 0) requestPermanentDiscard(instanceId);
         }
 
         function boardHandleFrontierDraw(peerId, data) {
@@ -53589,6 +53701,15 @@
                 } else if (data.type === 'board-contest-taken' && typeof data.name === 'string') {
                     const cb = contestTakeCb;
                     contestTakeCb = null;
+                    if (cb) cb(!!data.ok);
+                } else if (data.type === 'board-radio-offered') {
+                    const cb = radioOfferCb;
+                    radioOfferCb = null;
+                    const o = data.offer;
+                    if (cb) cb(o && typeof o === 'object' && typeof o.original === 'string' ? { original: o.original, drawn: (Array.isArray(o.drawn) ? o.drawn : []).filter(x => typeof x === 'string').slice(0, 2) } : null);
+                } else if (data.type === 'board-radio-kept') {
+                    const cb = radioKeepCb;
+                    radioKeepCb = null;
                     if (cb) cb(!!data.ok);
                 } else if (data.type === 'board-roll-shown') {
                     boardShowRoll(data);
