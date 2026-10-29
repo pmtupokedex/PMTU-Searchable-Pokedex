@@ -8473,6 +8473,7 @@
                 playBattleCardFromHand(cardId);
                 return;
             }
+            if (movementRollCardBlocked(card)) return;
             const deckName = getEffectiveCardDeck(card) || getDeckToolList()[0];
             pendingActiveCardScrollTrigger = true;
             if (lobbyState.role === 'guest') {
@@ -13068,12 +13069,21 @@
             return upkeepOnMoveEnd(moved, colors);
         }
 
+        function cardDoublesMovementRoll(card) { return !!card && card.doubleMovementRoll === 'yes'; } // Bicycle
+        function cardAddsToMovementRoll(card) { return !!card && (parseInt(card.addToMovementRoll, 10) || 0) > 0; } // e.g. Running Shoes: +1 up to +N on this turn's Movement Roll
+        function movementRollCardBlocked(card) { // true (with a toast) when a Movement Roll card is played outside the Movement window
+            if (!cardAddsToMovementRoll(card) && !cardDoublesMovementRoll(card)) return false;
+            if (boardMoveGated() && !boardMoveWindowOpen()) { showGameToast(card.name + ' can only be used during your Movement Phase \u2014 after you roll, before you press Done Moving.'); return true; }
+            return false;
+        }
         function cardEffectLabel(card) {
             if (!card) return '';
             const n = parseInt(card.drawCards, 10) || 0;
             if (card.gameCorner === 'yes') return 'Play Game Corner';
             if (card.lookKeep && card.lookKeep.deck) return 'Look at Top ' + (parseInt(card.lookKeep.count, 10) || 3);
             if (card.healTeam === 'yes') return 'Heal Team';
+            if (cardAddsToMovementRoll(card)) return 'Add to Movement Roll';
+            if (cardDoublesMovementRoll(card)) return 'Double Movement Roll';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
             if (card.poolGain === 'space') return 'Draw a Pok\u00e9mon';
             if (parseInt(card.swapPokemon, 10) > 0) return 'Trade Pok\u00e9mon';
@@ -13109,6 +13119,20 @@
                     + `<button class="filter-btn include game-cardfx-btn" type="button" data-act="level" data-card-id="${escapeHtml(cardId)}">Gain a Level</button>`
                     + `<button class="filter-btn exclude game-cardfx-btn" type="button" data-act="cancel" data-card-id="${escapeHtml(cardId)}">Cancel</button>`);
                 document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
+                return;
+            }
+            if (cardDoublesMovementRoll(card)) {
+                if (movementRollCardBlocked(card)) return;
+                if (boardDoubleMovementRoll(card.name)) cardEffectDone(cardId);
+                return;
+            }
+            if (cardAddsToMovementRoll(card)) {
+                if (movementRollCardBlocked(card)) return;
+                const max = parseInt(card.addToMovementRoll, 10) || 2;
+                let btns = '';
+                for (let n = 1; n <= max; n++) btns += `<button class="filter-btn include game-cardfx-btn" type="button" data-act="moveroll${n}" data-card-id="${escapeHtml(cardId)}">+${n}</button>`;
+                boardFrontierShow(card.name, 'Add how much to your Movement Roll?', '<div class="game-frontier-choices">' + btns
+                    + `<button class="filter-btn exclude game-cardfx-btn" type="button" data-act="cancel" data-card-id="${escapeHtml(cardId)}">Cancel</button></div>`);
                 return;
             }
             if (card.gameCorner === 'yes') { gameCornerBegin(cardId); return; }
@@ -13149,6 +13173,13 @@
             if (act === 'pool') { cardPoolGain(cardId); return; }
             if (act === 'level') { cardLevelGainPick(cardId); return; }
             if (act === 'cancel') return;
+            if (/^moveroll\d+$/.test(act)) {
+                const n = parseInt(act.slice(8), 10), max = parseInt(card.addToMovementRoll, 10) || 0;
+                if (!(n >= 1 && n <= max) || movementRollCardBlocked(card)) return;
+                boardAddToMovementRoll(n, card.name);
+                cardEffectDone(cardId);
+                return;
+            }
             if (act === 'skip') { cardEffectDrawCards(card, parseInt(card.drawCards, 10) || 0); cardEffectDone(cardId); return; }
             if (act === 'shuffle') {
                 cardShufflePick = { cardId };
@@ -23134,25 +23165,53 @@
             requestPermanentDiscard(pick.instanceId);
             showGameToast('Soda Pop: ' + who + '’s Status Condition was removed.');
         }
+        function boardCurrentMovementRoll() { // this turn's roll object (shared with the move window), or the latest roll
+            const mst = boardMoveGated() ? boardMoveState() : null;
+            const r = (mst && mst.window && mst.window.type === 'regular' && mst.roll) ? mst.roll : boardLastRoll;
+            return { r, mst };
+        }
+        function boardBroadcastMovementRoll(r, mst) { // re-shows the roll (with its bonus / doubling) here and for the other players
+            const me = boardMyPlayer();
+            if (!me || !r) return;
+            if (mst && mst.roll === r) upkeepPersist();
+            const shown = { type: 'board-roll-shown', c: me.c, name: me.name, value: r.value, raw: r.raw, penalty: r.penalty || 0, bonus: r.bonus || 0, doubled: !!r.doubled };
+            boardShowRoll(shown);
+            if (lobbyState.role === 'guest') boardSend({ type: 'board-roll', value: shown.value, raw: shown.raw, penalty: shown.penalty, bonus: shown.bonus, doubled: shown.doubled });
+            else if (lobbyState.role === 'host') boardSend(shown);
+        }
+        function boardAddToMovementRoll(n, label) { // adds n to this turn's Movement Roll (Fresh Water, Running Shoes)
+            const { r, mst } = boardCurrentMovementRoll();
+            if (boardMyPlayer() && r && usesVirtualDiceForActiveSave()) {
+                r.bonus = (r.bonus || 0) + n;
+                r.value = r.value + n;
+                boardBroadcastMovementRoll(r, mst);
+                showGameToast(label + ': +' + n + ' \u2014 your Movement Roll is now ' + r.value + '.');
+            } else {
+                showGameToast(label + ': add ' + n + ' to your Movement Roll.');
+            }
+        }
+        // Bicycle: doubles the Movement Die result only -- never the bonuses added by Running Shoes, Fresh Water and the like (those are kept in r.bonus and added after).
+        // Returns false (and keeps the card) if it can't be used, true once it has been used.
+        // FUTURE: Bicycle also lets the player end their movement early on ANY space this turn, not just a City space. The movement system doesn't support that yet,
+        // so for now the toast below only tells the player; wire it up where the move window decides which spaces can end a move (see boardMoveOpen / boardWindowRoute).
+        function boardDoubleMovementRoll(label) {
+            const { r, mst } = boardCurrentMovementRoll();
+            if (boardMyPlayer() && r && usesVirtualDiceForActiveSave()) {
+                if (r.doubled) { showGameToast(label + ': this turn\u2019s Movement Roll is already doubled.'); return false; }
+                r.doubled = true;
+                r.value = Math.max(0, r.raw * 2 - (r.penalty || 0)) + (r.bonus || 0); // double the die, then take off any penalty and put the bonuses back
+                boardBroadcastMovementRoll(r, mst);
+                showGameToast(label + ': your Movement Roll was doubled to ' + r.value + ', and you can end your movement on any space this turn.');
+            } else {
+                showGameToast(label + ': double your Movement Die result (not any bonuses), and you can end your movement on any space this turn.');
+            }
+            return true;
+        }
         function vendingWaterApply(instanceId, n) {
             closeFrontierOverlay();
             if (!(n === 1 || n === 2) || isActiveSaveReadOnly()) return;
             if (!getLocalPermanentArray().some(e => e.instanceId === instanceId)) return;
-            const me = boardMyPlayer();
-            const mst = boardMoveGated() ? boardMoveState() : null;
-            const r = (mst && mst.window && mst.window.type === 'regular' && mst.roll) ? mst.roll : boardLastRoll;
-            if (me && r && usesVirtualDiceForActiveSave()) {
-                r.bonus = (r.bonus || 0) + n;
-                r.value = r.value + n;
-                if (mst && mst.roll === r) upkeepPersist();
-                const shown = { type: 'board-roll-shown', c: me.c, name: me.name, value: r.value, raw: r.raw, penalty: r.penalty || 0, bonus: r.bonus };
-                boardShowRoll(shown);
-                if (lobbyState.role === 'guest') boardSend({ type: 'board-roll', value: shown.value, raw: shown.raw, penalty: shown.penalty, bonus: shown.bonus });
-                else if (lobbyState.role === 'host') boardSend(shown);
-                showGameToast('Fresh Water: +' + n + ' — your Movement Roll is now ' + r.value + '.');
-            } else {
-                showGameToast('Fresh Water: add ' + n + ' to your Movement Roll.');
-            }
+            boardAddToMovementRoll(n, 'Fresh Water');
             requestPermanentDiscard(instanceId);
         }
 
@@ -24846,10 +24905,10 @@
             const me = boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host'));
             if (!me) { showGameToast('Only players can roll for movement.'); return; } // e.g. a host who isn't playing
             if (!isBlimp && !boardMoveActionGuard()) return; // this turn's move is already rolled for, or spent
-            let raw, penalty, value, bonus = 0;
+            let raw, penalty, value, bonus = 0, doubled = false;
             const mst = (!isBlimp && boardMoveGated()) ? boardMoveState() : null;
             if (mst && mst.roll) { // this turn's roll was cancelled: the same result again, never a fresh one
-                raw = mst.roll.raw; penalty = mst.roll.penalty; value = mst.roll.value; bonus = mst.roll.bonus || 0;
+                raw = mst.roll.raw; penalty = mst.roll.penalty; value = mst.roll.value; bonus = mst.roll.bonus || 0; doubled = !!mst.roll.doubled;
                 showGameToast('Same roll as before \u2014 a cancelled roll stands.');
             } else {
                 raw = 1 + Math.floor(Math.random() * 6); penalty = boardMovePenalty();
@@ -24858,20 +24917,20 @@
                 if (mst) { mst.roll = { value, raw, penalty }; upkeepPersist(); }
             }
             boardLastRoll = (mst && mst.roll) ? mst.roll : { value, raw, penalty, bonus }; // what Vending Machine's Fresh Water adds to
-            const shown = { type: 'board-roll-shown', c: me.c, name: me.name, value, raw, penalty, bonus };
+            const shown = { type: 'board-roll-shown', c: me.c, name: me.name, value, raw, penalty, bonus, doubled };
             boardShowRoll(shown);
-            if (lobbyState.role === 'guest') boardSend({ type: 'board-roll', value, raw, penalty, bonus }); // the Host fills in who rolled
+            if (lobbyState.role === 'guest') boardSend({ type: 'board-roll', value, raw, penalty, bonus, doubled }); // the Host fills in who rolled
             else if (lobbyState.role === 'host') boardSend(shown);
             if (!isBlimp && boardMoveGated()) { if (value === 0) boardMoveActionUsed(); else boardMoveOpen('regular'); } // a 0 uses the move without opening it
             if (value === 0 && !isBlimp) boardRequestLanding(); // no movement: the space they are on counts as just landed on
         }
         function boardHandleRollFromGuest(peerId, data) {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
-            const raw = Math.trunc(Number(data.raw)), value = Math.trunc(Number(data.value)), penalty = Math.trunc(Number(data.penalty) || 0), bonus = Math.trunc(Number(data.bonus) || 0);
-            if (!(raw >= 1 && raw <= 6) || !(bonus >= 0 && bonus <= 20) || !(value >= 0 && value <= 6 + bonus) || !(penalty >= 0 && penalty <= 99)) return;
+            const raw = Math.trunc(Number(data.raw)), value = Math.trunc(Number(data.value)), penalty = Math.trunc(Number(data.penalty) || 0), bonus = Math.trunc(Number(data.bonus) || 0), doubled = data.doubled === true;
+            if (!(raw >= 1 && raw <= 6) || !(bonus >= 0 && bonus <= 20) || !(value >= 0 && value <= (doubled ? 12 : 6) + bonus) || !(penalty >= 0 && penalty <= 99)) return;
             const me = boardPlayers().find(p => p.id === peerId);
             if (!me) return;
-            const shown = { type: 'board-roll-shown', c: me.c, name: me.name, value, raw, penalty, bonus };
+            const shown = { type: 'board-roll-shown', c: me.c, name: me.name, value, raw, penalty, bonus, doubled };
             boardShowRoll(shown);
             lobbyState.connections.forEach((entry, id) => { if (id !== peerId && entry && entry.conn && entry.conn.open) entry.conn.send(shown); });
         }
@@ -24913,15 +24972,15 @@
             const box = document.getElementById('board-roll-display');
             if (!box || !m) return;
             const num = document.getElementById('board-roll-num'), note = document.getElementById('board-roll-note'), sr = document.getElementById('board-roll-sr');
-            const value = Math.trunc(Number(m.value)), raw = Math.trunc(Number(m.raw)), penalty = Math.trunc(Number(m.penalty) || 0), bonus = Math.trunc(Number(m.bonus) || 0);
-            if (!(bonus >= 0 && bonus <= 20) || !(value >= 0 && value <= 6 + bonus)) return;
+            const value = Math.trunc(Number(m.value)), raw = Math.trunc(Number(m.raw)), penalty = Math.trunc(Number(m.penalty) || 0), bonus = Math.trunc(Number(m.bonus) || 0), doubled = m.doubled === true;
+            if (!(bonus >= 0 && bonus <= 20) || !(value >= 0 && value <= (doubled ? 12 : 6) + bonus)) return;
             const color = (typeof m.c === 'string' && /^#[0-9a-f]{3,8}$/i.test(m.c)) ? m.c : '#ffffff';
             const name = typeof m.name === 'string' ? m.name.slice(0, 40) : 'A player';
             num.textContent = String(value);
             num.style.color = color;
-            note.textContent = (penalty > 0 || bonus > 0) ? 'rolled ' + raw + (penalty > 0 ? ', \u2212' + penalty : '') + (bonus > 0 ? ', +' + bonus : '') : '';
+            note.textContent = (penalty > 0 || bonus > 0 || doubled) ? 'rolled ' + raw + (doubled ? ', doubled to ' + (raw * 2) : '') + (penalty > 0 ? ', \u2212' + penalty : '') + (bonus > 0 ? ', +' + bonus : '') : '';
             note.style.color = color;
-            if (sr) sr.textContent = name + ' rolled ' + value + (penalty > 0 ? ' (' + raw + ' minus ' + penalty + ')' : '') + (bonus > 0 ? ' (plus ' + bonus + ' from a card)' : '') + '. ';
+            if (sr) sr.textContent = name + ' rolled ' + value + (penalty > 0 ? ' (' + raw + (doubled ? ' doubled' : '') + ' minus ' + penalty + ')' : (doubled ? ' (' + raw + ' doubled)' : '')) + (bonus > 0 ? ' (plus ' + bonus + ' from a card)' : '') + '. ';
             boardRollOwner = color.toLowerCase();
             boardNumbersSpawn();
             box.classList.remove('visible', 'fading');
