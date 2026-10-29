@@ -7957,9 +7957,9 @@
             showGameToast(card.name + ': you beat ' + (msg.loserName || 'your opponent') + '! ' + parts.join(' '));
             if (cardBattleRewardsItem(card)) battleItemRewardBonus();
         }
-        function hostPvpNote(key, text, showHand) {
-            if (key === 'host') { showGameToast(text); if (showHand) boardShowHand(); }
-            else hostSendToPlayer(key, { type: 'pvp-reward-note', text, showHand: !!showHand });
+        function hostPvpNote(key, text, showHand, itemBonus) {
+            if (key === 'host') { showGameToast(text); if (showHand) boardShowHand(); if (itemBonus) battleItemRewardBonus(); }
+            else hostSendToPlayer(key, { type: 'pvp-reward-note', text, showHand: !!showHand, itemBonus: !!itemBonus });
         }
         function hostApplyPvpRewardSteal(winnerKey) {
             const r = hostPendingPvpRewards.get(winnerKey);
@@ -7983,7 +7983,7 @@
                 hostSendToPlayer(winnerKey, { type: 'deck-drawn', deck: deckName, cardId });
             }
             const cardName = (card && card.name) || 'a card';
-            hostPvpNote(winnerKey, `You took ${cardName} from ${boardPlayerName(loserKey)}\u2019s hand.`, true);
+            hostPvpNote(winnerKey, `You took ${cardName} from ${boardPlayerName(loserKey)}\u2019s hand.`, true, true); // taking a card counts as gaining an Item: Amulet Coin applies on the winner's device
             hostPvpNote(loserKey, `${boardPlayerName(winnerKey)} took ${cardName} from your hand.`, false);
             broadcastDeckState();
             renderDecksScreen();
@@ -10237,7 +10237,7 @@
         let deckLookViewerCards = [];
         let deckLookViewerMode = null;
         let deckLookPendingMode = null;
-        let deckLookViewerLabel = 'Department Store', deckLookViewerRequired = false, deckLookViewerOthers = 1, deckLookViewerDone = null;
+        let deckLookViewerLabel = 'Department Store', deckLookViewerRequired = false, deckLookViewerOthers = 1, deckLookViewerDone = null, deckLookViewerGained = null;
 
         function openDeckLookViewer(deckName, cards) {
             const pend = (deckLookPendingMode && deckLookPendingMode.deck === deckName && Date.now() - deckLookPendingMode.at < 60000) ? deckLookPendingMode : null;
@@ -10253,6 +10253,7 @@
             deckLookViewerRequired = !!(pend && pend.required);
             deckLookViewerOthers = Math.max(1, cards.length - 1);
             deckLookViewerDone = (pend && pend.onDone) || null;
+            deckLookViewerGained = (pend && pend.onGained) || null; // runs instead of onDone once a card has actually been kept
             deckLookViewerDeckName = deckName;
             deckLookViewerCards = cards.slice();
             renderDeckLookViewer();
@@ -10265,6 +10266,7 @@
             deckLookViewerLabel = 'Department Store';
             deckLookViewerRequired = false;
             deckLookViewerDone = null;
+            deckLookViewerGained = null;
             deckLookViewerCards = [];
             document.getElementById('game-deck-look-viewer-overlay').classList.remove('visible');
         }
@@ -10321,7 +10323,7 @@
                 requestLookAddToHand(deckName, cardId);
                 others.forEach(id => requestLookMoveToBottom(deckName, id));
                 const kept = CARDS_BY_ID[cardId];
-                const label = deckLookViewerLabel, done = deckLookViewerDone;
+                const label = deckLookViewerLabel, done = deckLookViewerGained || deckLookViewerDone;
                 closeDeckLookViewer();
                 showGameToast(label + ': kept ' + (kept ? kept.name : 'the card') + (others.length ? (others.length > 1 ? '; the others went to the bottom of the deck.' : '; the other went to the bottom of the deck.') : '.'));
                 if (done) done();
@@ -17510,7 +17512,8 @@
         }
 
         let battleParticipationSnapshot = { id: null, uids: [] };
-        let amuletQueue = [], amuletCurrent = null, amuletTimer = null;
+        let amuletQueue = [], amuletCurrent = null, amuletTimer = null, amuletAfters = [];
+        function amuletFlushAfters() { const fns = amuletAfters.splice(0); fns.forEach(fn => { try { fn(); } catch (err) { /* a follow-up step must not break the others */ } }); }
         function noteBattleParticipationSnapshot(record) {
             try {
                 if (!record || !record.id || !record.seen) return;
@@ -17538,17 +17541,24 @@
             return out;
         }
         function battleItemRewardBonus(opts) {
+            // opts.ask: ask whether each holder took part. opts.after: runs once any bonus prompts are finished (immediately if there are none).
+            const after = (opts && typeof opts.after === 'function') ? opts.after : null;
+            let queued = false;
             try {
-                if (isActiveSaveReadOnly()) return;
-                const ask = !!(opts && opts.ask);
-                amuletCoinHolders(ask).forEach(h => amuletQueue.push({ card: h.card, name: (getBattleMemberDisplay(h.member).name || 'Pok\u00e9mon'), ask }));
-                if (amuletQueue.length && !amuletCurrent && !amuletTimer) amuletTimer = setTimeout(() => { amuletTimer = null; amuletNext(); }, 500); // lets the reward message / overlay that just closed finish first
+                if (!isActiveSaveReadOnly()) {
+                    const ask = !!(opts && opts.ask);
+                    amuletCoinHolders(ask).forEach(h => { amuletQueue.push({ card: h.card, name: (getBattleMemberDisplay(h.member).name || 'Pok\u00e9mon'), ask }); queued = true; });
+                    if (amuletQueue.length && !amuletCurrent && !amuletTimer) amuletTimer = setTimeout(() => { amuletTimer = null; amuletNext(); }, 500); // lets the reward message / overlay that just closed finish first
+                }
             } catch (err) { /* never get in the way of the reward */ }
+            if (after) {
+                if (queued || amuletCurrent || amuletTimer || amuletQueue.length) amuletAfters.push(after); else after();
+            }
         }
         function amuletNext() {
             if (amuletCurrent) return;
             const e = amuletQueue.shift();
-            if (!e) return;
+            if (!e) { setTimeout(amuletFlushAfters, 300); return; }
             amuletCurrent = e;
             const cfg = e.card.battleItemRewardBonus;
             if (e.ask) {
@@ -17592,7 +17602,7 @@
                     showGameToast(e.card.name + ': draw a card from your physical ' + deck + '.');
                 }
             }
-            if (amuletQueue.length) setTimeout(amuletNext, 400);
+            if (amuletQueue.length) setTimeout(amuletNext, 400); else setTimeout(amuletFlushAfters, 400);
         }
 
         function flushGymBadgeAwards() {
@@ -24035,20 +24045,20 @@
                 openGamePanel();
                 setGameScreen('team');
                 showGameToast('Battle Frontier \u2014 Pink reward: if one of your Pok\u00e9mon gained a Level from this Battle, it gains an additional Level. Raise its Level counter now.');
-            } else if (color === 'green') boardUsePokeMart(); // the same draw from the Item deck as a Poké Mart
-            else if (color === 'blue') boardFrontierLookKeepOne(2, null);
+            } else if (color === 'green') { boardUsePokeMart(); battleItemRewardBonus(); } // the same draw from the Item deck as a Poké Mart; Amulet Coin applies once
+            else if (color === 'blue') boardFrontierLookKeepOne(2, null, () => battleItemRewardBonus());
             else if (color === 'yellow') boardFrontierYellow();
-            else if (color === 'red') boardFrontierLookKeepOne(3, boardFrontierLevelUp);
-            else if (color === 'orange') boardFrontierPickItem(boardFrontierLevelUp);
+            else if (color === 'red') boardFrontierLookKeepOne(3, boardFrontierLevelUp, () => battleItemRewardBonus({ after: boardFrontierLevelUp })); // Amulet Coin first, then the Level
+            else if (color === 'orange') boardFrontierPickItem(boardFrontierLevelUp, () => battleItemRewardBonus({ after: boardFrontierLevelUp }));
         }
-        function boardFrontierLookKeepOne(count, onDone) {
+        function boardFrontierLookKeepOne(count, onDone, onGained) {
             if (isActiveSaveReadOnly()) return;
             if (!isVirtualDecksEnabledForActiveSave()) {
-                boardFrontierAck('Battle Frontier', 'Virtual decks are off for this save \u2014 look at the top ' + count + ' cards of your physical Item deck, keep one, and put the rest on the bottom.', onDone);
+                boardFrontierAck('Battle Frontier', 'Virtual decks are off for this save \u2014 look at the top ' + count + ' cards of your physical Item deck, keep one, and put the rest on the bottom.', onGained || onDone);
                 return;
             }
             boardShowHand(); // the kept card goes to the hand
-            deckLookPendingMode = { mode: 'keep-one', deck: 'Item Deck', at: Date.now(), label: 'Battle Frontier', required: true, onDone };
+            deckLookPendingMode = { mode: 'keep-one', deck: 'Item Deck', at: Date.now(), label: 'Battle Frontier', required: true, onDone, onGained };
             requestLookAtTopCards('Item Deck', count);
         }
 
@@ -24066,15 +24076,15 @@
             return a.slice(0, 3);
         }
 
-        function boardFrontierPickItem(onDone) {
+        function boardFrontierPickItem(onDone, onGained) {
             if (isActiveSaveReadOnly()) return;
             if (!isVirtualDecksEnabledForActiveSave()) {
                 boardFrontierMarkLegendaryClaimed();
-                boardFrontierAck('Battle Frontier', 'Virtual decks are off for this save \u2014 choose one Item card from your physical Item deck or Item discard pile and add it to your hand (shuffle the deck afterwards).', onDone);
+                boardFrontierAck('Battle Frontier', 'Virtual decks are off for this save \u2014 choose one Item card from your physical Item deck or Item discard pile and add it to your hand (shuffle the deck afterwards).', onGained || onDone);
                 return;
             }
             boardShowHand(); // the chosen card goes to the hand
-            deckLookPendingMode = { mode: 'frontier-pick', deck: 'Item Deck', at: Date.now(), onDone };
+            deckLookPendingMode = { mode: 'frontier-pick', deck: 'Item Deck', at: Date.now(), onDone, onGained };
             requestLookAtTopCards('Item Deck', 100000); // clamped to the deck's size Host-side
         }
         function boardFrontierOpenItemPicker(deckName, deckCards, pend) {
@@ -24084,7 +24094,7 @@
                 boardFrontierAck(pend.label || 'Battle Frontier', deckOnly ? 'The Item deck is empty, so there is no card to take.' : 'The Item deck and the Item discard pile are both empty, so there is no card to take.', pend.onDone || null);
                 return;
             }
-            boardFrontierPick = { deck: deckName, deckCards: deckCards.slice(), onDone: pend.onDone || null, deckOnly, label: pend.label || 'Battle Frontier' };
+            boardFrontierPick = { deck: deckName, deckCards: deckCards.slice(), onDone: pend.onDone || null, onGained: pend.onGained || null, deckOnly, label: pend.label || 'Battle Frontier' };
             const ov = document.getElementById('game-frontier-pick-overlay');
             const pt = ov.querySelector('.game-confirm-title'), ps = ov.querySelector('.game-confirm-subtext');
             if (pt) pt.textContent = deckOnly ? pend.label : 'Battle Frontier \u2014 Legendary reward';
@@ -24132,7 +24142,7 @@
             if (!st || isActiveSaveReadOnly()) return;
             if (source === 'discard') requestReturnDiscardToHand(st.deck, cardId);
             else { requestLookAddToHand(st.deck, cardId); requestShuffleDeck(st.deck); }
-            const card = CARDS_BY_ID[cardId], done = st.onDone;
+            const card = CARDS_BY_ID[cardId], done = st.onGained || st.onDone;
             closeFrontierPicker();
             if (!st.deckOnly) boardFrontierMarkLegendaryClaimed();
             showGameToast((st.label || 'Battle Frontier') + ': added ' + (card ? card.name : 'the card') + ' to your hand' + (source === 'deck' ? ' (the Item deck was shuffled).' : '.'));
@@ -25570,6 +25580,7 @@
                 } else if (data.type === 'pvp-reward-note' && typeof data.text === 'string') {
                     showGameToast(data.text);
                     if (data.showHand) boardShowHand();
+                    if (data.itemBonus) battleItemRewardBonus();
                 } else if (data.type === 'gym-badge-earned' && typeof data.leaderId === 'string') {
                     queueGymBadgeAward(data.leaderId);
                 } else if (data.type === 'battle-caught' && data.member) {
