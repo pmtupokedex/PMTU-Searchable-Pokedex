@@ -4664,6 +4664,9 @@
                     sendToBattleBannerText.textContent = 'Tap ' + (left === 1 ? 'a Pok\u00e9mon' : 'up to ' + left + ' Pok\u00e9mon') + ' on your team to trade away.' + (teamSwapPick.picks.length ? ' (' + teamSwapPick.picks.length + ' chosen)' : '');
                 } else if (teamStatusPick) {
                     sendToBattleBannerText.textContent = 'Soda Pop \u2014 tap a Pok\u00e9mon to remove its Status Condition.';
+                } else if (teamRevivePick && teamRevivePick.card) {
+                    const rc = CARDS_BY_ID[teamRevivePick.card] || {};
+                    sendToBattleBannerText.textContent = rc.name + ' \u2014 tap ' + (teamRevivePick.left === 1 ? 'a Fainted Pok\u00e9mon' : 'up to ' + teamRevivePick.left + ' Fainted Pok\u00e9mon') + ' to Revive.';
                 } else if (teamRevivePick && teamRevivePick.vending) {
                     sendToBattleBannerText.textContent = 'Lemonade \u2014 tap a Fainted Pok\u00e9mon to Revive.';
                 } else if (teamRevivePick) {
@@ -5088,7 +5091,12 @@
             if (teamSwapPick) { clearTeamSwapPick(); return; } // Cancel on a card's trade pick
             if (teamLevelPick) { clearTeamLevelPick(); return; } // Cancel on a card's Level pick
             if (teamStatusPick) { clearTeamStatusPick(); return; } // Cancel on Soda Pop's pick
-            if (teamRevivePick) { clearTeamRevivePick(); return; } // Cancel on the post-blackout Revive pick (or Lemonade's)
+            if (teamRevivePick) { // Cancel on the post-blackout Revive pick (or Lemonade's, or a Revive card's)
+                const pk = teamRevivePick;
+                clearTeamRevivePick();
+                if (pk.card && pk.done > 0) { cardEffectDone(pk.card); showGameToast(((CARDS_BY_ID[pk.card] || {}).name || 'Revive') + ': revived ' + pk.done + ' Pok\u00e9mon.'); } // stopping early still uses the card; with none revived it is kept
+                return;
+            }
             if (teamContestPick) { contestAbort(); return; } // Cancel on the Contest Hall's Contestant pick
             const calledOffChallenge = boardPvpChooserClosed();
             const cameFromArena = teamSendToBattleTargetSlot !== null && !calledOffChallenge;
@@ -8473,7 +8481,7 @@
                 playBattleCardFromHand(cardId);
                 return;
             }
-            if (movementRollCardBlocked(card)) return;
+            if (actionCardBlocked(card) || movementRollCardBlocked(card)) return;
             const deckName = getEffectiveCardDeck(card) || getDeckToolList()[0];
             pendingActiveCardScrollTrigger = true;
             if (lobbyState.role === 'guest') {
@@ -13069,6 +13077,15 @@
             return upkeepOnMoveEnd(moved, colors);
         }
 
+        function isActionCardTagged(card) { return !!card && String(card.actionCard).toLowerCase() === 'yes'; } // an Item that can be played any time on your own turn, outside a Battle
+        function actionCardBlocked(card) { // true (with a toast) when an Action Card is played on someone else's turn or during a Battle
+            if (!isActionCardTagged(card)) return false;
+            if (cardAddsToMovementRoll(card) || cardDoublesMovementRoll(card)) return false; // the Movement Phase rule is stricter (your turn, window open) and takes precedence
+            if (turnView && turnView.cur && !upkeepIsMyTurn()) { showGameToast(card.name + ' is an Action Card \u2014 it can only be played on your own turn.'); return true; }
+            if (vendingInMyBattle()) { showGameToast(card.name + ' is an Action Card \u2014 it can only be played outside of a Battle.'); return true; }
+            return false;
+        }
+        function cardReviveCount(card) { return card ? Math.max(0, parseInt(card.reviveCount, 10) || 0) : 0; } // Revive: 1, Max Revive: up to 4
         function cardDoublesMovementRoll(card) { return !!card && card.doubleMovementRoll === 'yes'; } // Bicycle
         function cardAddsToMovementRoll(card) { return !!card && (parseInt(card.addToMovementRoll, 10) || 0) > 0; } // e.g. Running Shoes: +1 up to +N on this turn's Movement Roll
         function movementRollCardBlocked(card) { // true (with a toast) when a Movement Roll card is played outside the Movement window
@@ -13084,6 +13101,7 @@
             if (card.healTeam === 'yes') return 'Heal Team';
             if (cardAddsToMovementRoll(card)) return 'Add to Movement Roll';
             if (cardDoublesMovementRoll(card)) return 'Double Movement Roll';
+            if (cardReviveCount(card)) return cardReviveCount(card) === 1 ? 'Revive a Pok\u00e9mon' : 'Revive up to ' + cardReviveCount(card) + ' Pok\u00e9mon';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
             if (card.poolGain === 'space') return 'Draw a Pok\u00e9mon';
             if (parseInt(card.swapPokemon, 10) > 0) return 'Trade Pok\u00e9mon';
@@ -13108,6 +13126,7 @@
         function useCardEffect(cardId) {
             const card = CARDS_BY_ID[cardId];
             if (isActiveSaveReadOnly() || !card || !cardEffectLabel(card)) return;
+            if (actionCardBlocked(card)) return;
             if (card.poolGain && card.levelGain) {
                 const poolOk = usesVirtualTokensForActiveSave();
                 const col = String(card.poolGain);
@@ -13121,6 +13140,7 @@
                 document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
                 return;
             }
+            if (cardReviveCount(card)) { cardRevivePick(cardId); return; }
             if (cardDoublesMovementRoll(card)) {
                 if (movementRollCardBlocked(card)) return;
                 if (boardDoubleMovementRoll(card.name)) cardEffectDone(cardId);
@@ -21750,6 +21770,24 @@
             teamSendToBattleNote = null;
             renderTeamGrid();
         }
+        function cardRevivePick(cardId) { // Revive / Max Revive: pick Fainted Pok\u00e9mon on the team, the same pick the post-blackout revive and Lemonade use
+            const card = CARDS_BY_ID[cardId], max = cardReviveCount(card);
+            if (!card || !max || isActiveSaveReadOnly()) return;
+            const fainted = boardTeamIndexes(m => m.fainted);
+            if (!fainted.length) { showGameToast(card.name + ': none of your Pok\u00e9mon are Fainted.'); return; }
+            if (teamRevivePick || teamStatusPick || teamReplacePendingMember || teamReleaseModeActive || teamSendToBattleModeActive || handAttachPendingCardId || isTradeNegotiationActive()) {
+                showGameToast('Finish what you are doing in Team Tracker first.');
+                return;
+            }
+            openGamePanel();
+            setGameScreen('team');
+            teamRevivePick = { left: Math.min(max, fainted.length), card: cardId, done: 0 };
+            teamSendToBattleModeActive = true; // borrows the send-to-battle mode and its banner, like the Level and Status picks
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
         function clearTeamRevivePick() {
             if (!teamRevivePick) return;
             teamRevivePick = null;
@@ -21770,7 +21808,12 @@
             if (!pick) return;
             const name = getBattleMemberDisplay(member).name || 'Pokémon';
             pick.left--;
-            if (pick.vending) { // Lemonade: one Revive, and the Vending Machine is used up
+            pick.done = (pick.done || 0) + 1;
+            if (pick.card) { // Revive / Max Revive: the card is used up once the last pick is made (or they stop early with Cancel -- see exitTeamSendToBattleMode)
+                const cname = (CARDS_BY_ID[pick.card] || {}).name || 'Revive';
+                if (pick.left <= 0 || !boardTeamIndexes(x => x.fainted).length) { const id = pick.card; clearTeamRevivePick(); cardEffectDone(id); showGameToast(cname + ': ' + name + ' was revived.'); }
+                else { showGameToast(cname + ': ' + name + ' was revived. Choose up to ' + pick.left + ' more, or tap Cancel to stop.'); renderTeamGrid(); }
+            } else if (pick.vending) { // Lemonade: one Revive, and the Vending Machine is used up
                 clearTeamRevivePick();
                 requestPermanentDiscard(pick.vending);
                 showGameToast('Lemonade: ' + name + ' was revived.');
