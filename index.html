@@ -7725,7 +7725,7 @@
                 return;
             }
             if (lobbyState.role === 'guest') {
-                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-phase', action, forfeit: !!(opts && opts.forfeit) });
+                if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-phase', action, forfeit: !!(opts && opts.forfeit), noOutcome: !!(opts && opts.noOutcome) });
             } else if (lobbyState.role === 'host') {
                 hostApplyBattlePhase('host', action, opts);
             }
@@ -7870,15 +7870,16 @@
             } else if (action === 'reveal') {
                 hostRevealBattleCards();
             } else if (action === 'end') {
-                pvpOutcome = hostPvpOutcome(st, opts && opts.forfeit ? peerKey : null); // read before the halves are cleared below
+                const noOutcome = !!(opts && opts.noOutcome); // Poke Doll: nobody wins, nobody loses
+                pvpOutcome = noOutcome ? null : hostPvpOutcome(st, opts && opts.forfeit ? peerKey : null); // read before the halves are cleared below
                 const sb = hostSecretBase;
                 if (sb && st.inProgress && st.attacker && st.defender && st.attacker.ownerId === sb.initiatorId && st.defender.ownerId === sb.partnerId) {
                     hostSecretBase = null;
-                    secretBaseWin = (pvpOutcome && pvpOutcome.winnerId === sb.initiatorId) ? sb : null;
+                    secretBaseWin = (!noOutcome && pvpOutcome && pvpOutcome.winnerId === sb.initiatorId) ? sb : null;
                     pvpOutcome = null; // only the challenger is ever rewarded for a Secret Base battle
                 }
                 const gd = st.defender;
-                if (st.inProgress && !isHostAttackerSideSpent(st) && gd && !gd.ownerId && gd.member && gd.member.gymLeaderId && gd.member.fainted
+                if (!noOutcome && st.inProgress && !isHostAttackerSideSpent(st) && gd && !gd.ownerId && gd.member && gd.member.gymLeaderId && gd.member.fainted
                     && !(gd.member.gymLeaderQueue && gd.member.gymLeaderQueue.length)) {
                     gymBadgeDelivery = { leaderId: gd.member.gymLeaderId, owners: Object.keys((st.record && st.record.seen) || {}) };
                 }
@@ -7891,7 +7892,7 @@
                 st.record = makeEmptyBattleRecord();
                 if (st.defender && !st.defender.ownerId) discardMemberEquippedCards(st.defender.member);
                 if (st.attacker && !st.attacker.ownerId) discardMemberEquippedCards(st.attacker.member);
-                if (st.defender && !st.defender.ownerId) boardNoteWildLeft(st.defender.member, failedCatch ? 'defeated' : undefined);
+                if (st.defender && !st.defender.ownerId) boardNoteWildLeft(st.defender.member, noOutcome ? 'escaped' : failedCatch ? 'defeated' : undefined);
                 st.attacker = null;
                 st.defender = null;
                 st.fields = { attacker: null, defender: null };
@@ -13078,8 +13079,13 @@
         }
 
         function isActionCardTagged(card) { return !!card && String(card.actionCard).toLowerCase() === 'yes'; } // an Item that can be played any time on your own turn, outside a Battle
+        function cardEscapesBattle(card) { return !!card && card.escapeBattle === 'yes'; } // Poke Doll: ends the Battle with no rewards and no penalties
         function actionCardBlocked(card) { // true (with a toast) when an Action Card is played on someone else's turn or during a Battle
             if (!isActionCardTagged(card)) return false;
+            if (cardEscapesBattle(card)) { // the opposite rule: only during a Battle the player is in (it can't be checked that it is the start of a Round)
+                if (!vendingInMyBattle()) { showGameToast(card.name + ' can only be played during a Battle you are taking part in.'); return true; }
+                return false;
+            }
             if (cardAddsToMovementRoll(card) || cardDoublesMovementRoll(card)) return false; // the Movement Phase rule is stricter (your turn, window open) and takes precedence
             if (turnView && turnView.cur && !upkeepIsMyTurn()) { showGameToast(card.name + ' is an Action Card \u2014 it can only be played on your own turn.'); return true; }
             if (vendingInMyBattle()) { showGameToast(card.name + ' is an Action Card \u2014 it can only be played outside of a Battle.'); return true; }
@@ -13101,6 +13107,7 @@
             if (card.healTeam === 'yes') return 'Heal Team';
             if (cardAddsToMovementRoll(card)) return 'Add to Movement Roll';
             if (cardDoublesMovementRoll(card)) return 'Double Movement Roll';
+            if (cardEscapesBattle(card)) return 'End the Battle';
             if (cardReviveCount(card)) return cardReviveCount(card) === 1 ? 'Revive a Pok\u00e9mon' : 'Revive up to ' + cardReviveCount(card) + ' Pok\u00e9mon';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
             if (card.poolGain === 'space') return 'Draw a Pok\u00e9mon';
@@ -13140,6 +13147,7 @@
                 document.getElementById('game-frontier-text').style.whiteSpace = 'pre-line';
                 return;
             }
+            if (cardEscapesBattle(card)) { cardEscapeBattle(cardId); return; }
             if (cardReviveCount(card)) { cardRevivePick(cardId); return; }
             if (cardDoublesMovementRoll(card)) {
                 if (movementRollCardBlocked(card)) return;
@@ -15165,9 +15173,10 @@
             }
             endBattle();
         }
-        function endBattle() {
-            if (lobbyState.role !== null) { requestBattlePhase('end'); return; }
-            const earnedLeaderId = (battleInProgress && !isSoloAttackerSideSpent()) ? getDefeatedGymLeaderIdInDefender() : null;
+        function endBattle(opts) { // opts.noOutcome: end it with no result at all (Poke Doll) -- no Badge, reward, Frontier penalty or encounter outcome
+            const noOutcome = !!(opts && opts.noOutcome === true);
+            if (lobbyState.role !== null) { requestBattlePhase('end', noOutcome ? { noOutcome: true } : undefined); return; }
+            const earnedLeaderId = (!noOutcome && battleInProgress && !isSoloAttackerSideSpent()) ? getDefeatedGymLeaderIdInDefender() : null;
             battleInProgress = false;
             syncBattleMusicToArena(); // solo Play a Game session: back to Route
             battleDiceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() }; // so the next battle starts clean
@@ -15176,7 +15185,7 @@
             soloBattleFields = { attacker: null, defender: null };
             renderBattleFieldZones(soloBattleFields);
             recallBattleAttacker();
-            recallBattleDefender();
+            recallBattleDefender(noOutcome ? { escaped: true } : undefined);
             renderBattleControls();
             if (earnedLeaderId) {
                 queueGymBadgeAward(earnedLeaderId);
@@ -16740,7 +16749,7 @@
             battleDefenderMemberIndex = null;
             battleDefenderTeamId = null;
             if (lobbyState.role === null && !(opts && opts.keepCards)) discardMemberEquippedCards(battleWildPokemon);
-            if (lobbyState.role === null) boardNoteWildLeft(battleWildPokemon, opts && opts.keepCards ? 'caught' : null); // Virtual Game Board (solo)
+            if (lobbyState.role === null) boardNoteWildLeft(battleWildPokemon, opts && opts.keepCards ? 'caught' : (opts && opts.escaped ? 'escaped' : null)); // Virtual Game Board (solo)
             battleWildPokemon = null;
             battleEnteredThisRound.defender = false;
             battleRerollsUsed.defender = 0;
@@ -20090,7 +20099,7 @@
                 } else if (data.type === 'battle-no-replacement' && typeof data.slot === 'string') {
                     hostApplyBattleNoReplacement(data.slot, conn.peer, !!data.value);
                 } else if (data.type === 'battle-phase') {
-                    hostApplyBattlePhase(conn.peer, data.action, { forfeit: !!data.forfeit });
+                    hostApplyBattlePhase(conn.peer, data.action, { forfeit: !!data.forfeit, noOutcome: data.noOutcome === true });
                 } else if (data.type === 'battle-dice') {
                     hostApplyBattleDice(data.slot, conn.peer, data);
                 } else if (data.type === 'battle-lullaby') {
@@ -21769,6 +21778,14 @@
             teamSendToBattleFaintSlot = null;
             teamSendToBattleNote = null;
             renderTeamGrid();
+        }
+        function cardEscapeBattle(cardId) { // Poke Doll: the Battle ends on the spot -- no Victory rewards, Badges or Frontier / Gym penalties either way
+            const card = CARDS_BY_ID[cardId];
+            if (!card || isActiveSaveReadOnly() || actionCardBlocked(card)) return;
+            if (cardBattlePending) cardBattlePending.won = false; // an Event card's Battle that had already been won no longer pays out
+            cardEffectDone(cardId);
+            endBattle({ noOutcome: true });
+            showGameToast(card.name + ': the Battle ended. No rewards were gained and no penalties were suffered.');
         }
         function cardRevivePick(cardId) { // Revive / Max Revive: pick Fainted Pok\u00e9mon on the team, the same pick the post-blackout revive and Lemonade use
             const card = CARDS_BY_ID[cardId], max = cardReviveCount(card);
@@ -23626,7 +23643,7 @@
             if (!boardEncounter || !boardEncounter.uid || !member || member.uid !== boardEncounter.uid) return;
             const enc = boardEncounter;
             boardEncounter = null;
-            const outcome = forced || (member.fainted ? 'defeated' : 'abandon');
+            const outcome = forced === 'escaped' ? 'abandon' : (forced || (member.fainted ? 'defeated' : 'abandon')); // 'escaped' (Poke Doll): the token just stays face-up where it was
             if (boardCtrl) boardCtrl.resolveEncounter(enc.spaceId, outcome);
         }
         function boardHandleSetHome(peerId, data) {
@@ -24120,6 +24137,7 @@
             if (!f) return;
             if (f.roaming) { if (boardCtrl) boardCtrl.settlePoolToken(f.name, forced === 'caught' ? 'caught' : 'returned'); return; }
             if (boardCtrl) boardCtrl.settlePoolToken(f.name, 'returned'); // the token goes back to its pool either way
+            if (forced === 'escaped') return; // Poke Doll: no result, no reward, and the marker isn't sent back
             const won = !!member.fainted && forced !== 'caught';
             const moved = (!won && boardCtrl) ? boardCtrl.movePlayer(playerId, boardFrontierReturnTo) : '';
             const result = { type: 'board-frontier-result', won, color: f.color, name: f.name, moved };
