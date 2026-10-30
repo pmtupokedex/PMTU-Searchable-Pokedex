@@ -10556,9 +10556,26 @@
             return (raw === 'wild' || raw === 'trainer' || raw === 'safari') ? raw : Number(raw);
         }
 
+        function cardRevivesOnFaint(card) { return !!card && card.reviveOnFaint === 'yes'; } // Potion / Max Potion: attached, it saves the Pok\u00e9mon from fainting once
+        function savePokemonWithAttachedCard(index, member) { // the Pok\u00e9mon faints and is revived on the spot: the faint's clean-up still happens, the card is used up, HP is restored
+            const cardId = member.attachCardId, card = CARDS_BY_ID[cardId];
+            member.status = null;
+            member.statusCounter = undefined;
+            member.statusCardSide = undefined;
+            member.formOverride = null;
+            member.dynamaxed = false;
+            commitTeamMemberCard(index, 'attach', null); // detaches the card (and saves)
+            if (isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(cardId);
+            const max = getTeamMemberHpMax(member, getHpRule(getActiveSaveData()));
+            if (max !== null) member.hp = max;
+            persistTeamSlotChange(index);
+            if (teamDetailIndex === index) { renderTeamDetailCardsSection(); renderTeamDetailHeader(); renderTeamDetailHpSection(); }
+            showGameToast((card ? card.name : 'The attached card') + ': ' + (getBattleMemberDisplay(member).name || 'Pok\u00e9mon') + ' would have fainted, but was revived!' + (isVirtualDecksEnabledForActiveSave() ? '' : ' Discard the card from your physical deck.'));
+        }
         function faintTeamMember(index) {
             const member = getTeamSlotMember(index);
             if (!member || member.fainted) return;
+            if (typeof index === 'number' && !isActiveSaveReadOnly() && member.attachCardId && cardRevivesOnFaint(CARDS_BY_ID[member.attachCardId])) { savePokemonWithAttachedCard(index, member); return; }
             reportBattleFaint(member, false, index === 'wild' || index === 'trainer'); // see makeEmptyBattleRecord()
             member.fainted = true;
             member.faintedWithStatus = !!member.status;
