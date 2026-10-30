@@ -22296,6 +22296,39 @@
             lobbyState.connections.forEach(entry => { if (entry && entry.conn && entry.conn.open) { try { entry.conn.send({ type: 'board-reset' }); } catch (err) { /* gone */ } } });
             if (boardModeActive) initBoardScreen();
         }
+        var boardCharmPending = null; // { cardId, at, ready } -- a Shiny Charm played for the next wild encounter on this device (see boardShinyCharmEncounter())
+        function cardEncountersWithAttach(card) { return !!card && card.encounterAttach === 'yes'; } // Shiny Charm: played before an unrevealed wild Pok\u00e9mon is revealed, then attached to it
+        function boardEncounterCharmInHand() {
+            if (isActiveSaveReadOnly() || !isVirtualDecksEnabledForActiveSave()) return null;
+            const id = getLocalHandArray().find(cid => cardEncountersWithAttach(CARDS_BY_ID[cid]));
+            return id || null;
+        }
+        function boardSendEncounter() { // the 'Wild Pok\u00e9mon Encounter' request: the map reveals the Pok\u00e9mon and answers with the encounter landing
+            if (lobbyState.role === 'guest') boardSend({ type: 'board-encounter' });
+            else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-encounter', player: 'host' });
+        }
+        function boardShinyCharmEncounter(cardId) {
+            const card = CARDS_BY_ID[cardId];
+            if (isActiveSaveReadOnly() || !card || !getLocalHandArray().includes(cardId)) { showGameToast('That card isn\u2019t in your hand any more.'); return; }
+            if (boardCharmPending && Date.now() - boardCharmPending.at < 15000) return; // already under way
+            if (actionCardBlocked(card)) return;
+            boardCharmPending = { cardId, at: Date.now(), ready: false };
+            requestPlayFromHand(cardId); // played face-up first, so every player sees it in the Active Card zone before the Pok\u00e9mon is revealed
+            let tries = 0;
+            const timer = setInterval(() => {
+                tries++;
+                const info = getActiveCardInfo();
+                if (info && info.cardId === cardId && activeCardIsMine(info) && !info.committed) {
+                    clearInterval(timer);
+                    if (boardCharmPending) boardCharmPending.ready = true;
+                    boardSendEncounter();
+                } else if (tries > 40) { // ~4s: the play never showed up (e.g. the Host couldn't be reached)
+                    clearInterval(timer);
+                    boardCharmPending = null;
+                    showGameToast('Couldn\u2019t play ' + card.name + ' \u2014 try again.');
+                }
+            }, 100);
+        }
         function boardOnLanding(info) {
             if (info.kind === 'encounter') boardEncounter = { spaceId: info.space.id, playerId: info.player, name: info.token, uid: null };
             if (info.player === (getMyLobbyPlayerId() || 'host')) { boardDeliverLanding(info); return; }
@@ -22318,6 +22351,8 @@
                     if (!info.boss) buttons.push({ id: 'reroll', label: 'Look For Other Pok\u00e9mon' });
                 } else {
                     buttons.push({ id: 'encounter', label: 'Wild Pok\u00e9mon Encounter' });
+                    const charmId = boardEncounterCharmInHand();
+                    if (charmId) buttons.push({ id: 'encounter-charm:' + charmId, label: 'Wild Pok\u00e9mon Encounter (' + CARDS_BY_ID[charmId].name + ')' }); // only while one is in hand
                 }
             } else if (info.kind === 'encounter') {
                 if (info.noOthers) showGameToast('No other Pok\u00e9mon of that color are left \u2014 facing the same one.');
@@ -22380,8 +22415,9 @@
                 openGamePanel(); // the board is a main view now, not inside the panel
                 setGameScreen('decks'); // the drawn card appears there as the Active Card
             } else if (id === 'encounter') {
-                if (lobbyState.role === 'guest') boardSend({ type: 'board-encounter' });
-                else if (boardCtrl) boardCtrl.handleMessage({ type: 'board-encounter', player: 'host' });
+                boardSendEncounter();
+            } else if (id.startsWith('encounter-charm:')) {
+                boardShinyCharmEncounter(id.slice(16));
             } else if (id.startsWith('details:')) {
                 boardOpenActionDetails(id.slice(8));
             } else if (id === 'reroll') {
@@ -23709,15 +23745,29 @@
             const entry = POKEMON_BY_NAME[info.token];
             if (!entry) { showGameToast('Could not find ' + info.token + ' in the Pok\u00e9mon data.'); return; }
             if (isActiveSaveReadOnly()) return;
-            const source = { dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: false };
+            const charm = (info.kind === 'encounter' && !info.noCatch && boardCharmPending && boardCharmPending.ready && Date.now() - boardCharmPending.at < 120000) ? boardCharmPending : null;
+            if (charm) boardCharmPending = null;
+            const charmCard = charm ? CARDS_BY_ID[charm.cardId] : null;
+            const source = { dex: (entry.tags && entry.tags[0]) || '', name: entry.name, src: entry.src, shinysrc: entry.shinysrc || '', shiny: !!charmCard && cardForcesShiny(charmCard) && hasShinyForm(entry.shinysrc || '') };
             openGamePanel(); // the board is a main view now, not inside the panel
             setGameScreen('battle');
             confirmBattleSlotReplace('defender', () => {
                 const wild = buildWildPokemonMember(source);
                 if (info.noCatch) wild.noCatch = true; // Battle Frontier: this Defender can't be Caught
+                let attachSource = null; // Shiny Charm: attached to the revealed Pok\u00e9mon (it was played into the Active Card zone first)
+                if (charmCard) {
+                    const ctxActive = { source: 'active-card', cardId: charm.cardId }, ctxHand = { source: 'hand', cardId: charm.cardId };
+                    attachSource = canResolveWildAttachContext(ctxActive) ? 'active-card' : (canResolveWildAttachContext(ctxHand) ? 'hand' : null);
+                    if (attachSource) { wild.attachCardId = charm.cardId; wild.attachCounter = getDefaultItemCounter(charmCard); }
+                    else showGameToast(charmCard.name + ' couldn\u2019t be attached \u2014 the Pok\u00e9mon appears without it.');
+                }
                 setBattleDefenderWild(wild);
                 renderBattleDefenderSlot();
                 renderBattleAttackerSlot();
+                if (attachSource) {
+                    resolveAttachSource(attachSource, charm.cardId);
+                    runOnAttachEffects('wild', charm.cardId);
+                }
                 if (info.onPlaced) info.onPlaced();
             });
         }
