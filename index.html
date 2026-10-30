@@ -7550,6 +7550,7 @@
                 return;
             }
             ensureMemberUid(member); // (no-op for an empty half)
+            if (wild && slot === 'defender' && member) { const prevWild = hostBattleArenaState.defender; if (prevWild && !prevWild.ownerId && prevWild.member && prevWild.member.levelOverride && prevWild.member.uid && prevWild.member.uid === member.uid && !member.levelOverride) member.levelOverride = prevWild.member.levelOverride; } // Black Flute survives a re-send of the same wild Pok\u00e9mon
             if (wild && slot === 'defender') boardBindEncounter(peerKey, member); // Virtual Game Board: this is the encounter's Pok\u00e9mon
             const previous = hostBattleArenaState[slot];
             const newOwnerId = wild ? null : peerKey;
@@ -13079,9 +13080,14 @@
         }
 
         function isActionCardTagged(card) { return !!card && String(card.actionCard).toLowerCase() === 'yes'; } // an Item that can be played any time on your own turn, outside a Battle
+        function cardMatchesWildLevel(card) { return !!card && card.matchWildLevel === 'yes'; } // Black Flute
         function cardEscapesBattle(card) { return !!card && card.escapeBattle === 'yes'; } // Poke Doll: ends the Battle with no rewards and no penalties
         function actionCardBlocked(card) { // true (with a toast) when an Action Card is played on someone else's turn or during a Battle
             if (!isActionCardTagged(card)) return false;
+            if (cardMatchesWildLevel(card)) { // only during a Battle against a wild Pok\u00e9mon that the player is taking part in
+                if (!blackFluteContext()) { showGameToast(card.name + ' can only be played during a Battle against a wild Pok\u00e9mon that you are taking part in.'); return true; }
+                return false;
+            }
             if (cardEscapesBattle(card)) { // the opposite rule: only during a Battle the player is in (it can't be checked that it is the start of a Round)
                 if (!vendingInMyBattle()) { showGameToast(card.name + ' can only be played during a Battle you are taking part in.'); return true; }
                 return false;
@@ -13108,6 +13114,7 @@
             if (cardAddsToMovementRoll(card)) return 'Add to Movement Roll';
             if (cardDoublesMovementRoll(card)) return 'Double Movement Roll';
             if (cardEscapesBattle(card)) return 'End the Battle';
+            if (cardMatchesWildLevel(card)) return 'Raise Wild Level';
             if (cardReviveCount(card)) return cardReviveCount(card) === 1 ? 'Revive a Pok\u00e9mon' : 'Revive up to ' + cardReviveCount(card) + ' Pok\u00e9mon';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
             if (card.poolGain === 'space') return 'Draw a Pok\u00e9mon';
@@ -13148,6 +13155,7 @@
                 return;
             }
             if (cardEscapesBattle(card)) { cardEscapeBattle(cardId); return; }
+            if (cardMatchesWildLevel(card)) { cardBlackFlute(cardId); return; }
             if (cardReviveCount(card)) { cardRevivePick(cardId); return; }
             if (cardDoublesMovementRoll(card)) {
                 if (movementRollCardBlocked(card)) return;
@@ -15299,7 +15307,9 @@
         }
 
         function getBattleMemberTotalLevel(member) {
-            return getTeamMemberBaseLevel(member) + (member.level || 0);
+            const normal = getTeamMemberBaseLevel(member) + (member.level || 0);
+            // Black Flute: a temporary, fixed level on a wild Pok\u00e9mon for this Battle only. Kept apart from the Level counter (so Shiny / Pok\u00e9rus Levels are untouched) and it can only raise the level.
+            return (member && typeof member.levelOverride === 'number' && member.levelOverride > normal) ? member.levelOverride : normal;
         }
 
         function getBattleOpposingSlotName(slotName) {
@@ -16461,6 +16471,8 @@
                 const progress = getGymLeaderProgress(labelMember);
                 if (progress) {
                     defenderLabel.innerHTML = `<span style="font-size: 16px;">${progress.current} of ${progress.total} Pok&eacute;mon</span><br>Defender`;
+                } else if (labelMember && typeof labelMember.levelOverride === 'number' && labelMember.levelOverride > getTeamMemberBaseLevel(labelMember) + (labelMember.level || 0)) {
+                    defenderLabel.innerHTML = `Defender<br><span style="font-size: 14px;">Black Flute: Lv ${labelMember.levelOverride}</span>`; // text for now; a visual treatment can replace this
                 } else {
                     defenderLabel.textContent = 'Defender';
                 }
@@ -16767,6 +16779,7 @@
             if (!member || isActiveSaveReadOnly()) return;
 
             member.dynamaxed = false;
+            delete member.levelOverride; // Black Flute's level only lasts for the Battle -- a caught Pok\u00e9mon keeps its real one
             resetParalyzedSide(member);
             if (member.formOverride) {
                 const hpRule = getHpRule(getActiveSaveData());
@@ -20098,6 +20111,8 @@
                     hostApplyBattleSetMove(data.slot, conn.peer, data.move || null);
                 } else if (data.type === 'battle-no-replacement' && typeof data.slot === 'string') {
                     hostApplyBattleNoReplacement(data.slot, conn.peer, !!data.value);
+                } else if (data.type === 'battle-black-flute') {
+                    hostApplyBlackFlute(conn.peer);
                 } else if (data.type === 'battle-phase') {
                     hostApplyBattlePhase(conn.peer, data.action, { forfeit: !!data.forfeit, noOutcome: data.noOutcome === true });
                 } else if (data.type === 'battle-dice') {
@@ -21778,6 +21793,52 @@
             teamSendToBattleFaintSlot = null;
             teamSendToBattleNote = null;
             renderTeamGrid();
+        }
+        function blackFluteContext() { // { wild, mine } while the player is in a Battle against a wild Pok\u00e9mon (not a Trainer or Gym Leader), else null
+            if (!battleInProgress) return null;
+            let wild = null, mine = null;
+            if (lobbyState.role === null) {
+                if (battleDefenderMemberIndex !== 'wild' || !battleWildPokemon || typeof battleAttackerMemberIndex !== 'number') return null;
+                wild = battleWildPokemon; mine = getBattleSlotMember('attacker');
+            } else {
+                const d = getArenaSlotEntry('defender'), a = getArenaSlotEntry('attacker');
+                if (!d || d.ownerId || d.trainer || !d.member) return null;
+                if (!a || a.ownerId !== (getMyLobbyPlayerId() || 'host') || !a.member) return null;
+                wild = d.member; mine = a.member;
+            }
+            if (!wild || !mine || wild.gymLeaderId) return null;
+            return { wild, mine };
+        }
+        function hostApplyBlackFlute(peerKey) { // Host: sets the fixed level on the wild Defender (the level of the Attacker's Pok\u00e9mon) and shares it with everyone
+            const st = hostBattleArenaState, d = st.defender, a = st.attacker;
+            if (!st.inProgress || !d || d.ownerId || d.trainer || !d.member || d.member.gymLeaderId || !a || a.ownerId !== peerKey || !a.member) {
+                sendBattleNotice(peerKey, 'Black Flute only works during a Battle against a wild Pok\u00e9mon that you are taking part in.');
+                return false;
+            }
+            const lv = getBattleMemberTotalLevel(a.member);
+            if (lv > getBattleMemberTotalLevel(d.member)) d.member.levelOverride = lv; // never lowers it
+            broadcastBattleArenaState();
+            return true;
+        }
+        function cardBlackFlute(cardId) { // Black Flute: the wild Pok\u00e9mon's Level rises to match the player's Pok\u00e9mon in the Arena, until the Battle ends
+            const card = CARDS_BY_ID[cardId];
+            if (!card || isActiveSaveReadOnly() || actionCardBlocked(card)) return;
+            const ctx = blackFluteContext();
+            if (!ctx) return;
+            const mineLv = getBattleMemberTotalLevel(ctx.mine), wildLv = getBattleMemberTotalLevel(ctx.wild);
+            const wildName = getBattleMemberDisplay(ctx.wild).name || 'The wild Pok\u00e9mon';
+            if (mineLv <= wildLv) { showGameToast(card.name + ': ' + wildName + ' is already Lv ' + wildLv + ', so this would have no effect. The card is kept.'); return; }
+            if (lobbyState.role === 'guest') {
+                if (!(lobbyState.hostConn && lobbyState.hostConn.open)) return;
+                lobbyState.hostConn.send({ type: 'battle-black-flute' });
+            } else if (lobbyState.role === 'host') {
+                if (!hostApplyBlackFlute('host')) return;
+            } else {
+                ctx.wild.levelOverride = mineLv;
+            }
+            cardEffectDone(cardId);
+            renderBattleDefenderSlot();
+            showGameToast(card.name + ': ' + wildName + ' is now Lv ' + mineLv + ' for the rest of this Battle.');
         }
         function cardEscapeBattle(cardId) { // Poke Doll: the Battle ends on the spot -- no Victory rewards, Badges or Frontier / Gym penalties either way
             const card = CARDS_BY_ID[cardId];
