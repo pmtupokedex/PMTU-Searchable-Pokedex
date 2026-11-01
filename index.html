@@ -8493,6 +8493,10 @@
                 playCatchCardFromHand(cardId);
                 return;
             }
+            if (isCatchCardTagged(card) && isVirtualDecksEnabledForActiveSave()) { // like Battle Cards: only played at their own step (here, from the Catch dialog's 'Play a Catch Card')
+                showDecksNotice('Catch Cards are played during the Catch step \u2014 start a Catch, then tap \u201cPlay a Catch Card\u201d.');
+                return;
+            }
             if (isBattleCardTagged(card)) {
                 playBattleCardFromHand(cardId);
                 return;
@@ -27514,6 +27518,18 @@
             if (attempt.fainted) lines.push({ label: 'Fainted before the attempt', amount: 2 });
             if (attempt.fainted && attempt.hadStatus) lines.push({ label: 'Had a Status Condition when it fainted', amount: 1 });
             if (attempt.safari && attempt.safari.frontier) lines.push({ label: attempt.safari.label ? attempt.safari.label + ' (victory reward)' : 'Battle Frontier (Yellow reward)', amount: 2 });
+            const catchCard = attempt.cardId ? CARDS_BY_ID[attempt.cardId] : null; // the Catch Card played for this attempt: a static bonus (Poke Ball +1, Great Ball +2, Ultra Ball +3); conditional ones aren't wired yet
+            let cardBonus = catchCard ? (parseInt(catchCard.catchBonus, 10) || 0) : 0, cardLabel = catchCard ? catchCard.name : '';
+            const cond = catchCard && catchCard.catchBonusIf; // a conditional bonus: e.g. Safari Ball is +3 instead of +1 against a Yellow token
+            if (cond && cond.tokenColor) {
+                const target = getCatchTargetMember();
+                const tokenEntry = target ? POKEMON_BY_NAME[target.name] : null; // the token's own color, not a form it has since taken
+                if (tokenEntry && (tokenEntry.tags || []).includes(cond.tokenColor)) {
+                    cardBonus = parseInt(cond.bonus, 10) || cardBonus;
+                    cardLabel += ' (' + cond.tokenColor.charAt(0).toUpperCase() + cond.tokenColor.slice(1) + ' Pok\u00e9mon)';
+                }
+            }
+            if (cardBonus) lines.push({ label: cardLabel, amount: cardBonus });
             return lines;
         }
 
