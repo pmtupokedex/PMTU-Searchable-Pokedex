@@ -16809,6 +16809,39 @@
             }
         }
 
+        function boardCatchBallFor() { // the Catch Card played for the attempt that is being caught right now (taken once), else null
+            const a = catchAttempt;
+            if (!a || !a.cardId || a.cardApplied || a.resolved === 'failed') return null;
+            const card = CARDS_BY_ID[a.cardId];
+            if (!card) return null;
+            a.cardApplied = true;
+            return card;
+        }
+        function catchBallBeforeJoin(card, member) { // Friend Ball / Luxury Ball: a caught Pok\u00e9mon that isn't the highest Level on the team gains a Level (a tie doesn't count)
+            const gain = parseInt(card.onCatchLevelUnlessHighest, 10) || 0;
+            if (!gain) return;
+            const members = (getActiveSaveData().team.members || []).filter(Boolean);
+            const topLevel = members.reduce((best, m) => Math.max(best, getBattleMemberTotalLevel(m)), 0);
+            const before = getBattleMemberTotalLevel(member);
+            if (!members.length || before >= topLevel) return;
+            const next = Math.min(6, (member.level || 0) + gain);
+            if (next === (member.level || 0)) return;
+            member.level = next;
+            showGameToast(card.name + ': ' + (getBattleMemberDisplay(member).name || 'the Pok\u00e9mon') + ' gained a Level (Lv ' + before + ' \u2192 ' + getBattleMemberTotalLevel(member) + ').');
+        }
+        function catchBallAfterJoin(card, member) {
+            if (card.onCatchReviveTeam === 'yes') { // Heal Ball: every Fainted Pok\u00e9mon on the team is revived
+                const down = boardTeamIndexes(m => m.fainted);
+                down.forEach(i => reviveTeamMember(i));
+                showGameToast(card.name + ': ' + (down.length ? 'revived ' + down.length + ' Pok\u00e9mon' : 'no Pok\u00e9mon were Fainted') + '.');
+            }
+            const draw = card.onCatchDraw;
+            if (draw && (parseInt(draw.count, 10) || 0) > 0) { // Love Ball: draws an Item card
+                const deck = draw.deck || 'Item Deck', n = parseInt(draw.count, 10);
+                if (isVirtualDecksEnabledForActiveSave()) { for (let i = 0; i < n; i++) requestDrawCard(deck); showGameToast(card.name + ': drew ' + n + ' card' + (n === 1 ? '' : 's') + ' from the ' + deck + '.'); }
+                else showGameToast(card.name + ': draw ' + n + ' card' + (n === 1 ? '' : 's') + ' from your physical ' + deck + '.');
+            }
+        }
         function applyCaughtWildMember(member) {
             if (!member || isActiveSaveReadOnly()) return;
 
@@ -16833,6 +16866,8 @@
             const data = getActiveSaveData();
             if (!data.team.members) data.team.members = [];
             const wasRosterEmpty = data.team.members.length === 0;
+            const ball = boardCatchBallFor(); // a Catch Card's on-catch effect (Friend / Luxury / Heal / Love Ball)
+            if (ball) catchBallBeforeJoin(ball, member);
             if (data.team.members.length < 6) {
                 data.team.members.push(member);
                 fireOwedTeamDraws(member);
@@ -16843,6 +16878,7 @@
             } else {
                 beginTeamReplaceMode(member, null);
             }
+            if (ball) catchBallAfterJoin(ball, member);
         }
 
         function finishLocalWildCatch(member) {
@@ -27513,23 +27549,69 @@
             return (e && typeof e.catchValue === 'number') ? e.catchValue : null;
         }
 
+        function catchConditionMet(cond, attempt) { // a Catch Card's conditional bonus (catchBonusIf): every condition listed on the card has to hold
+            const target = getCatchTargetMember();
+            const tags = (target && POKEMON_BY_NAME[target.name] && POKEMON_BY_NAME[target.name].tags) || []; // the token's own entry, not a form it has since taken
+            let any = false;
+            if (cond.tokenColor) { any = true; if (!tags.includes(cond.tokenColor)) return false; }          // Safari Ball: a Yellow token
+            if (cond.tokenTag) { any = true; if (!tags.includes(cond.tokenTag)) return false; }              // Dive Ball: the Surf ability
+            if (cond.tokenTagAny) { any = true; if (!cond.tokenTagAny.some(t => tags.includes(t))) return false; }      // Heavy Ball: an evolved form (Stage 2 or 3)
+            if (cond.maxLevel !== undefined) {                                                                 // Nest Ball: Level 3 or lower
+                any = true;
+                if (!target || getBattleMemberTotalLevel(target) > cond.maxLevel) return false;
+            }
+            if (cond.higherLevelParticipant) {                                                                 // Level Ball: one of the Pok\u00e9mon used against it is a higher Level
+                any = true;
+                if (!target || attempt.safari) return false; // a Safari / Contest catch has no Battle behind it
+                const wildLevel = getBattleMemberTotalLevel(target);
+                const used = battleParticipationSnapshot.uids || [];
+                if (!(((getActiveSaveData().team || {}).members || []).some(m => m && m.uid && used.includes(m.uid) && getBattleMemberTotalLevel(m) > wildLevel))) return false;
+            }
+            if (cond.hadStatus) { any = true; if (!attempt.hadStatus) return false; }                         // Dream Ball: the same check as the catch step's own Status Condition bonus
+            if (cond.newGeneration) {                                                                          // Premier Ball: a Generation nobody on the team is from
+                any = true;
+                const gen = target ? getTokenGeneration(target.name) : null;
+                if (gen === null) return false;
+                if (((getActiveSaveData().team || {}).members || []).some(m => m && getTokenGeneration(m.name) === gen)) return false;
+            }
+            if (cond.evenBadges) {                                                                             // Dusk Ball: an even (and not zero) number of Gym Badges
+                any = true;
+                const n = computeCollectedBadgeCount(getActiveSaveData());
+                if (!(n > 0 && n % 2 === 0)) return false;
+            }
+            return any;
+        }
+        function computeCatchCardLine(attempt) { // the played Catch Card's bonus line: { label, amount } or null
+            const card = attempt.cardId ? CARDS_BY_ID[attempt.cardId] : null;
+            if (!card) return null;
+            let amount = parseInt(card.catchBonus, 10) || 0, label = card.name;
+            const cond = card.catchBonusIf;
+            if (cond && catchConditionMet(cond, attempt)) {
+                amount = parseInt(cond.bonus, 10) || amount;
+                const why = cond.label || (cond.tokenColor ? cond.tokenColor.charAt(0).toUpperCase() + cond.tokenColor.slice(1) + ' Pok\u00e9mon' : '');
+                if (why) label += ' (' + why + ')';
+            }
+            return amount ? { label, amount } : null;
+        }
+        function getCatchDieKey(attempt) { // Cherish Ball rolls the High-Crit d8 instead of the d6
+            const card = attempt && attempt.cardId ? CARDS_BY_ID[attempt.cardId] : null;
+            return (card && card.catchDie === 'd8') ? 'd8' : 'd6';
+        }
+        function rollCatchDie(attempt) {
+            const die = BATTLE_DICE.find(d => d.key === getCatchDieKey(attempt));
+            return rollBattleFace(die ? die.faces : [1, 2, 3, 4, 5, 6]);
+        }
+        function catchCardRerolls(attempt) { // Fast Ball: one reroll after a failed catch
+            const card = attempt && attempt.cardId ? CARDS_BY_ID[attempt.cardId] : null;
+            return !!card && card.catchRerollOnFail === 'yes';
+        }
         function getCatchBonusLines(attempt) {
             const lines = [];
             if (attempt.fainted) lines.push({ label: 'Fainted before the attempt', amount: 2 });
-            if (attempt.fainted && attempt.hadStatus) lines.push({ label: 'Had a Status Condition when it fainted', amount: 1 });
+            if (attempt.hadStatus) lines.push({ label: attempt.fainted ? 'Had a Status Condition when it fainted' : 'Has a Status Condition', amount: 1 });
             if (attempt.safari && attempt.safari.frontier) lines.push({ label: attempt.safari.label ? attempt.safari.label + ' (victory reward)' : 'Battle Frontier (Yellow reward)', amount: 2 });
-            const catchCard = attempt.cardId ? CARDS_BY_ID[attempt.cardId] : null; // the Catch Card played for this attempt: a static bonus (Poke Ball +1, Great Ball +2, Ultra Ball +3); conditional ones aren't wired yet
-            let cardBonus = catchCard ? (parseInt(catchCard.catchBonus, 10) || 0) : 0, cardLabel = catchCard ? catchCard.name : '';
-            const cond = catchCard && catchCard.catchBonusIf; // a conditional bonus: e.g. Safari Ball is +3 instead of +1 against a Yellow token
-            if (cond && cond.tokenColor) {
-                const target = getCatchTargetMember();
-                const tokenEntry = target ? POKEMON_BY_NAME[target.name] : null; // the token's own color, not a form it has since taken
-                if (tokenEntry && (tokenEntry.tags || []).includes(cond.tokenColor)) {
-                    cardBonus = parseInt(cond.bonus, 10) || cardBonus;
-                    cardLabel += ' (' + cond.tokenColor.charAt(0).toUpperCase() + cond.tokenColor.slice(1) + ' Pok\u00e9mon)';
-                }
-            }
-            if (cardBonus) lines.push({ label: cardLabel, amount: cardBonus });
+            const cardLine = attempt.frozenCardLine !== undefined ? attempt.frozenCardLine : computeCatchCardLine(attempt); // frozen once the attempt is resolved (the caught Pok\u00e9mon then joins the team, which would change e.g. the Premier Ball's check)
+            if (cardLine) lines.push(cardLine);
             return lines;
         }
 
@@ -27539,7 +27621,7 @@
             if (member.noCatch) { showGameToast('The Battle Frontier\u2019s Defender can\u2019t be caught.'); return; }
             catchAttempt = {
                 fainted: !!member.fainted,
-                hadStatus: !!member.fainted && !!member.faintedWithStatus,
+                hadStatus: (!!member.fainted && !!member.faintedWithStatus) || (!member.fainted && !!member.status), // a Status Condition when it fainted, or one it has right now (e.g. a Pok\u00e9mon that arrives already afflicted)
                 roll: null,
                 cardId: null,
                 manualBonus: 0 // hand-entered, until Catch Cards carry their own bonus data
@@ -27646,7 +27728,7 @@
             let caught = false, missed = false;
             if (a.roll !== null) {
                 const total = a.roll + bonus;
-                html += `<div class="game-catch-roll-line">${battleDieIconMarkup('d6')}<span>${a.roll}</span>`
+                html += `<div class="game-catch-roll-line">${battleDieIconMarkup(getCatchDieKey(a))}<span>${a.roll}</span>`
                     + `<span>+ Bonus ${bonus} =</span><span class="game-catch-total-big">${total}</span></div>`;
                 if (catchValue !== null) {
                     const safeName = escapeHtml(displayName);
@@ -27662,7 +27744,7 @@
                             : short === 3 ? 'Aww! It appeared to be caught!'
                             : 'Oh no! The Pok\u00e9mon broke free!';
                         html += `<div class="game-catch-result"><p class="game-catch-result-main">${line}</p>`
-                            + `<p class="game-catch-result-sub">The wild ${safeName} fled...</p></div>`;
+                            + `<p class="game-catch-result-sub">${a.canReroll ? escapeHtml(card ? card.name : 'Your Catch Card') + ' lets you roll the catch die once more!' : 'The wild ' + safeName + ' fled...'}</p></div>`;
                     }
                 }
             }
@@ -27670,7 +27752,7 @@
             if (a.resolved) {
                 html += '<button class="filter-btn include game-catch-close-btn" type="button">Continue</button>';
             } else {
-                if (!sf || a.roll === null) html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
+                if (!sf || a.roll === null || a.canReroll) html += `<button class="filter-btn game-catch-roll-btn" type="button">${a.roll === null ? 'Roll Catch Die' : 'Roll Catch Die Again'}</button>`;
                 if (!a.cardId && !(sf && !sf.frontier) && a.roll === null) html += '<button class="filter-btn game-catch-play-card-btn" type="button">Play a Catch Card</button>';
                 html += `<button class="filter-btn include game-catch-finish-btn" type="button"${missed ? ' disabled' : ''}>Caught \u2014 Add to Team</button>`;
                 html += `<button class="filter-btn exclude game-catch-fail-btn" type="button"${caught ? ' disabled' : ''}>Failed to Catch</button>`;
@@ -27755,6 +27837,7 @@
             a.snap = getCatchDisplay(member); // before the catch resets the Pok\u00e9mon's form
             a.snapCard = Object.assign({}, member); // same, for its slot card (form, cards and HP as they were when it was rolled for)
             a.snapMember = member;            // the arena is cleared by the time the overlay redraws
+            a.frozenCardLine = computeCatchCardLine(a); a.canReroll = false; // as it was when it was rolled for
             if (caught) finishCatchAttempt(true); else failCatchAttempt(true);
             if (catchAttempt !== a) return;
             a.resolved = caught ? 'caught' : 'failed'; // set last: setGameScreen() drops resolved attempts when it leaves the battle screen
@@ -27763,15 +27846,18 @@
 
         document.getElementById('game-catch-overlay').addEventListener('click', (e) => {
             if (e.target.closest('.game-catch-roll-btn')) {
-                if (catchAttempt && !catchAttempt.resolved && !(catchAttempt.safari && catchAttempt.roll !== null)) {
+                if (catchAttempt && !catchAttempt.resolved && (!(catchAttempt.safari && catchAttempt.roll !== null) || catchAttempt.canReroll)) {
                     const a = catchAttempt;
-                    a.roll = Math.floor(Math.random() * 6) + 1;
+                    if (a.canReroll) { a.canReroll = false; a.rerolled = true; } // Fast Ball's one reroll
+                    a.roll = rollCatchDie(a);
                     const member = getCatchTargetMember();
                     const lines = getCatchBonusLines(a);
                     const total = a.roll + lines.reduce((n, l) => n + l.amount, 0) + (a.manualBonus || 0);
                     const cv = member ? getCatchValueFor(a, member, getCatchDisplay(member).name) : null;
-                    if (cv !== null) resolveCatchAttempt(total >= cv);
-                    else renderCatchOverlay();
+                    if (cv !== null) {
+                        if (total < cv && !a.rerolled && catchCardRerolls(a)) { a.canReroll = true; renderCatchOverlay(); return; } // Fast Ball: a missed catch isn't final yet
+                        resolveCatchAttempt(total >= cv);
+                    } else renderCatchOverlay();
                 }
                 return;
             }
