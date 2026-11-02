@@ -17654,7 +17654,7 @@
             battleItemRewardBonus({ ask: !award.leaderId });
         }
 
-        let battleParticipationSnapshot = { id: null, uids: [] };
+        let battleParticipationSnapshot = { id: null, uids: [], wild: null }; // wild: the wild Pok\u00e9mon that was battled ({ key, rounds }), for Quick / Timer Ball
         let amuletQueue = [], amuletCurrent = null, amuletTimer = null, amuletAfters = [];
         function amuletFlushAfters() { const fns = amuletAfters.splice(0); fns.forEach(fn => { try { fn(); } catch (err) { /* a follow-up step must not break the others */ } }); }
         function noteBattleParticipationSnapshot(record) {
@@ -17662,7 +17662,10 @@
                 if (!record || !record.id || !record.seen) return;
                 const me = lobbyState.role === null ? 'solo' : getMyLobbyPlayerId();
                 const seen = me && Array.isArray(record.seen[me]) ? record.seen[me] : [];
-                if (seen.length) battleParticipationSnapshot = { id: record.id, uids: seen.slice() };
+                const wildSlot = ['defender', 'attacker'].find(sl => getBattleSlotMember(sl) && !getBattleSlotOwnerId(sl));
+                const wildMon = wildSlot ? getBattleSlotMember(wildSlot) : null;
+                const wild = wildMon ? { key: wildMon.uid || wildMon.name, rounds: record.round || 1 } : (battleParticipationSnapshot.id === record.id ? battleParticipationSnapshot.wild : null);
+                if (seen.length) battleParticipationSnapshot = { id: record.id, uids: seen.slice(), wild: wild };
             } catch (err) { /* never get in the way of the battle */ }
         }
         function cardBattleRewardsItem(card) {
@@ -27566,6 +27569,25 @@
                 const wildLevel = getBattleMemberTotalLevel(target);
                 const used = battleParticipationSnapshot.uids || [];
                 if (!(((getActiveSaveData().team || {}).members || []).some(m => m && m.uid && used.includes(m.uid) && getBattleMemberTotalLevel(m) > wildLevel))) return false;
+            }
+            if (cond.typeAny) {                                                                                // the type balls: one of the listed types
+                any = true;
+                const own = target ? getBattleMemberTypes(target) : [];
+                if (!cond.typeAny.some(t => own.includes(t))) return false;
+            }
+            if (cond.matchesTeamType) {                                                                        // Repeat Ball: a type someone on the team already has
+                any = true;
+                const own = target ? getBattleMemberTypes(target) : [];
+                const mine = new Set();
+                ((getActiveSaveData().team || {}).members || []).forEach(m => { if (m) getBattleMemberTypes(m).forEach(t => mine.add(t)); });
+                if (!own.some(t => mine.has(t))) return false;
+            }
+            if (cond.notBattled || cond.battleRoundsOver !== undefined) {                                      // Quick Ball / Timer Ball: was it Battled, and for how long
+                any = true;
+                const w = !attempt.safari && target ? battleParticipationSnapshot.wild : null;
+                const battled = !!(w && w.key === (target.uid || target.name)); // pressing Begin Battle counts
+                if (cond.notBattled && battled) return false;
+                if (cond.battleRoundsOver !== undefined && !(battled && w.rounds > cond.battleRoundsOver)) return false;
             }
             if (cond.hadStatus) { any = true; if (!attempt.hadStatus) return false; }                         // Dream Ball: the same check as the catch step's own Status Condition bonus
             if (cond.newGeneration) {                                                                          // Premier Ball: a Generation nobody on the team is from
