@@ -9302,6 +9302,18 @@
             showGameToast(`${card.name} was resolved.`);
         }
 
+        function useCureStatusCard(index) { // Berry: removes the Pok\u00e9mon's Status Condition, and the card is used up
+            if (index === null || isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
+            const member = getTeamSlotMember(index);
+            const card = member && member.attachCardId ? CARDS_BY_ID[member.attachCardId] : null;
+            if (!card || card.cureStatus !== 'yes') return;
+            if (!member.status) { showGameToast(card.name + ': ' + (getBattleMemberDisplay(member).name || 'this Pok\u00e9mon') + ' has no Status Condition to remove.'); return; }
+            boardClearTeamStatus(index);
+            commitTeamMemberCard(index, 'attach', null);
+            if (isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(card.id);
+            persistTeamSlotChange(index);
+            showGameToast(card.name + ': ' + (getBattleMemberDisplay(member).name || 'the Pok\u00e9mon') + '\u2019s Status Condition was removed.');
+        }
         function resolveTeamCardsOverlayOneTimeEffect(slot) {
             if (teamCardsOverlayIndex === null) return;
             resolveEquippedOneTimeEffect(teamCardsOverlayIndex, slot);
@@ -10794,6 +10806,7 @@
                     ${(getCardOneTimeEffect(card) && isVirtualDecksEnabledForActiveSave()) ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-one-time-btn" type="button" data-slot="${slot}" ${isActiveSaveReadOnly() ? 'disabled' : ''}>Resolve One-Time Effect</button>` : ''}
                     ${(cardHasDiscardShuffle(card) && !getCardOneTimeEffect(card) && isVirtualDecksEnabledForActiveSave()) ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-shuffle-discards-btn" type="button" data-slot="${slot}" title="Shuffles this card and the ${escapeHtml(card.shuffleDiscardPile)} discard pile into the ${escapeHtml(card.shuffleIntoDeck)}." ${isActiveSaveReadOnly() ? 'disabled' : ''}>Shuffle Discards into Deck</button>` : ''}
                     ${(cardCanPermanentFromAttach(card) && !getCardOneTimeEffect(card) && isVirtualDecksEnabledForActiveSave()) ? `<button class="filter-btn game-team-cards-card-btn game-team-cards-to-permanent-btn" type="button" data-slot="${slot}">Send to Permanent</button>` : ''}
+                    ${(slot === 'attach' && card.cureStatus === 'yes') ? `<button class="filter-btn include game-team-cards-card-btn game-team-cards-cure-btn" type="button" data-slot="${slot}" ${isActiveSaveReadOnly() ? 'disabled' : ''}>Use: Remove Status Condition</button>` : ''}
                     <button class="filter-btn exclude game-team-cards-card-btn game-team-cards-remove-btn" type="button" data-slot="${slot}">Remove Card</button>
                 `;
                 return;
@@ -11149,6 +11162,32 @@
             renderTeamStatusCard(pendingTeamStatusId, pendingTeamStatusCardSide);
         }
 
+        function luckyEggAfterManual(index, before) { // Lucky Egg: a Level gained by hand during a Battle (not a scripted one) earns a d6 roll for another
+            if (!battleInProgress || isActiveSaveReadOnly()) return;
+            const member = getTeamSlotMember(index);
+            const card = member && member.attachCardId ? CARDS_BY_ID[member.attachCardId] : null;
+            const need = card ? parseInt(card.extraLevelOnRoll, 10) : 0;
+            if (!(need >= 1) || (member.level || 0) <= before) return;
+            const name = getBattleMemberDisplay(member).name || 'Pok\u00e9mon';
+            boardFrontierShow(card.name, name + ' is holding ' + card.name + ' and gained a Level in Battle. Roll a d6: on a ' + need + ', it gains another Level.',
+                `<button class="filter-btn include game-egg-btn" type="button" data-act="roll" data-index="${index}" data-uid="${escapeHtml(member.uid || '')}">Roll d6</button>`);
+        }
+        function luckyEggRoll(index, uid) {
+            const member = getTeamSlotMember(index);
+            const card = member && member.attachCardId ? CARDS_BY_ID[member.attachCardId] : null;
+            const need = card ? parseInt(card.extraLevelOnRoll, 10) : 0;
+            if (!member || !(need >= 1) || (uid && member.uid !== uid)) { closeFrontierOverlay(); return; }
+            const roll = 1 + Math.floor(Math.random() * 6);
+            const name = getBattleMemberDisplay(member).name || 'Pok\u00e9mon';
+            let msg;
+            if (roll >= need) {
+                if ((member.level || 0) >= 6) msg = 'Rolled a ' + roll + '! ' + name + ' is already at the highest Level it can reach.';
+                else { adjustTeamMemberLevel(index, 1); msg = 'Rolled a ' + roll + '! ' + name + ' gained another Level.'; }
+            } else msg = 'Rolled a ' + roll + '. No extra Level this time.';
+            boardFrontierShow(card.name, msg, '<button class="filter-btn include game-egg-btn" type="button" data-act="ok">OK</button>');
+            if (teamDetailIndex === index) { renderTeamDetailLevelSection(); renderTeamDetailHpSection(); }
+            renderTeamGrid();
+        }
         function adjustTeamMemberLevel(index, delta) {
             const member = getTeamSlotMember(index);
             if (!member || member.gymLeaderId) return; // level is printed on the card
@@ -11545,7 +11584,9 @@
         function adjustTeamDetailLevel(delta) {
             if (teamDetailIndex === null) return;
             if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
+            const eggBefore = (getTeamSlotMember(teamDetailIndex) || {}).level || 0;
             adjustTeamMemberLevel(teamDetailIndex, delta);
+            if (delta > 0) luckyEggAfterManual(teamDetailIndex, eggBefore);
             renderTeamDetailLevelSection();
             renderTeamDetailHpSection();
             renderTeamDetailEvolutionSection();
@@ -13130,8 +13171,21 @@
             }
             if (cardAddsToMovementRoll(card) || cardDoublesMovementRoll(card)) return false; // the Movement Phase rule is stricter (your turn, window open) and takes precedence
             if (turnView && turnView.cur && !upkeepIsMyTurn()) { showGameToast(card.name + ' is an Action Card \u2014 it can only be played on your own turn.'); return true; }
+            if (cardRepelsEncounter(card)) { // needs the revealed Pok\u00e9mon in the Arena, before any Battle or Catch
+                if (!repelContext()) { showGameToast(card.name + ' can only be played after a wild Pok\u00e9mon is revealed on your space, before you begin a Battle or Catch attempt.'); return true; }
+                return false;
+            }
             if (vendingInMyBattle()) { showGameToast(card.name + ' is an Action Card \u2014 it can only be played outside of a Battle.'); return true; }
             return false;
+        }
+        function cardRepelsEncounter(card) { return !!card && card.repelEncounter === 'yes'; } // Repel
+        function repelContext() { // a revealed wild Pok\u00e9mon waiting in the Arena, with no Battle or Catch attempt begun yet
+            if (battleInProgress || catchAttempt) return null;
+            if (!getRegionMapSettingsForActiveSave().enabled) return null;
+            const entry = getArenaSlotEntry('defender');
+            const wild = entry && !entry.ownerId && entry.member ? entry.member : (lobbyState.role === null ? battleWildPokemon : null);
+            if (!wild || wild.fainted || wild.noCatch) return null;
+            return wild;
         }
         function cardReviveCount(card) { return card ? Math.max(0, parseInt(card.reviveCount, 10) || 0) : 0; } // Revive: 1, Max Revive: up to 4
         function cardDoublesMovementRoll(card) { return !!card && card.doubleMovementRoll === 'yes'; } // Bicycle
@@ -13151,6 +13205,8 @@
             if (cardDoublesMovementRoll(card)) return 'Double Movement Roll';
             if (cardEscapesBattle(card)) return 'End the Battle';
             if (cardMatchesWildLevel(card)) return 'Raise Wild Level';
+            if (cardRepelsEncounter(card)) return 'Look for Other Pok\u00e9mon';
+            if (card.levelGain && !card.poolGain) return 'Gain a Level';
             if (cardReviveCount(card)) return cardReviveCount(card) === 1 ? 'Revive a Pok\u00e9mon' : 'Revive up to ' + cardReviveCount(card) + ' Pok\u00e9mon';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
             if (card.poolGain === 'space') return 'Draw a Pok\u00e9mon';
@@ -13192,6 +13248,8 @@
             }
             if (cardEscapesBattle(card)) { cardEscapeBattle(cardId); return; }
             if (cardMatchesWildLevel(card)) { cardBlackFlute(cardId); return; }
+            if (cardRepelsEncounter(card)) { cardRepel(cardId); return; }
+            if (card.levelGain && !card.poolGain) { cardLevelGainPick(cardId); return; }
             if (cardReviveCount(card)) { cardRevivePick(cardId); return; }
             if (cardDoublesMovementRoll(card)) {
                 if (movementRollCardBlocked(card)) return;
@@ -14979,14 +15037,28 @@
 
         function rerollBattleAttackDice(slotName) {
             if (!guardBattleDiceAction(slotName)) return;
-            if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'reroll-attack' }); return; }
             const grant = getBattleRerollGrant(getBattleBonusCards(slotName));
             const reason = getBattleRerollBlockReason(grant, battleRerollsUsed[slotName], battleDiceResults[slotName].attack);
             if (reason) { showBattleArenaNotice(reason); return; }
+            if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'reroll-attack' }); berryUseAfterReroll(slotName, grant); return; }
             battleDiceResults[slotName].attack = generateBattleAttackRolls(countBattleDiceFromRolls(battleDiceResults[slotName].attack));
             battleDiceResults[slotName].rerolled = true;
             battleRerollsUsed[slotName] += 1;
             refreshBattleDice(slotName);
+            berryUseAfterReroll(slotName, grant);
+        }
+        function berryUseAfterReroll(slotName, grant) { // Berry: rerolling uses the card up (the owner's own screen discards it)
+            if (!grant || !grant.discardCardId || isActiveSaveReadOnly()) return;
+            const idx = slotName === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+            if (typeof idx !== 'number') return;
+            const me = lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host');
+            if (getBattleSlotOwnerId(slotName) !== me) return;
+            const m = getTeamSlotMember(idx);
+            if (!m || m.attachCardId !== grant.discardCardId) return;
+            commitTeamMemberCard(idx, 'attach', null);
+            if (isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(grant.discardCardId);
+            persistTeamSlotChange(idx);
+            showGameToast(grant.label + ' was used up for the reroll.');
         }
 
         function rollBattleEffectDie(slotName) {
@@ -15858,16 +15930,17 @@
         }
 
         function getBattleRerollGrant(cards) {
-            let allowed = 0, penalty = 0, label = '';
+            let allowed = 0, penalty = 0, label = '', discardCardId = null;
             cards.forEach(c => {
                 const n = parseInt(c.attackRerollsPerBattle, 10);
                 if (!Number.isFinite(n) || n <= 0) return;
                 allowed += n;
+                if (c.attackRerollDiscards === 'yes' && !discardCardId) discardCardId = c.id; // Berry: the card is used up by the reroll
                 const p = parseInt(c.attackRerollTotalPenalty, 10);
                 if (Number.isFinite(p) && p > 0) penalty += p;
                 if (!label) label = c.name || 'Card';
             });
-            return allowed > 0 ? { allowed, penalty, label } : null;
+            return allowed > 0 ? { allowed, penalty, label, discardCardId } : null;
         }
 
         function getBattleRerollBlockReason(grant, used, rolls) {
@@ -23955,6 +24028,8 @@
                 }
                 return;
             }
+            const eggBtn = e.target.closest('.game-egg-btn');
+            if (eggBtn) { if (eggBtn.dataset.act === 'roll') luckyEggRoll(Number(eggBtn.dataset.index), eggBtn.dataset.uid); else closeFrontierOverlay(); return; }
             const amuletBtn = e.target.closest('.game-amulet-btn');
             if (amuletBtn) { amuletChoose(amuletBtn.dataset.act); return; }
             const pvpRewardBtn = e.target.closest('.game-pvpreward-btn');
@@ -24295,13 +24370,38 @@
             if (!pend.offer || (name !== pend.offer.original && !pend.offer.drawn.includes(name))) return;
             boardRadioPending = null;
             boardRadioDiscardIfEmpty(pend.instanceId);
-            const fallback = () => { showGameToast(pend.cardName + ': couldn\u2019t swap the Pok\u00e9mon \u2014 carrying on with the revealed one.'); boardStartWildBattle(pend.info); };
+            if (pend.repelCardId) cardEffectDone(pend.repelCardId); // Repel: used up once the choice is made
+            const fallback = pend.repelCardId
+                ? () => showGameToast(pend.cardName + ': couldn\u2019t swap the Pok\u00e9mon \u2014 the revealed one stays.')
+                : () => { showGameToast(pend.cardName + ': couldn\u2019t swap the Pok\u00e9mon \u2014 carrying on with the revealed one.'); boardStartWildBattle(pend.info); };
             if (lobbyState.role === 'guest') {
                 radioKeepCb = ok => { if (!ok) fallback(); };
                 boardSend({ type: 'board-radio-keep', name });
                 return;
             }
             boardEnsureBoard().then(c => { if (!c.radioKeep(upkeepMe(), name)) fallback(); }).catch(fallback);
+        }
+        function cardRepel(cardId) { // Repel: two more tokens of the space's color are drawn; keep one of the three, the others go back to the pool
+            const card = CARDS_BY_ID[cardId];
+            const wild = repelContext();
+            if (!card || !wild || isActiveSaveReadOnly()) return;
+            if (boardRadioPending && Date.now() - boardRadioPending.at < 600000) { showGameToast('Finish choosing a Pok\u00e9mon first.'); return; }
+            const pend = boardRadioPending = { info: { kind: 'encounter', token: wild.name, space: { id: null } }, used: true, at: Date.now(), offer: null, instanceId: null, cardName: card.name, repelCardId: cardId };
+            boardRadioRequestOffer(offer => {
+                if (boardRadioPending !== pend) return;
+                if (!offer || !offer.original) {
+                    showGameToast(card.name + ': the Pok\u00e9mon on this space can\u2019t be swapped.');
+                    boardRadioPending = null;
+                    return; // nothing was used: the card stays in the Active Card zone
+                }
+                pend.offer = offer;
+                if (!offer.drawn.length) {
+                    showGameToast(card.name + ': no other Pok\u00e9mon of that color are left in the pool \u2014 the revealed one stays.');
+                    boardRadioKeep(pend, offer.original);
+                    return;
+                }
+                boardRadioShowChoice(pend);
+            });
         }
         function boardRadioDiscardIfEmpty(instanceId) {
             const entry = getLocalPermanentArray().find(e => e.instanceId === instanceId);
@@ -26769,7 +26869,9 @@
                 if (isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
                 const rect = levelBadge.getBoundingClientRect();
                 const clickedRightHalf = (e.clientX - rect.left) > rect.width / 2;
-                adjustTeamMemberLevel(parseTeamSlotIndex(levelBadge.dataset.index), clickedRightHalf ? 1 : -1);
+                const badgeIndex = parseTeamSlotIndex(levelBadge.dataset.index), eggBefore = (getTeamSlotMember(badgeIndex) || {}).level || 0;
+                adjustTeamMemberLevel(badgeIndex, clickedRightHalf ? 1 : -1);
+                if (clickedRightHalf) luckyEggAfterManual(badgeIndex, eggBefore);
                 return;
             }
 
@@ -27497,6 +27599,12 @@
             const cardOneTimeBtn = e.target.closest('.game-team-cards-one-time-btn');
             if (cardOneTimeBtn) {
                 resolveTeamCardsOverlayOneTimeEffect(cardOneTimeBtn.dataset.slot);
+                return;
+            }
+            if (e.target.closest('.game-team-cards-cure-btn')) {
+                useCureStatusCard(teamCardsOverlayIndex);
+                renderTeamCardsOverlay();
+                renderTeamGrid();
                 return;
             }
             if (e.target.closest('.game-team-cards-nature-attach-btn')) {
@@ -28355,6 +28463,13 @@
             const cardOneTimeBtn = e.target.closest('.game-team-cards-one-time-btn');
             if (cardOneTimeBtn) {
                 resolveTeamDetailOneTimeEffect(cardOneTimeBtn.dataset.slot);
+                return;
+            }
+            if (e.target.closest('.game-team-cards-cure-btn')) {
+                useCureStatusCard(teamDetailIndex);
+                renderTeamDetailCardsSection();
+                renderTeamDetailHeader();
+                renderTeamGrid();
                 return;
             }
             if (e.target.closest('.game-team-cards-nature-attach-btn')) {
