@@ -8240,7 +8240,9 @@
             }
             battleTrainerQueue = Array.isArray(payload.trainerQueue) ? payload.trainerQueue : [];
             battleTrainerTotal = payload.trainerTotal | 0;
+            const bfPrev = battleInProgress;
             battleInProgress = !!payload.inProgress;
+            battleFormsOnChange(bfPrev);
             battleEnteredThisRound = {
                 attacker: !!(payload.entered && payload.entered.attacker),
                 defender: !!(payload.entered && payload.entered.defender),
@@ -8296,6 +8298,7 @@
                     const m = (getActiveSaveData().team.members || [])[index];
                     if (m && m.uid === uid && lullabyPutToSleep(m)) {
                         persistTeamSlotChange(index);
+                        fluteSleepCheck(index);
                         showBattleArenaNotice((getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' fell asleep to the Radio: PKMN Lullaby! Roll the Status Die and flip the Sleep card.');
                     }
                 });
@@ -10397,11 +10400,64 @@
             });
         }
 
+        let battleFormUsed = { mega: false, dyna: false }; // this Battle: one Mega Evolution and one Dynamax / Gigantamax per player
+        function isMegaBraceletInPlay() {
+            return getLocalPermanentArray().some(entry => { const card = CARDS_BY_ID[entry.cardId]; return !!card && card.name === 'Mega Bracelet'; });
+        }
+        function megaFormRulesApply(member) { // virtual-card saves: Mega Stone / Mega Bracelet / Dynamax Band are enforced for the player's own Pok\u00e9mon
+            return !!member && isVirtualDecksEnabledForActiveSave() && member !== battleWildPokemon && member !== battleTrainerPokemon && !member.gymLeaderId;
+        }
+        function memberInMyArena(member) { // in the Arena, in a Battle that has begun
+            if (!member || !battleInProgress) return false;
+            return [[battleAttackerTeamId, battleAttackerMemberIndex], [battleDefenderTeamId, battleDefenderMemberIndex]]
+                .some(([teamId, index]) => teamId === getActiveTeamId() && typeof index === 'number' && getTeamSlotMember(index) === member);
+        }
+        function memberHoldsMegaStone(member) {
+            const card = member && member.attachCardId ? CARDS_BY_ID[member.attachCardId] : null;
+            return !!card && card.name === 'Mega Stone';
+        }
+        function canMemberMega(member) {
+            if (!member || member.fainted) return false;
+            if (!megaFormRulesApply(member)) return true;
+            return !member.dynamaxed && !member.formOverride && memberHoldsMegaStone(member) && isMegaBraceletInPlay() && memberInMyArena(member) && !battleFormUsed.mega;
+        }
+        function canMemberGmax(member) {
+            if (!member || member.fainted) return false;
+            if (!megaFormRulesApply(member)) return true;
+            return !member.formOverride && isDynamaxBandInPlay() && memberInMyArena(member) && !battleFormUsed.dyna;
+        }
         function canMemberDynamax(member) {
             if (!member || member.fainted || member.formOverride || member.dynamaxed) return false;
             if (member === battleWildPokemon || member === battleTrainerPokemon) return true;
-            if (isVirtualDecksEnabledForActiveSave()) return isDynamaxBandInPlay();
+            if (isVirtualDecksEnabledForActiveSave()) return isDynamaxBandInPlay() && memberInMyArena(member) && !battleFormUsed.dyna;
             return true;
+        }
+        function revertTemporaryForm(index, member, onlyDynamax) { // Mega / Gigantamax -> base form, Dynamax off (HP follows the form change)
+            if (!member) return false;
+            const form = member.formOverride ? POKEMON_BY_NAME[member.formOverride] : null;
+            const isTemp = !!form && (form.form_type === 'mega' || form.form_type === 'gmax');
+            const changeForm = isTemp && !(onlyDynamax && form.form_type === 'mega');
+            if (!member.dynamaxed && !changeForm) return false;
+            const hpRule = getHpRule(getActiveSaveData()), oldMax = getTeamMemberHpMax(member, hpRule);
+            member.dynamaxed = false;
+            if (changeForm) { member.formOverride = null; reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax, 1); }
+            if (typeof index === 'number') persistTeamSlotChange(index);
+            return true;
+        }
+        function battleFormsOnChange(wasInProgress) { // a Battle began or ended: everything resets
+            if (!wasInProgress && battleInProgress) { battleFormUsed = { mega: false, dyna: false }; return; }
+            if (!(wasInProgress && !battleInProgress)) return;
+            battleFormUsed = { mega: false, dyna: false };
+            if (!isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return;
+            let any = false;
+            (((getActiveSaveData().team || {}).members) || []).forEach((m, i) => { if (m && !m.gymLeaderId && revertTemporaryForm(i, m, false)) any = true; });
+            if (any) { try { renderTeamGrid(); } catch (e) { /* not on screen */ } showGameToast('Mega Evolutions, Gigantamax and Dynamax ended with the Battle.'); }
+        }
+        function revertDynamaxAt(teamId, index) { // a Pok\u00e9mon leaves the Arena: Dynamax / Gigantamax ends (Mega Evolution lasts until the Battle ends)
+            if (!isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return;
+            if (typeof index !== 'number' || !teamId || teamId !== getActiveTeamId()) return;
+            const m = getTeamSlotMember(index);
+            if (m && !m.gymLeaderId) revertTemporaryForm(index, m, true);
         }
 
         function reconcileDynamaxWithPermanent() {
@@ -10451,8 +10507,8 @@
             const canEvolve = !!(baseEntry.evolves_to && baseEntry.evolves_to.length
                 && typeof baseEntry.evolve_cost === 'number'
                 && (member.level || 0) >= baseEntry.evolve_cost);
-            const canMega = !member.fainted && !!(baseEntry.mega_forms && baseEntry.mega_forms.length);
-            const canGmax = !member.fainted && !!(baseEntry.gmax_forms && baseEntry.gmax_forms.length);
+            const canMega = !member.fainted && !!(baseEntry.mega_forms && baseEntry.mega_forms.length) && canMemberMega(member);
+            const canGmax = !member.fainted && !!(baseEntry.gmax_forms && baseEntry.gmax_forms.length) && canMemberGmax(member);
 
             const icons = [];
             if (canEvolve) icons.push(EVOLUTION_MODE_IMAGES.evolve);
@@ -11135,6 +11191,7 @@
             const statusId = pendingTeamStatusId;
             const counter = pendingTeamStatusCounter;
             const side = pendingTeamStatusCardSide;
+            const prevStatusForFlute = member ? member.status : null;
             closeTeamStatusOverlay();
             if (!member) return;
             const config = STATUS_COUNTER_CONFIG[statusId];
@@ -11153,6 +11210,7 @@
             member.statusCounter = config ? counter : undefined;
             member.statusCardSide = STATUS_TWO_SIDED[statusId] ? (side === 2 ? 2 : 1) : undefined;
             persistTeamSlotChange(index);
+            if (statusId === 'sleep' && prevStatusForFlute !== 'sleep') fluteSleepCheck(index);
         }
 
         function flipTeamStatusCard() {
@@ -11363,8 +11421,8 @@
                 baseEntry.evolves_to.forEach(name => options.push({ category: 'evolve', name }));
             }
             if (!member.fainted) {
-                if (baseEntry.mega_forms) baseEntry.mega_forms.forEach(name => options.push({ category: 'mega', name }));
-                if (baseEntry.gmax_forms) baseEntry.gmax_forms.forEach(name => options.push({ category: 'gmax', name }));
+                if (baseEntry.mega_forms && canMemberMega(member)) baseEntry.mega_forms.forEach(name => options.push({ category: 'mega', name }));
+                if (baseEntry.gmax_forms && canMemberGmax(member)) baseEntry.gmax_forms.forEach(name => options.push({ category: 'gmax', name }));
             }
             if (baseEntry.legendary_evolve && baseEntry.legendary_evolve.targets) {
                 const cfg = baseEntry.legendary_evolve;
@@ -11392,6 +11450,10 @@
         }
 
         function applyEvolutionChoice(member, baseEntry, choice, hpRule) {
+            if (megaFormRulesApply(member)) { // one Mega Evolution, and one Dynamax or Gigantamax, per Battle
+                if (choice.category === 'mega') battleFormUsed.mega = true;
+                else if (choice.category === 'gmax' || choice.category === 'dynamax') battleFormUsed.dyna = true;
+            }
             if (choice.category === 'dynamax') {
                 member.dynamaxed = true;
                 return;
@@ -12284,6 +12346,7 @@
             const member = (data.team.members || [])[teamDetailIndex];
             if (!member) return;
             const alreadyShown = teamDetailStatusPendingId === statusId;
+            const detailIndexForFlute = teamDetailIndex, prevDetailStatus = member.status;
 
             member.status = statusId === 'none' ? null : statusId;
             const config = STATUS_COUNTER_CONFIG[statusId];
@@ -12299,6 +12362,7 @@
             renderTeamDetailStatusSection(!alreadyShown);
             const pickerEl = document.getElementById('game-team-detail-status-picker');
             if (pickerEl) pickerEl.classList.remove('visible');
+            if (statusId === 'sleep' && prevDetailStatus !== 'sleep') fluteSleepCheck(detailIndexForFlute);
         }
 
         function handleTeamDetailStatusPickerTap(statusId) {
@@ -13240,6 +13304,52 @@
             }
             return false;
         }
+        function cardHerba(cardId) { // Herba Mystica: revive every Fainted Pok\u00e9mon, or raise one Pok\u00e9mon's Level by 1
+            const card = CARDS_BY_ID[cardId];
+            if (!card || isActiveSaveReadOnly()) return;
+            const down = boardTeamIndexes(m => m.fainted).length, canLevel = boardTeamIndexes(m => !m.gymLeaderId && (m.level || 0) < 6).length;
+            if (!down && !canLevel) { showGameToast(card.name + ': nothing on your team needs it right now.'); return; }
+            boardFrontierShow(card.name, 'Choose one: revive all Fainted Pok\u00e9mon on your team, or have a Pok\u00e9mon on your team gain a Level.',
+                `<button class="filter-btn include game-herba-btn" type="button" data-act="revive" data-card-id="${escapeHtml(cardId)}" ${down ? '' : 'disabled'}>Revive All Fainted${down ? ' (' + down + ')' : ''}</button>`
+                + `<button class="filter-btn include game-herba-btn" type="button" data-act="level" data-card-id="${escapeHtml(cardId)}" ${canLevel ? '' : 'disabled'}>Gain a Level</button>`
+                + `<button class="filter-btn exclude game-herba-btn" type="button" data-act="cancel">Cancel</button>`);
+        }
+        function cardHerbaChoose(act, cardId) {
+            closeFrontierOverlay();
+            const card = CARDS_BY_ID[cardId];
+            if (!card || act === 'cancel') return;
+            if (act === 'level') { cardLevelGainPick(cardId); return; }
+            const down = boardTeamIndexes(m => m.fainted);
+            down.forEach(i => reviveTeamMember(i));
+            showGameToast(card.name + ': revived ' + down.length + ' Pok\u00e9mon.');
+            cardEffectDone(cardId);
+        }
+        function fluteSleepCheck(index) { // Pok\u00e9 Flute: a Pok\u00e9mon on the team fell asleep -> roll a d4; on a 4 the Sleep is discarded
+            try {
+                if (isActiveSaveReadOnly()) return;
+                const member = getTeamSlotMember(index);
+                if (!member || member.status !== 'sleep') return;
+                const entry = getLocalPermanentArray().find(e => { const c = e && CARDS_BY_ID[e.cardId]; return !!c && parseInt(c.sleepRollDie, 10) >= 2; });
+                const card = entry && CARDS_BY_ID[entry.cardId];
+                if (!card) return;
+                const die = parseInt(card.sleepRollDie, 10), uid = ensureMemberUid(member);
+                setTimeout(() => boardFrontierShow(card.name, (getBattleMemberDisplay(member).name || 'A Pok\u00e9mon') + ' fell asleep. Roll a d' + die + ': on a ' + die + ', the Sleep Status Condition is discarded.',
+                    `<button class="filter-btn include game-sleeproll-btn" type="button" data-uid="${escapeHtml(uid)}" data-card-id="${escapeHtml(card.id)}">Roll d${die}</button>`
+                    + '<button class="filter-btn exclude game-egg-btn" type="button" data-act="ok">No Thanks</button>'), 300);
+            } catch (err) { /* never get in the way of a Status change */ }
+        }
+        function fluteSleepRoll(uid, cardId) {
+            const card = CARDS_BY_ID[cardId], die = card ? parseInt(card.sleepRollDie, 10) : 0;
+            const members = (getActiveSaveData().team || {}).members || [];
+            const i = members.findIndex(x => x && x.uid === uid), m = members[i];
+            if (!card || !m || !(die >= 2)) { closeFrontierOverlay(); return; }
+            const roll = 1 + Math.floor(Math.random() * die), name = getBattleMemberDisplay(m).name || 'The Pok\u00e9mon';
+            let msg;
+            if (m.status !== 'sleep') msg = name + ' is no longer asleep.';
+            else if (roll === die) { boardClearTeamStatus(i); msg = 'Rolled a ' + roll + '! ' + name + ' woke up \u2014 the Sleep Status Condition was discarded.'; renderTeamGrid(); if (teamDetailIndex === i) renderTeamDetailStatusSection(false); }
+            else msg = 'Rolled a ' + roll + '. ' + name + ' stays asleep.';
+            boardFrontierShow(card.name, msg, '<button class="filter-btn include game-egg-btn" type="button" data-act="ok">OK</button>');
+        }
         function cardGoHome(cardId) { // Escape Rope: the Trainer Figure goes straight to the Current Home; the Movement Phase is left as it was
             const card = CARDS_BY_ID[cardId], me = boardMyPlayer();
             if (!card || !me || !boardCtrl || isActiveSaveReadOnly()) return;
@@ -13307,6 +13417,7 @@
             if (cardMatchesWildLevel(card)) return 'Raise Wild Level';
             if (cardRepelsEncounter(card)) return 'Look for Other Pok\u00e9mon';
             if (card.goHome === 'yes') return 'Return to Current Home';
+            if (card.herbaChoice === 'yes') return 'Choose Effect';
             if (card.cureStatusPick === 'yes') return 'Remove a Status';
             if (card.discardPickItem === 'yes') return 'Take from Discard Pile';
             if (card.levelGain && !card.poolGain) return 'Gain a Level';
@@ -13353,6 +13464,7 @@
             if (cardMatchesWildLevel(card)) { cardBlackFlute(cardId); return; }
             if (cardRepelsEncounter(card)) { cardRepel(cardId); return; }
             if (card.goHome === 'yes') { cardGoHome(cardId); return; }
+            if (card.herbaChoice === 'yes') { cardHerba(cardId); return; }
             if (card.cureStatusPick === 'yes') { cardFullHeal(cardId); return; }
             if (card.discardPickItem === 'yes') { cardItemfinder(cardId); return; }
             if (card.levelGain && !card.poolGain) { cardLevelGainPick(cardId); return; }
@@ -14198,7 +14310,7 @@
             if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
             const newTeamId = index !== null ? getActiveTeamId() : null;
             const isNewOccupant = index !== null && (battleAttackerMemberIndex !== index || battleAttackerTeamId !== newTeamId);
-            if (index === null || isNewOccupant) resetParalyzedSideAt(battleAttackerTeamId, battleAttackerMemberIndex);
+            if (index === null || isNewOccupant) { revertDynamaxAt(battleAttackerTeamId, battleAttackerMemberIndex); resetParalyzedSideAt(battleAttackerTeamId, battleAttackerMemberIndex); }
             if (isNewOccupant) resetParalyzedSideAt(newTeamId, index);
             battleAttackerMemberIndex = index;
             battleAttackerTeamId = newTeamId;
@@ -14230,7 +14342,7 @@
             if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
             const newTeamId = index !== null ? getActiveTeamId() : null;
             const isNewOccupant = index !== null && (battleDefenderMemberIndex !== index || battleDefenderTeamId !== newTeamId);
-            if (index === null || isNewOccupant) resetParalyzedSideAt(battleDefenderTeamId, battleDefenderMemberIndex);
+            if (index === null || isNewOccupant) { revertDynamaxAt(battleDefenderTeamId, battleDefenderMemberIndex); resetParalyzedSideAt(battleDefenderTeamId, battleDefenderMemberIndex); }
             if (isNewOccupant) resetParalyzedSideAt(newTeamId, index);
             battleDefenderMemberIndex = index;
             battleDefenderTeamId = newTeamId;
@@ -15280,7 +15392,7 @@
             if (!beginBtn || !nextBtn || !endBtn) return;
             const attackerIn = !!getBattleSlotMember('attacker');
             const defenderIn = !!getBattleSlotMember('defender');
-            if (battleInProgress && !attackerIn && !defenderIn) battleInProgress = false;
+            if (battleInProgress && !attackerIn && !defenderIn) { battleInProgress = false; battleFormsOnChange(true); }
             watchCardBattle();
             beginBtn.style.display = battleInProgress ? 'none' : '';
             const spectating = isArenaSpectatorOfPlayerBattle(); // two other players' battle: Begin / Next Round / End aren't mine
@@ -15331,6 +15443,7 @@
             if (!getBattleSlotMember('attacker') || !getBattleSlotMember('defender')) return;
             if (lobbyState.role !== null) { requestBattlePhase('begin'); return; } // shared: comes back via applyIncomingArenaState()
             battleInProgress = true;
+            battleFormsOnChange(false);
             syncBattleMusicToArena(); // solo Play a Game session: battle music on start
             battleEnteredThisRound = { attacker: false, defender: false };
             battleRerollsUsed = { attacker: 0, defender: 0 };
@@ -15368,7 +15481,7 @@
             ['attacker', 'defender'].forEach(slot => {
                 const m = lullabyNow[slot] ? getBattleSlotMember(slot) : null;
                 const index = slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
-                if (m && lullabyPutToSleep(m)) { persistTeamSlotChange(index); showBattleArenaNotice((getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' fell asleep to the Radio: PKMN Lullaby! Roll the Status Die and flip the Sleep card.'); }
+                if (m && lullabyPutToSleep(m)) { persistTeamSlotChange(index); if (typeof index === 'number') fluteSleepCheck(index); showBattleArenaNotice((getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ' fell asleep to the Radio: PKMN Lullaby! Roll the Status Die and flip the Sleep card.'); }
             });
             battleRecord.moved = {};
             const trainerSwitched = advanceSoloTrainerIfFainted();
@@ -15408,6 +15521,7 @@
             if (lobbyState.role !== null) { requestBattlePhase('end', noOutcome ? { noOutcome: true } : undefined); return; }
             const earnedLeaderId = (!noOutcome && battleInProgress && !isSoloAttackerSideSpent()) ? getDefeatedGymLeaderIdInDefender() : null;
             battleInProgress = false;
+            battleFormsOnChange(true);
             syncBattleMusicToArena(); // solo Play a Game session: back to Route
             battleDiceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() }; // so the next battle starts clean
             hostClearBattleCards();
@@ -15475,7 +15589,9 @@
                 soloBattleFields = { attacker: null, defender: null };
                 return;
             }
+            const bfPrev2 = battleInProgress;
             battleInProgress = false;
+            battleFormsOnChange(bfPrev2);
             battleEnteredThisRound = { attacker: false, defender: false };
             battleRerollsUsed = { attacker: 0, defender: 0 };
             battleDiceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
@@ -16662,6 +16778,7 @@
         }
 
         function recallBattleAttacker() {
+            revertDynamaxAt(battleAttackerTeamId, battleAttackerMemberIndex); // leaving the Arena
             resetParalyzedSideAt(battleAttackerTeamId, battleAttackerMemberIndex); // leaving the Arena
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
@@ -16978,6 +17095,7 @@
         }
 
         function recallBattleDefender(opts) {
+            revertDynamaxAt(battleDefenderTeamId, battleDefenderMemberIndex); // leaving the Arena
             resetParalyzedSideAt(battleDefenderTeamId, battleDefenderMemberIndex); // leaving the Arena
             battleDefenderMemberIndex = null;
             battleDefenderTeamId = null;
@@ -24147,6 +24265,10 @@
             if (wrBtn) { closeFrontierOverlay(); if (wrBtn.dataset.cardId) { requestBattleFieldEffect(wrBtn.dataset.slot, wrBtn.dataset.cardId); showGameToast((CARDS_BY_ID[wrBtn.dataset.cardId] || {}).name + ' is now in play.'); } return; }
             const esBtn = e.target.closest('.game-expshare-btn');
             if (esBtn) { expShareAdd(esBtn.dataset.uid); return; }
+            const herbaBtn = e.target.closest('.game-herba-btn');
+            if (herbaBtn) { if (!herbaBtn.disabled) cardHerbaChoose(herbaBtn.dataset.act, herbaBtn.dataset.cardId); return; }
+            const sleepBtn = e.target.closest('.game-sleeproll-btn');
+            if (sleepBtn) { fluteSleepRoll(sleepBtn.dataset.uid, sleepBtn.dataset.cardId); return; }
             const eggBtn = e.target.closest('.game-egg-btn');
             if (eggBtn) { if (eggBtn.dataset.act === 'roll') luckyEggRoll(Number(eggBtn.dataset.index), eggBtn.dataset.uid); else closeFrontierOverlay(); return; }
             const amuletBtn = e.target.closest('.game-amulet-btn');
