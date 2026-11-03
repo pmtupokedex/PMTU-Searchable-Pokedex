@@ -4677,7 +4677,7 @@
                     const left = teamSwapPick.max - teamSwapPick.picks.length;
                     sendToBattleBannerText.textContent = 'Tap ' + (left === 1 ? 'a Pok\u00e9mon' : 'up to ' + left + ' Pok\u00e9mon') + ' on your team to trade away.' + (teamSwapPick.picks.length ? ' (' + teamSwapPick.picks.length + ' chosen)' : '');
                 } else if (teamStatusPick) {
-                    sendToBattleBannerText.textContent = 'Soda Pop \u2014 tap a Pok\u00e9mon to remove its Status Condition.';
+                    sendToBattleBannerText.textContent = (teamStatusPick.cardId ? (CARDS_BY_ID[teamStatusPick.cardId] || {}).name || 'Full Heal' : 'Soda Pop') + ' \u2014 tap a Pok\u00e9mon to remove its Status Condition.';
                 } else if (teamRevivePick && teamRevivePick.card) {
                     const rc = CARDS_BY_ID[teamRevivePick.card] || {};
                     sendToBattleBannerText.textContent = rc.name + ' \u2014 tap ' + (teamRevivePick.left === 1 ? 'a Fainted Pok\u00e9mon' : 'up to ' + teamRevivePick.left + ' Fainted Pok\u00e9mon') + ' to Revive.';
@@ -11202,6 +11202,61 @@
             reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax);
 
             persistTeamSlotChange(index);
+            if (delta > 0 && typeof index === 'number') expShareCheck(index);
+        }
+        let expShareQueue = [], expShareShowing = null;
+        function expShareCheck(index) { // Exp. Share: a teammate gained a Level and is now above the holder -> add a counter to the card
+            try {
+                if (isActiveSaveReadOnly()) return;
+                const gainer = getTeamSlotMember(index);
+                if (!gainer) return;
+                const gainerLevel = getBattleMemberTotalLevel(gainer);
+                ((getActiveSaveData().team || {}).members || []).forEach((m, i) => {
+                    if (!m || i === index) return;
+                    const c = m.attachCardId ? CARDS_BY_ID[m.attachCardId] : null;
+                    if (!c || !(parseInt(c.expShareLevel, 10) >= 1) || gainerLevel <= getBattleMemberTotalLevel(m)) return;
+                    expShareQueue.push({ uid: ensureMemberUid(m), gainer: getBattleMemberDisplay(gainer).name || 'A Pok\u00e9mon' });
+                });
+                if (expShareQueue.length) setTimeout(expShareNext, 400);
+            } catch (err) { /* never get in the way of a Level change */ }
+        }
+        function expShareNext() {
+            if (expShareShowing || !expShareQueue.length) return;
+            const ov = document.getElementById('game-frontier-overlay');
+            if (ov && ov.classList.contains('visible')) { setTimeout(expShareNext, 600); return; } // another prompt is open: wait for it
+            const e = expShareQueue.shift();
+            const members = (getActiveSaveData().team || {}).members || [];
+            const m = members.find(x => x && x.uid === e.uid);
+            const c = m && m.attachCardId ? CARDS_BY_ID[m.attachCardId] : null;
+            if (!c || !(parseInt(c.expShareLevel, 10) >= 1)) { expShareNext(); return; }
+            expShareShowing = e;
+            const need = parseInt(c.expShareLevel, 10), have = m.attachCounter || 0;
+            const name = getBattleMemberDisplay(m).name || 'Pok\u00e9mon';
+            boardFrontierShow(c.name, e.gainer + ' gained a Level and is now a higher Level than ' + name + '. Add a counter to ' + c.name + ' (' + have + ' \u2192 ' + (have + 1) + ' of ' + need + ').' + (have + 1 >= need ? ' ' + name + ' gains a Level and the counters are removed.' : ''),
+                `<button class="filter-btn include game-expshare-btn" type="button" data-uid="${escapeHtml(e.uid)}">Add Counter</button>`);
+        }
+        function expShareAdd(uid) {
+            closeFrontierOverlay();
+            expShareShowing = null;
+            const members = (getActiveSaveData().team || {}).members || [];
+            const i = members.findIndex(x => x && x.uid === uid), m = members[i];
+            const c = m && m.attachCardId ? CARDS_BY_ID[m.attachCardId] : null;
+            if (c && parseInt(c.expShareLevel, 10) >= 1) {
+                const need = parseInt(c.expShareLevel, 10), name = getBattleMemberDisplay(m).name || 'Pok\u00e9mon';
+                m.attachCounter = (m.attachCounter || 0) + 1;
+                if (m.attachCounter >= need) {
+                    m.attachCounter = 0;
+                    persistTeamSlotChange(i);
+                    adjustTeamMemberLevel(i, 1);
+                    showGameToast(c.name + ': ' + name + ' gained a Level and the counters were removed.');
+                } else {
+                    persistTeamSlotChange(i);
+                    showGameToast(c.name + ': counter added (' + m.attachCounter + ' of ' + need + ').');
+                }
+                renderTeamGrid();
+                if (teamDetailIndex === i) { renderTeamDetailCardsSection(); renderTeamDetailLevelSection(); renderTeamDetailHpSection(); }
+            }
+            setTimeout(expShareNext, 400);
         }
 
         let pendingTeamEvolutionIndex = null;
@@ -13176,7 +13231,52 @@
                 return false;
             }
             if (vendingInMyBattle()) { showGameToast(card.name + ' is an Action Card \u2014 it can only be played outside of a Battle.'); return true; }
+            if (card.requireCitySpace === 'yes') { // Treasure: only while standing on a City (can only be checked when the virtual board is in use)
+                const me = boardMyPlayer(), sp = (me && boardCtrl && boardCtrl.spaceOf) ? boardCtrl.spaceOf(me.id) : null;
+                if (me && boardCtrl && !(sp && sp.type === 'city')) { showGameToast(card.name + ' can only be played while you are on a City space.'); return true; }
+            }
+            if (card.goHome === 'yes') { // Escape Rope needs the board to move the Trainer Figure
+                if (!boardCtrl || !boardMyPlayer()) { showGameToast(card.name + ' needs the virtual game board \u2014 move your Trainer Figure to your Current Home yourself.'); return true; }
+            }
             return false;
+        }
+        function cardGoHome(cardId) { // Escape Rope: the Trainer Figure goes straight to the Current Home; the Movement Phase is left as it was
+            const card = CARDS_BY_ID[cardId], me = boardMyPlayer();
+            if (!card || !me || !boardCtrl || isActiveSaveReadOnly()) return;
+            const home = boardCtrl.homeOf(me.id), here = boardCtrl.spaceOf(me.id);
+            if (!home) { showGameToast(card.name + ': you have no Current Home to return to.'); return; }
+            if (here && here.id === home.id) { showGameToast(card.name + ': you are already at your Current Home (' + (home.label || 'City') + ').'); return; }
+            try { boardCtrl.hideAction(); } catch (e) { /* nothing showing */ }
+            if (lobbyState.role === 'guest') boardSend({ type: 'board-jump', to: '@home', land: false });
+            else boardCtrl.handleMessage({ type: 'board-jump', player: me.id, to: '@home', land: false });
+            showGameToast(card.name + ': your Trainer Figure returned to your Current Home' + (home.label ? ', ' + home.label : '') + '.');
+            cardEffectDone(cardId);
+        }
+        function cardFullHeal(cardId) { // Full Heal: pick a Pok\u00e9mon in the Team Tracker and remove its Status Condition
+            const card = CARDS_BY_ID[cardId];
+            if (!card || isActiveSaveReadOnly()) return;
+            if (!boardTeamIndexes(m => m.status).length) { showGameToast(card.name + ': none of your Pok\u00e9mon have a Status Condition.'); return; }
+            if (vendingTeamBusy() || teamRevivePick || teamStatusPick || teamLevelPick) { showGameToast('Finish what you are doing in Team Tracker first.'); return; }
+            openGamePanel();
+            setGameScreen('team');
+            teamStatusPick = { cardId };
+            teamSendToBattleModeActive = true; // borrows the send-to-battle mode and its banner, like Soda Pop
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        function cardItemfinder(cardId) { // Itemfinder: one non-Key Item card from the Item discard pile goes to the hand
+            const card = CARDS_BY_ID[cardId];
+            if (!card || isActiveSaveReadOnly()) return;
+            if (!isVirtualDecksEnabledForActiveSave()) {
+                showGameToast(card.name + ': take one card from your physical Item discard pile (not a Key Item) and add it to your hand.');
+                cardEffectDone(cardId);
+                return;
+            }
+            boardShowHand();
+            deckLookPendingMode = { mode: 'frontier-pick', deck: 'Item Deck', at: Date.now(), onDone: null, onGained: () => cardEffectDone(cardId), discardOnly: true, label: card.name };
+            requestLookAtTopCards('Item Deck', 100000); // clamped to the deck's size Host-side; only the discard pile is shown
         }
         function cardRepelsEncounter(card) { return !!card && card.repelEncounter === 'yes'; } // Repel
         function repelContext() { // a revealed wild Pok\u00e9mon waiting in the Arena, with no Battle or Catch attempt begun yet
@@ -13206,6 +13306,9 @@
             if (cardEscapesBattle(card)) return 'End the Battle';
             if (cardMatchesWildLevel(card)) return 'Raise Wild Level';
             if (cardRepelsEncounter(card)) return 'Look for Other Pok\u00e9mon';
+            if (card.goHome === 'yes') return 'Return to Current Home';
+            if (card.cureStatusPick === 'yes') return 'Remove a Status';
+            if (card.discardPickItem === 'yes') return 'Take from Discard Pile';
             if (card.levelGain && !card.poolGain) return 'Gain a Level';
             if (cardReviveCount(card)) return cardReviveCount(card) === 1 ? 'Revive a Pok\u00e9mon' : 'Revive up to ' + cardReviveCount(card) + ' Pok\u00e9mon';
             if (card.poolGain && card.levelGain) return 'Choose Reward';
@@ -13249,6 +13352,9 @@
             if (cardEscapesBattle(card)) { cardEscapeBattle(cardId); return; }
             if (cardMatchesWildLevel(card)) { cardBlackFlute(cardId); return; }
             if (cardRepelsEncounter(card)) { cardRepel(cardId); return; }
+            if (card.goHome === 'yes') { cardGoHome(cardId); return; }
+            if (card.cureStatusPick === 'yes') { cardFullHeal(cardId); return; }
+            if (card.discardPickItem === 'yes') { cardItemfinder(cardId); return; }
             if (card.levelGain && !card.poolGain) { cardLevelGainPick(cardId); return; }
             if (cardReviveCount(card)) { cardRevivePick(cardId); return; }
             if (cardDoublesMovementRoll(card)) {
@@ -14080,6 +14186,14 @@
             });
         }
 
+        function weatherRockOnEnter(slot, member) { // Weather Rock: the holder entering the Arena may set a weather Field Move Effect for free
+            const card = member && member.attachCardId ? CARDS_BY_ID[member.attachCardId] : null;
+            const ids = card && Array.isArray(card.enterArenaField) ? card.enterArenaField.filter(id => CARDS_BY_ID[id]) : [];
+            if (!ids.length || isActiveSaveReadOnly()) return;
+            const btns = ids.map(id => `<button class="filter-btn include game-weatherrock-btn" type="button" data-slot="${slot}" data-card-id="${escapeHtml(id)}">${escapeHtml(CARDS_BY_ID[id].name)}</button>`).join('')
+                + '<button class="filter-btn exclude game-weatherrock-btn" type="button" data-act="skip">No Thanks</button>';
+            setTimeout(() => boardFrontierShow(card.name, (getBattleMemberDisplay(member).name || 'Your Pok\u00e9mon') + ' entered the Arena holding ' + card.name + '. You may play one of these Field Move Effect cards for free:', '<div class="game-frontier-choices">' + btns + '</div>'), 300);
+        }
         function setBattleAttackerIndex(index) {
             if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
             const newTeamId = index !== null ? getActiveTeamId() : null;
@@ -14100,7 +14214,7 @@
                 if (index === null || isNewOccupant) { battleRerollsUsed.attacker = 0; battleDiceCounts.attacker = makeDefaultBattleDiceCounts(); }
             }
             if (isNewOccupant && lobbyState.role === null) noteSoloBattleParticipants();
-            if (isNewOccupant) playMemberCry((getActiveSaveData().team.members || [])[index]);
+            if (isNewOccupant) { playMemberCry((getActiveSaveData().team.members || [])[index]); weatherRockOnEnter('attacker', (getActiveSaveData().team.members || [])[index]); }
             if (index !== null && battleDefenderMemberIndex === index) {
                 battleDefenderMemberIndex = null;
                 battleDefenderTeamId = null;
@@ -14129,7 +14243,7 @@
             battleWildPokemon = null;
             resetBattleCalcResult('defender');
             clearBattleDiceResults('defender');
-            if (isNewOccupant) playMemberCry((getActiveSaveData().team.members || [])[index]);
+            if (isNewOccupant) { playMemberCry((getActiveSaveData().team.members || [])[index]); weatherRockOnEnter('defender', (getActiveSaveData().team.members || [])[index]); }
             if (index !== null && battleAttackerMemberIndex === index) {
                 battleAttackerMemberIndex = null;
                 battleAttackerTeamId = null;
@@ -23466,6 +23580,7 @@
             const who = getBattleMemberDisplay(m).name || 'Pokémon';
             boardClearTeamStatus(index);
             clearTeamStatusPick();
+            if (pick.cardId) { showGameToast((CARDS_BY_ID[pick.cardId] || {}).name + ': ' + who + '’s Status Condition was removed.'); cardEffectDone(pick.cardId); return; }
             requestPermanentDiscard(pick.instanceId);
             showGameToast('Soda Pop: ' + who + '’s Status Condition was removed.');
         }
@@ -24028,6 +24143,10 @@
                 }
                 return;
             }
+            const wrBtn = e.target.closest('.game-weatherrock-btn');
+            if (wrBtn) { closeFrontierOverlay(); if (wrBtn.dataset.cardId) { requestBattleFieldEffect(wrBtn.dataset.slot, wrBtn.dataset.cardId); showGameToast((CARDS_BY_ID[wrBtn.dataset.cardId] || {}).name + ' is now in play.'); } return; }
+            const esBtn = e.target.closest('.game-expshare-btn');
+            if (esBtn) { expShareAdd(esBtn.dataset.uid); return; }
             const eggBtn = e.target.closest('.game-egg-btn');
             if (eggBtn) { if (eggBtn.dataset.act === 'roll') luckyEggRoll(Number(eggBtn.dataset.index), eggBtn.dataset.uid); else closeFrontierOverlay(); return; }
             const amuletBtn = e.target.closest('.game-amulet-btn');
@@ -24495,15 +24614,20 @@
         function boardFrontierOpenItemPicker(deckName, deckCards, pend) {
             const info = getDeckInfoMap()[deckName];
             const deckOnly = !!pend.deckOnly; // Game Corner's jackpot: the deck alone, no discard pile, and it isn't the Legendary claim
-            if (!deckCards.length && (deckOnly || !((info && info.discardPile) || []).length)) {
+            const discardOnly = !!pend.discardOnly; // Itemfinder: the discard pile alone (Key Items can't be taken)
+            if (discardOnly && !((info && info.discardPile) || []).length) {
+                boardFrontierAck(pend.label || 'Itemfinder', 'The Item discard pile is empty, so there is no card to take.', null);
+                return;
+            }
+            if (!discardOnly && !deckCards.length && (deckOnly || !((info && info.discardPile) || []).length)) {
                 boardFrontierAck(pend.label || 'Battle Frontier', deckOnly ? 'The Item deck is empty, so there is no card to take.' : 'The Item deck and the Item discard pile are both empty, so there is no card to take.', pend.onDone || null);
                 return;
             }
-            boardFrontierPick = { deck: deckName, deckCards: deckCards.slice(), onDone: pend.onDone || null, onGained: pend.onGained || null, deckOnly, label: pend.label || 'Battle Frontier' };
+            boardFrontierPick = { deck: deckName, deckCards: deckCards.slice(), onDone: pend.onDone || null, onGained: pend.onGained || null, deckOnly, discardOnly, label: pend.label || 'Battle Frontier' };
             const ov = document.getElementById('game-frontier-pick-overlay');
             const pt = ov.querySelector('.game-confirm-title'), ps = ov.querySelector('.game-confirm-subtext');
-            if (pt) pt.textContent = deckOnly ? pend.label : 'Battle Frontier \u2014 Legendary reward';
-            if (ps) ps.textContent = deckOnly ? 'Choose any one card from the Item deck. Tap a card, then Add to Hand. The deck is shuffled afterwards.' : 'Choose one Item card from the Item discard pile or the Item deck. Tap a card, then Add to Hand.';
+            if (pt) pt.textContent = (deckOnly || discardOnly) ? pend.label : 'Battle Frontier \u2014 Legendary reward';
+            if (ps) ps.textContent = discardOnly ? 'Choose one card from the Item discard pile (not a Key Item). Tap a card, then Add to Hand.' : deckOnly ? 'Choose any one card from the Item deck. Tap a card, then Add to Hand. The deck is shuffled afterwards.' : 'Choose one Item card from the Item discard pile or the Item deck. Tap a card, then Add to Hand.';
             renderFrontierPicker();
             document.getElementById('game-frontier-pick-overlay').classList.add('visible');
         }
@@ -24540,7 +24664,7 @@
             const discard = (info && info.discardPile) || [];
             const nameOf = id => { const c = CARDS_BY_ID[id]; return c ? c.name : String(id); };
             const deck = st.deckCards.slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b))); // sorted, so the deck's order isn't shown
-            body.innerHTML = (st.deckOnly ? '' : frontierPileHtml('Item Discard Pile', 'discard', discard)) + frontierPileHtml('Item Deck', 'deck', deck);
+            body.innerHTML = (st.deckOnly ? '' : frontierPileHtml('Item Discard Pile', 'discard', discard)) + (st.discardOnly ? '' : frontierPileHtml('Item Deck', 'deck', deck));
         }
         function boardFrontierTakeItem(source, cardId) {
             const st = boardFrontierPick;
@@ -24549,7 +24673,7 @@
             else { requestLookAddToHand(st.deck, cardId); requestShuffleDeck(st.deck); }
             const card = CARDS_BY_ID[cardId], done = st.onGained || st.onDone;
             closeFrontierPicker();
-            if (!st.deckOnly) boardFrontierMarkLegendaryClaimed();
+            if (!st.deckOnly && !st.discardOnly) boardFrontierMarkLegendaryClaimed();
             showGameToast((st.label || 'Battle Frontier') + ': added ' + (card ? card.name : 'the card') + ' to your hand' + (source === 'deck' ? ' (the Item deck was shuffled).' : '.'));
             if (done) done();
         }
