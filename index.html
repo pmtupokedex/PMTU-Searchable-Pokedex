@@ -30950,6 +30950,22 @@
                 + `<div class="gbd-total"><span class="gbd-total-label">Attack Total</span><span class="gbd-total-num">${breakdown.total}</span></div>`;
         }
 
+        function getBattleGrantedMoveEffects(slotName) { // Move Effects granted from outside the move itself (a Battle Card in play, an attached card): ids from effects.json
+            const out = [];
+            getBattleBonusCards(slotName).forEach(card => {
+                (Array.isArray(card.grantsMoveEffects) ? card.grantsMoveEffects : []).forEach(id => { if (typeof id === 'string' && id && !out.includes(id)) out.push(id); });
+            });
+            return out;
+        }
+        function buildGrantedMoveEffectsHtml(ids, withPlus) {
+            if (!ids.length || EFFECTS_STATE !== 'ok' || !EFFECTS_DATA) return '';
+            const items = ids.map(id => {
+                const ef = EFFECTS_DATA.effects[id];
+                if (!ef || !ef.icon) return `<button type="button" class="pim-icon-btn" data-pim-effect="${escapeHtml(id)}"><span class="pim-chip-missing">${escapeHtml((ef && ef.name) || id)}</span></button>`;
+                return `<button type="button" class="pim-icon-btn" data-pim-effect="${escapeHtml(id)}" aria-label="${escapeHtml(ef.name || id)}"><img src="${escapeHtml(ef.icon)}" alt="${escapeHtml(ef.name || id)}" title="${escapeHtml(ef.name || id)}" loading="lazy" decoding="async"></button>`;
+            }).join('');
+            return `<div class="gbd-extra-row">${withPlus ? '<span class="gbd-extra-plus">+</span>' : ''}<div class="pim-move-icons gbd-extra-icons">${items}</div></div>`;
+        }
         function renderBattleMoveDetails(slotName) {
             if (!moveEffectsPanelReady) return;
             const box = document.getElementById(`game-battle-${slotName}-move-details`);
@@ -30957,7 +30973,22 @@
             const moveName = battleCalcMoveName[slotName];
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
             const breakdown = moveName ? computeBattleMoveBreakdown(slotName, moveName, battleCalcBaseMove[slotName]) : null;
-            if (!moveName || (!entry && !breakdown)) {
+            const grantedIds = getBattleGrantedMoveEffects(slotName);
+            const noMove = !moveName || (!entry && !breakdown);
+            if (noMove && grantedIds.length && EFFECTS_STATE === 'ok') { // no Move picked, but a card still grants an effect this round
+                if (!box.querySelector('.gbd-left')) box.innerHTML = '<div class="gbd-inner"><div class="gbd-left"></div><div class="gbd-right"></div></div>';
+                const key0 = `|${EFFECTS_STATE}|0|${grantedIds.join(',')}`;
+                if (box.dataset.moveKey !== key0) {
+                    box.dataset.moveKey = key0;
+                    hideEffectToast();
+                    box.querySelector('.gbd-left').innerHTML = buildGrantedMoveEffectsHtml(grantedIds, false);
+                }
+                const r0 = box.querySelector('.gbd-right');
+                r0.innerHTML = ''; r0.hidden = true;
+                box.hidden = false;
+                return;
+            }
+            if (noMove) {
                 if (!box.hidden) hideEffectToast();
                 box.dataset.moveKey = '';
                 box.hidden = true;
@@ -30967,14 +30998,15 @@
             if (!box.querySelector('.gbd-left')) box.innerHTML = '<div class="gbd-inner"><div class="gbd-left"></div><div class="gbd-right"></div></div>';
             const left = box.querySelector('.gbd-left');
             const right = box.querySelector('.gbd-right');
-            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}`;
+            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}`;
             if (box.dataset.moveKey !== key) {
                 box.dataset.moveKey = key;
                 hideEffectToast();
                 let detail = '';
                 if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false }).bodyHtml;
                 else if (entry && EFFECTS_STATE === 'failed') detail = '<div class="pim-note">effects.json could not be loaded (is it in the repo root?)</div>';
-                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry) : ''}</div>${detail}`;
+                const hasStd = !!(entry && EFFECTS_STATE === 'ok' && buildMoveEffectBodyHtml(entry, { showTbd: false }).iconsHtml);
+                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry) : ''}</div>${detail}${buildGrantedMoveEffectsHtml(grantedIds, hasStd)}`;
             }
             right.innerHTML = breakdown ? buildBattleCalcHtml(breakdown) : '';
             right.hidden = !breakdown;
