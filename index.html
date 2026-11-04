@@ -30964,7 +30964,7 @@
                 if (!ef || !ef.icon) return `<button type="button" class="pim-icon-btn" data-pim-effect="${escapeHtml(id)}"><span class="pim-chip-missing">${escapeHtml((ef && ef.name) || id)}</span></button>`;
                 return `<button type="button" class="pim-icon-btn" data-pim-effect="${escapeHtml(id)}" aria-label="${escapeHtml(ef.name || id)}"><img src="${escapeHtml(ef.icon)}" alt="${escapeHtml(ef.name || id)}" title="${escapeHtml(ef.name || id)}" loading="lazy" decoding="async"></button>`;
             }).join('');
-            return `<div class="gbd-extra-row">${withPlus ? '<span class="gbd-extra-plus">+</span>' : ''}<div class="pim-move-icons gbd-extra-icons">${items}</div></div>`;
+            return `<span class="gbd-extra-group">${withPlus ? '<span class="gbd-extra-plus">+</span>' : ''}${items}</span>`; // sits at the end of the move's own icon row (wraps to a new line only if it doesn't fit)
         }
         function renderBattleMoveDetails(slotName) {
             if (!moveEffectsPanelReady) return;
@@ -30981,7 +30981,7 @@
                 if (box.dataset.moveKey !== key0) {
                     box.dataset.moveKey = key0;
                     hideEffectToast();
-                    box.querySelector('.gbd-left').innerHTML = buildGrantedMoveEffectsHtml(grantedIds, false);
+                    box.querySelector('.gbd-left').innerHTML = `<div class="pim-move-icons gbd-icons-row">${buildGrantedMoveEffectsHtml(grantedIds, false)}</div>`;
                 }
                 const r0 = box.querySelector('.gbd-right');
                 r0.innerHTML = ''; r0.hidden = true;
@@ -31005,8 +31005,16 @@
                 let detail = '';
                 if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false }).bodyHtml;
                 else if (entry && EFFECTS_STATE === 'failed') detail = '<div class="pim-note">effects.json could not be loaded (is it in the repo root?)</div>';
-                const hasStd = !!(entry && EFFECTS_STATE === 'ok' && buildMoveEffectBodyHtml(entry, { showTbd: false }).iconsHtml);
-                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry) : ''}</div>${detail}${buildGrantedMoveEffectsHtml(grantedIds, hasStd)}`;
+                let body = detail;
+                if (entry && EFFECTS_STATE === 'ok') {
+                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false });
+                    const extra = buildGrantedMoveEffectsHtml(grantedIds, !!parts.iconsHtml);
+                    // the granted effects join the move's own icon row (right-aligned); the row wraps if they don't fit
+                    body = ((parts.iconsHtml || extra) ? `<div class="pim-move-icons gbd-icons-row">${parts.iconsHtml}${extra}</div>` : '') + parts.uniqueHtml + parts.tableHtml;
+                } else if (grantedIds.length) {
+                    body += `<div class="pim-move-icons gbd-icons-row">${buildGrantedMoveEffectsHtml(grantedIds, false)}</div>`;
+                }
+                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry) : ''}</div>${body}`;
             }
             right.innerHTML = breakdown ? buildBattleCalcHtml(breakdown) : '';
             right.hidden = !breakdown;
