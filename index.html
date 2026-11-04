@@ -30782,7 +30782,9 @@
                 refreshMoveValidationColumns();
             });
 
-        function getMoveIconItems(entry) {
+        const BATTLE_DIE_UPGRADE = { d4: 'd6', d6: 'd8' }; // Dire Hit: one stage up (a d8 is already the top, so it stays)
+
+        function getMoveIconItems(entry, opts) {
             const items = [];
             const effects = EFFECTS_DATA.effects, codes = EFFECTS_DATA.codes;
             const fromEffect = (id, label) => {
@@ -30792,7 +30794,13 @@
                 return { src: ef.icon, title: ef.name, effectId: id };
             };
             if (MOVE_ICONS_SHOW_DIE_AND_LEVEL) {
-                if (entry.die === 'd4' || entry.die === 'd8') items.push(fromEffect(entry.die, entry.die));
+                const upgradedDie = (opts && opts.upgradeDie) ? BATTLE_DIE_UPGRADE[entry.die || 'd6'] : null; // a move with no listed die uses the d6
+                if (entry.die === 'd4' || entry.die === 'd8') {
+                    const dieItem = fromEffect(entry.die, entry.die);
+                    if (upgradedDie) dieItem.replaced = true; // shown darkened: the card replaced it
+                    items.push(dieItem);
+                }
+                if (upgradedDie) items.push(fromEffect(upgradedDie, upgradedDie));
                 const str = entry.attack_strength;
                 if (str && str.mode === 'half_level') {
                     items.push(fromEffect(str.of === 'target' ? 'halflevel_opp' : 'halflevel_self', 'half_level ' + str.of));
@@ -30880,13 +30888,14 @@
             const showTbd = !opts || opts.showTbd !== false;
             const dataAttr = it => it.code ? ` data-pim-code="${escapeHtml(it.code)}"`
                 : it.effectId ? ` data-pim-effect="${escapeHtml(it.effectId)}"` : '';
-            const iconsHtml = getMoveIconItems(entry).map(it => {
+            const iconsHtml = getMoveIconItems(entry, opts).map(it => {
                 const attr = dataAttr(it);
+                const btnClass = it.replaced ? 'pim-icon-btn pim-icon-replaced' : 'pim-icon-btn';
                 if (it.missing) {
                     const chip = `<span class="pim-chip-missing">${escapeHtml(it.missing)}</span>`;
-                    return attr ? `<button type="button" class="pim-icon-btn"${attr}>${chip}</button>` : chip;
+                    return attr ? `<button type="button" class="${btnClass}"${attr}>${chip}</button>` : chip;
                 }
-                return `<button type="button" class="pim-icon-btn"${attr} aria-label="${escapeHtml(it.title)}">`
+                return `<button type="button" class="${btnClass}"${attr} aria-label="${escapeHtml(it.title)}">`
                      + `<img src="${escapeHtml(it.src)}" alt="${escapeHtml(it.title)}" title="${escapeHtml(it.title)}" loading="lazy" decoding="async"></button>`;
             }).join('');
             const unique = typeof entry.uniqueEffect === 'string' ? entry.uniqueEffect.trim() : '';
@@ -30966,6 +30975,9 @@
             }).join('');
             return `<span class="gbd-extra-group">${withPlus ? '<span class="gbd-extra-plus">+</span>' : ''}${items}</span>`; // sits at the end of the move's own icon row (wraps to a new line only if it doesn't fit)
         }
+        function battleSlotUpgradesMoveDie(slotName) { // a Battle Card in play (Dire Hit) bumps the move's Attack Die up one stage
+            return getBattleBonusCards(slotName).some(card => parseBattleRuleFlag(card.upgradeMoveDie, false));
+        }
         function renderBattleMoveDetails(slotName) {
             if (!moveEffectsPanelReady) return;
             const box = document.getElementById(`game-battle-${slotName}-move-details`);
@@ -30974,6 +30986,7 @@
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
             const breakdown = moveName ? computeBattleMoveBreakdown(slotName, moveName, battleCalcBaseMove[slotName]) : null;
             const grantedIds = getBattleGrantedMoveEffects(slotName);
+            const upgradeDie = battleSlotUpgradesMoveDie(slotName);
             const noMove = !moveName || (!entry && !breakdown);
             if (noMove && grantedIds.length && EFFECTS_STATE === 'ok') { // no Move picked, but a card still grants an effect this round
                 if (!box.querySelector('.gbd-left')) box.innerHTML = '<div class="gbd-inner"><div class="gbd-left"></div><div class="gbd-right"></div></div>';
@@ -30998,16 +31011,16 @@
             if (!box.querySelector('.gbd-left')) box.innerHTML = '<div class="gbd-inner"><div class="gbd-left"></div><div class="gbd-right"></div></div>';
             const left = box.querySelector('.gbd-left');
             const right = box.querySelector('.gbd-right');
-            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}`;
+            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|${upgradeDie ? 'up' : ''}`;
             if (box.dataset.moveKey !== key) {
                 box.dataset.moveKey = key;
                 hideEffectToast();
                 let detail = '';
-                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false }).bodyHtml;
+                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie }).bodyHtml;
                 else if (entry && EFFECTS_STATE === 'failed') detail = '<div class="pim-note">effects.json could not be loaded (is it in the repo root?)</div>';
                 let body = detail;
                 if (entry && EFFECTS_STATE === 'ok') {
-                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false });
+                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie });
                     const extra = buildGrantedMoveEffectsHtml(grantedIds, !!parts.iconsHtml);
                     // the granted effects join the move's own icon row (right-aligned); the row wraps if they don't fit
                     body = ((parts.iconsHtml || extra) ? `<div class="pim-move-icons gbd-icons-row">${parts.iconsHtml}${extra}</div>` : '') + parts.uniqueHtml + parts.tableHtml;
