@@ -10415,6 +10415,8 @@
             gmax: 'https://dl.dropboxusercontent.com/scl/fi/rwjaflyfqnxzot2ooa55x/evo_gmax.png?rlkey=8e85bdzjdnckgps7bt4nsgmj9&st=6qla9nbb&dl=1',
             activeMega: 'https://dl.dropboxusercontent.com/scl/fi/ttfbrvc2g7jh5cqk7fay1/evo_mega_active.png?rlkey=jj5rur7igdjhus9wi4nkak6ro&st=fhplglrd&dl=1',
             activeGmax: 'https://dl.dropboxusercontent.com/scl/fi/8v4o0iq9bc4fh1fowxvmk/evo_gmax_active.png?rlkey=sr12w0oxozfnie3i25o5wdsyj&st=gpla4ovy&dl=1',
+            tera: 'https://dl.dropboxusercontent.com/scl/fi/s9rur9vgxxfkv1331days/evo_tera_able.png?rlkey=9xph2i1xkdamuk88jm5liaahr&st=xcz55som&dl=1',
+            activeTera: 'https://dl.dropboxusercontent.com/scl/fi/86uom4ery5qiwi3wntbf8/evo_tera_active.png?rlkey=jol1y1o72nz8r9radkwzg1oze&st=fhplglrd&dl=1',
         };
 
         EVOLUTION_MODE_IMAGES.dynamax = EVOLUTION_MODE_IMAGES.unable;
@@ -10427,9 +10429,51 @@
             });
         }
 
-        let battleFormUsed = { mega: false, dyna: false }; // this Battle: one Mega Evolution and one Dynamax / Gigantamax per player
+        let battleFormUsed = { mega: false, dyna: false, tera: false }; // this Battle: one Mega Evolution and one Dynamax / Gigantamax per player
         function isMegaBraceletInPlay() {
             return getLocalPermanentArray().some(entry => { const card = CARDS_BY_ID[entry.cardId]; return !!card && card.name === 'Mega Bracelet'; });
+        }
+        // ---- Terastallization ----
+        // member.terastallized = true while a Pok\u00e9mon is Terastallized. It lasts until the Battle ends, and only while its Tera Type card stays attached.
+        // battleFormUsed.tera = this player has already Terastallized a Pok\u00e9mon this Battle (it stays set even if that Pok\u00e9mon faints or reverts).
+        function getMemberTeraCard(member) { // the Tera Type card attached to this Pok\u00e9mon, if any
+            if (!member) return null;
+            for (const id of [member.attachCardId, member.natureCardId]) {
+                const c = id ? CARDS_BY_ID[id] : null;
+                if (c && c.cardDeck === 'Tera Type Deck') return c;
+            }
+            return null;
+        }
+        function isMemberTerastallized(member) { return !!member && member.terastallized === true && !!getMemberTeraCard(member); }
+        function isBattleMoveSelectionOpen() { // from the start of a Round until either side has chosen a Move
+            return battleInProgress && !battleCalcMoveName.attacker && !battleCalcMoveName.defender;
+        }
+        function canMemberTera(member) {
+            if (!member || member.fainted || member.terastallized || member.gymLeaderId) return false;
+            if (member === battleWildPokemon || member === battleTrainerPokemon) return false;
+            if (!getMemberTeraCard(member)) return false;
+            return !battleFormUsed.tera && memberInMyArena(member) && isBattleMoveSelectionOpen();
+        }
+        function endTerastallizationOnTeam() { // the Battle ended: every Terastallized Pok\u00e9mon goes back to normal
+            let any = false;
+            try {
+                (((getActiveSaveData().team || {}).members) || []).forEach((m, i) => {
+                    if (m && m.terastallized) { m.terastallized = false; any = true; persistTeamSlotChange(i); }
+                });
+            } catch (e) { /* save not ready */ }
+            return any;
+        }
+        let teraWindowSignature = '', teraWindowRefreshTimer = null;
+        function scheduleTeraWindowRefresh() { // the Tera badge appears / disappears as Moves are chosen, Rounds start and Pok\u00e9mon enter the Arena
+            clearTimeout(teraWindowRefreshTimer);
+            teraWindowRefreshTimer = setTimeout(() => {
+                const sig = [isBattleMoveSelectionOpen(), battleAttackerMemberIndex, battleDefenderMemberIndex, battleFormUsed.tera].join('|');
+                if (sig === teraWindowSignature) return;
+                teraWindowSignature = sig;
+                try {
+                    if ((((getActiveSaveData().team || {}).members) || []).some(m => m && getMemberTeraCard(m))) renderTeamGrid();
+                } catch (e) { /* not on screen */ }
+            }, 0);
         }
         function megaFormRulesApply(member) { // virtual-card saves: Mega Stone / Mega Bracelet / Dynamax Band are enforced for the player's own Pok\u00e9mon
             return !!member && isVirtualDecksEnabledForActiveSave() && member !== battleWildPokemon && member !== battleTrainerPokemon && !member.gymLeaderId;
@@ -10472,9 +10516,11 @@
             return true;
         }
         function battleFormsOnChange(wasInProgress) { // a Battle began or ended: everything resets
-            if (!wasInProgress && battleInProgress) { battleFormUsed = { mega: false, dyna: false }; return; }
+            if (!wasInProgress && battleInProgress) { battleFormUsed = { mega: false, dyna: false, tera: false }; scheduleTeraWindowRefresh(); return; }
             if (!(wasInProgress && !battleInProgress)) return;
-            battleFormUsed = { mega: false, dyna: false };
+            battleFormUsed = { mega: false, dyna: false, tera: false };
+            if (!isActiveSaveReadOnly() && endTerastallizationOnTeam()) showGameToast('Terastallization ended with the Battle.');
+            scheduleTeraWindowRefresh();
             if (!isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return;
             let any = false;
             (((getActiveSaveData().team || {}).members) || []).forEach((m, i) => { if (m && !m.gymLeaderId && revertTemporaryForm(i, m, false)) any = true; });
@@ -10500,8 +10546,10 @@
             });
         }
 
-        function computeTeamEvolutionState(member) {
-            if (!member) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], dimmed: false };
+        // kinds[] runs parallel to icons[]: what each cycling image stands for ('evolve', 'mega', 'gmax', 'legendary', 'dynamax', 'tera', or 'active-...').
+        function computeBaseEvolutionState(member) {
+            const unableState = (dimmed) => ({ mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], kinds: ['unable'], dimmed: !!dimmed });
+            if (!member) return unableState(false);
 
             if (member.formOverride) {
                 const overrideEntry = POKEMON_BY_NAME[member.formOverride];
@@ -10513,6 +10561,7 @@
                     return {
                         mode: 'active-legendary',
                         icons: [legendaryTarget.iconUrl || EVOLUTION_MODE_IMAGES.unable],
+                        kinds: ['active-legendary'],
                         dimmed: false,
                     };
                 }
@@ -10520,16 +10569,17 @@
                 return {
                     mode: isGmax ? 'active-gmax' : 'active-mega',
                     icons: [isGmax ? EVOLUTION_MODE_IMAGES.activeGmax : EVOLUTION_MODE_IMAGES.activeMega],
+                    kinds: [isGmax ? 'active-gmax' : 'active-mega'],
                     dimmed: false,
                 };
             }
 
             if (member.dynamaxed) {
-                return { mode: 'active-dynamax', icons: [EVOLUTION_MODE_IMAGES.activeDynamax], dimmed: false };
+                return { mode: 'active-dynamax', icons: [EVOLUTION_MODE_IMAGES.activeDynamax], kinds: ['active-dynamax'], dimmed: false };
             }
 
             const baseEntry = POKEMON_BY_NAME[member.name];
-            if (!baseEntry) return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], dimmed: !!member.fainted };
+            if (!baseEntry) return unableState(member.fainted);
 
             const canEvolve = !!(baseEntry.evolves_to && baseEntry.evolves_to.length
                 && typeof baseEntry.evolve_cost === 'number'
@@ -10537,16 +10587,35 @@
             const canMega = !member.fainted && !!(baseEntry.mega_forms && baseEntry.mega_forms.length) && canMemberMega(member);
             const canGmax = !member.fainted && !!(baseEntry.gmax_forms && baseEntry.gmax_forms.length) && canMemberGmax(member);
 
-            const icons = [];
-            if (canEvolve) icons.push(EVOLUTION_MODE_IMAGES.evolve);
-            if (canMega) icons.push(EVOLUTION_MODE_IMAGES.mega);
-            if (canGmax) icons.push(EVOLUTION_MODE_IMAGES.gmax);
+            const icons = [], kinds = [];
+            if (canEvolve) { icons.push(EVOLUTION_MODE_IMAGES.evolve); kinds.push('evolve'); }
+            if (canMega) { icons.push(EVOLUTION_MODE_IMAGES.mega); kinds.push('mega'); }
+            if (canGmax) { icons.push(EVOLUTION_MODE_IMAGES.gmax); kinds.push('gmax'); }
             getTeamEvolutionOptions(member).forEach(option => {
-                if (option.category === 'legendary' && option.iconUrl) icons.push(option.iconUrl);
+                if (option.category === 'legendary' && option.iconUrl) { icons.push(option.iconUrl); kinds.push('legendary'); }
             });
-            if (icons.length) return { mode: 'available', icons, dimmed: false };
-            if (canMemberDynamax(member)) return { mode: 'available', icons: [EVOLUTION_MODE_IMAGES.dynamax], dimmed: false };
-            return { mode: 'unable', icons: [EVOLUTION_MODE_IMAGES.unable], dimmed: !!member.fainted };
+            if (icons.length) return { mode: 'available', icons, kinds, dimmed: false };
+            if (canMemberDynamax(member)) return { mode: 'available', icons: [EVOLUTION_MODE_IMAGES.dynamax], kinds: ['dynamax'], dimmed: false };
+            return unableState(member.fainted);
+        }
+
+        function computeTeamEvolutionState(member) {
+            const base = computeBaseEvolutionState(member);
+            if (!member) return base;
+            const teraActive = isMemberTerastallized(member);
+            const teraAble = !teraActive && canMemberTera(member);
+            if (!teraActive && !teraAble) return base;
+            const teraIcon = teraActive ? EVOLUTION_MODE_IMAGES.activeTera : EVOLUTION_MODE_IMAGES.tera;
+            const teraKind = teraActive ? 'active-tera' : 'tera';
+            if (base.mode.indexOf('active-') === 0) { // Mega / Gigantamax / Dynamax is on: Terastallization stacks beside it
+                return { mode: base.mode, icons: base.icons.concat(teraIcon), kinds: base.kinds.concat(teraKind), dimmed: base.dimmed };
+            }
+            let icons = base.icons.slice(), kinds = base.kinds.slice();
+            const dynamaxOnly = kinds.length === 1 && kinds[0] === 'dynamax'; // Dynamax's "available" picture is the blank badge: Tera's replaces it
+            const nothingElse = base.mode === 'unable';
+            if (nothingElse || dynamaxOnly) { icons = []; kinds = []; }
+            icons.push(teraIcon); kinds.push(teraKind);
+            return { mode: (teraActive && nothingElse) ? 'active-tera' : 'available', icons, kinds, dimmed: nothingElse ? base.dimmed : false };
         }
 
         function shouldShowWildEvolutionBadge(member) {
@@ -10846,6 +10915,7 @@
             if (index === null || (slot !== 'attach' && slot !== 'nature')) return;
             const member = getTeamSlotMember(index);
             if (!member) return;
+            const teraBefore = getMemberTeraCard(member);
             if (slot === 'attach') {
                 member.attachCardId = cardId;
                 member.attachCounter = getDefaultItemCounter(CARDS_BY_ID[cardId]);
@@ -10854,6 +10924,10 @@
                 member.natureCardId = cardId;
             }
             if (cardId && cardForcesShiny(CARDS_BY_ID[cardId])) member.shiny = true;
+            if (member.terastallized) { // its Tera Type card was removed (or swapped): back to normal. battleFormUsed.tera stays set.
+                const teraAfter = getMemberTeraCard(member);
+                if (!teraAfter || !teraBefore || teraAfter.id !== teraBefore.id) member.terastallized = false;
+            }
             persistTeamSlotChange(index);
         }
 
@@ -11356,13 +11430,14 @@
 
         let pendingTeamEvolutionChoice = null;
 
-        const EVOLUTION_CATEGORY_LABELS = { evolve: 'Evolution', mega: 'Mega Evolution', gmax: 'Gigantamax', legendary: 'Legendary Evolution', dynamax: 'Dynamax' };
+        const EVOLUTION_CATEGORY_LABELS = { evolve: 'Evolution', mega: 'Mega Evolution', gmax: 'Gigantamax', legendary: 'Legendary Evolution', dynamax: 'Dynamax', tera: 'Terastallization' };
 
         function evolutionChoiceVerb(choice) {
             if (choice.category === 'evolve') return 'Evolve into';
             if (choice.category === 'mega') return 'Mega Evolve into';
             if (choice.category === 'gmax') return 'Gigantamax into';
             if (choice.category === 'dynamax') return 'Dynamax';
+            if (choice.category === 'tera') return 'Terastallize';
             if (choice.category === 'legendary') return choice.reverts ? 'Transform into' : 'Evolve into';
             return 'Evolve into';
         }
@@ -11374,6 +11449,12 @@
             }
             if (choice.category === 'gmax') {
                 return `<p class="game-team-evolution-reminder">To Gigantamax this Pok\u00e9mon, you must have a Dynamax Band card in play.</p>`;
+            }
+            if (choice.category === 'tera') {
+                const typeName = choice.teraType ? choice.teraType.charAt(0).toUpperCase() + choice.teraType.slice(1) : '';
+                return `<p class="game-team-evolution-reminder">${typeName
+                    ? `This Pok\u00e9mon becomes the ${escapeHtml(typeName)} type: it loses its original types defensively, keeps STAB from them, and ${escapeHtml(typeName)} Moves get +1 Attack Strength.`
+                    : 'Stellar Tera Type: this Pok\u00e9mon\u2019s type does not change.'} Terastallization lasts until the Battle ends (or its Tera Type card is removed), and only one of your Pok\u00e9mon can Terastallize per Battle.</p>`;
             }
             if (choice.category === 'dynamax') {
                 if (isVirtualDecksEnabledForActiveSave()) return '';
@@ -11416,7 +11497,7 @@
                 return;
             }
 
-            const categories = ['evolve', 'mega', 'gmax', 'legendary', 'dynamax'].filter(cat => pendingTeamEvolutionOptions.some(o => o.category === cat));
+            const categories = ['evolve', 'mega', 'gmax', 'legendary', 'dynamax', 'tera'].filter(cat => pendingTeamEvolutionOptions.some(o => o.category === cat));
             const showHeaders = categories.length > 1;
 
             optionsEl.innerHTML = categories.map(cat => {
@@ -11479,6 +11560,10 @@
                 }
             }
             if (canMemberDynamax(member)) options.push({ category: 'dynamax', name: member.name });
+            if (canMemberTera(member)) {
+                const teraCard = getMemberTeraCard(member);
+                options.push({ category: 'tera', name: member.name, teraType: (teraCard && teraCard.teraType) ? String(teraCard.teraType).toLowerCase() : null });
+            }
             return options;
         }
 
@@ -11486,6 +11571,13 @@
             if (megaFormRulesApply(member)) { // one Mega Evolution, and one Dynamax or Gigantamax, per Battle
                 if (choice.category === 'mega') battleFormUsed.mega = true;
                 else if (choice.category === 'gmax' || choice.category === 'dynamax') battleFormUsed.dyna = true;
+            }
+            if (choice.category === 'tera') { // stacks with Dynamax / Gigantamax, so nothing else is touched
+                member.terastallized = true;
+                battleFormUsed.tera = true;
+                const t = choice.teraType ? choice.teraType.charAt(0).toUpperCase() + choice.teraType.slice(1) : 'Stellar';
+                showGameToast((member.name || 'Pok\u00e9mon') + ' Terastallized' + (choice.teraType ? ' into the ' + t + ' type!' : ' (Stellar)!'));
+                return;
             }
             if (choice.category === 'dynamax') {
                 member.dynamaxed = true;
@@ -11511,11 +11603,12 @@
             playMemberCry(member);
         }
 
-        function openTeamEvolutionOverlay(index) {
+        function openTeamEvolutionOverlay(index, onlyCategory) {
             const member = getTeamSlotMember(index);
             if (!member || member.gymLeaderId) return; // gym leader cards never evolve
             let options = getTeamEvolutionOptions(member);
             if (index === 'wild' || index === 'trainer') options = options.filter(o => o.category === 'mega' || o.category === 'gmax' || o.category === 'dynamax');
+            if (onlyCategory) options = options.filter(o => o.category === onlyCategory);
             if (options.length === 0) return;
 
             pendingTeamEvolutionIndex = index;
@@ -11529,6 +11622,7 @@
                         : options[0].category === 'mega' ? 'Mega Evolve'
                         : options[0].category === 'gmax' ? 'Gigantamax'
                         : options[0].category === 'dynamax' ? 'Dynamax'
+                        : options[0].category === 'tera' ? 'Terastallize'
                         : options[0].reverts ? 'Transform' : 'Evolve')
                     : 'Choose an Evolution';
             }
@@ -12545,12 +12639,24 @@
             }
             if (rowEl) rowEl.classList.remove('no-evolution');
 
+            const teraDetailButtonsHtml = () => (evoState.kinds || []).map((k, i) => {
+                if (k === 'tera') return `<button class="game-team-detail-evolution-type-btn${teamDetailEvolutionCategory === 'tera' ? ' active' : ''}" data-category="tera"><img src="${evoState.icons[i]}" alt="Terastallization"></button>`;
+                if (k === 'active-tera') return `<button class="game-team-detail-evolution-type-btn" data-category="active-tera" title="Lasts until the Battle ends or its Tera Type card is removed"><img src="${evoState.icons[i]}" alt="Terastallized"></button>`;
+                return '';
+            }).join('');
+
             if (evoState.mode === 'active-mega' || evoState.mode === 'active-gmax' || evoState.mode === 'active-dynamax') {
                 buttonsEl.innerHTML = `
                     <button class="game-team-detail-evolution-type-btn" data-category="revert">
                         <img src="${evoState.icons[0]}" alt="Revert">
                     </button>
-                `;
+                ` + teraDetailButtonsHtml();
+                if (teamDetailEvolutionCategory !== 'tera') cancelTeamDetailEvolutionPicker();
+                return;
+            }
+
+            if (evoState.mode === 'active-tera') {
+                buttonsEl.innerHTML = teraDetailButtonsHtml();
                 cancelTeamDetailEvolutionPicker();
                 return;
             }
@@ -12560,13 +12666,13 @@
                     <button class="game-team-detail-evolution-type-btn" data-category="active-legendary" title="Ends when its card is detached">
                         <img src="${evoState.icons[0]}" alt="Active Evolution">
                     </button>
-                `;
-                cancelTeamDetailEvolutionPicker();
+                ` + teraDetailButtonsHtml();
+                if (teamDetailEvolutionCategory !== 'tera') cancelTeamDetailEvolutionPicker();
                 return;
             }
 
             const options = getTeamEvolutionOptions(member);
-            const categories = ['evolve', 'mega', 'gmax', 'legendary', 'dynamax'].filter(cat => options.some(o => o.category === cat));
+            const categories = ['evolve', 'mega', 'gmax', 'legendary', 'dynamax', 'tera'].filter(cat => options.some(o => o.category === cat));
             if (teamDetailEvolutionCategory && !categories.includes(teamDetailEvolutionCategory)) {
                 cancelTeamDetailEvolutionPicker();
             }
@@ -12579,7 +12685,7 @@
                     <img src="${icon}" alt="${EVOLUTION_CATEGORY_LABELS[cat]}">
                 </button>
             `;
-            }).join('');
+            }).join('') + ((evoState.kinds || []).includes('active-tera') ? teraDetailButtonsHtml() : '');
         }
 
         function renderTeamDetailEvolutionPicker() {
@@ -15941,14 +16047,14 @@
 
         const BATTLE_STAB_BONUS = 1;
 
-        function getBattleMemberTypes(member) {
+        function getBattleMemberTypes(member, opts) { // opts.original: ignore Terastallization (STAB still comes from the original types)
             if (!member) return [];
             const gymMon = getGymLeaderMemberData(member);
             if (gymMon) {
                 return (Array.isArray(gymMon.types) ? gymMon.types : [])
                     .map(t => String(t).toLowerCase().trim()).filter(t => BATTLE_MOVE_TYPE_NAMES.includes(t));
             }
-            const teraType = getBattleMemberTeraType(member);
+            const teraType = (opts && opts.original) ? null : getBattleMemberTeraType(member);
             if (teraType) return [teraType];
             const entry = POKEMON_BY_NAME[member.formOverride || member.name] || POKEMON_BY_NAME[member.name];
             const types = entry && Array.isArray(entry.types) ? entry.types : [];
@@ -16006,6 +16112,7 @@
             if (member) {
                 [member.attachCardId, member.natureCardId].forEach(id => {
                     const c = id ? CARDS_BY_ID[id] : null;
+                    if (c && c.cardDeck === 'Tera Type Deck' && !isMemberTerastallized(member)) return; // a Tera Type card only works once its Pok\u00e9mon has Terastallized
                     if (c) cards.push(c);
                 });
             }
@@ -16113,14 +16220,11 @@
             return collectBattleBonusCards(getBattleSlotMember(slotName), battleZones[slotName] && battleZones[slotName].battleCard);
         }
 
-        function getBattleMemberTeraType(member) {
-            if (!member) return null;
-            for (const id of [member.attachCardId, member.natureCardId]) {
-                const c = id ? CARDS_BY_ID[id] : null;
-                const t = c && c.teraType ? String(c.teraType).toLowerCase().trim() : '';
-                if (t && BATTLE_MOVE_TYPE_NAMES.includes(t)) return t;
-            }
-            return null;
+        function getBattleMemberTeraType(member) { // the type a Terastallized Pok\u00e9mon has become (null: not Terastallized, or Stellar)
+            if (!isMemberTerastallized(member)) return null;
+            const c = getMemberTeraCard(member);
+            const t = c && c.teraType ? String(c.teraType).toLowerCase().trim() : '';
+            return (t && BATTLE_MOVE_TYPE_NAMES.includes(t)) ? t : null;
         }
 
         function normalizeBattleTypeList(value) {
@@ -16531,7 +16635,7 @@
             const power = resolveBattleMovePower(slotName, eff);
             if (power === null) return null;
             const moveType = getBattleMoveType(eff.name);
-            const stab = (moveType && moveCanGetStab(eff.name) && getBattleMemberTypes(member).includes(moveType))
+            const stab = (moveType && moveCanGetStab(eff.name) && getBattleMemberTypes(member, { original: true }).includes(moveType))
                 ? BATTLE_STAB_BONUS : 0;
             const bonuses = evaluateBattleCardRules(slotName, 'strength', 'normal', moveName, power);
             const bonusSum = bonuses.reduce((sum, b) => sum + b.bonus, 0);
@@ -16710,10 +16814,12 @@
             battleCalcMoveName[slotName] = null;
             battleCalcManualValue[slotName] = null;
             battleCalcBaseMove[slotName] = null;
+            scheduleTeraWindowRefresh();
             renderBattleMoveDetails(slotName);
         }
 
         function renderBattleCalcReadout(slotName, isMirror) {
+            scheduleTeraWindowRefresh();
             if (!isMirror) renderBattleCalcReadout(getBattleOpposingSlotName(slotName), true);
             syncBattleMoveSelection(slotName);
             renderBattleMoveDetails(slotName);
@@ -23326,7 +23432,7 @@
             let value = 2, bonus = true;
             if (a && a.mode === 'fixed' && typeof a.value === 'number' && a.value > 0) { value = a.value; bonus = false; }
             const type = getBattleMoveType(moveName);
-            const stab = !!(member && type && moveCanGetStab(moveName) && getBattleMemberTypes(member).includes(type));
+            const stab = !!(member && type && moveCanGetStab(moveName) && getBattleMemberTypes(member, { original: true }).includes(type));
             return { value: value + (stab ? BATTLE_STAB_BONUS : 0), base: value, stab, bonus };
         }
         function boardContestMoves(name) {
@@ -27473,13 +27579,27 @@
                 const member = getTeamSlotMember(index);
                 if (!member) return;
                 const evoState = computeTeamEvolutionState(member);
-                if (evoState.mode === 'unable' || evoState.mode === 'active-legendary') return;
-                if (evoState.mode === 'active-dynamax') {
+                if (evoState.mode === 'unable') return;
+                let kind = evoState.kinds[0];
+                const evoLayers = evolutionBadge.querySelectorAll('.game-team-slot-evolution-img');
+                if (evoLayers.length > 1) { // several pictures cycle: act on the one showing right now
+                    const shown = Array.prototype.findIndex.call(evoLayers, layer => layer.classList.contains('evolution-cycle-active'));
+                    if (shown >= 0 && evoState.kinds[shown]) kind = evoState.kinds[shown];
+                }
+                if (kind === 'active-legendary') return;
+                if (kind === 'active-tera') {
+                    if (!battleInProgress) { member.terastallized = false; persistTeamSlotChange(index); return; } // left over from a Battle that never ended here
+                    if (evoState.mode === 'available') { openTeamEvolutionOverlay(index); return; } // Dynamax etc. can still be chosen
+                    showGameToast('Terastallization lasts until the Battle ends.');
+                    return;
+                }
+                if (kind === 'tera' && evoState.mode !== 'available') { openTeamEvolutionOverlay(index, 'tera'); return; } // beside an active Mega / Gigantamax / Dynamax
+                if (kind === 'active-dynamax') {
                     member.dynamaxed = false;
                     persistTeamSlotChange(index);
                     return;
                 }
-                if (evoState.mode === 'active-mega' || evoState.mode === 'active-gmax') {
+                if (kind === 'active-mega' || kind === 'active-gmax') {
                     const hpRule = getHpRule(getActiveSaveData());
                     const oldMax = getTeamMemberHpMax(member, hpRule);
                     member.formOverride = null;
