@@ -7481,6 +7481,7 @@
                 }
             });
             if (!st.attacker && !st.defender) { st.inProgress = false; st.record = makeEmptyBattleRecord(); }
+            if (st.inProgress) ['attacker', 'defender'].forEach(slot => { if (st[slot] && st[slot].member) noteBattleFirstRound(st.record, st[slot].member); });
             if (lobbyState.role === 'host') {
                 if (!st.attacker && !st.defender) hostClearBattleCards();
                 ['attacker', 'defender'].forEach(slot => {
@@ -8093,11 +8094,13 @@
                 const lensBonus = (half.effect === null || half.effect === undefined)
                     ? battleEffectDieBonus(st.record, slot, st[slot] && st[slot].member, getBattleCardsStore()[slot]) : 0;
                 const lensRaw = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
-                half.effect = Math.min(Math.max(...BATTLE_EFFECT_DIE_FACES), lensRaw + lensBonus); // Wide Lens can't push the roll past the top face
-                half.effectBonus = lensBonus;
+                const oppSlot = slot === 'attacker' ? 'defender' : 'attacker';
+                const penalty = battleEffectDiePenalty(st.record, st[oppSlot] && st[oppSlot].member);
+                half.effect = Math.max(Math.min(...BATTLE_EFFECT_DIE_FACES), Math.min(Math.max(...BATTLE_EFFECT_DIE_FACES), lensRaw + lensBonus - penalty)); // Wide Lens can't push the roll past the top face; Mild can't take it below the bottom one
+                half.effectBonus = lensBonus - penalty;
                 half.effectRaw = lensRaw;
             } else if (req && req.action === 'roll-status') {
-                half.status = rollBattleFace(BATTLE_STATUS_DIE_FACES);
+                half.status = rollBattleFace(getBattleStatusDieFaces(st[slot] && st[slot].member));
             } else if (req && req.action === 'reroll-attack') {
                 if (!st.rerolls) st.rerolls = { attacker: 0, defender: 0 };
                 const entry = st[slot];
@@ -10545,6 +10548,7 @@
             if (!wasInProgress && battleInProgress) { battleFormUsed = { mega: false, dyna: false, tera: false }; scheduleTeraWindowRefresh(); return; }
             if (!(wasInProgress && !battleInProgress)) return;
             battleFormUsed = { mega: false, dyna: false, tera: false };
+            lonelyBattleEnded();
             if (!isActiveSaveReadOnly() && endTerastallizationOnTeam()) showGameToast('Terastallization ended with the Battle.');
             scheduleTeraWindowRefresh();
             if (!isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return;
@@ -15655,8 +15659,9 @@
             const lensBonus = (battleDiceResults[slotName].effect === null || battleDiceResults[slotName].effect === undefined) // only the first roll after it's switched on
                 ? battleEffectDieBonus(battleRecord, slotName, getBattleSlotMember(slotName), lensZone && lensZone.battleCard) : 0;
             const lensRaw = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
-            battleDiceResults[slotName].effect = Math.min(Math.max(...BATTLE_EFFECT_DIE_FACES), lensRaw + lensBonus); // Wide Lens can't push the roll past the top face
-            battleDiceResults[slotName].effectBonus = lensBonus;
+            const penalty = battleEffectDiePenalty(battleRecord, getBattleSlotMember(getBattleOpposingSlotName(slotName)));
+            battleDiceResults[slotName].effect = Math.max(Math.min(...BATTLE_EFFECT_DIE_FACES), Math.min(Math.max(...BATTLE_EFFECT_DIE_FACES), lensRaw + lensBonus - penalty)); // Wide Lens can't push the roll past the top face; Mild can't take it below the bottom one
+            battleDiceResults[slotName].effectBonus = lensBonus - penalty;
             battleDiceResults[slotName].effectRaw = lensRaw;
             refreshBattleDice(slotName);
         }
@@ -15664,7 +15669,7 @@
         function rollBattleStatusDie(slotName) {
             if (!guardBattleDiceAction(slotName)) return;
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-status' }); return; }
-            battleDiceResults[slotName].status = rollBattleFace(BATTLE_STATUS_DIE_FACES);
+            battleDiceResults[slotName].status = rollBattleFace(getBattleStatusDieFaces(getBattleSlotMember(slotName)));
             refreshBattleDice(slotName);
         }
 
@@ -15703,7 +15708,7 @@
                     : '<span class="game-battle-dice-result"><small>No dice selected</small></span>'}</span>`;
             }
             if (results.effect !== null && results.effect !== undefined) {
-                resultItems += `<span class="game-battle-dice-result game-battle-dice-result-effect">${battleDieIconMarkup('effect')}${results.effect}${results.effectBonus ? `<small class="game-battle-dice-bonus-note">(${results.effectRaw || (results.effect - results.effectBonus)}+${results.effectBonus})</small>` : ''}</span>`;
+                resultItems += `<span class="game-battle-dice-result game-battle-dice-result-effect">${battleDieIconMarkup('effect')}${results.effect}${results.effectBonus ? `<small class="game-battle-dice-bonus-note">(${results.effectRaw || (results.effect - results.effectBonus)}${results.effectBonus > 0 ? '+' : '\u2212'}${Math.abs(results.effectBonus)})</small>` : ''}</span>`;
             }
             const rerollGrant = getBattleRerollGrant(getBattleBonusCards(slotName));
             let rerollBtn = '';
@@ -16201,6 +16206,19 @@
             record.items[o.key] = record.round;
             return '';
         }
+        // NOTE (not wired up yet, needs the Move Effect system): Lax and Sassy adjust the opponent's Effect Die roll only for Move Effects that would inflict Paralyzed / Burned
+        // (see "wiringNote" on those cards). Mild's general penalty below is already applied to every Effect Die roll.
+        function battleEffectDiePenalty(record, opponentMember) { // Mild: the opponent's Effect Die roll is N lower during the first Round the holder takes part in
+            if (!record || !opponentMember || !opponentMember.uid || !record.firstRound || record.firstRound[opponentMember.uid] !== record.round) return 0;
+            return [opponentMember.attachCardId, opponentMember.natureCardId].reduce((sum, id) => {
+                const c = id ? CARDS_BY_ID[id] : null;
+                return sum + Math.max(0, c ? (parseInt(c.firstRoundOpponentEffectDiePenalty, 10) || 0) : 0);
+            }, 0);
+        }
+        function getBattleStatusDieFaces(member) { // Lax: while Paralyzed, the Status Die is a d6 instead of a d4
+            const wide = !!member && member.status === 'paralyzed' && [member.attachCardId, member.natureCardId].some(id => { const c = id ? CARDS_BY_ID[id] : null; return !!c && c.paralyzedStatusDie === 'd6'; });
+            return wide ? [1, 2, 3, 4, 5, 6] : BATTLE_STATUS_DIE_FACES;
+        }
         function battleEffectDieBonus(record, slotName, member, zoneState) { // Wide Lens: +N on the next Effect Die roll
             return getBattleItemOptionsFor(slotName, member, zoneState, record)
                 .reduce((sum, o) => sum + ((o.state === 'active' && Number.isFinite(o.opt.effectDieBonus)) ? o.opt.effectDieBonus : 0), 0);
@@ -16305,7 +16323,7 @@
 
         function makeEmptyBattleRecord() {
             return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {},
-                id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {} };
+                id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
 
@@ -16336,10 +16354,19 @@
             const uid = ensureMemberUid(member);
             const list = record.seen[ownerId] || (record.seen[ownerId] = []);
             if (!list.includes(uid)) list.push(uid);
+            if (!record.firstRound || typeof record.firstRound !== 'object') record.firstRound = {};
+            if (record.firstRound[uid] === undefined) record.firstRound[uid] = record.round; // Docile / Hasty: the first Round this Pok\u00e9mon takes part in
         }
 
+        function noteBattleFirstRound(record, member) { // any Pok\u00e9mon in a Battle slot (a player's, a wild one, a Trainer's): the Round it first took part in
+            if (!record || !member) return;
+            const uid = ensureMemberUid(member);
+            if (!record.firstRound || typeof record.firstRound !== 'object') record.firstRound = {};
+            if (record.firstRound[uid] === undefined) record.firstRound[uid] = record.round;
+        }
         function noteSoloBattleParticipants() {
             if (lobbyState.role !== null || !battleInProgress) return;
+            ['attacker', 'defender'].forEach(slot => noteBattleFirstRound(battleRecord, getBattleSlotMember(slot)));
             ['attacker', 'defender'].forEach(slot => {
                 if (getBattleSlotOwnerId(slot) === 'solo') noteBattleParticipant(battleRecord, 'solo', getBattleSlotMember(slot));
             });
@@ -16449,6 +16476,11 @@
             if (!fall || !fall.cs || !fall.d) return;
             const slot = fall.cs;
             const otherSlot = getBattleOpposingSlotName(slot);
+            if (!fall.o && battleCalcMoveName[slot] && battleCalcMoveName[otherSlot]) { // an ownerless (wild / Trainer) Pok\u00e9mon fainted: how far apart were the two Attack Totals? (Gentle)
+                const a = computeBattleMoveBreakdown(slot, battleCalcMoveName[slot], battleCalcBaseMove[slot], true);
+                const b = computeBattleMoveBreakdown(otherSlot, battleCalcMoveName[otherSlot], battleCalcBaseMove[otherSlot], true);
+                if (a && b) fall.diff = Math.abs(a.total - b.total);
+            }
             const cards = getBattleBonusCards(slot);
             const hasEarnable = cards.some(card => getBattleCardRules(card).some(r => r.phase === 'earned'));
             if (!hasEarnable) return;
@@ -16491,6 +16523,7 @@
                 hostRecordBattleFaint(isWild ? null : 'host', uid, revive);
             } else if (battleInProgress) {
                 earnBattleBonusesForDefeat(battleRecord, applyBattleFaintToRecord(battleRecord, getSoloBattleEntries(), isWild ? null : 'solo', uid, revive));
+                noteBattleParticipationSnapshot(battleRecord);
                 renderBattleCalcReadout('attacker');
                 renderBattleCalcReadout('defender');
             }
@@ -18429,9 +18462,31 @@
             battleItemRewardBonus({ ask: !award.leaderId });
         }
 
-        let battleParticipationSnapshot = { id: null, uids: [], wild: null }; // wild: the wild Pok\u00e9mon that was battled ({ key, rounds }), for Quick / Timer Ball
+        let battleParticipationSnapshot = { id: null, uids: [], wild: null, wildDefeat: null }; // wild: the wild Pok\u00e9mon that was battled ({ key, rounds }), for Quick / Timer Ball
         let amuletQueue = [], amuletCurrent = null, amuletTimer = null, amuletAfters = [];
         function amuletFlushAfters() { const fns = amuletAfters.splice(0); fns.forEach(fn => { try { fn(); } catch (err) { /* a follow-up step must not break the others */ } }); }
+        function isBattleSlotWildEncounter(slot) {
+            const m = getBattleSlotMember(slot);
+            if (!m || m.gymLeaderId || m.noCatch) return false;
+            if (lobbyState.role !== null) { const e = getArenaSlotEntry(slot); return !!e && !e.ownerId && !e.trainer; }
+            return (slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex) === 'wild';
+        }
+        function lonelyBattleEnded() { // Lonely: the only Pok\u00e9mon of the team to take part in a battle that was not against a wild Pok\u00e9mon gains a Level
+            try {
+                const snap = battleParticipationSnapshot;
+                if (!snap || !snap.nonWild || !Array.isArray(snap.uids) || snap.uids.length !== 1 || isActiveSaveReadOnly()) return;
+                const members = ((getActiveSaveData().team || {}).members || []);
+                const index = members.findIndex(m => m && m.uid === snap.uids[0]);
+                const m = index >= 0 ? members[index] : null;
+                const c = m && m.natureCardId ? CARDS_BY_ID[m.natureCardId] : null;
+                const amount = c ? (parseInt(c.levelUpIfOnlyBattler, 10) || 0) : 0;
+                if (!(amount > 0) || snap.lonelyDone) return;
+                snap.lonelyDone = true;
+                const before = m.level || 0;
+                adjustTeamMemberLevel(index, amount);
+                if ((m.level || 0) > before) showGameToast(c.name + ': ' + (m.name || 'Your Pok\u00e9mon') + ' was the only one to battle and gained a Level (now Level ' + m.level + ').');
+            } catch (err) { /* never get in the way of the end of a battle */ }
+        }
         function noteBattleParticipationSnapshot(record) {
             try {
                 if (!record || !record.id || !record.seen) return;
@@ -18440,7 +18495,19 @@
                 const wildSlot = ['defender', 'attacker'].find(sl => getBattleSlotMember(sl) && !getBattleSlotOwnerId(sl));
                 const wildMon = wildSlot ? getBattleSlotMember(wildSlot) : null;
                 const wild = wildMon ? { key: wildMon.uid || wildMon.name, rounds: record.round || 1 } : (battleParticipationSnapshot.id === record.id ? battleParticipationSnapshot.wild : null);
-                if (seen.length) battleParticipationSnapshot = { id: record.id, uids: seen.slice(), wild: wild };
+                let wildDefeat = null; // Careful / Gentle: which of my Pok\u00e9mon KO'd the wild one, and how close the Attack Totals were
+                const wf = (record.faints || []).filter(f => !f.o && f.d && wild && f.u === wild.key).pop();
+                if (wf) {
+                    const parts = String(wf.d).split('|');
+                    if (parts[0] === me) wildDefeat = { key: wild.key, uid: parts.slice(1).join('|'), diff: typeof wf.diff === 'number' ? wf.diff : null };
+                } else if (battleParticipationSnapshot.id === record.id && battleParticipationSnapshot.wildDefeat && wild && battleParticipationSnapshot.wildDefeat.key === wild.key && !wildMon) {
+                    wildDefeat = battleParticipationSnapshot.wildDefeat;
+                }
+                const sameBattle = battleParticipationSnapshot.id === record.id;
+                const bothSlots = !!(getBattleSlotMember('attacker') && getBattleSlotMember('defender'));
+                const sawWild = (sameBattle && !!battleParticipationSnapshot.sawWild) || isBattleSlotWildEncounter('attacker') || isBattleSlotWildEncounter('defender');
+                const sawOpponent = (sameBattle && !!battleParticipationSnapshot.sawOpponent) || bothSlots;
+                if (seen.length) battleParticipationSnapshot = { id: record.id, uids: seen.slice(), wild: wild, wildDefeat: wildDefeat, sawWild, sawOpponent, nonWild: sawOpponent && !sawWild, lonelyDone: sameBattle && !!battleParticipationSnapshot.lonelyDone };
             } catch (err) { /* never get in the way of the battle */ }
         }
         function cardBattleRewardsItem(card) {
@@ -24705,6 +24772,8 @@
             if (cBtn) { boardContestChoose(cBtn.dataset.act); return; }
             const swapBtn = e.target.closest('.game-swap-btn');
             if (swapBtn) { closeFrontierOverlay(); swapOverlayChoose(swapBtn.dataset.act, swapBtn.dataset.gen); return; }
+            const jollyBtn = e.target.closest('.game-jolly-btn');
+            if (jollyBtn) { closeFrontierOverlay(); const n = parseInt(jollyBtn.dataset.act, 10) || 0; if (n > 0) boardAddToMovementRoll(n, 'Jolly'); return; }
             const fxBtn = e.target.closest('.game-cardfx-btn');
             if (fxBtn) { closeFrontierOverlay(); cardShopChoose(fxBtn.dataset.cardId, fxBtn.dataset.act); return; }
             const radioBtn = e.target.closest('.game-radio-btn');
@@ -25975,9 +26044,10 @@
             const me = boardPlayers().find(p => p.id === (getMyLobbyPlayerId() || 'host'));
             if (!me) { showGameToast('Only players can roll for movement.'); return; } // e.g. a host who isn't playing
             if (!isBlimp && !boardMoveActionGuard()) return; // this turn's move is already rolled for, or spent
-            let raw, penalty, value, bonus = 0, doubled = false;
+            let raw, penalty, value, bonus = 0, doubled = false, repeated = false;
             const mst = (!isBlimp && boardMoveGated()) ? boardMoveState() : null;
-            if (mst && mst.roll) { // this turn's roll was cancelled: the same result again, never a fresh one
+            if (mst && mst.roll) {
+                repeated = true; // this turn's roll was cancelled: the same result again, never a fresh one
                 raw = mst.roll.raw; penalty = mst.roll.penalty; value = mst.roll.value; bonus = mst.roll.bonus || 0; doubled = !!mst.roll.doubled;
                 showGameToast('Same roll as before \u2014 a cancelled roll stands.');
             } else {
@@ -25993,6 +26063,19 @@
             else if (lobbyState.role === 'host') boardSend(shown);
             if (!isBlimp && boardMoveGated()) { if (value === 0) boardMoveActionUsed(); else boardMoveOpen('regular'); } // a 0 uses the move without opening it
             if (value === 0 && !isBlimp) boardRequestLanding(); // no movement: the space they are on counts as just landed on
+            if (!isBlimp && !repeated && raw === 6 && value > 0) jollyOffer(); // Jolly: a 6 on the Movement Die lets the Pok\u00e9mon's trainer move 1 more space
+        }
+        function jollyOffer() {
+            const holder = ((getActiveSaveData().team || {}).members || []).find(m => {
+                const c = m && !m.fainted && m.natureCardId ? CARDS_BY_ID[m.natureCardId] : null;
+                return c && (parseInt(c.movementSixExtra, 10) || 0) > 0;
+            });
+            if (!holder) return;
+            const c = CARDS_BY_ID[holder.natureCardId], max = parseInt(c.movementSixExtra, 10) || 1;
+            let btns = '';
+            for (let n = 1; n <= max; n++) btns += `<button class="filter-btn include game-jolly-btn" type="button" data-act="${n}">+${n}</button>`;
+            boardFrontierShow(c.name, 'You rolled a 6! Add up to ' + max + ' more space' + (max === 1 ? '' : 's') + ' to your Movement Roll?',
+                '<div class="game-frontier-choices">' + btns + '<button class="filter-btn exclude game-jolly-btn" type="button" data-act="0">No Thanks</button></div>');
         }
         function boardHandleRollFromGuest(peerId, data) {
             if (!getRegionMapSettingsForActiveSave().enabled) return;
@@ -28468,6 +28551,28 @@
             const card = attempt && attempt.cardId ? CARDS_BY_ID[attempt.cardId] : null;
             return !!card && card.catchRerollOnFail === 'yes';
         }
+        function getCatchNatureLines(attempt) { // Nature cards: Docile (caught without a Battle), Careful / Gentle (the attached Pok\u00e9mon defeated it)
+            const lines = [];
+            const target = getCatchTargetMember();
+            if (!attempt || attempt.safari || !target) return lines;
+            const members = ((getActiveSaveData().team || {}).members || []).filter(Boolean);
+            const natureOf = m => (m.natureCardId ? CARDS_BY_ID[m.natureCardId] : null);
+            const own = natureOf(target); // Docile: the Pok\u00e9mon being caught is the one holding it (its effect is spent once it joins the team)
+            if (own && (parseInt(own.catchBonusNotBattled, 10) || 0) > 0 && catchConditionMet({ notBattled: true }, attempt)) lines.push({ label: own.name + ' (not battled)', amount: parseInt(own.catchBonusNotBattled, 10) });
+            if (own && (parseInt(own.catchBonusAfterBattle, 10) || 0) > 0 && catchConditionMet({ battleRoundsOver: 0 }, attempt)) lines.push({ label: own.name + ' (battled first)', amount: parseInt(own.catchBonusAfterBattle, 10) }); // Mild: the opposite of Docile
+            const d = battleParticipationSnapshot.wildDefeat;
+            if (d && d.key === (target.uid || target.name)) {
+                const m = members.find(x => x.uid === d.uid);
+                const c = m ? natureOf(m) : null;
+                const cfg = c && c.catchBonusWhenDefeated;
+                if (cfg) {
+                    const max = parseInt(cfg.maxTotalDifference, 10);
+                    const closeEnough = !Number.isFinite(max) || (d.diff !== null && d.diff <= max);
+                    if (closeEnough) lines.push({ label: c.name + (Number.isFinite(max) ? ' (Attack Totals within ' + max + ')' : ' (defeated it)'), amount: parseInt(cfg.bonus, 10) || 0 });
+                }
+            }
+            return lines.filter(l => l.amount);
+        }
         function getCatchBonusLines(attempt) {
             const lines = [];
             if (attempt.fainted) lines.push({ label: 'Fainted before the attempt', amount: 2 });
@@ -28475,6 +28580,7 @@
             if (attempt.safari && attempt.safari.frontier) lines.push({ label: attempt.safari.label ? attempt.safari.label + ' (victory reward)' : 'Battle Frontier (Yellow reward)', amount: 2 });
             const cardLine = attempt.frozenCardLine !== undefined ? attempt.frozenCardLine : computeCatchCardLine(attempt); // frozen once the attempt is resolved (the caught Pok\u00e9mon then joins the team, which would change e.g. the Premier Ball's check)
             if (cardLine) lines.push(cardLine);
+            getCatchNatureLines(attempt).forEach(l => lines.push(l));
             return lines;
         }
 
@@ -31463,6 +31569,13 @@
             getBattleBonusCards(slotName).forEach(card => {
                 (Array.isArray(card.grantsMoveEffects) ? card.grantsMoveEffects : []).forEach(id => { if (typeof id === 'string' && id && !out.includes(id)) out.push(id); });
             });
+            const firstMember = battleInProgress ? getBattleSlotMember(slotName) : null; // Docile / Hasty: only in the first Round this Pok\u00e9mon takes part in
+            if (firstMember && firstMember.uid && battleRecord && battleRecord.firstRound && battleRecord.firstRound[firstMember.uid] === battleRecord.round) {
+                [firstMember.attachCardId, firstMember.natureCardId].forEach(id => {
+                    const c = id ? CARDS_BY_ID[id] : null;
+                    (c && Array.isArray(c.firstRoundMoveEffects) ? c.firstRoundMoveEffects : []).forEach(eid => { if (typeof eid === 'string' && eid && !out.includes(eid)) out.push(eid); });
+                });
+            }
             getBattleItemOptions(slotName).forEach(o => { // Eviolite, Quick Claw: only while switched on this round
                 if (o.state !== 'active' || !Array.isArray(o.opt.grantsMoveEffects)) return;
                 o.opt.grantsMoveEffects.forEach(id => { if (typeof id === 'string' && id && !out.includes(id)) out.push(id); });
