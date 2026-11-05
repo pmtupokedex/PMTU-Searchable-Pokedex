@@ -10475,6 +10475,32 @@
                 } catch (e) { /* not on screen */ }
             }, 0);
         }
+        // ---- ending a Mega Evolution / Gigantamax / Dynamax from the corner badge asks first (guards against misclicks) ----
+        let pendingEndFormIndex = null, pendingEndFormKind = null;
+        function askEndForm(index, kind) {
+            pendingEndFormIndex = index; pendingEndFormKind = kind;
+            const label = kind === 'active-mega' ? 'Mega Evolution' : kind === 'active-gmax' ? 'Gigantamax' : 'Dynamax';
+            boardFrontierShow('End ' + label + '?', 'This Pok\u00e9mon will go back to its normal form.',
+                `<button class="filter-btn exclude game-endform-btn" type="button" data-act="end">End ${label}</button>`
+                + `<button class="filter-btn include game-endform-btn" type="button" data-act="keep">Keep ${label}</button>`);
+        }
+        function confirmEndForm() {
+            const index = pendingEndFormIndex, kind = pendingEndFormKind;
+            pendingEndFormIndex = null; pendingEndFormKind = null;
+            const member = getTeamSlotMember(index);
+            if (!member || isActiveSaveReadOnly()) return;
+            if (kind === 'active-dynamax') {
+                if (!member.dynamaxed) return;
+                member.dynamaxed = false;
+            } else {
+                if (!member.formOverride) return;
+                const hpRule = getHpRule(getActiveSaveData());
+                const oldMax = getTeamMemberHpMax(member, hpRule);
+                member.formOverride = null;
+                reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax, 1);
+            }
+            persistTeamSlotChange(index);
+        }
         function megaFormRulesApply(member) { // virtual-card saves: Mega Stone / Mega Bracelet / Dynamax Band are enforced for the player's own Pok\u00e9mon
             return !!member && isVirtualDecksEnabledForActiveSave() && member !== battleWildPokemon && member !== battleTrainerPokemon && !member.gymLeaderId;
         }
@@ -11453,8 +11479,8 @@
             if (choice.category === 'tera') {
                 const typeName = choice.teraType ? choice.teraType.charAt(0).toUpperCase() + choice.teraType.slice(1) : '';
                 return `<p class="game-team-evolution-reminder">${typeName
-                    ? `This Pok\u00e9mon becomes the ${escapeHtml(typeName)} type: it loses its original types defensively, keeps STAB from them, and ${escapeHtml(typeName)} Moves get +1 Attack Strength.`
-                    : 'Stellar Tera Type: this Pok\u00e9mon\u2019s type does not change.'} Terastallization lasts until the Battle ends (or its Tera Type card is removed), and only one of your Pok\u00e9mon can Terastallize per Battle.</p>`;
+                    ? `This Pok\u00e9mon becomes the ${escapeHtml(typeName)} Tera Type. It loses its original types defensively, but keeps STAB from them. ${escapeHtml(typeName)} Moves get +1 Attack Strength.`
+                    : 'Stellar Tera Type: this Pok\u00e9mon\u2019s type does not change, but its Moves gain Ignore Type.'} Terastallization lasts until the Battle ends (or its Tera Type card is removed), and only one of your Pok\u00e9mon can Terastallize per Battle.</p>`;
             }
             if (choice.category === 'dynamax') {
                 if (isVirtualDecksEnabledForActiveSave()) return '';
@@ -24698,6 +24724,12 @@
                 else if (modeBtn.dataset.mode === 'gallery') beginTrainerBattleGalleryPick(modeBtn.dataset.cardId);
                 return;
             }
+            const endFormBtn = e.target.closest('.game-endform-btn');
+            if (endFormBtn) {
+                closeFrontierOverlay();
+                if (endFormBtn.dataset.act === 'end') confirmEndForm(); else { pendingEndFormIndex = null; pendingEndFormKind = null; }
+                return;
+            }
             const forfeitBtn = e.target.closest('.game-forfeit-btn');
             if (forfeitBtn) {
                 closeFrontierOverlay();
@@ -27594,19 +27626,7 @@
                     return;
                 }
                 if (kind === 'tera' && evoState.mode !== 'available') { openTeamEvolutionOverlay(index, 'tera'); return; } // beside an active Mega / Gigantamax / Dynamax
-                if (kind === 'active-dynamax') {
-                    member.dynamaxed = false;
-                    persistTeamSlotChange(index);
-                    return;
-                }
-                if (kind === 'active-mega' || kind === 'active-gmax') {
-                    const hpRule = getHpRule(getActiveSaveData());
-                    const oldMax = getTeamMemberHpMax(member, hpRule);
-                    member.formOverride = null;
-                    reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax, 1);
-                    persistTeamSlotChange(index);
-                    return;
-                }
+                if (kind === 'active-dynamax' || kind === 'active-mega' || kind === 'active-gmax') { askEndForm(index, kind); return; }
                 openTeamEvolutionOverlay(index);
                 return;
             }
