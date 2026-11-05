@@ -14588,11 +14588,17 @@
         }
 
         // ---- Status badge pulse: "go in and do your upkeep" ----
-        const statusAttnAcked = new WeakMap(); // member -> the battle round the player went in during
+        const STATUS_ATTN_AFTER_ROLLS = ['poisoned', 'cursed', 'burned']; // upkeep comes once both sides have rolled their Attack Dice
+        const statusAttnAcked = new WeakMap(); // member -> { key: battle + round, status, rolled: were both Attack Dice already rolled }
         function statusAttnRoundKey() { return battleRecord ? battleRecord.id + ':' + battleRecord.round : ''; }
-        function statusAttnAcknowledge(member) {
-            if (!member || typeof member !== 'object') return;
-            statusAttnAcked.set(member, statusAttnRoundKey());
+        function statusAttnBothRolled() {
+            const a = battleDiceResults.attacker && battleDiceResults.attacker.attack;
+            const d = battleDiceResults.defender && battleDiceResults.defender.attack;
+            return !!(a && a.length && d && d.length);
+        }
+        function statusAttnAcknowledge(member) { // the player went in to do the upkeep of the Status the Pok\u00e9mon has right now
+            if (!member || typeof member !== 'object' || !member.status || !battleInProgress) return; // opening the screen to ADD a Status isn't doing its upkeep
+            statusAttnAcked.set(member, { key: statusAttnRoundKey(), status: member.status, rolled: statusAttnBothRolled() });
             updateStatusAttentionBadges();
         }
         function statusInMyArena(index) {
@@ -14607,17 +14613,16 @@
         function statusNeedsAttentionRaw(member, index) {
             if (!member || !member.status || member.fainted || !battleInProgress) return false;
             if (!statusInMyArena(index)) return false;
-            if (statusAttnAcked.get(member) === statusAttnRoundKey()) return false;
+            const ack = statusAttnAcked.get(member);
+            if (ack && ack.key === statusAttnRoundKey() && ack.status === member.status) { // already seen to this Round
+                if (!STATUS_ATTN_AFTER_ROLLS.includes(member.status) || ack.rolled) return false; // a look before the dice were rolled doesn't count for those
+            }
             const side2 = member.statusCardSide === 2;
             switch (member.status) {
                 case 'frozen': return true;          // from the start of the Round
                 case 'paralyzed': return !side2;     // Paralyzed 1
                 case 'sleep': return side2;          // Sleep 2
-                case 'poisoned': case 'cursed': case 'burned': { // once both sides have rolled their Attack Dice
-                    const a = battleDiceResults.attacker && battleDiceResults.attacker.attack;
-                    const d = battleDiceResults.defender && battleDiceResults.defender.attack;
-                    return !!(a && a.length && d && d.length);
-                }
+                case 'poisoned': case 'cursed': case 'burned': return statusAttnBothRolled(); // once both sides have rolled their Attack Dice
             }
             return false;
         }
