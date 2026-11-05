@@ -8087,10 +8087,11 @@
             if (req && req.action === 'set-counts') {
                 st.diceCounts[slot] = sanitizeBattleDiceCounts(req.counts);
             } else if (req && req.action === 'roll-attack') {
-                half.attack = generateBattleAttackRolls(sanitizeBattleDiceCounts(st.diceCounts[slot]));
+                half.attack = generateBattleAttackRolls(effectiveBattleDiceCounts(slot, st.diceCounts[slot])); // + Advantage / Disadvantage dice
                 if (!st.record) st.record = makeEmptyBattleRecord();
                 noteBattleMoveUsed(st.record, slot, st[slot] && st[slot].member); // this Pok\u00e9mon used a Move this round (Radio: PKMN Lullaby)
             } else if (req && req.action === 'roll-effect') {
+                const firstEffectRoll = (half.effect === null || half.effect === undefined); // only the first roll of the round counts
                 const lensBonus = (half.effect === null || half.effect === undefined)
                     ? battleEffectDieBonus(st.record, slot, st[slot] && st[slot].member, getBattleCardsStore()[slot]) : 0;
                 const lensRaw = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
@@ -8099,6 +8100,7 @@
                 half.effect = Math.max(Math.min(...BATTLE_EFFECT_DIE_FACES), Math.min(Math.max(...BATTLE_EFFECT_DIE_FACES), lensRaw + lensBonus - penalty)); // Wide Lens can't push the roll past the top face; Mild can't take it below the bottom one
                 half.effectBonus = lensBonus - penalty;
                 half.effectRaw = lensRaw;
+                if (firstEffectRoll) half.effectFirst = half.effect;
             } else if (req && req.action === 'roll-status') {
                 half.status = rollBattleFace(getBattleStatusDieFaces(st[slot] && st[slot].member));
             } else if (req && req.action === 'reroll-attack') {
@@ -8290,6 +8292,7 @@
                     effect: (rolled && rolled.effect !== undefined) ? rolled.effect : null,
                     effectBonus: (rolled && rolled.effectBonus) | 0,
                     effectRaw: (rolled && rolled.effectRaw) | 0,
+                    effectFirst: (rolled && Number.isFinite(rolled.effectFirst)) ? rolled.effectFirst : null,
                     status: (rolled && rolled.status !== undefined) ? rolled.status : null,
                     rerolled: !!(rolled && rolled.rerolled),
                 };
@@ -15565,7 +15568,7 @@
         }
 
         function makeEmptyBattleDice() {
-            return { attacker: { attack: null, effect: null, status: null, rerolled: false }, defender: { attack: null, effect: null, status: null, rerolled: false } };
+            return { attacker: { attack: null, effect: null, effectFirst: null, status: null, rerolled: false }, defender: { attack: null, effect: null, effectFirst: null, status: null, rerolled: false } };
         }
 
         function rollBattleFace(faces) {
@@ -15590,7 +15593,7 @@
         }
 
         function clearBattleDiceResults(slotName) {
-            battleDiceResults[slotName] = { attack: null, effect: null, status: null, rerolled: false };
+            battleDiceResults[slotName] = { attack: null, effect: null, effectFirst: null, status: null, rerolled: false };
         }
 
         function refreshBattleDice(slotName) {
@@ -15624,7 +15627,7 @@
 
         function rollBattleAttackDice(slotName) {
             if (!guardBattleDiceAction(slotName)) return;
-            const counts = sanitizeBattleDiceCounts(battleDiceCounts[slotName]);
+            const counts = effectiveBattleDiceCounts(slotName);
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-attack', counts }); return; }
             battleDiceResults[slotName].attack = generateBattleAttackRolls(counts);
             noteBattleMoveUsed(battleRecord, slotName, getBattleSlotMember(slotName)); // Radio: PKMN Lullaby
@@ -15660,6 +15663,7 @@
         function rollBattleEffectDie(slotName) {
             if (!guardBattleDiceAction(slotName)) return;
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-effect' }); return; }
+            const firstEffectRoll = battleDiceResults[slotName].effect === null || battleDiceResults[slotName].effect === undefined; // later rolls (rare effects) are shown, but only the first one counts
             const lensZone = battleZones[slotName];
             const lensBonus = (battleDiceResults[slotName].effect === null || battleDiceResults[slotName].effect === undefined) // only the first roll after it's switched on
                 ? battleEffectDieBonus(battleRecord, slotName, getBattleSlotMember(slotName), lensZone && lensZone.battleCard) : 0;
@@ -15668,6 +15672,7 @@
             battleDiceResults[slotName].effect = Math.max(Math.min(...BATTLE_EFFECT_DIE_FACES), Math.min(Math.max(...BATTLE_EFFECT_DIE_FACES), lensRaw + lensBonus - penalty)); // Wide Lens can't push the roll past the top face; Mild can't take it below the bottom one
             battleDiceResults[slotName].effectBonus = lensBonus - penalty;
             battleDiceResults[slotName].effectRaw = lensRaw;
+            if (firstEffectRoll) battleDiceResults[slotName].effectFirst = battleDiceResults[slotName].effect;
             refreshBattleDice(slotName);
         }
 
@@ -15692,7 +15697,7 @@
             if (!container) return;
             container.style.display = battleInProgress ? '' : 'none';
             container.classList.toggle('game-battle-dice-locked', !canIChooseBattleMoves(slotName));
-            const counts = battleDiceCounts[slotName];
+            const counts = effectiveBattleDiceCounts(slotName);
             const results = battleDiceResults[slotName];
             const counters = BATTLE_DICE.map(d => `
                 <div class="game-battle-dice-counter">
@@ -15727,7 +15732,7 @@
             const lensHtml = getBattleItemOptions(slotName)
                 .filter(o => Number.isFinite(o.opt.effectDieBonus) && o.eligible)
                 .map(o => buildBattleItemButtonHtml(slotName, o, effectRolled)).join('');
-            const countersHtml = `<div class="game-battle-dice-counters">${counters}</div>`;
+            const countersHtml = `${buildBattleDiceAdvantageNote(slotName)}<div class="game-battle-dice-counters">${counters}</div>`;
             const rollRowHtml = `
                 <div class="game-battle-dice-roll-row">
                     <button class="filter-btn game-battle-roll-attack-btn" data-battle-slot="${slotName}">Roll Attack Dice</button>
@@ -15742,6 +15747,13 @@
             fitBattleDiceResultLine(container);
             renderTeamStatusRoll(); // the Status Condition overlay shows the same Status roll
             updateStatusAttentionBadges(); // both sides rolled -> Poisoned / Cursed / Burned badges pulse
+        }
+
+        function buildBattleDiceAdvantageNote(slotName) {
+            const adv = getBattleDiceAdvantage(slotName);
+            if (!adv.extra || !getBattleActiveDieKey(sanitizeBattleDiceCounts(battleDiceCounts[slotName]))) return '';
+            const capped = adv.extra > BATTLE_DICE_MAX - 1;
+            return `<div class="game-battle-dice-adv-note game-battle-dice-adv-note-${adv.mode}">+${adv.extra} ${adv.mode === 'adv' ? 'Advantage' : 'Disadvantage'} ${adv.extra === 1 ? 'die' : 'dice'}${capped ? ` (up to ${BATTLE_DICE_MAX})` : ''}</div>`;
         }
 
         function fitBattleDiceResultLine(container) {
@@ -16260,7 +16272,75 @@
             const out = [];
             getBattleBonusCards(slotName).forEach(card => {
                 const a = card.addsMoveCode;
-                if (a && typeof a.code === 'string' && a.code) out.push({ code: a.code, shifts: Array.isArray(a.shifts) ? a.shifts : [] });
+                if (a && typeof a.code === 'string' && a.code) out.push({ code: a.code, shifts: Array.isArray(a.shifts) ? a.shifts : [], onTrigger: (a.onTrigger && typeof a.onTrigger === 'object') ? a.onTrigger : null });
+            });
+            return out;
+        }
+
+        // ---- Effect Die thresholds ----
+        // A Move Effect code ending in a number (wextra6, bdis5, ...) triggers when the Effect Die result is at least that number
+        // (effects.json: codes[code].threshold; requiresRoll=false / a threshold of 1 means no roll is needed). Cards can watch a code via
+        // addsMoveCode.onTrigger and act when it's met, e.g. Razor Claw's { upgradeMoveDie: 1 }.
+        function getBattleEffectDieResult(slotName) { // this side's FIRST Effect Die result of the round (Wide Lens included), or null if it hasn't rolled; later rolls don't count
+            const r = battleDiceResults[slotName];
+            if (!r) return null;
+            return Number.isFinite(r.effectFirst) ? r.effectFirst : (Number.isFinite(r.effect) ? r.effect : null);
+        }
+        function effectDieThresholdMet(code, result) { // true / false once the Effect Die was rolled; null when the code doesn't depend on a roll, or it hasn't been rolled
+            const def = EFFECTS_DATA && EFFECTS_DATA.codes && EFFECTS_DATA.codes[code];
+            if (!def || !Number.isFinite(def.threshold) || def.requiresRoll === false || def.threshold <= 1) return null;
+            if (!Number.isFinite(result)) return null;
+            return result >= def.threshold;
+        }
+
+        // ---- Advantage / Disadvantage: extra Attack Dice ----
+        // Every Advantage / Disadvantage instance makes a side roll 1 extra die (Double: 2). A Move's Advantage helps its own side, its
+        // Disadvantage hurts the opponent. Opposing instances cancel die for die; what's left is extra dice on the die already in use.
+        // An instance behind an Effect Die threshold (wadv5, bdis5, ...) only counts once the first Effect Die roll of the round meets it.
+        const BATTLE_ADV_EFFECTS = { adv: { kind: 'adv', n: 1 }, doubadv: { kind: 'adv', n: 2 }, dis: { kind: 'dis', n: 1 }, doubdis: { kind: 'dis', n: 2 } };
+        function effectDieCodeNeedsRoll(def) { return !!def && Number.isFinite(def.threshold) && def.requiresRoll !== false && def.threshold > 1; }
+        function getBattleAdvantageSources(slotName) { // the Advantage / Disadvantage instances this side's Move and cards bring: [{ kind, n, code }]
+            const out = [];
+            if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return out;
+            const result = getBattleEffectDieResult(slotName);
+            const moveName = battleCalcMoveName[slotName];
+            const entry = moveName ? getBattleMoveEntry(moveName) : null;
+            if (entry) {
+                resolveMoveCodeList(entry, getBattleMoveCodeAdds(slotName)).forEach(({ code, replaced }) => {
+                    const def = EFFECTS_DATA.codes[code];
+                    if (replaced || !def) return; // a code a card shifted down is replaced by the shifted one
+                    if (effectDieCodeNeedsRoll(def) && effectDieThresholdMet(code, result) !== true) return; // threshold not (yet) met
+                    (Array.isArray(def.effects) ? def.effects : []).forEach(id => { const a = BATTLE_ADV_EFFECTS[id]; if (a) out.push({ kind: a.kind, n: a.n, code }); });
+                });
+            }
+            getBattleGrantedMoveEffects(slotName, true).forEach(id => { const a = BATTLE_ADV_EFFECTS[id]; if (a) out.push({ kind: a.kind, n: a.n, code: id }); });
+            return out;
+        }
+        function getBattleDiceAdvantage(slotName) { // { net, extra, mode }: net > 0 Advantage (extra dice, best counts), net < 0 Disadvantage
+            let net = 0;
+            getBattleAdvantageSources(slotName).forEach(s => { if (s.kind === 'adv') net += s.n; });
+            getBattleAdvantageSources(getBattleOpposingSlotName(slotName)).forEach(s => { if (s.kind === 'dis') net -= s.n; });
+            return { net, extra: Math.abs(net), mode: net > 0 ? 'adv' : (net < 0 ? 'dis' : null) };
+        }
+        function getBattleActiveDieKey(counts) { // the die the side has chosen to attack with
+            let key = null, best = 0;
+            BATTLE_DICE.forEach(d => { if (counts[d.key] > best) { best = counts[d.key]; key = d.key; } });
+            return key;
+        }
+        function effectiveBattleDiceCounts(slotName, manualCounts) { // the counters the player set, plus the extra dice Advantage / Disadvantage adds to the die in use
+            const counts = sanitizeBattleDiceCounts(manualCounts || battleDiceCounts[slotName]);
+            const adv = getBattleDiceAdvantage(slotName);
+            const key = adv.extra ? getBattleActiveDieKey(counts) : null; // no die chosen = no Attack Roll to add dice to
+            if (key) counts[key] = Math.min(BATTLE_DICE_MAX, counts[key] + adv.extra);
+            return counts;
+        }
+
+        function getBattleTriggeredEffects(slotName) { // what the cards in play do because of the Effect Die result
+            const out = { upgradeMoveDie: 0 };
+            const result = getBattleEffectDieResult(slotName);
+            getBattleMoveCodeAdds(slotName).forEach(add => {
+                if (!add.onTrigger || effectDieThresholdMet(add.code, result) !== true) return;
+                out.upgradeMoveDie += Number(add.onTrigger.upgradeMoveDie) || 0;
             });
             return out;
         }
@@ -16887,6 +16967,7 @@
             if (!isMirror) renderBattleCalcReadout(getBattleOpposingSlotName(slotName), true);
             syncBattleMoveSelection(slotName);
             renderBattleMoveDetails(slotName);
+            renderBattleDice(slotName); // the extra Advantage / Disadvantage dice follow the Moves, cards and Effect Dice
         }
 
         let battleManualPending = null; // { slotName, moveName, baseMoveName, manualName } | null
@@ -31375,13 +31456,13 @@
                 refreshMoveValidationColumns();
             });
 
-        const BATTLE_DIE_UPGRADE = { d4: 'd6', d6: 'd8' }; // Dire Hit: one stage up (a d8 is already the top, so it stays)
+        const BATTLE_DIE_LADDER = ['d4', 'd6', 'd8']; // an upgrade moves the Attack Die one stage up this ladder (a d8 is already the top, so it stays)
 
         function resolveMoveCodeList(entry, codeAdds) { // the Move's effect codes after King's Rock / Zoom Lens: [{ code, replaced? }]
             const out = (Array.isArray(entry.effects) ? entry.effects : []).map(code => ({ code }));
             (codeAdds || []).forEach(add => {
                 const idx = out.findIndex(c => { const m = /^([a-z]+)([1-6])$/.exec(c.code); return !c.replaced && m && add.shifts.includes(m[1]); });
-                if (idx < 0) { out.push({ code: add.code }); return; } // nothing to shift: the card's own effect is added
+                if (idx < 0) { if (!out.some(c => c.code === add.code)) out.push({ code: add.code }); return; } // nothing to shift: the card's own effect is added (once)
                 const m = /^([a-z]+)([1-6])$/.exec(out[idx].code);
                 const n = parseInt(m[2], 10);
                 if (n > 1) out.splice(idx, 1, { code: out[idx].code, replaced: true }, { code: m[1] + (n - 1) }); // one step easier; a threshold of 1 can't go lower
@@ -31399,7 +31480,10 @@
                 return { src: ef.icon, title: ef.name, effectId: id };
             };
             if (MOVE_ICONS_SHOW_DIE_AND_LEVEL) {
-                const upgradedDie = (opts && opts.upgradeDie) ? BATTLE_DIE_UPGRADE[entry.die || 'd6'] : null; // a move with no listed die uses the d6
+                const baseDie = entry.die || 'd6', baseStage = BATTLE_DIE_LADDER.indexOf(baseDie); // a move with no listed die uses the d6
+                const stages = Math.max(0, Number(opts && opts.upgradeDie) || 0);
+                let upgradedDie = (stages > 0 && baseStage >= 0) ? BATTLE_DIE_LADDER[Math.min(BATTLE_DIE_LADDER.length - 1, baseStage + stages)] : null;
+                if (upgradedDie === baseDie) upgradedDie = null; // already as high as it goes
                 if (entry.die === 'd4' || entry.die === 'd8') {
                     const dieItem = fromEffect(entry.die, entry.die);
                     if (upgradedDie) dieItem.replaced = true; // shown darkened: the card replaced it
@@ -31428,7 +31512,11 @@
             resolveMoveCodeList(entry, opts && opts.codeAdds).forEach(({ code, replaced }) => {
                 const first = items.length;
                 addCode(code);
-                if (replaced) for (let i = first; i < items.length; i++) items[i].replaced = true; // shown darkened: the card changed it
+                const met = replaced ? null : effectDieThresholdMet(code, opts && opts.effectDieResult);
+                for (let i = first; i < items.length; i++) {
+                    if (replaced) items[i].replaced = true; // shown darkened: the card changed it
+                    else if (met === true) items[i].thresholdMet = true; // the Effect Die reached it: ringed in white
+                }
             });
             return items;
         }
@@ -31500,7 +31588,7 @@
                 : it.effectId ? ` data-pim-effect="${escapeHtml(it.effectId)}"` : '';
             const iconsHtml = getMoveIconItems(entry, opts).map(it => {
                 const attr = dataAttr(it);
-                const btnClass = it.replaced ? 'pim-icon-btn pim-icon-replaced' : 'pim-icon-btn';
+                const btnClass = 'pim-icon-btn' + (it.replaced ? ' pim-icon-replaced' : '') + (it.thresholdMet ? ' pim-icon-met' : '');
                 if (it.missing) {
                     const chip = `<span class="pim-chip-missing">${escapeHtml(it.missing)}</span>`;
                     return attr ? `<button type="button" class="${btnClass}"${attr}>${chip}</button>` : chip;
@@ -31569,21 +31657,22 @@
                 + `<div class="gbd-total"><span class="gbd-total-label">Attack Total</span><span class="gbd-total-num">${breakdown.total}</span></div>`;
         }
 
-        function getBattleGrantedMoveEffects(slotName) { // Move Effects granted from outside the move itself (a Battle Card in play, an attached card): ids from effects.json
+        function getBattleGrantedMoveEffects(slotName, everyInstance) { // Move Effects granted from outside the move itself (a Battle Card in play, an attached card): ids from effects.json (everyInstance: no de-duplicating, one entry per source)
             const out = [];
+            const addId = id => { if (typeof id === 'string' && id && (everyInstance || !out.includes(id))) out.push(id); };
             getBattleBonusCards(slotName).forEach(card => {
-                (Array.isArray(card.grantsMoveEffects) ? card.grantsMoveEffects : []).forEach(id => { if (typeof id === 'string' && id && !out.includes(id)) out.push(id); });
+                (Array.isArray(card.grantsMoveEffects) ? card.grantsMoveEffects : []).forEach(addId);
             });
             const firstMember = battleInProgress ? getBattleSlotMember(slotName) : null; // Docile / Hasty: only in the first Round this Pok\u00e9mon takes part in
             if (firstMember && firstMember.uid && battleRecord && battleRecord.firstRound && battleRecord.firstRound[firstMember.uid] === battleRecord.round) {
                 [firstMember.attachCardId, firstMember.natureCardId].forEach(id => {
                     const c = id ? CARDS_BY_ID[id] : null;
-                    (c && Array.isArray(c.firstRoundMoveEffects) ? c.firstRoundMoveEffects : []).forEach(eid => { if (typeof eid === 'string' && eid && !out.includes(eid)) out.push(eid); });
+                    (c && Array.isArray(c.firstRoundMoveEffects) ? c.firstRoundMoveEffects : []).forEach(addId);
                 });
             }
             getBattleItemOptions(slotName).forEach(o => { // Eviolite, Quick Claw: only while switched on this round
                 if (o.state !== 'active' || !Array.isArray(o.opt.grantsMoveEffects)) return;
-                o.opt.grantsMoveEffects.forEach(id => { if (typeof id === 'string' && id && !out.includes(id)) out.push(id); });
+                o.opt.grantsMoveEffects.forEach(addId);
             });
             return out;
         }
@@ -31596,8 +31685,10 @@
             }).join('');
             return `<span class="gbd-extra-group">${withPlus ? '<span class="gbd-extra-plus">+</span>' : ''}${items}</span>`; // sits at the end of the move's own icon row (wraps to a new line only if it doesn't fit)
         }
-        function battleSlotUpgradesMoveDie(slotName) { // a Battle Card in play (Dire Hit) bumps the move's Attack Die up one stage
-            return getBattleBonusCards(slotName).some(card => parseBattleRuleFlag(card.upgradeMoveDie, false));
+        function battleSlotUpgradesMoveDie(slotName) { // how many stages the move's Attack Die goes up: Dire Hit, and Razor Claw once the Effect Die meets its threshold
+            let stages = getBattleBonusCards(slotName).some(card => parseBattleRuleFlag(card.upgradeMoveDie, false)) ? 1 : 0;
+            stages += getBattleTriggeredEffects(slotName).upgradeMoveDie;
+            return stages;
         }
         function renderBattleMoveDetails(slotName) {
             if (!moveEffectsPanelReady) return;
@@ -31608,6 +31699,7 @@
             const breakdown = moveName ? computeBattleMoveBreakdown(slotName, moveName, battleCalcBaseMove[slotName]) : null;
             const grantedIds = getBattleGrantedMoveEffects(slotName);
             const upgradeDie = battleSlotUpgradesMoveDie(slotName);
+            const effectDieResult = getBattleEffectDieResult(slotName);
             const codeAdds = getBattleMoveCodeAdds(slotName);
             const itemsHtml = buildBattleItemChoicesHtml(slotName);
             const noMove = !moveName || (!entry && !breakdown);
@@ -31634,16 +31726,16 @@
             if (!box.querySelector('.gbd-left')) box.innerHTML = '<div class="gbd-inner"><div class="gbd-left"></div><div class="gbd-right"></div></div>';
             const left = box.querySelector('.gbd-left');
             const right = box.querySelector('.gbd-right');
-            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|${upgradeDie ? 'up' : ''}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
+            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|up${upgradeDie}|e${effectDieResult === null ? '' : effectDieResult}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
             if (box.dataset.moveKey !== key) {
                 box.dataset.moveKey = key;
                 hideEffectToast();
                 let detail = '';
-                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, codeAdds }).bodyHtml;
+                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, codeAdds, effectDieResult }).bodyHtml;
                 else if (entry && EFFECTS_STATE === 'failed') detail = '<div class="pim-note">effects.json could not be loaded (is it in the repo root?)</div>';
                 let body = detail;
                 if (entry && EFFECTS_STATE === 'ok') {
-                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, codeAdds });
+                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, codeAdds, effectDieResult });
                     const extra = buildGrantedMoveEffectsHtml(grantedIds, !!parts.iconsHtml);
                     // the granted effects join the move's own icon row (right-aligned); the row wraps if they don't fit
                     body = ((parts.iconsHtml || extra) ? `<div class="pim-move-icons gbd-icons-row">${parts.iconsHtml}${extra}</div>` : '') + parts.uniqueHtml + parts.tableHtml;
