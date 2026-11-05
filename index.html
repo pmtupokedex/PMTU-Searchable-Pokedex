@@ -1822,6 +1822,14 @@
             </div>
         </div>
 
+        <div id="game-poison-overlay">
+            <div class="game-confirm-card">
+                <p class="game-confirm-title" id="game-poison-title">Poisoned</p>
+                <p class="game-confirm-subtext" id="game-poison-text"></p>
+                <div class="game-catch-actions" id="game-poison-actions"></div>
+            </div>
+        </div>
+
         <div id="game-frontier-pick-overlay">
             <div class="game-confirm-card">
                 <p class="game-confirm-title">Battle Frontier &mdash; Legendary reward</p>
@@ -4544,6 +4552,7 @@
                     statusBadge.style.animationDelay = '-' + elapsed + 'ms';
                 }
             }
+            if (statusNeedsAttention(member, index)) statusBadge.classList.add('status-attn-white'); // upkeep waiting (see statusNeedsAttention())
             if (member.status && STATUS_COUNTER_CONFIG[member.status]) {
                 const countEl = document.createElement('span');
                 countEl.className = 'game-team-slot-status-count';
@@ -8102,6 +8111,10 @@
                 half.attack = generateBattleAttackRolls(countBattleDiceFromRolls(half.attack));
                 half.rerolled = true;
                 st.rerolls[slot] += 1;
+            } else if (req && req.action === 'note-cursed') { // the first Pokémon on a side to gain Cursed is the only one that can this Battle
+                if (!st.record) st.record = makeEmptyBattleRecord();
+                if (!st.record.cursedBy) st.record.cursedBy = {};
+                if (!st.record.cursedBy[slot] && typeof req.uid === 'string' && req.uid) st.record.cursedBy[slot] = req.uid.slice(0, 64);
             } else if (req && req.action === 'use-item') {
                 if (!st.record) st.record = makeEmptyBattleRecord();
                 const reason = typeof req.cardId === 'string'
@@ -8299,7 +8312,7 @@
             [['attacker', battleAttackerTeamId, battleAttackerMemberIndex], ['defender', battleDefenderTeamId, battleDefenderMemberIndex]].forEach(([slot, teamId, index]) => {
                 const [prevTeamId, prevIndex] = prevPicks[slot];
                 const stillThere = typeof index === 'number' && prevIndex === index && prevTeamId === teamId;
-                if (typeof prevIndex === 'number' && !stillThere) resetParalyzedSideAt(prevTeamId, prevIndex);
+                if (typeof prevIndex === 'number' && !stillThere) arenaLeaveCleanupAt(prevTeamId, prevIndex);
                 else if (nextRound && stillThere && payload[slot] && payload[slot].ownerId === myId) {
                     if (resetParalyzedSideAt(teamId, index, false)) persistTeamSlotChange(index);
                 }
@@ -11153,6 +11166,7 @@
         function openTeamStatusOverlay(index) {
             const member = getTeamSlotMember(index);
             if (!member) return;
+            statusAttnAcknowledge(member); // the player went in to do the upkeep: the badge stops pulsing for this Round
             pendingTeamStatusIndex = index;
             pendingTeamStatusId = member.status || 'none';
             const config = STATUS_COUNTER_CONFIG[pendingTeamStatusId];
@@ -11206,6 +11220,11 @@
             const counter = pendingTeamStatusCounter;
             const side = pendingTeamStatusCardSide;
             const prevStatusForFlute = member ? member.status : null;
+            if (member && member.status !== 'cursed') {
+                const cursedWhy = cursedBlockedFor(index, statusId);
+                if (cursedWhy) { showGameToast(cursedWhy); return; } // the picker stays open so another Status can be chosen
+            }
+            if (member && statusId === 'cursed') noteCursedGained(index);
             closeTeamStatusOverlay();
             if (!member) return;
             const config = STATUS_COUNTER_CONFIG[statusId];
@@ -12361,6 +12380,11 @@
             if (!member) return;
             const alreadyShown = teamDetailStatusPendingId === statusId;
             const detailIndexForFlute = teamDetailIndex, prevDetailStatus = member.status;
+            if (prevDetailStatus !== 'cursed') {
+                const cursedWhy = cursedBlockedFor(teamDetailIndex, statusId);
+                if (cursedWhy) { showGameToast(cursedWhy); return; }
+            }
+            if (statusId === 'cursed') noteCursedGained(teamDetailIndex);
 
             member.status = statusId === 'none' ? null : statusId;
             const config = STATUS_COUNTER_CONFIG[statusId];
@@ -12408,6 +12432,7 @@
             const data = getActiveSaveData();
             const member = (data.team.members || [])[teamDetailIndex];
             if (!member || !member.status) return;
+            statusAttnAcknowledge(member);
             const config = STATUS_COUNTER_CONFIG[member.status];
             if (!config) return;
             const current = member.statusCounter ?? config.default;
@@ -12490,6 +12515,7 @@
             const data = getActiveSaveData();
             const member = (data.team.members || [])[teamDetailIndex];
             if (!member || !member.status || !STATUS_TWO_SIDED[member.status]) return;
+            statusAttnAcknowledge(member);
 
             member.statusCardSide = member.statusCardSide === 2 ? 1 : 2;
             if (activeSaveSlot !== null) persistGameSaves();
@@ -13245,6 +13271,7 @@
             if (!boardMoveGated()) return;
             const st = boardMoveState();
             if (st.window && !boardBlimp) { boardBlimp = { cardId: st.window.type }; boardBlimpShowDone(true); }
+            try { poisonNext(); } catch (err) { /* nothing owed */ }
         }
         function boardMoveActionUsed() {
             if (!boardMoveGated()) return;
@@ -13267,6 +13294,87 @@
             if (!usesVirtualDiceForActiveSave()) return st.regularUsed ? 'You have already moved this turn.' : null; // a physical die: the walk itself opens the move
             return st.regularUsed ? 'You have already moved this turn.' : 'Roll the Movement Die first.';
         }
+        // ---- Poisoned: a counter for every 3 spaces moved in a turn ----
+        const POISON_STEPS_PER_COUNTER = 3;
+        let boardJumpGuardUntil = 0; // Dig / Fly / Teleport / Escape Rope jumps are not steps: a travel report right after one is ignored
+        function poisonOnMoveEnd(stepsThisMove) { // a walking move was marked complete; stepsThisMove = its net route length
+            if (!(stepsThisMove > 0) || isActiveSaveReadOnly()) return;
+            const st = boardMoveState();
+            const before = st.steps | 0, after = before + stepsThisMove; // the whole turn's spaces: a remainder is held for more movement
+            st.steps = after;
+            const gained = Math.floor(after / POISON_STEPS_PER_COUNTER) - Math.floor(before / POISON_STEPS_PER_COUNTER);
+            const data = getActiveSaveData(), cfg = STATUS_COUNTER_CONFIG.poisoned;
+            const poisoned = ((data.team && data.team.members) || []).filter(m => m && !m.fainted && m.status === 'poisoned');
+            if (!poisoned.length) { upkeepPersist(); return; }
+            const pending = [];
+            poisoned.forEach(m => {
+                const owed = Math.min(gained, cfg.max - (m.statusCounter ?? cfg.default)); // never past the Status's maximum
+                if (owed > 0) pending.push({ uid: ensureMemberUid(m), owed, steps: stepsThisMove, total: after });
+            });
+            if (!pending.length) {
+                const toGo = POISON_STEPS_PER_COUNTER - (after % POISON_STEPS_PER_COUNTER);
+                showGameToast(`Poisoned: ${after} space${after === 1 ? '' : 's'} moved this turn \u2014 ${toGo} more for the next counter.`);
+                upkeepPersist();
+                return;
+            }
+            data.poisonOwed = (Array.isArray(data.poisonOwed) ? data.poisonOwed : []).concat(pending);
+            upkeepPersist();
+            poisonNext();
+        }
+        function poisonNext() {
+            const ov = document.getElementById('game-poison-overlay');
+            const data = getActiveSaveData();
+            if (!ov || !data || isActiveSaveReadOnly()) return;
+            const cfg = STATUS_COUNTER_CONFIG.poisoned, members = (data.team && data.team.members) || [];
+            while (Array.isArray(data.poisonOwed) && data.poisonOwed.length) {
+                const e = data.poisonOwed[0], m = members.find(x => x && x.uid === e.uid);
+                const room = m ? cfg.max - (m.statusCounter ?? cfg.default) : 0;
+                if (!m || m.fainted || m.status !== 'poisoned' || e.owed < 1 || room < 1) { data.poisonOwed.shift(); continue; } // cured, fainted or full in the meantime
+                e.owed = Math.min(e.owed, room);
+                const name = getBattleMemberDisplay(m).name || 'The Pok\u00e9mon';
+                const left = e.total % POISON_STEPS_PER_COUNTER;
+                document.getElementById('game-poison-title').textContent = 'Poisoned \u2014 ' + name;
+                const text = document.getElementById('game-poison-text');
+                text.style.whiteSpace = 'pre-line';
+                text.textContent = `Moved ${e.steps} space${e.steps === 1 ? '' : 's'} this move (${e.total} this turn).\n`
+                    + `Add ${e.owed} Poison counter${e.owed === 1 ? '' : 's'} to ${name}. It has ${m.statusCounter ?? cfg.default} of ${cfg.max}.`
+                    + (left ? `\n${left} space${left === 1 ? '' : 's'} carry over toward the next counter.` : '');
+                document.getElementById('game-poison-actions').innerHTML =
+                    `<button class="filter-btn include game-poison-btn" type="button">Add Poison Counter (${e.owed} left)</button>`;
+                try { openGamePanel(); } catch (err) { /* panel not available */ }
+                ov.classList.add('visible');
+                return;
+            }
+            ov.classList.remove('visible');
+            upkeepPersist();
+        }
+        function poisonAddCounter() {
+            const data = getActiveSaveData(), e = data && Array.isArray(data.poisonOwed) ? data.poisonOwed[0] : null;
+            if (!e) { poisonNext(); return; }
+            const cfg = STATUS_COUNTER_CONFIG.poisoned, members = (data.team && data.team.members) || [];
+            const i = members.findIndex(x => x && x.uid === e.uid), m = members[i];
+            if (!m || m.status !== 'poisoned' || m.fainted) { data.poisonOwed.shift(); poisonNext(); return; }
+            const next = (m.statusCounter ?? cfg.default) + 1;
+            if (next >= cfg.max) { // the last counter: the Pok\u00e9mon faints, exactly as when counters are added by hand
+                data.poisonOwed.shift();
+                faintTeamMember(i);
+                try { renderTeamGrid(); if (teamDetailIndex === i) { renderTeamDetailStatusSection(true); renderTeamDetailHpSection(); renderTeamDetailEvolutionSection(); } } catch (err) { /* not on screen */ }
+                upkeepPersist();
+                poisonNext();
+                return;
+            }
+            m.statusCounter = next;
+            e.owed -= 1;
+            if (e.owed < 1) data.poisonOwed.shift();
+            persistTeamSlotChange(i);
+            try { if (teamDetailIndex === i) renderTeamDetailStatusSection(false); } catch (err) { /* not on screen */ }
+            upkeepPersist();
+            poisonNext();
+        }
+        document.getElementById('game-poison-overlay').addEventListener('click', (ev) => {
+            if (ev.target.closest('.game-poison-btn')) poisonAddCounter(); // no other way out: every counter has to be added
+        });
+
         function boardMoveDone(atTurnEnd) {
             if (!boardBlimp) return [];
             const gated = boardMoveGated(), st = boardMoveState(), w = st.window;
@@ -13281,6 +13389,9 @@
             const moved = !!(w && sp && w.startId && (sp.id !== w.startId || route.some(id => id !== w.startId)));
             const cityIds = new Set(boardCtrl && boardCtrl.cities ? boardCtrl.cities().map(c => c.id) : []);
             const passed = sp ? [...new Set(route.slice(0, -1).filter(id => cityIds.has(id) && id !== sp.id))] : [];
+            if (gated && w && (w.type === 'regular' || w.type === 'blimp')) { // walking only: jumps never open a move window
+                try { poisonOnMoveEnd(boardWindowRoute(w).length); } catch (err) { /* never get in the way of ending a move */ }
+            }
             boardBlimpFinish();
             if (!atTurnEnd && w && sp && w.type === 'regular') boardRequestLanding(passed);
             if (!gated || !w) return [];
@@ -13371,6 +13482,7 @@
             if (!home) { showGameToast(card.name + ': you have no Current Home to return to.'); return; }
             if (here && here.id === home.id) { showGameToast(card.name + ': you are already at your Current Home (' + (home.label || 'City') + ').'); return; }
             try { boardCtrl.hideAction(); } catch (e) { /* nothing showing */ }
+            boardJumpGuardUntil = Date.now() + 3000; // a jump isn't walking (see poisonOnMoveEnd())
             if (lobbyState.role === 'guest') boardSend({ type: 'board-jump', to: '@home', land: false });
             else boardCtrl.handleMessage({ type: 'board-jump', player: me.id, to: '@home', land: false });
             showGameToast(card.name + ': your Trainer Figure returned to your Current Home' + (home.label ? ', ' + home.label : '') + '.');
@@ -14280,6 +14392,109 @@
             requestBattleSetSlot(slot, members[index] || null, false);
         }
 
+        // ---- Cursed / Confused only last while a Pok\u00e9mon is in the Arena ----
+        function clearBattleBoundStatus(member) {
+            if (!member || (member.status !== 'cursed' && member.status !== 'confused')) return false;
+            member.status = null;
+            member.statusCounter = undefined;
+            member.statusCardSide = undefined;
+            return true;
+        }
+        function clearBattleBoundStatusAt(teamId, index) {
+            if (typeof index !== 'number' || !teamId || teamId !== getActiveTeamId() || isActiveSaveReadOnly()) return false;
+            const member = (getActiveSaveData().team.members || [])[index];
+            if (!clearBattleBoundStatus(member)) return false;
+            if (activeSaveSlot !== null) persistGameSaves();
+            else if (activeGuestSaveId !== null) persistGameGuestSaves();
+            markUnsavedProgressChanged();
+            try { renderTeamGrid(); } catch (err) { /* not on screen */ }
+            return true;
+        }
+        function arenaLeaveCleanupAt(teamId, index) { // a Pok\u00e9mon leaves the Arena (or the Battle ends and the Arena empties)
+            resetParalyzedSideAt(teamId, index);
+            clearBattleBoundStatusAt(teamId, index);
+        }
+
+        // ---- Cursed: one Pok\u00e9mon per side per Battle can ever gain it (healing it doesn't free it up for another) ----
+        function cursedSlotFor(index) { // which side of the Arena this Pok\u00e9mon is on, or null when it isn't in a Battle
+            if (!battleInProgress) return null;
+            if (index === 'wild') return 'defender';
+            if (index === 'trainer') return 'attacker';
+            if (typeof index !== 'number' || Number.isNaN(index)) return null;
+            const team = getActiveTeamId();
+            if (battleAttackerMemberIndex === index && battleAttackerTeamId === team) return 'attacker';
+            if (battleDefenderMemberIndex === index && battleDefenderTeamId === team) return 'defender';
+            return null;
+        }
+        function cursedBlockedFor(index, statusId) { // '' when it's allowed, else the reason
+            if (statusId !== 'cursed') return '';
+            const member = getTeamSlotMember(index);
+            const slot = cursedSlotFor(index);
+            if (slot) {
+                const by = (getBattleRecordStore().cursedBy || {})[slot];
+                if (by && !(member && member.uid === by)) return 'Only one Pok\u00e9mon per side can gain Cursed in a Battle, and one already has. Curing it doesn\u2019t let another gain it.';
+                return '';
+            }
+            let team = []; // outside a Battle: one at a time on the team
+            if (typeof index === 'number') team = (getActiveSaveData().team.members || []);
+            else if (index === 'trainer') team = [battleTrainerPokemon].concat(Array.isArray(battleTrainerQueue) ? battleTrainerQueue : []);
+            const other = team.find(m => m && m !== member && !m.fainted && m.status === 'cursed');
+            return other ? `${getBattleMemberDisplay(other).name || 'A Pok\u00e9mon'} is already Cursed. Only one Pok\u00e9mon on a team can be Cursed at a time.` : '';
+        }
+        function noteCursedGained(index) { // remembers, for the rest of the Battle, which Pok\u00e9mon on this side has gained Cursed
+            const slot = cursedSlotFor(index), member = slot ? getTeamSlotMember(index) : null;
+            if (!member) return;
+            const uid = ensureMemberUid(member);
+            if (lobbyState.role !== null) { requestBattleDice(slot, { action: 'note-cursed', uid }); return; } // the host keeps the shared Battle Record
+            const rec = getBattleRecordStore();
+            if (!rec.cursedBy) rec.cursedBy = {};
+            if (!rec.cursedBy[slot]) rec.cursedBy[slot] = uid;
+        }
+
+        // ---- Status badge pulse: "go in and do your upkeep" ----
+        const statusAttnAcked = new WeakMap(); // member -> the battle round the player went in during
+        function statusAttnRoundKey() { return battleRecord ? battleRecord.id + ':' + battleRecord.round : ''; }
+        function statusAttnAcknowledge(member) {
+            if (!member || typeof member !== 'object') return;
+            statusAttnAcked.set(member, statusAttnRoundKey());
+            updateStatusAttentionBadges();
+        }
+        function statusInMyArena(index) {
+            if (index === 'wild' || index === 'trainer') return true;
+            if (typeof index !== 'number' || Number.isNaN(index)) return false;
+            const team = getActiveTeamId();
+            return (battleAttackerMemberIndex === index && battleAttackerTeamId === team) || (battleDefenderMemberIndex === index && battleDefenderTeamId === team);
+        }
+        function statusNeedsAttention(member, index) {
+            try { return statusNeedsAttentionRaw(member, index); } catch (err) { return false; } // never get in the way of drawing a badge (e.g. very early in page load)
+        }
+        function statusNeedsAttentionRaw(member, index) {
+            if (!member || !member.status || member.fainted || !battleInProgress) return false;
+            if (!statusInMyArena(index)) return false;
+            if (statusAttnAcked.get(member) === statusAttnRoundKey()) return false;
+            const side2 = member.statusCardSide === 2;
+            switch (member.status) {
+                case 'frozen': return true;          // from the start of the Round
+                case 'paralyzed': return !side2;     // Paralyzed 1
+                case 'sleep': return side2;          // Sleep 2
+                case 'poisoned': case 'cursed': case 'burned': { // once both sides have rolled their Attack Dice
+                    const a = battleDiceResults.attacker && battleDiceResults.attacker.attack;
+                    const d = battleDiceResults.defender && battleDiceResults.defender.attack;
+                    return !!(a && a.length && d && d.length);
+                }
+            }
+            return false;
+        }
+        function updateStatusAttentionBadges() {
+            document.querySelectorAll('.game-team-slot-status').forEach(el => {
+                if (el.dataset.index === undefined) return;
+                const idx = parseTeamSlotIndex(el.dataset.index);
+                const usable = idx === 'wild' || idx === 'trainer' || (typeof idx === 'number' && !Number.isNaN(idx));
+                const member = usable ? getTeamSlotMember(idx) : null;
+                el.classList.toggle('status-attn-white', !!member && statusNeedsAttention(member, idx));
+            });
+        }
+
         function resetParalyzedSide(member) {
             if (!member || member.status !== 'paralyzed' || member.statusCardSide !== 2) return false;
             member.statusCardSide = 1;
@@ -14324,7 +14539,7 @@
             if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
             const newTeamId = index !== null ? getActiveTeamId() : null;
             const isNewOccupant = index !== null && (battleAttackerMemberIndex !== index || battleAttackerTeamId !== newTeamId);
-            if (index === null || isNewOccupant) { revertDynamaxAt(battleAttackerTeamId, battleAttackerMemberIndex); resetParalyzedSideAt(battleAttackerTeamId, battleAttackerMemberIndex); }
+            if (index === null || isNewOccupant) { revertDynamaxAt(battleAttackerTeamId, battleAttackerMemberIndex); arenaLeaveCleanupAt(battleAttackerTeamId, battleAttackerMemberIndex); }
             if (isNewOccupant) resetParalyzedSideAt(newTeamId, index);
             battleAttackerMemberIndex = index;
             battleAttackerTeamId = newTeamId;
@@ -14356,7 +14571,7 @@
             if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
             const newTeamId = index !== null ? getActiveTeamId() : null;
             const isNewOccupant = index !== null && (battleDefenderMemberIndex !== index || battleDefenderTeamId !== newTeamId);
-            if (index === null || isNewOccupant) { revertDynamaxAt(battleDefenderTeamId, battleDefenderMemberIndex); resetParalyzedSideAt(battleDefenderTeamId, battleDefenderMemberIndex); }
+            if (index === null || isNewOccupant) { revertDynamaxAt(battleDefenderTeamId, battleDefenderMemberIndex); arenaLeaveCleanupAt(battleDefenderTeamId, battleDefenderMemberIndex); }
             if (isNewOccupant) resetParalyzedSideAt(newTeamId, index);
             battleDefenderMemberIndex = index;
             battleDefenderTeamId = newTeamId;
@@ -14399,7 +14614,7 @@
 
         function setBattleAttackerTrainer(member, queue) {
             if (lobbyState.role === null && battleTrainerPokemon && battleTrainerPokemon !== member) discardMemberEquippedCards(battleTrainerPokemon);
-            resetParalyzedSideAt(battleAttackerTeamId, battleAttackerMemberIndex);
+            arenaLeaveCleanupAt(battleAttackerTeamId, battleAttackerMemberIndex);
             ensureMemberUid(member);
             resetParalyzedSide(member); // entering the Arena
             battleTrainerPokemon = member;
@@ -15384,6 +15599,7 @@
                 : rollRowHtml + countersHtml + resultsHtml;
             fitBattleDiceResultLine(container);
             renderTeamStatusRoll(); // the Status Condition overlay shows the same Status roll
+            updateStatusAttentionBadges(); // both sides rolled -> Poisoned / Cursed / Burned badges pulse
         }
 
         function fitBattleDiceResultLine(container) {
@@ -15419,6 +15635,7 @@
             const defenderIn = !!getBattleSlotMember('defender');
             if (battleInProgress && !attackerIn && !defenderIn) { battleInProgress = false; battleFormsOnChange(true); }
             watchCardBattle();
+            updateStatusAttentionBadges(); // a Round started: Frozen / Paralyzed 1 / Sleep 2 badges pulse
             beginBtn.style.display = battleInProgress ? 'none' : '';
             const spectating = isArenaSpectatorOfPlayerBattle(); // two other players' battle: Begin / Next Round / End aren't mine
             beginBtn.disabled = !(attackerIn && defenderIn) || spectating;
@@ -15957,7 +16174,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -16900,7 +17117,7 @@
 
         function recallBattleAttacker() {
             revertDynamaxAt(battleAttackerTeamId, battleAttackerMemberIndex); // leaving the Arena
-            resetParalyzedSideAt(battleAttackerTeamId, battleAttackerMemberIndex); // leaving the Arena
+            arenaLeaveCleanupAt(battleAttackerTeamId, battleAttackerMemberIndex); // leaving the Arena
             battleAttackerMemberIndex = null;
             battleAttackerTeamId = null;
             if (lobbyState.role === null) discardMemberEquippedCards(battleTrainerPokemon);
@@ -17217,7 +17434,7 @@
 
         function recallBattleDefender(opts) {
             revertDynamaxAt(battleDefenderTeamId, battleDefenderMemberIndex); // leaving the Arena
-            resetParalyzedSideAt(battleDefenderTeamId, battleDefenderMemberIndex); // leaving the Arena
+            arenaLeaveCleanupAt(battleDefenderTeamId, battleDefenderMemberIndex); // leaving the Arena
             battleDefenderMemberIndex = null;
             battleDefenderTeamId = null;
             if (lobbyState.role === null && !(opts && opts.keepCards)) discardMemberEquippedCards(battleWildPokemon);
@@ -22067,6 +22284,7 @@
         function boardOnTravel(playerId, path) {
             if (playerId === (getMyLobbyPlayerId() || 'host')) {
                 boardNoteVisited(path);
+                if (Date.now() < boardJumpGuardUntil) { boardJumpGuardUntil = 0; return; } // Dig / Fly / Teleport / Escape Rope: not walked, so not part of the move
                 const walkedWindow = () => {
                     const w = boardMoveGated() && boardMoveState().window;
                     if (!w || !path || path.length < 2) return;
@@ -22405,6 +22623,7 @@
             if (!me || !boardCtrl) return;
             boardAnnounceRollSettled(me); // the move is decided, so any roll still on screen can wind down
             try { boardCtrl.hideAction(); } catch (e) { /* nothing showing */ }
+            boardJumpGuardUntil = Date.now() + 3000; // a jump isn't walking (see poisonOnMoveEnd())
             if (lobbyState.role === 'guest') boardSend({ type: 'board-jump', to, land });
             else boardCtrl.handleMessage({ type: 'board-jump', player: me.id, to, land });
         }
