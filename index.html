@@ -8081,7 +8081,12 @@
                 if (!st.record) st.record = makeEmptyBattleRecord();
                 noteBattleMoveUsed(st.record, slot, st[slot] && st[slot].member); // this Pok\u00e9mon used a Move this round (Radio: PKMN Lullaby)
             } else if (req && req.action === 'roll-effect') {
-                half.effect = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
+                const lensBonus = (half.effect === null || half.effect === undefined)
+                    ? battleEffectDieBonus(st.record, slot, st[slot] && st[slot].member, getBattleCardsStore()[slot]) : 0;
+                const lensRaw = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
+                half.effect = Math.min(Math.max(...BATTLE_EFFECT_DIE_FACES), lensRaw + lensBonus); // Wide Lens can't push the roll past the top face
+                half.effectBonus = lensBonus;
+                half.effectRaw = lensRaw;
             } else if (req && req.action === 'roll-status') {
                 half.status = rollBattleFace(BATTLE_STATUS_DIE_FACES);
             } else if (req && req.action === 'reroll-attack') {
@@ -8097,6 +8102,13 @@
                 half.attack = generateBattleAttackRolls(countBattleDiceFromRolls(half.attack));
                 half.rerolled = true;
                 st.rerolls[slot] += 1;
+            } else if (req && req.action === 'use-item') {
+                if (!st.record) st.record = makeEmptyBattleRecord();
+                const reason = typeof req.cardId === 'string'
+                    ? applyBattleItemUse(st.record, slot, st[slot] && st[slot].member, getBattleCardsStore()[slot], req.cardId, !!req.on,
+                        { moveChosen: !!(st.moves && st.moves[slot]), effectRolled: half.effect !== null && half.effect !== undefined })
+                    : 'Unknown card.';
+                if (reason) { sendBattleNotice(peerKey, reason); broadcastBattleArenaState(); return; }
             } else if (req && req.action === 'toggle') {
                 const i = Number(req.index);
                 if (half.attack && Number.isInteger(i) && half.attack[i]) half.attack[i].excluded = !half.attack[i].excluded;
@@ -8260,6 +8272,8 @@
                 battleDiceResults[slot] = {
                     attack: (rolled && rolled.attack) ? rolled.attack.map(r => ({ die: r.die, value: r.value, excluded: !!r.excluded })) : null,
                     effect: (rolled && rolled.effect !== undefined) ? rolled.effect : null,
+                    effectBonus: (rolled && rolled.effectBonus) | 0,
+                    effectRaw: (rolled && rolled.effectRaw) | 0,
                     status: (rolled && rolled.status !== undefined) ? rolled.status : null,
                     rerolled: !!(rolled && rolled.rerolled),
                 };
@@ -15290,7 +15304,13 @@
         function rollBattleEffectDie(slotName) {
             if (!guardBattleDiceAction(slotName)) return;
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-effect' }); return; }
-            battleDiceResults[slotName].effect = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
+            const lensZone = battleZones[slotName];
+            const lensBonus = (battleDiceResults[slotName].effect === null || battleDiceResults[slotName].effect === undefined) // only the first roll after it's switched on
+                ? battleEffectDieBonus(battleRecord, slotName, getBattleSlotMember(slotName), lensZone && lensZone.battleCard) : 0;
+            const lensRaw = rollBattleFace(BATTLE_EFFECT_DIE_FACES);
+            battleDiceResults[slotName].effect = Math.min(Math.max(...BATTLE_EFFECT_DIE_FACES), lensRaw + lensBonus); // Wide Lens can't push the roll past the top face
+            battleDiceResults[slotName].effectBonus = lensBonus;
+            battleDiceResults[slotName].effectRaw = lensRaw;
             refreshBattleDice(slotName);
         }
 
@@ -15336,7 +15356,7 @@
                     : '<span class="game-battle-dice-result"><small>No dice selected</small></span>'}</span>`;
             }
             if (results.effect !== null && results.effect !== undefined) {
-                resultItems += `<span class="game-battle-dice-result game-battle-dice-result-effect">${battleDieIconMarkup('effect')}${results.effect}</span>`;
+                resultItems += `<span class="game-battle-dice-result game-battle-dice-result-effect">${battleDieIconMarkup('effect')}${results.effect}${results.effectBonus ? `<small class="game-battle-dice-bonus-note">(${results.effectRaw || (results.effect - results.effectBonus)}+${results.effectBonus})</small>` : ''}</span>`;
             }
             const rerollGrant = getBattleRerollGrant(getBattleBonusCards(slotName));
             let rerollBtn = '';
@@ -15346,12 +15366,17 @@
                 const cost = rerollGrant.penalty ? ` \u2212${rerollGrant.penalty}` : '';
                 rerollBtn = `<button class="filter-btn game-battle-reroll-attack-btn" data-battle-slot="${slotName}"${(left <= 0 || !hasRoll) ? ' disabled' : ''}>Reroll (${escapeHtml(rerollGrant.label)}${cost} \u00b7 ${left} left)</button>`;
             }
+            const effectRolled = results.effect !== null && results.effect !== undefined;
+            const lensHtml = getBattleItemOptions(slotName)
+                .filter(o => Number.isFinite(o.opt.effectDieBonus) && o.eligible)
+                .map(o => buildBattleItemButtonHtml(slotName, o, effectRolled)).join('');
             const countersHtml = `<div class="game-battle-dice-counters">${counters}</div>`;
             const rollRowHtml = `
                 <div class="game-battle-dice-roll-row">
                     <button class="filter-btn game-battle-roll-attack-btn" data-battle-slot="${slotName}">Roll Attack Dice</button>
                     <button class="filter-btn exclude game-battle-roll-effect-btn" data-battle-slot="${slotName}">Roll Effect Die</button>
                     ${rerollBtn}
+                    ${lensHtml}
                 </div>`;
             const resultsHtml = `<div class="game-battle-dice-results">${resultItems ? `<div class="game-battle-dice-result-line game-battle-dice-result-line-${slotName}">${resultItems}</div>` : ''}</div>`;
             container.innerHTML = slotName === 'attacker'
@@ -15774,6 +15799,99 @@
             return cards;
         }
 
+        // ---- Item Cards with a choice to make (Eviolite, Quick Claw, Wide Lens) ----
+        // Usage lives in the Battle Record, which is already shared with every player and reset per battle:
+        // record.items[key] = the round the card was used. That round = "on", an earlier round = "used up for this battle".
+        function battleItemKey(member, slotName, cardId) {
+            return `${(member && member.uid) || slotName}:${cardId}`;
+        }
+        function isBattleMemberFullyEvolved(member) { // true / false, or null when the Pok\u00e9mon's data isn't known
+            if (!member) return null;
+            const entry = POKEMON_BY_NAME[member.name]; // the base species: a Mega or Gigantamax form doesn't change whether it can still evolve
+            if (!entry || !Array.isArray(entry.tags)) return null;
+            const tags = entry.tags.map(t => String(t).toLowerCase());
+            return !(tags.includes('canevolve') || tags.includes('splitevo'));
+        }
+        function getBattleItemOptionsFor(slotName, member, zoneState, record) {
+            const items = (record && record.items) || {};
+            const round = record ? record.round : 1;
+            const out = [];
+            collectBattleBonusCards(member, zoneState).forEach(card => {
+                const opt = card.battleOption;
+                if (!opt || typeof opt !== 'object' || out.some(o => o.card.id === card.id)) return;
+                const key = battleItemKey(member, slotName, card.id);
+                const used = items[key];
+                out.push({
+                    card, opt, key,
+                    state: used === undefined ? 'ready' : (used === round ? 'active' : 'spent'),
+                    eligible: !(opt.requiresNotFullyEvolved && isBattleMemberFullyEvolved(member) !== false),
+                });
+            });
+            return out;
+        }
+        function getBattleItemOptions(slotName) {
+            const zone = battleZones[slotName];
+            return getBattleItemOptionsFor(slotName, getBattleSlotMember(slotName), zone && zone.battleCard, getBattleRecordStore());
+        }
+        function applyBattleItemUse(record, slotName, member, zoneState, cardId, on, ctx) { // returns '' on success, else the reason it was refused
+            const o = getBattleItemOptionsFor(slotName, member, zoneState, record).find(x => x.card.id === cardId);
+            if (!o) return 'That card isn\u2019t in play for this Pok\u00e9mon.';
+            if (!record.items) record.items = {};
+            const used = record.items[o.key];
+            if (!on) {
+                if (used !== record.round) return '';
+                if (o.opt.effectDieBonus && ctx.effectRolled) return `${o.card.name} has already added to the Effect Die roll.`;
+                delete record.items[o.key];
+                return '';
+            }
+            if (used !== undefined) return used === record.round ? '' : `${o.card.name} has already been used this battle.`;
+            if (!o.eligible) return `${o.card.name} only works on a Pok\u00e9mon that can still evolve.`;
+            if (o.opt.needsMove && !ctx.moveChosen) return 'Select a Move first.';
+            if (o.opt.effectDieBonus && ctx.effectRolled) return 'The Effect Die has already been rolled this round.';
+            record.items[o.key] = record.round;
+            return '';
+        }
+        function battleEffectDieBonus(record, slotName, member, zoneState) { // Wide Lens: +N on the next Effect Die roll
+            return getBattleItemOptionsFor(slotName, member, zoneState, record)
+                .reduce((sum, o) => sum + ((o.state === 'active' && Number.isFinite(o.opt.effectDieBonus)) ? o.opt.effectDieBonus : 0), 0);
+        }
+        function toggleBattleItem(slotName, cardId) {
+            if (!guardBattleDiceAction(slotName)) return;
+            const o = getBattleItemOptions(slotName).find(x => x.card.id === cardId);
+            if (!o) return;
+            const on = o.state !== 'active';
+            if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'use-item', cardId, on }); return; }
+            const zone = battleZones[slotName];
+            const reason = applyBattleItemUse(battleRecord, slotName, getBattleSlotMember(slotName), zone && zone.battleCard, cardId, on,
+                { moveChosen: !!battleCalcMoveName[slotName], effectRolled: battleDiceResults[slotName].effect !== null && battleDiceResults[slotName].effect !== undefined });
+            if (reason) { showBattleArenaNotice(reason); return; }
+            refreshBattleDice(slotName);
+        }
+        function buildBattleItemButtonHtml(slotName, o, locked) {
+            const name = o.card.name;
+            let text = `${name}: ${o.opt.prompt}`, cls = 'filter-btn game-battle-item-btn', disabled = !canIChooseBattleMoves(slotName);
+            if (o.state === 'spent') { text = `${name} used`; disabled = true; }
+            else if (o.state === 'active') {
+                cls += ' include';
+                if (locked) { text = `${name} applied`; disabled = true; } else text = `${name} on \u00b7 tap to undo`;
+            }
+            return `<button type="button" class="${cls}" data-battle-slot="${slotName}" data-card-id="${escapeHtml(o.card.id)}"${disabled ? ' disabled' : ''}>${escapeHtml(text)}</button>`;
+        }
+        function buildBattleItemChoicesHtml(slotName) { // the choices that need a Move picked first, shown with the Move's details
+            const buttons = getBattleItemOptions(slotName)
+                .filter(o => o.opt.needsMove && o.eligible)
+                .map(o => buildBattleItemButtonHtml(slotName, o, false));
+            return buttons.length ? `<div class="gbd-item-row">${buttons.join('')}</div>` : '';
+        }
+        function getBattleMoveCodeAdds(slotName) { // King's Rock, Zoom Lens: a Move Effect code the card adds to every Move used
+            const out = [];
+            getBattleBonusCards(slotName).forEach(card => {
+                const a = card.addsMoveCode;
+                if (a && typeof a.code === 'string' && a.code) out.push({ code: a.code, shifts: Array.isArray(a.shifts) ? a.shifts : [] });
+            });
+            return out;
+        }
+
         function getBattleBonusCards(slotName) {
             return collectBattleBonusCards(getBattleSlotMember(slotName), battleZones[slotName] && battleZones[slotName].battleCard);
         }
@@ -15839,7 +15957,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -26960,6 +27078,11 @@
                 rerollBattleAttackDice(battleRerollAttackBtn.dataset.battleSlot);
                 return;
             }
+            const battleItemBtn = e.target.closest('.game-battle-item-btn');
+            if (battleItemBtn) {
+                toggleBattleItem(battleItemBtn.dataset.battleSlot, battleItemBtn.dataset.cardId);
+                return;
+            }
             const battleRollAttackBtn = e.target.closest('.game-battle-roll-attack-btn');
             if (battleRollAttackBtn) {
                 rollBattleAttackDice(battleRollAttackBtn.dataset.battleSlot);
@@ -30784,6 +30907,18 @@
 
         const BATTLE_DIE_UPGRADE = { d4: 'd6', d6: 'd8' }; // Dire Hit: one stage up (a d8 is already the top, so it stays)
 
+        function resolveMoveCodeList(entry, codeAdds) { // the Move's effect codes after King's Rock / Zoom Lens: [{ code, replaced? }]
+            const out = (Array.isArray(entry.effects) ? entry.effects : []).map(code => ({ code }));
+            (codeAdds || []).forEach(add => {
+                const idx = out.findIndex(c => { const m = /^([a-z]+)([1-6])$/.exec(c.code); return !c.replaced && m && add.shifts.includes(m[1]); });
+                if (idx < 0) { out.push({ code: add.code }); return; } // nothing to shift: the card's own effect is added
+                const m = /^([a-z]+)([1-6])$/.exec(out[idx].code);
+                const n = parseInt(m[2], 10);
+                if (n > 1) out.splice(idx, 1, { code: out[idx].code, replaced: true }, { code: m[1] + (n - 1) }); // one step easier; a threshold of 1 can't go lower
+            });
+            return out;
+        }
+
         function getMoveIconItems(entry, opts) {
             const items = [];
             const effects = EFFECTS_DATA.effects, codes = EFFECTS_DATA.codes;
@@ -30806,7 +30941,7 @@
                     items.push(fromEffect(str.of === 'target' ? 'halflevel_opp' : 'halflevel_self', 'half_level ' + str.of));
                 }
             }
-            (Array.isArray(entry.effects) ? entry.effects : []).forEach(code => {
+            const addCode = code => {
                 const def = codes[code];
                 if (!def) { items.push({ missing: `${code} (unknown code)` }); return; }
                 const ids = Array.isArray(def.effects) ? def.effects : [];
@@ -30819,6 +30954,11 @@
                     if (ef && ef.icon) items.push({ src: ef.icon, title, code });
                     else items.push({ missing: `${code} (${ef ? 'no icon' : 'no effect "' + id + '"'})`, code });
                 });
+            };
+            resolveMoveCodeList(entry, opts && opts.codeAdds).forEach(({ code, replaced }) => {
+                const first = items.length;
+                addCode(code);
+                if (replaced) for (let i = first; i < items.length; i++) items[i].replaced = true; // shown darkened: the card changed it
             });
             return items;
         }
@@ -30964,6 +31104,10 @@
             getBattleBonusCards(slotName).forEach(card => {
                 (Array.isArray(card.grantsMoveEffects) ? card.grantsMoveEffects : []).forEach(id => { if (typeof id === 'string' && id && !out.includes(id)) out.push(id); });
             });
+            getBattleItemOptions(slotName).forEach(o => { // Eviolite, Quick Claw: only while switched on this round
+                if (o.state !== 'active' || !Array.isArray(o.opt.grantsMoveEffects)) return;
+                o.opt.grantsMoveEffects.forEach(id => { if (typeof id === 'string' && id && !out.includes(id)) out.push(id); });
+            });
             return out;
         }
         function buildGrantedMoveEffectsHtml(ids, withPlus) {
@@ -30987,6 +31131,8 @@
             const breakdown = moveName ? computeBattleMoveBreakdown(slotName, moveName, battleCalcBaseMove[slotName]) : null;
             const grantedIds = getBattleGrantedMoveEffects(slotName);
             const upgradeDie = battleSlotUpgradesMoveDie(slotName);
+            const codeAdds = getBattleMoveCodeAdds(slotName);
+            const itemsHtml = buildBattleItemChoicesHtml(slotName);
             const noMove = !moveName || (!entry && !breakdown);
             if (noMove && grantedIds.length && EFFECTS_STATE === 'ok') { // no Move picked, but a card still grants an effect this round
                 if (!box.querySelector('.gbd-left')) box.innerHTML = '<div class="gbd-inner"><div class="gbd-left"></div><div class="gbd-right"></div></div>';
@@ -31011,23 +31157,23 @@
             if (!box.querySelector('.gbd-left')) box.innerHTML = '<div class="gbd-inner"><div class="gbd-left"></div><div class="gbd-right"></div></div>';
             const left = box.querySelector('.gbd-left');
             const right = box.querySelector('.gbd-right');
-            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|${upgradeDie ? 'up' : ''}`;
+            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|${upgradeDie ? 'up' : ''}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
             if (box.dataset.moveKey !== key) {
                 box.dataset.moveKey = key;
                 hideEffectToast();
                 let detail = '';
-                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie }).bodyHtml;
+                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, codeAdds }).bodyHtml;
                 else if (entry && EFFECTS_STATE === 'failed') detail = '<div class="pim-note">effects.json could not be loaded (is it in the repo root?)</div>';
                 let body = detail;
                 if (entry && EFFECTS_STATE === 'ok') {
-                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie });
+                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, codeAdds });
                     const extra = buildGrantedMoveEffectsHtml(grantedIds, !!parts.iconsHtml);
                     // the granted effects join the move's own icon row (right-aligned); the row wraps if they don't fit
                     body = ((parts.iconsHtml || extra) ? `<div class="pim-move-icons gbd-icons-row">${parts.iconsHtml}${extra}</div>` : '') + parts.uniqueHtml + parts.tableHtml;
                 } else if (grantedIds.length) {
                     body += `<div class="pim-move-icons gbd-icons-row">${buildGrantedMoveEffectsHtml(grantedIds, false)}</div>`;
                 }
-                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry) : ''}</div>${body}`;
+                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry) : ''}</div>${body}${itemsHtml}`;
             }
             right.innerHTML = breakdown ? buildBattleCalcHtml(breakdown) : '';
             right.hidden = !breakdown;
