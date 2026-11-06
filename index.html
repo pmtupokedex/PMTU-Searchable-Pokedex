@@ -8087,7 +8087,7 @@
             if (req && req.action === 'set-counts') {
                 st.diceCounts[slot] = sanitizeBattleDiceCounts(req.counts);
             } else if (req && req.action === 'roll-attack') {
-                half.attack = generateBattleAttackRolls(effectiveBattleDiceCounts(slot, st.diceCounts[slot])); // + Advantage / Disadvantage dice
+                half.attack = applyBattleAdvantageDrop(slot, generateBattleAttackRolls(effectiveBattleDiceCounts(slot, st.diceCounts[slot])), st.diceCounts[slot]); // + Advantage / Disadvantage dice, then drop
                 if (!st.record) st.record = makeEmptyBattleRecord();
                 noteBattleMoveUsed(st.record, slot, st[slot] && st[slot].member); // this Pok\u00e9mon used a Move this round (Radio: PKMN Lullaby)
             } else if (req && req.action === 'roll-effect') {
@@ -8113,7 +8113,7 @@
                     broadcastBattleArenaState();
                     return;
                 }
-                half.attack = generateBattleAttackRolls(countBattleDiceFromRolls(half.attack));
+                half.attack = applyBattleAdvantageDrop(slot, generateBattleAttackRolls(countBattleDiceFromRolls(half.attack)), st.diceCounts[slot]);
                 half.rerolled = true;
                 st.rerolls[slot] += 1;
             } else if (req && req.action === 'note-cursed') { // the first Pokémon on a side to gain Cursed is the only one that can this Battle
@@ -14452,7 +14452,16 @@
         ];
         const BATTLE_EFFECT_DIE_FACES = [1, 2, 3, 4, 5, 6];
         const BATTLE_STATUS_DIE_FACES = [1, 2, 3, 4];
-        const BATTLE_DICE_MAX = 3;
+        const BATTLE_DICE_MAX = 9;
+        const BATTLE_DIE_LADDER = ['d4', 'd6', 'd8']; // an upgrade moves the Attack Die one stage up this ladder (a d8 is already the top, so it stays)
+        function shiftBattleDieKey(key, stages) { // the die a counter shows once cards have raised the Attack Die by `stages`
+            const i = BATTLE_DIE_LADDER.indexOf(key);
+            return i < 0 ? key : BATTLE_DIE_LADDER[Math.min(BATTLE_DIE_LADDER.length - 1, i + Math.max(0, stages | 0))];
+        }
+        function unshiftBattleDieKey(key, stages) { // the die to set on the counter so it shows `key` after the upgrade; null when no die can end up there
+            const i = BATTLE_DIE_LADDER.indexOf(key) - Math.max(0, stages | 0);
+            return i >= 0 ? BATTLE_DIE_LADDER[i] : null;
+        }
 
         const BATTLE_DIE_ICONS = {
             d4: { name: 'd4', imageUrl: 'https://dl.dropboxusercontent.com/scl/fi/7ievxxpdqnwsxupnfcy8c/die_d4.png?rlkey=qe4sddlqj0rz9c172tmib57co&st=7t3ohbam&dl=1' },
@@ -15581,6 +15590,7 @@
                 const n = parseInt(counts && counts[d.key], 10);
                 clean[d.key] = Number.isFinite(n) ? Math.max(0, Math.min(BATTLE_DICE_MAX, n)) : 0;
             });
+            if (!BATTLE_DICE.some(d => clean[d.key] > 0)) clean.d6 = 1; // there's always at least one die on a counter
             return clean;
         }
 
@@ -15601,14 +15611,20 @@
             renderBattleCalcReadout(slotName);
         }
 
-        function stepBattleDice(slotName, dieKey, step) {
+        function stepBattleDice(slotName, dieKey, step) { // dieKey is the die as the counter shows it, i.e. after any upgrade a card made
             const counts = battleDiceCounts[slotName];
             if (!counts || !(dieKey in counts)) return;
-            const next = Math.max(0, Math.min(BATTLE_DICE_MAX, counts[dieKey] + step));
-            if (next === counts[dieKey]) return;
+            const stages = battleSlotUpgradesMoveDie(slotName);
+            const activeKey = getBattleActiveDieKey(counts);
+            const setKey = (activeKey && shiftBattleDieKey(activeKey, stages) === dieKey) ? activeKey : unshiftBattleDieKey(dieKey, stages); // the die to store so the counter shows dieKey
+            if (!setKey || !(setKey in counts)) return; // a die below the upgraded one can't be chosen
+            const next = Math.max(0, Math.min(BATTLE_DICE_MAX, counts[setKey] + step));
+            if (next === counts[setKey]) return;
+            const otherDice = BATTLE_DICE.reduce((sum, d) => sum + (d.key === setKey ? 0 : (counts[d.key] | 0)), 0);
+            if (next === 0 && otherDice === 0) return; // the last die can't be taken off: add to another counter instead, which moves the dice over
             const updated = { ...counts };
             if (step > 0) BATTLE_DICE.forEach(d => { updated[d.key] = 0; });
-            updated[dieKey] = next;
+            updated[setKey] = next;
             if (lobbyState.role !== null) {
                 if (!guardBattleDiceAction(slotName)) return;
                 requestBattleDice(slotName, { action: 'set-counts', counts: updated });
@@ -15629,7 +15645,7 @@
             if (!guardBattleDiceAction(slotName)) return;
             const counts = effectiveBattleDiceCounts(slotName);
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-attack', counts }); return; }
-            battleDiceResults[slotName].attack = generateBattleAttackRolls(counts);
+            battleDiceResults[slotName].attack = applyBattleAdvantageDrop(slotName, generateBattleAttackRolls(counts), battleDiceCounts[slotName]);
             noteBattleMoveUsed(battleRecord, slotName, getBattleSlotMember(slotName)); // Radio: PKMN Lullaby
             refreshBattleDice(slotName);
         }
@@ -15640,7 +15656,7 @@
             const reason = getBattleRerollBlockReason(grant, battleRerollsUsed[slotName], battleDiceResults[slotName].attack);
             if (reason) { showBattleArenaNotice(reason); return; }
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'reroll-attack' }); berryUseAfterReroll(slotName, grant); return; }
-            battleDiceResults[slotName].attack = generateBattleAttackRolls(countBattleDiceFromRolls(battleDiceResults[slotName].attack));
+            battleDiceResults[slotName].attack = applyBattleAdvantageDrop(slotName, generateBattleAttackRolls(countBattleDiceFromRolls(battleDiceResults[slotName].attack)), battleDiceCounts[slotName]);
             battleDiceResults[slotName].rerolled = true;
             battleRerollsUsed[slotName] += 1;
             refreshBattleDice(slotName);
@@ -15698,16 +15714,29 @@
             container.style.display = battleInProgress ? '' : 'none';
             container.classList.toggle('game-battle-dice-locked', !canIChooseBattleMoves(slotName));
             const counts = effectiveBattleDiceCounts(slotName);
+            const manualCounts = sanitizeBattleDiceCounts(battleDiceCounts[slotName]);
+            const manualTotal = BATTLE_DICE.reduce((sum, d) => sum + manualCounts[d.key], 0);
             const results = battleDiceResults[slotName];
-            const counters = BATTLE_DICE.map(d => `
+            const dieStages = battleSlotUpgradesMoveDie(slotName);
+            const manualActiveKey = getBattleActiveDieKey(manualCounts);
+            const shownActiveKey = manualActiveKey ? shiftBattleDieKey(manualActiveKey, dieStages) : null; // the die the counter shows as in use
+            const counters = BATTLE_DICE.map(d => {
+                const isActive = d.key === shownActiveKey;
+                const lastDie = isActive && manualCounts[manualActiveKey] <= 1 && manualTotal === manualCounts[manualActiveKey];
+                const minusOff = !isActive || lastDie;
+                const plusOff = isActive ? counts[d.key] >= BATTLE_DICE_MAX : unshiftBattleDieKey(d.key, dieStages) === null;
+                const minusTitle = lastDie ? ' title="There is always at least one die to roll. Add to another counter to switch dice."' : '';
+                const plusTitle = (!isActive && plusOff) ? ' title="A card raised the attack die, so a lower die can\u2019t be chosen."' : '';
+                return `
                 <div class="game-battle-dice-counter">
                     <span class="game-battle-dice-counter-label">${battleDieIconMarkup(d.key) || d.label}</span>
                     <div class="game-battle-dice-counter-controls">
-                        <button class="filter-btn game-battle-dice-step-btn" data-battle-slot="${slotName}" data-die="${d.key}" data-step="-1" aria-label="Fewer ${d.label}"${counts[d.key] <= 0 ? ' disabled' : ''}>&minus;</button>
+                        <button class="filter-btn game-battle-dice-step-btn" data-battle-slot="${slotName}" data-die="${d.key}" data-step="-1" aria-label="Fewer ${d.label}"${minusOff ? ' disabled' : ''}${minusTitle}>&minus;</button>
                         <span class="game-battle-dice-value">${counts[d.key]}</span>
-                        <button class="filter-btn game-battle-dice-step-btn" data-battle-slot="${slotName}" data-die="${d.key}" data-step="1" aria-label="More ${d.label}"${counts[d.key] >= BATTLE_DICE_MAX ? ' disabled' : ''}>+</button>
+                        <button class="filter-btn game-battle-dice-step-btn" data-battle-slot="${slotName}" data-die="${d.key}" data-step="1" aria-label="More ${d.label}"${plusOff ? ' disabled' : ''}${plusTitle}>+</button>
                     </div>
-                </div>`).join('');
+                </div>`;
+            }).join('');
             let resultItems = '';
             if (results.status !== null && results.status !== undefined) {
                 resultItems += `<span class="game-battle-dice-result game-battle-dice-result-status">${battleDieIconMarkup('status')}${results.status}</span>`;
@@ -15751,9 +15780,13 @@
 
         function buildBattleDiceAdvantageNote(slotName) {
             const adv = getBattleDiceAdvantage(slotName);
-            if (!adv.extra || !getBattleActiveDieKey(sanitizeBattleDiceCounts(battleDiceCounts[slotName]))) return '';
-            const capped = adv.extra > BATTLE_DICE_MAX - 1;
-            return `<div class="game-battle-dice-adv-note game-battle-dice-adv-note-${adv.mode}">+${adv.extra} ${adv.mode === 'adv' ? 'Advantage' : 'Disadvantage'} ${adv.extra === 1 ? 'die' : 'dice'}${capped ? ` (up to ${BATTLE_DICE_MAX})` : ''}</div>`;
+            const manual = sanitizeBattleDiceCounts(battleDiceCounts[slotName]);
+            if (!adv.extra || !getBattleActiveDieKey(manual)) return '';
+            const sum = c => BATTLE_DICE.reduce((s, d) => s + c[d.key], 0);
+            const added = sum(effectiveBattleDiceCounts(slotName)) - sum(manual); // can fall short of adv.extra at the maximum
+            const label = adv.mode === 'adv' ? 'Advantage' : 'Disadvantage';
+            const drops = `drops the ${added > 1 ? added + ' ' : ''}${adv.mode === 'adv' ? 'lowest' : 'highest'}`;
+            return `<div class="game-battle-dice-adv-note game-battle-dice-adv-note-${adv.mode}">${label}: +${added} ${added === 1 ? 'die' : 'dice'}, ${added ? drops : 'at the maximum of ' + BATTLE_DICE_MAX}${added && added < adv.extra ? ` (max ${BATTLE_DICE_MAX})` : ''}</div>`;
         }
 
         function fitBattleDiceResultLine(container) {
@@ -16322,13 +16355,29 @@
             getBattleAdvantageSources(getBattleOpposingSlotName(slotName)).forEach(s => { if (s.kind === 'dis') net -= s.n; });
             return { net, extra: Math.abs(net), mode: net > 0 ? 'adv' : (net < 0 ? 'dis' : null) };
         }
+        function applyBattleAdvantageDrop(slotName, rolls, manualCounts) { // Advantage drops one die from the bottom per level left, Disadvantage one from the top
+            const adv = getBattleDiceAdvantage(slotName);
+            if (!adv.mode || !rolls || !rolls.length) return rolls;
+            const manual = sanitizeBattleDiceCounts(manualCounts || battleDiceCounts[slotName]);
+            const manualTotal = BATTLE_DICE.reduce((sum, d) => sum + manual[d.key], 0);
+            const drop = Math.min(adv.extra, Math.max(0, rolls.length - Math.max(1, manualTotal))); // only the extra dice that were really rolled
+            rolls.map((r, i) => i)
+                .sort((a, b) => adv.mode === 'adv' ? rolls[a].value - rolls[b].value : rolls[b].value - rolls[a].value) // stable: ties keep roll order
+                .slice(0, drop)
+                .forEach(i => { rolls[i].excluded = true; }); // still toggleable by hand
+            return rolls;
+        }
         function getBattleActiveDieKey(counts) { // the die the side has chosen to attack with
             let key = null, best = 0;
             BATTLE_DICE.forEach(d => { if (counts[d.key] > best) { best = counts[d.key]; key = d.key; } });
             return key;
         }
-        function effectiveBattleDiceCounts(slotName, manualCounts) { // the counters the player set, plus the extra dice Advantage / Disadvantage adds to the die in use
-            const counts = sanitizeBattleDiceCounts(manualCounts || battleDiceCounts[slotName]);
+        function effectiveBattleDiceCounts(slotName, manualCounts) { // what will be rolled: the counters the player set, moved up by any Attack Die upgrade (Dire Hit, Razor Claw), plus Advantage / Disadvantage dice
+            const manual = sanitizeBattleDiceCounts(manualCounts || battleDiceCounts[slotName]);
+            const stages = battleSlotUpgradesMoveDie(slotName);
+            const counts = {};
+            BATTLE_DICE.forEach(d => { counts[d.key] = 0; });
+            BATTLE_DICE.forEach(d => { if (manual[d.key] > 0) counts[shiftBattleDieKey(d.key, stages)] += manual[d.key]; });
             const adv = getBattleDiceAdvantage(slotName);
             const key = adv.extra ? getBattleActiveDieKey(counts) : null; // no die chosen = no Attack Roll to add dice to
             if (key) counts[key] = Math.min(BATTLE_DICE_MAX, counts[key] + adv.extra);
@@ -31456,8 +31505,7 @@
                 refreshMoveValidationColumns();
             });
 
-        const BATTLE_DIE_LADDER = ['d4', 'd6', 'd8']; // an upgrade moves the Attack Die one stage up this ladder (a d8 is already the top, so it stays)
-
+        
         function resolveMoveCodeList(entry, codeAdds) { // the Move's effect codes after King's Rock / Zoom Lens: [{ code, replaced? }]
             const out = (Array.isArray(entry.effects) ? entry.effects : []).map(code => ({ code }));
             (codeAdds || []).forEach(add => {
