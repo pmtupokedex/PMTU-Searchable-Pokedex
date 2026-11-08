@@ -15781,12 +15781,22 @@
         function buildBattleDiceAdvantageNote(slotName) {
             const adv = getBattleDiceAdvantage(slotName);
             const manual = sanitizeBattleDiceCounts(battleDiceCounts[slotName]);
-            if (!adv.extra || !getBattleActiveDieKey(manual)) return '';
+            if ((!adv.extra && !adv.add) || !getBattleActiveDieKey(manual)) return '';
             const sum = c => BATTLE_DICE.reduce((s, d) => s + c[d.key], 0);
-            const added = sum(effectiveBattleDiceCounts(slotName)) - sum(manual); // can fall short of adv.extra at the maximum
-            const label = adv.mode === 'adv' ? 'Advantage' : 'Disadvantage';
-            const drops = `drops the ${added > 1 ? added + ' ' : ''}${adv.mode === 'adv' ? 'lowest' : 'highest'}`;
-            return `<div class="game-battle-dice-adv-note game-battle-dice-adv-note-${adv.mode}">${label}: +${added} ${added === 1 ? 'die' : 'dice'}, ${added ? drops : 'at the maximum of ' + BATTLE_DICE_MAX}${added && added < adv.extra ? ` (max ${BATTLE_DICE_MAX})` : ''}</div>`;
+            const manualTotal = sum(manual);
+            const addAdded = Math.min(BATTLE_DICE_MAX, manualTotal + adv.add) - manualTotal; // can fall short at the maximum
+            const advAdded = sum(effectiveBattleDiceCounts(slotName)) - manualTotal - addAdded;
+            const dice = n => (n === 1 ? 'die' : 'dice');
+            let html = '';
+            if (adv.add) {
+                html += `<div class="game-battle-dice-adv-note game-battle-dice-adv-note-add">Add Die: ${addAdded ? `+${addAdded} ${dice(addAdded)}, added to the result` : 'at the maximum of ' + BATTLE_DICE_MAX}${addAdded < adv.add && addAdded ? ` (max ${BATTLE_DICE_MAX})` : ''}</div>`;
+            }
+            if (adv.extra) {
+                const label = adv.mode === 'adv' ? 'Advantage' : 'Disadvantage';
+                const drops = `drops the ${advAdded > 1 ? advAdded + ' ' : ''}${adv.mode === 'adv' ? 'lowest' : 'highest'}`;
+                html += `<div class="game-battle-dice-adv-note game-battle-dice-adv-note-${adv.mode}">${label}: ${advAdded ? `+${advAdded} ${dice(advAdded)}, ${drops}` : 'at the maximum of ' + BATTLE_DICE_MAX}${advAdded && advAdded < adv.extra ? ` (max ${BATTLE_DICE_MAX})` : ''}</div>`;
+            }
+            return html;
         }
 
         function fitBattleDiceResultLine(container) {
@@ -16326,11 +16336,21 @@
             return result >= def.threshold;
         }
 
-        // ---- Advantage / Disadvantage: extra Attack Dice ----
+        // ---- Advantage / Disadvantage / Add Die: extra Attack Dice ----
         // Every Advantage / Disadvantage instance makes a side roll 1 extra die (Double: 2). A Move's Advantage helps its own side, its
-        // Disadvantage hurts the opponent. Opposing instances cancel die for die; what's left is extra dice on the die already in use.
-        // An instance behind an Effect Die threshold (wadv5, bdis5, ...) only counts once the first Effect Die roll of the round meets it.
-        const BATTLE_ADV_EFFECTS = { adv: { kind: 'adv', n: 1 }, doubadv: { kind: 'adv', n: 2 }, dis: { kind: 'dis', n: 1 }, doubdis: { kind: 'dis', n: 2 } };
+        // Disadvantage hurts the opponent. Opposing instances cancel die for die; what's left is extra dice on the die already in use, and
+        // that many of the lowest (Advantage) or highest (Disadvantage) are dropped. Add Die (wadd1-6) is one extra die for its own side that
+        // is simply added to the result: it never cancels anything and never drops anything on its own.
+        // Enraged (rage) is an Advantage that only counts while the opponent's selected Move has an Attack Strength above 0.
+        // An instance behind an Effect Die threshold (wadv5, bdis5, wadd3, ...) only counts once the first Effect Die roll of the round meets it.
+        const BATTLE_ADV_EFFECTS = { adv: { kind: 'adv', n: 1 }, doubadv: { kind: 'adv', n: 2 }, dis: { kind: 'dis', n: 1 }, doubdis: { kind: 'dis', n: 2 }, add: { kind: 'add', n: 1 }, rage: { kind: 'adv', n: 1, needsOpponentAttack: true } };
+        function battleOpponentMoveAttacks(slotName) { // does the opponent's selected Move have an Attack Strength above 0? (unknown, e.g. a manual strength not entered yet, counts as no)
+            const other = getBattleOpposingSlotName(slotName);
+            const moveName = battleCalcMoveName[other];
+            if (!moveName) return false;
+            const power = resolveBattleMovePower(other, getBattleEffectiveStrength(other, moveName, battleCalcBaseMove[other]));
+            return Number.isFinite(power) && power > 0;
+        }
         function effectDieCodeNeedsRoll(def) { return !!def && Number.isFinite(def.threshold) && def.requiresRoll !== false && def.threshold > 1; }
         function getBattleAdvantageSources(slotName) { // the Advantage / Disadvantage instances this side's Move and cards bring: [{ kind, n, code }]
             const out = [];
@@ -16338,29 +16358,31 @@
             const result = getBattleEffectDieResult(slotName);
             const moveName = battleCalcMoveName[slotName];
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
+            let opponentAttacks = null; // worked out only if an effect needs it
+            const applies = a => !a.needsOpponentAttack || (opponentAttacks === null ? (opponentAttacks = battleOpponentMoveAttacks(slotName)) : opponentAttacks);
             if (entry) {
                 resolveMoveCodeList(entry, getBattleMoveCodeAdds(slotName)).forEach(({ code, replaced }) => {
                     const def = EFFECTS_DATA.codes[code];
                     if (replaced || !def) return; // a code a card shifted down is replaced by the shifted one
                     if (effectDieCodeNeedsRoll(def) && effectDieThresholdMet(code, result) !== true) return; // threshold not (yet) met
-                    (Array.isArray(def.effects) ? def.effects : []).forEach(id => { const a = BATTLE_ADV_EFFECTS[id]; if (a) out.push({ kind: a.kind, n: a.n, code }); });
+                    (Array.isArray(def.effects) ? def.effects : []).forEach(id => { const a = BATTLE_ADV_EFFECTS[id]; if (a && applies(a)) out.push({ kind: a.kind, n: a.n, code }); });
                 });
             }
-            getBattleGrantedMoveEffects(slotName, true).forEach(id => { const a = BATTLE_ADV_EFFECTS[id]; if (a) out.push({ kind: a.kind, n: a.n, code: id }); });
+            getBattleGrantedMoveEffects(slotName, true).forEach(id => { const a = BATTLE_ADV_EFFECTS[id]; if (a && applies(a)) out.push({ kind: a.kind, n: a.n, code: id }); });
             return out;
         }
-        function getBattleDiceAdvantage(slotName) { // { net, extra, mode }: net > 0 Advantage (extra dice, best counts), net < 0 Disadvantage
-            let net = 0;
-            getBattleAdvantageSources(slotName).forEach(s => { if (s.kind === 'adv') net += s.n; });
+        function getBattleDiceAdvantage(slotName) { // { net, extra, mode, add }: net > 0 Advantage (extra dice, lowest dropped), net < 0 Disadvantage (highest dropped); add = Add Die dice (nothing dropped)
+            let net = 0, add = 0;
+            getBattleAdvantageSources(slotName).forEach(s => { if (s.kind === 'adv') net += s.n; else if (s.kind === 'add') add += s.n; });
             getBattleAdvantageSources(getBattleOpposingSlotName(slotName)).forEach(s => { if (s.kind === 'dis') net -= s.n; });
-            return { net, extra: Math.abs(net), mode: net > 0 ? 'adv' : (net < 0 ? 'dis' : null) };
+            return { net, extra: Math.abs(net), mode: net > 0 ? 'adv' : (net < 0 ? 'dis' : null), add };
         }
         function applyBattleAdvantageDrop(slotName, rolls, manualCounts) { // Advantage drops one die from the bottom per level left, Disadvantage one from the top
             const adv = getBattleDiceAdvantage(slotName);
             if (!adv.mode || !rolls || !rolls.length) return rolls;
             const manual = sanitizeBattleDiceCounts(manualCounts || battleDiceCounts[slotName]);
             const manualTotal = BATTLE_DICE.reduce((sum, d) => sum + manual[d.key], 0);
-            const drop = Math.min(adv.extra, Math.max(0, rolls.length - Math.max(1, manualTotal))); // only the extra dice that were really rolled
+            const drop = Math.min(adv.extra, Math.max(0, rolls.length - Math.max(1, manualTotal) - adv.add)); // only the Advantage / Disadvantage dice that were really rolled
             rolls.map((r, i) => i)
                 .sort((a, b) => adv.mode === 'adv' ? rolls[a].value - rolls[b].value : rolls[b].value - rolls[a].value) // stable: ties keep roll order
                 .slice(0, drop)
@@ -16379,8 +16401,8 @@
             BATTLE_DICE.forEach(d => { counts[d.key] = 0; });
             BATTLE_DICE.forEach(d => { if (manual[d.key] > 0) counts[shiftBattleDieKey(d.key, stages)] += manual[d.key]; });
             const adv = getBattleDiceAdvantage(slotName);
-            const key = adv.extra ? getBattleActiveDieKey(counts) : null; // no die chosen = no Attack Roll to add dice to
-            if (key) counts[key] = Math.min(BATTLE_DICE_MAX, counts[key] + adv.extra);
+            const key = (adv.extra || adv.add) ? getBattleActiveDieKey(counts) : null; // no die chosen = no Attack Roll to add dice to
+            if (key) counts[key] = Math.min(BATTLE_DICE_MAX, Math.min(BATTLE_DICE_MAX, counts[key] + adv.add) + adv.extra); // Add Die first: at the maximum it wins over the dice that get dropped
             return counts;
         }
 
@@ -17009,6 +17031,8 @@
             battleCalcBaseMove[slotName] = null;
             scheduleTeraWindowRefresh();
             renderBattleMoveDetails(slotName);
+            renderBattleDice(slotName); // the extra Advantage / Disadvantage dice follow the Moves
+            renderBattleDice(getBattleOpposingSlotName(slotName));
         }
 
         function renderBattleCalcReadout(slotName, isMirror) {
