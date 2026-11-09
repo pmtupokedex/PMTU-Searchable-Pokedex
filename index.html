@@ -7597,8 +7597,9 @@
                 const sameIndividual = !!member && ((previous.member.uid && member.uid) ? previous.member.uid === member.uid : sameOccupant);
                 if (!sameIndividual) { discardMemberEquippedCards(previous.member); boardNoteWildLeft(previous.member); } // Virtual Game Board: defeated or walked away from
             }
+            if (!sameOccupant && previous && previous.member && previous.member.uid && hostBattleArenaState.record) clearBattleMemberState(hostBattleArenaState.record, previous.member.uid); // switched out: Recharge / Stat Down end
             if (!sameOccupant && hostBattleArenaState.moves) hostBattleArenaState.moves[slot] = null;
-            if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, status: null, rerolled: false };
+            if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, effectFirst: null, status: null, rerolled: false, condBoost: false };
             if (!sameOccupant && hostBattleArenaState.diceCounts) hostBattleArenaState.diceCounts[slot] = makeDefaultBattleDiceCounts(); // a different Pok\u00e9mon starts from the default dice
             if (!hostBattleArenaState.rerolls) hostBattleArenaState.rerolls = { attacker: 0, defender: 0 };
             if (!member || !sameOccupant) hostBattleArenaState.rerolls[slot] = 0;
@@ -8068,6 +8069,11 @@
                     rule: (move.rule && typeof move.rule === 'object') ? { dual: !!move.rule.dual, immunities: !!move.rule.immunities } : null,
                 };
             }
+            if (clean && st.record && isBattleMoveSpentFor(st.record, st[slot] && st[slot].member, clean.moveName)) {
+                sendBattleNotice(peerKey, `${clean.moveName} was already used this Battle (Recharge).`);
+                broadcastBattleArenaState();
+                return;
+            }
             if (!st.moves) st.moves = { attacker: null, defender: null };
             st.moves[slot] = clean;
             broadcastBattleArenaState();
@@ -8087,9 +8093,14 @@
             if (req && req.action === 'set-counts') {
                 st.diceCounts[slot] = sanitizeBattleDiceCounts(req.counts);
             } else if (req && req.action === 'roll-attack') {
+                const firstAttackRoll = !(half.attack && half.attack.length);
                 half.attack = applyBattleAdvantageDrop(slot, generateBattleAttackRolls(effectiveBattleDiceCounts(slot, st.diceCounts[slot])), st.diceCounts[slot]); // + Advantage / Disadvantage dice, then drop
                 if (!st.record) st.record = makeEmptyBattleRecord();
                 noteBattleMoveUsed(st.record, slot, st[slot] && st[slot].member); // this Pok\u00e9mon used a Move this round (Radio: PKMN Lullaby)
+                if (firstAttackRoll) {
+                    half.condBoost = battleOpponentHasStatus(slot); // Condition Boost looks at the moment of the roll
+                    noteBattleMoveEffectsUsed(st.record, slot, st[slot] && st[slot].member); // Recharge, Stat Down
+                }
             } else if (req && req.action === 'roll-effect') {
                 const firstEffectRoll = (half.effect === null || half.effect === undefined); // only the first roll of the round counts
                 const lensBonus = (half.effect === null || half.effect === undefined)
@@ -8293,6 +8304,7 @@
                     effectBonus: (rolled && rolled.effectBonus) | 0,
                     effectRaw: (rolled && rolled.effectRaw) | 0,
                     effectFirst: (rolled && Number.isFinite(rolled.effectFirst)) ? rolled.effectFirst : null,
+                    condBoost: !!(rolled && rolled.condBoost),
                     status: (rolled && rolled.status !== undefined) ? rolled.status : null,
                     rerolled: !!(rolled && rolled.rerolled),
                 };
@@ -14561,6 +14573,10 @@
         function arenaLeaveCleanupAt(teamId, index) { // a Pok\u00e9mon leaves the Arena (or the Battle ends and the Arena empties)
             resetParalyzedSideAt(teamId, index);
             clearBattleBoundStatusAt(teamId, index);
+            if (lobbyState.role === null && battleInProgress && battleRecord && typeof index === 'number' && teamId === getActiveTeamId()) { // solo: the shared record is the host's otherwise
+                const leaving = (getActiveSaveData().team.members || [])[index];
+                if (leaving && leaving.uid) clearBattleMemberState(battleRecord, leaving.uid); // Recharge / Stat Down end when it's switched out
+            }
         }
 
         // ---- Cursed: one Pok\u00e9mon per side per Battle can ever gain it (healing it doesn't free it up for another) ----
@@ -15577,7 +15593,7 @@
         }
 
         function makeEmptyBattleDice() {
-            return { attacker: { attack: null, effect: null, effectFirst: null, status: null, rerolled: false }, defender: { attack: null, effect: null, effectFirst: null, status: null, rerolled: false } };
+            return { attacker: { attack: null, effect: null, effectFirst: null, status: null, rerolled: false, condBoost: false }, defender: { attack: null, effect: null, effectFirst: null, status: null, rerolled: false, condBoost: false } };
         }
 
         function rollBattleFace(faces) {
@@ -15603,7 +15619,7 @@
         }
 
         function clearBattleDiceResults(slotName) {
-            battleDiceResults[slotName] = { attack: null, effect: null, effectFirst: null, status: null, rerolled: false };
+            battleDiceResults[slotName] = { attack: null, effect: null, effectFirst: null, status: null, rerolled: false, condBoost: false };
         }
 
         function refreshBattleDice(slotName) {
@@ -15645,8 +15661,13 @@
             if (!guardBattleDiceAction(slotName)) return;
             const counts = effectiveBattleDiceCounts(slotName);
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-attack', counts }); return; }
+            const firstAttackRoll = !(battleDiceResults[slotName].attack && battleDiceResults[slotName].attack.length);
             battleDiceResults[slotName].attack = applyBattleAdvantageDrop(slotName, generateBattleAttackRolls(counts), battleDiceCounts[slotName]);
             noteBattleMoveUsed(battleRecord, slotName, getBattleSlotMember(slotName)); // Radio: PKMN Lullaby
+            if (firstAttackRoll) { // the user is committed to the Move now
+                battleDiceResults[slotName].condBoost = battleOpponentHasStatus(slotName); // Condition Boost looks at the moment of the roll
+                noteBattleMoveEffectsUsed(battleRecord, slotName, getBattleSlotMember(slotName)); // Recharge, Stat Down
+            }
             refreshBattleDice(slotName);
         }
 
@@ -16177,6 +16198,7 @@
             const target = getBattleSlotMember(getBattleOpposingSlotName(slotName));
             const moveType = getBattleMoveType(moveName);
             if (!target || !moveType) return null;
+            if (battleSlotHasMoveEffect(slotName, 'ignore', moveName)) return { label: 'Neutral', bonus: 0, ignored: true }; // Ignore Type: no effectiveness bonus or penalty
             const targetTypes = getBattleMemberTypes(target);
             if (!targetTypes.length) return null;
             const rule = getBattleTypeRuleToggles(slotName);
@@ -16352,29 +16374,79 @@
             return Number.isFinite(power) && power > 0;
         }
         function effectDieCodeNeedsRoll(def) { return !!def && Number.isFinite(def.threshold) && def.requiresRoll !== false && def.threshold > 1; }
-        function getBattleAdvantageSources(slotName) { // the Advantage / Disadvantage instances this side's Move and cards bring: [{ kind, n, code }]
+        function getBattleActiveMoveEffects(slotName, forMove) { // every Move Effect in force for this side: [{ id, code }], one per source (the Move's codes after cards add or shift them, thresholds met, plus granted effects)
             const out = [];
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return out;
             const result = getBattleEffectDieResult(slotName);
-            const moveName = battleCalcMoveName[slotName];
+            const moveName = forMove || battleCalcMoveName[slotName];
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
-            let opponentAttacks = null; // worked out only if an effect needs it
-            const applies = a => !a.needsOpponentAttack || (opponentAttacks === null ? (opponentAttacks = battleOpponentMoveAttacks(slotName)) : opponentAttacks);
             if (entry) {
                 resolveMoveCodeList(entry, getBattleMoveCodeAdds(slotName)).forEach(({ code, replaced }) => {
                     const def = EFFECTS_DATA.codes[code];
                     if (replaced || !def) return; // a code a card shifted down is replaced by the shifted one
                     if (effectDieCodeNeedsRoll(def) && effectDieThresholdMet(code, result) !== true) return; // threshold not (yet) met
-                    (Array.isArray(def.effects) ? def.effects : []).forEach(id => { const a = BATTLE_ADV_EFFECTS[id]; if (a && applies(a)) out.push({ kind: a.kind, n: a.n, code }); });
+                    (Array.isArray(def.effects) ? def.effects : []).forEach(id => out.push({ id, code }));
                 });
             }
-            getBattleGrantedMoveEffects(slotName, true).forEach(id => { const a = BATTLE_ADV_EFFECTS[id]; if (a && applies(a)) out.push({ kind: a.kind, n: a.n, code: id }); });
+            getBattleGrantedMoveEffects(slotName, true).forEach(id => out.push({ id, code: id }));
             return out;
+        }
+        function battleSlotHasMoveEffect(slotName, effectId, forMove) { return getBattleActiveMoveEffects(slotName, forMove).some(e => e.id === effectId); }
+        function getBattleAdvantageSources(slotName) { // the Advantage / Disadvantage / Add Die instances this side's Move and cards bring: [{ kind, n, code }]
+            const out = [];
+            let opponentAttacks = null; // worked out only if an effect needs it
+            const applies = a => !a.needsOpponentAttack || (opponentAttacks === null ? (opponentAttacks = battleOpponentMoveAttacks(slotName)) : opponentAttacks);
+            getBattleActiveMoveEffects(slotName).forEach(({ id, code }) => { const a = BATTLE_ADV_EFFECTS[id]; if (a && applies(a)) out.push({ kind: a.kind, n: a.n, code }); });
+            return out;
+        }
+
+        // ---- Move Effects that change the numbers (Life Recovery, Condition Boost, Reversal, Ignore Type) and the ones that last (Recharge, Stat Down) ----
+        // The Attacker's Move Effects always apply before the Defender's. That matters wherever one side reads the other's numbers (Reversal).
+        const BATTLE_EFFECT_ORDER = ['attacker', 'defender'];
+        function battleEffectsAppliedBefore(slotA, slotB) { return BATTLE_EFFECT_ORDER.indexOf(slotA) < BATTLE_EFFECT_ORDER.indexOf(slotB); }
+        function battleOpponentHasStatus(slotName) {
+            const m = getBattleSlotMember(getBattleOpposingSlotName(slotName));
+            return !!(m && !m.fainted && m.status && m.status !== 'none');
+        }
+        function battleConditionBoostActive(slotName, moveName) { // decided when the Attack Roll was made (stored with the roll), for this Round only
+            const half = battleDiceResults[slotName];
+            return !!(half && half.condBoost) && battleSlotHasMoveEffect(slotName, 'boost', moveName);
+        }
+        function battleStatDownActive(slotName) { // from the Round after the Move was used, until the Battle ends or the user is switched out
+            const member = getBattleSlotMember(slotName), rec = getBattleRecordStore();
+            if (!member || !member.uid || !rec || !rec.statDown) return false;
+            const started = rec.statDown[member.uid];
+            return Number.isFinite(started) && rec.round > started;
+        }
+        function isBattleMoveSpentFor(record, member, moveName) { // Recharge: used in an earlier Round of this Battle, and the user hasn't been switched out since
+            if (!record || !member || !member.uid || !record.usedMoves) return false;
+            const used = record.usedMoves[`${member.uid}|${moveName}`];
+            return Number.isFinite(used) && used < record.round;
+        }
+        function isBattleMoveSpent(slotName, moveName) { return isBattleMoveSpentFor(getBattleRecordStore(), getBattleSlotMember(slotName), moveName); }
+        function noteBattleMoveEffectsUsed(record, slotName, member) { // the Attack Roll was made: the Move counts as used (Recharge) and Stat Down starts
+            const moveName = battleCalcMoveName[slotName];
+            if (!record || !member || !moveName) return;
+            const uid = ensureMemberUid(member);
+            if (battleSlotHasMoveEffect(slotName, 'recharge', moveName)) {
+                if (!record.usedMoves || typeof record.usedMoves !== 'object') record.usedMoves = {};
+                if (record.usedMoves[`${uid}|${moveName}`] === undefined) record.usedMoves[`${uid}|${moveName}`] = record.round;
+            }
+            if (battleSlotHasMoveEffect(slotName, 'statdown', moveName)) {
+                if (!record.statDown || typeof record.statDown !== 'object') record.statDown = {};
+                if (record.statDown[uid] === undefined) record.statDown[uid] = record.round;
+            }
+        }
+        function clearBattleMemberState(record, uid) { // switched out: Recharge Moves are usable again and Stat Down is gone
+            if (!record || !uid) return;
+            if (record.statDown) delete record.statDown[uid];
+            if (record.usedMoves) Object.keys(record.usedMoves).forEach(k => { if (k.startsWith(uid + '|')) delete record.usedMoves[k]; });
         }
         function getBattleDiceAdvantage(slotName) { // { net, extra, mode, add }: net > 0 Advantage (extra dice, lowest dropped), net < 0 Disadvantage (highest dropped); add = Add Die dice (nothing dropped)
             let net = 0, add = 0;
             getBattleAdvantageSources(slotName).forEach(s => { if (s.kind === 'adv') net += s.n; else if (s.kind === 'add') add += s.n; });
             getBattleAdvantageSources(getBattleOpposingSlotName(slotName)).forEach(s => { if (s.kind === 'dis') net -= s.n; });
+            if (battleStatDownActive(slotName)) net -= 1; // Stat Down: the user's own Moves suffer Disadvantage
             return { net, extra: Math.abs(net), mode: net > 0 ? 'adv' : (net < 0 ? 'dis' : null), add };
         }
         function applyBattleAdvantageDrop(slotName, rolls, manualCounts) { // Advantage drops one die from the bottom per level left, Disadvantage one from the top
@@ -16478,7 +16550,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -16843,7 +16915,7 @@
             return sanitizeBattleDiceCounts(counts);
         }
 
-        function computeBattleAttackStrength(slotName, moveName, baseMoveName) {
+        function computeBattleAttackStrength(slotName, moveName, baseMoveName, opts) { // opts.ignoreMoveEffects: leave out this side's Move Effects (the other side reads it before they apply)
             const member = getBattleSlotMember(slotName);
             if (!member) return null;
             const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
@@ -16852,7 +16924,8 @@
             const moveType = getBattleMoveType(eff.name);
             const stab = (moveType && moveCanGetStab(eff.name) && getBattleMemberTypes(member, { original: true }).includes(moveType))
                 ? BATTLE_STAB_BONUS : 0;
-            const bonuses = evaluateBattleCardRules(slotName, 'strength', 'normal', moveName, power);
+            const bonuses = evaluateBattleCardRules(slotName, 'strength', 'normal', moveName, power).concat(
+                (!(opts && opts.ignoreMoveEffects) && battleConditionBoostActive(slotName, moveName)) ? [{ label: 'Condition Boost', bonus: 1 }] : []);
             const bonusSum = bonuses.reduce((sum, b) => sum + b.bonus, 0);
             return { power, stab, bonuses, total: Math.max(0, power + stab + bonusSum) };
         }
@@ -16943,8 +17016,8 @@
             return counted.length > 0 && counted.reduce((sum, r) => sum + r.value, 0) % 2 === 1;
         }
 
-        function getBattleAdjustedAttackStrength(slotName, moveName, baseMoveName) {
-            const attack = computeBattleAttackStrength(slotName, moveName, baseMoveName);
+        function getBattleAdjustedAttackStrength(slotName, moveName, baseMoveName, opts) {
+            const attack = computeBattleAttackStrength(slotName, moveName, baseMoveName, opts);
             if (!attack) return null;
             const requested = getBattleAttackStrengthPenalty(getBattleSlotMember(slotName));
             const taken = requested ? Math.min(requested.amount, attack.total) : 0;
@@ -16985,9 +17058,17 @@
                 const grant = getBattleRerollGrant(getBattleBonusCards(slotName));
                 if (grant && grant.penalty > 0) modifiers.push({ label: `${grant.label} reroll`, bonus: -grant.penalty });
             }
-            const modifierTotal = modifiers.reduce((sum, m) => sum + m.bonus, 0);
             const rolls = (battleDiceResults[slotName] && battleDiceResults[slotName].attack) || [];
             const diceTotal = rolls.reduce((sum, r) => sum + (r.excluded ? 0 : r.value), 0);
+            const lifeRecovery = Math.floor(diceTotal / 3); // a third of the Attack Roll, rounded down
+            if (lifeRecovery > 0 && battleSlotHasMoveEffect(slotName, 'life', moveName)) modifiers.push({ label: 'Life Recovery', bonus: lifeRecovery });
+            if (battleSlotHasMoveEffect(slotName, 'reversal', moveName)) { // the opponent's selected Move's Attack Strength
+                const reversalSlot = getBattleOpposingSlotName(slotName), reversalMove = battleCalcMoveName[reversalSlot];
+                const theirs = (reversalMove && getBattleSlotMember(reversalSlot))
+                    ? getBattleAdjustedAttackStrength(reversalSlot, reversalMove, battleCalcBaseMove[reversalSlot], { ignoreMoveEffects: !battleEffectsAppliedBefore(reversalSlot, slotName) }) : null; // the Defender's Move Effects haven't applied yet when the Attacker reads it
+                if (theirs && theirs.total > 0) modifiers.push({ label: 'Reversal', bonus: theirs.total });
+            }
+            const modifierTotal = modifiers.reduce((sum, m) => sum + m.bonus, 0);
             const confusion = getBattleOddRollBackfireStatus(member);
             const backfireOut = (confusion && isBattleAttackRollOdd(slotName) && getBattleSlotMember(getBattleOpposingSlotName(slotName)))
                 ? (() => { const b = getBattleBackfireAmount(slotName, attack.total); return { amount: b.amount, status: confusion.name, reduced: b.reduced }; })() : null;
@@ -17198,7 +17279,9 @@
                 const fromLabel = b.base
                     ? `<span class="game-battle-move-from">from ${escapeHtml(b.base)}</span>`
                     : (b.forcedBy ? `<span class="game-battle-move-from">forced by ${escapeHtml(b.forcedBy)}</span>` : '');
-                return `<button class="filter-btn game-battle-move-btn${typeClasses}${lockedClass}" data-battle-slot="${slotName}" data-move-name="${escapeHtml(b.name)}"${baseAttr}>${escapeHtml(b.name)}${fromLabel}</button>`;
+                const spent = isBattleMoveSpent(slotName, b.name);
+                const spentLabel = spent ? '<span class="game-battle-move-from">already used</span>' : ''; // Recharge
+                return `<button class="filter-btn game-battle-move-btn${typeClasses}${lockedClass}${spent ? ' game-battle-move-spent' : ''}" data-battle-slot="${slotName}" data-move-name="${escapeHtml(b.name)}"${baseAttr}${spent ? ' disabled' : ''}>${escapeHtml(b.name)}${fromLabel}${spentLabel}</button>`;
             }).join('');
             syncBattleMoveSelection(slotName);
             const randomRow = document.getElementById(`game-battle-${slotName}-random-row`);
@@ -17222,6 +17305,10 @@
         function selectBattleMove(slot, moveName, baseMove) {
             if (!canIChooseBattleMoves(slot)) {
                 showBattleArenaNotice(getMyBattleMoveLockReason(slot));
+                return;
+            }
+            if (isBattleMoveSpent(slot, moveName)) {
+                showBattleArenaNotice(`${moveName} was already used this Battle (Recharge).`);
                 return;
             }
             const manualName = getBattleManualSourceName(slot, moveName, baseMove);
@@ -17248,7 +17335,7 @@
             }
             const member = getBattleSlotMember(slotName);
             if (!member || !battleInProgress) return;
-            const usable = getBattleMemberMoveButtons(member).filter(b => {
+            const usable = getBattleMemberMoveButtons(member).filter(b => !isBattleMoveSpent(slotName, b.name)).filter(b => {
                 const base = b.base || null;
                 return !!getBattleManualSourceName(slotName, b.name, base)
                     || computeBattleMoveValue(slotName, b.name, base) !== null;
