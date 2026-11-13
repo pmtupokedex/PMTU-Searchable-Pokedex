@@ -584,6 +584,7 @@
                     <div class="game-battle-controls" id="game-battle-controls">
                         <button class="filter-btn" id="game-battle-catch-wild-btn" style="display: none;">Catch This Pok&eacute;mon</button>
                         <button class="filter-btn include" id="game-battle-begin-btn" disabled>Begin Battle</button>
+                        <button class="filter-btn exclude" id="game-battle-run-away-btn" style="display: none;">Run Away</button>
                         <button class="filter-btn" id="game-battle-guided-toggle" title="Run each round in phases: Moves, Battle Cards, Move Effects, Attack Rolls, Cleanup, Next Round">Guided Rounds: Off</button>
                         <button class="filter-btn" id="game-battle-next-round-btn" style="display: none;">Next Round</button>
                         <button class="filter-btn include" id="game-battle-reveal-cards-btn" style="display: none;">Reveal Battle Cards</button>
@@ -5125,6 +5126,7 @@
                 return;
             }
             if (teamContestPick) { contestAbort(); return; } // Cancel on the Contest Hall's Contestant pick
+            pendingBattleThisSlot = null; // cancelling the chooser cancels "Battle This Pok\u00e9mon"
             const calledOffChallenge = boardPvpChooserClosed();
             const cameFromArena = teamSendToBattleTargetSlot !== null && !calledOffChallenge;
             teamSendToBattleModeActive = false;
@@ -5184,6 +5186,7 @@
                 else setBattleDefenderIndex(index);
                 boardPvpSentOut(slot); // a Battle a Player challenger's Attacker is what the other player was waiting for
                 setGameScreen('battle');
+                battleThisPokemonFilled(slot); // "Battle This Pok\u00e9mon": the empty side is filled, so the Battle begins
             });
         }
 
@@ -15912,7 +15915,12 @@
             updateStatusAttentionBadges(); // a Round started: Frozen / Paralyzed 1 / Sleep 2 badges pulse
             beginBtn.style.display = battleInProgress ? 'none' : '';
             const spectating = isArenaSpectatorOfPlayerBattle(); // two other players' battle: Begin / Next Round / End aren't mine
-            beginBtn.disabled = !(attackerIn && defenderIn) || spectating;
+            const npcSide = battleInProgress ? null : arenaNpcSide();
+            const npcOptions = !!npcSide && canUseArenaNpcOptions(npcSide); // a non-player Pok\u00e9mon is waiting: Catch / Battle This Pok\u00e9mon / Run Away
+            beginBtn.textContent = npcOptions ? 'Battle This Pok\u00e9mon' : 'Begin Battle';
+            beginBtn.disabled = npcOptions ? spectating : (!(attackerIn && defenderIn) || spectating); // Battle This Pok\u00e9mon picks the missing side first
+            const runAwayBtn = document.getElementById('game-battle-run-away-btn');
+            if (runAwayBtn) { runAwayBtn.style.display = npcOptions ? '' : 'none'; runAwayBtn.disabled = spectating || !canIEndArenaBattle(); }
             const nextRoundShowing = battleInProgress && !isBattleNextRoundBlocked();
             nextBtn.style.display = nextRoundShowing ? '' : 'none';
             nextBtn.disabled = spectating;
@@ -15926,7 +15934,15 @@
             endBtn.classList.toggle('battle-next-round-hint', battleInProgress && isBattleNextRoundBlocked());
             const revealBtn = document.getElementById('game-battle-reveal-cards-btn');
             if (revealBtn) revealBtn.style.display = (battleInProgress && hasFacedownBattleCard() && !spectating) ? '' : 'none';
-            if (guidedState()) { if (revealBtn) revealBtn.style.display = 'none'; if (nextBtn) nextBtn.style.display = 'none'; } // Guided rounds: the phases reveal the cards and start the next round
+            if (guidedState()) { // Guided rounds: the phases reveal the cards and start the next round, and the buttons for ending it appear when they're needed
+                if (revealBtn) revealBtn.style.display = 'none';
+                if (nextBtn) nextBtn.style.display = 'none';
+                const guidedPhaseSix = guidedState().phase === 'replace';
+                endBtn.style.display = guidedPhaseSix ? '' : 'none'; // hidden until phase 6
+                endBtn.textContent = guidedEndButtonIsRunAway() ? 'Run Away' : 'End Battle';
+                const catchBtn = document.getElementById('game-battle-catch-wild-btn');
+                if (catchBtn) catchBtn.style.display = (guidedCatchAllowed() && guidedSlotKind('defender') === 'wild' && canCatchWildDefender()) ? '' : 'none'; // not during the Battle, except phase 6 with the wild Pok\u00e9mon fainted
+            } else endBtn.textContent = 'End Battle';
             renderGuidedBar();
             guidedScheduleTick();
             renderAllBattleZones();
@@ -16494,6 +16510,50 @@
             bar.style.display = g ? '' : 'none';
             bar.innerHTML = g ? buildGuidedBarHtml(g) : '';
         }
+
+        // ---- Arena options while a non-player Pok\u00e9mon (wild, Trainer, Gym Leader / Rival) is waiting ----
+        // Before a Battle: Catch This Pok\u00e9mon (wild only), Battle This Pok\u00e9mon (replaces Begin Battle: picks one of your Pok\u00e9mon for the empty side, then begins), Run Away.
+        function arenaNpcSide() { // the side holding a non-player Pok\u00e9mon, or null
+            for (const slot of ['defender', 'attacker']) { const kind = guidedSlotKind(slot); if (kind && kind !== 'player') return slot; }
+            return null;
+        }
+        function canUseArenaNpcOptions(slot) {
+            if (isArenaSpectatorOfPlayerBattle()) return false;
+            return guidedSlotKind(slot) === 'trainer' ? canControlTrainerAttacker() : canControlWildDefender();
+        }
+        let pendingBattleThisSlot = null; // "Battle This Pok\u00e9mon" is waiting for the Team Tracker pick that fills this side
+        function battleThisPokemon() {
+            if (battleInProgress) return;
+            const npc = arenaNpcSide();
+            if (!npc) { beginBattle(); return; }
+            const other = npc === 'attacker' ? 'defender' : 'attacker';
+            if (getBattleSlotMember(other)) { beginBattle(); return; } // both sides are already filled
+            pendingBattleThisSlot = other;
+            requestBattleChoosePokemon(other); // the Team Tracker chooser (or the usual notices when there's no team / the side is blocked)
+            if (!teamSendToBattleModeActive) pendingBattleThisSlot = null; // it didn't open: nothing to wait for
+        }
+        function battleThisPokemonFilled(slot) { // the chooser's pick was sent in: now the Battle begins
+            if (pendingBattleThisSlot !== slot) return;
+            pendingBattleThisSlot = null;
+            setTimeout(() => { if (!battleInProgress) beginBattle(); }, 0);
+        }
+        function confirmRunAway() {
+            boardFrontierShow('Run Away?', 'The Arena will be cleared. A wild Pok\u00e9mon stays revealed on its space.',
+                `<button class="filter-btn exclude game-runaway-btn" type="button" data-act="run">Run Away</button>`
+                + `<button class="filter-btn include game-runaway-btn" type="button" data-act="stay">Stay</button>`);
+        }
+        function guidedCatchAllowed() { // Guided rounds: Catch is only offered before the Battle, and again in phase 6 once the wild Pok\u00e9mon has fainted
+            const g = guidedState();
+            if (!g) return true;
+            const wild = getBattleSlotMember('defender');
+            return g.phase === 'replace' && !!(wild && wild.fainted) && guidedSlotKind('defender') === 'wild';
+        }
+        function guidedEndButtonIsRunAway() { // Guided rounds, phase 6, wild Pok\u00e9mon still standing: the End Battle button reads Run Away
+            const g = guidedState();
+            const wild = getBattleSlotMember('defender');
+            return !!(g && g.phase === 'replace' && guidedSlotKind('defender') === 'wild' && wild && !wild.fainted);
+        }
+
         function guidedHandleButton(op, slot) {
             if (op === 'playcard') { if (isVirtualDecksEnabledForActiveSave()) beginBattleCardHandPlay(slot); else showBattleArenaNotice('Tap the Battle Card zone to play a card.'); return; }
             if (op === 'forfeit') { if (lobbyState.role === null) endBattle(); else requestBattlePhase('end'); return; }
@@ -18181,7 +18241,7 @@
                 const canControl = canControlWildDefender();
                 setDefenderChooseButtons(true);
                 if (recallBtn) recallBtn.style.display = '';
-                if (catchBtn) catchBtn.style.display = canCatchWildDefender() ? '' : 'none';
+                if (catchBtn) catchBtn.style.display = (canCatchWildDefender() && guidedCatchAllowed()) ? '' : 'none';
                 if (canControl) {
                     renderBattleWildDefenderSlotBody(slot);
                 } else {
@@ -18200,7 +18260,7 @@
             if (battleDefenderMemberIndex === 'wild') {
                 renderBattleWildDefenderSlotBody(slot);
                 if (recallBtn) recallBtn.style.display = '';
-                if (catchBtn) catchBtn.style.display = canCatchWildDefender() ? '' : 'none';
+                if (catchBtn) catchBtn.style.display = (canCatchWildDefender() && guidedCatchAllowed()) ? '' : 'none';
                 return;
             }
             if (battleDefenderTeamId !== getActiveTeamId()) {
@@ -25627,6 +25687,12 @@
                 else if (modeBtn.dataset.mode === 'gallery') beginTrainerBattleGalleryPick(modeBtn.dataset.cardId);
                 return;
             }
+            const runAwayBtn = e.target.closest('.game-runaway-btn');
+            if (runAwayBtn) {
+                closeFrontierOverlay();
+                if (runAwayBtn.dataset.act === 'run') endBattle({ noOutcome: true }); // clears the Arena; a wild Pok\u00e9mon is left face-up on its space
+                return;
+            }
             const endFormBtn = e.target.closest('.game-endform-btn');
             if (endFormBtn) {
                 closeFrontierOverlay();
@@ -28373,9 +28439,10 @@
                 return;
             }
             if (e.target.closest('#game-battle-begin-btn')) {
-                beginBattle();
+                if (arenaNpcSide() && canUseArenaNpcOptions(arenaNpcSide())) battleThisPokemon(); else beginBattle();
                 return;
             }
+            if (e.target.closest('#game-battle-run-away-btn')) { confirmRunAway(); return; }
             const guidedToggleEl = e.target.closest('#game-battle-guided-toggle');
             if (guidedToggleEl) {
                 guidedRoundsPref = !guidedRoundsPref;
@@ -28394,7 +28461,7 @@
                 return;
             }
             if (e.target.closest('#game-battle-end-btn')) {
-                endBattleFromButton();
+                if (guidedEndButtonIsRunAway()) confirmRunAway(); else endBattleFromButton(); // guided phase 6: running from a wild Pok\u00e9mon that is still standing
                 return;
             }
 
