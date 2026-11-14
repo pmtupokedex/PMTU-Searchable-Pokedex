@@ -566,6 +566,7 @@
                         <div class="game-battle-move-details" id="game-battle-defender-move-details" data-battle-slot="defender" hidden></div>
                         <div class="game-battle-random-row" id="game-battle-defender-random-row" hidden>
                             <button class="filter-btn game-battle-random-btn" type="button" data-battle-slot="defender">Random</button>
+                            <button class="filter-btn include game-battle-lock-btn" type="button" data-battle-slot="defender" hidden>Lock In</button>
                         </div>
                         <div class="game-battle-moves" id="game-battle-defender-moves"></div>
                         <div class="game-battle-slot-row">
@@ -604,6 +605,7 @@
                         <div class="game-battle-moves" id="game-battle-attacker-moves"></div>
                         <div class="game-battle-random-row" id="game-battle-attacker-random-row" hidden>
                             <button class="filter-btn game-battle-random-btn" type="button" data-battle-slot="attacker">Random</button>
+                            <button class="filter-btn include game-battle-lock-btn" type="button" data-battle-slot="attacker" hidden>Lock In</button>
                         </div>
                         <div class="game-battle-move-details" id="game-battle-attacker-move-details" data-battle-slot="attacker" hidden></div>
                         <div class="game-battle-dice" id="game-battle-attacker-dice" data-battle-slot="attacker" style="display: none;"></div>
@@ -16080,11 +16082,14 @@
             const loser = outcome && outcome.loser || null;
             if (!loser) return { step: 'next' }; // a tie: nobody faints
             const winner = loser === 'attacker' ? 'defender' : 'attacker';
-            return { step: ctx.isNpc(loser) ? 'winner' : 'loser', loser, winner, loserUid: ctx.occupantUid(loser), winnerUid: ctx.occupantUid(winner) };
+            const base = { loser, winner, loserUid: ctx.occupantUid(loser), winnerUid: ctx.occupantUid(winner) };
+            if (ctx.isNpc(loser) && !ctx.npcHasReplacement(loser)) return Object.assign({ step: 'over' }, base); // nothing queued behind it: the battle is won, nothing left to choose
+            return Object.assign({ step: ctx.isNpc(loser) ? 'winner' : 'loser' }, base);
         }
         function guidedRepAdvance(g, ctx) {
             const r = g.rep;
             if (!r) { g.rep = { step: 'next' }; return true; }
+            if (r.step === 'winner' && ctx.isNpc(r.loser) && !ctx.npcHasReplacement(r.loser) && !g.pending) { r.step = 'over'; return true; } // nothing queued behind the loser: no keep / swap choice
             if (r.step === 'winner' && ctx.isNpc(r.winner) && !g.pending) { r.step = 'send'; return true; } // an NPC winner has no choices to make
             if (r.step === 'send' && !g.pending) {
                 if (ctx.isNpc(r.loser)) { r.step = ctx.npcHasReplacement(r.loser) ? 'next' : 'over'; return true; }
@@ -16423,7 +16428,6 @@
         }
 
         // ---- the phase bar ----
-        let guidedLevelGain = 1;
         const guidedSideLabel = slot => {
             const m = getBattleSlotMember(slot);
             return `${slot === 'attacker' ? 'Attacker' : 'Defender'}${m ? ' (' + (getBattleMemberDisplay(m).name || 'Pok\u00e9mon') + ')' : ''}`;
@@ -16436,8 +16440,7 @@
             let text = '', buttons = '';
             const status = fn => GUIDED_SLOTS.map(s => `${guidedSideLabel(s)}: ${fn(s)}`).join(' \u00b7 ');
             if (g.phase === 'moves') {
-                text = (g.resume ? 'The Pok\u00e9mon that was switched in chooses a Move of its own. ' : 'Choose a Move, then Lock In. ') + status(s => g.locked[s] ? 'locked in' : (battleCalcMoveName[s] ? 'chosen' : 'choosing'));
-                mine.forEach(s => { buttons += g.locked[s] ? (g.resume ? '' : guidedBtn('unlock', s, `Change ${s === 'attacker' ? 'Attacker' : 'Defender'}\u2019s Move`)) : guidedBtn('lock', s, `Lock In ${s === 'attacker' ? 'Attacker' : 'Defender'}`, !battleCalcMoveName[s]); });
+                text = (g.resume ? 'The Pok\u00e9mon that was switched in chooses a Move of its own. ' : 'Choose a Move, then press Lock In beside the Move list. ') + status(s => g.locked[s] ? 'locked in' : (battleCalcMoveName[s] ? 'chosen' : 'choosing'));
             } else if (g.phase === 'cards') {
                 text = 'Play a Battle Card face-down, or skip. Cards are revealed together once both sides have decided. ' + status(s => (g.skipped[s] ? 'skipped' : (battleZones[s] && battleZones[s].battleCard ? 'card played' : 'deciding')));
                 mine.forEach(s => { if (!g.skipped[s] && !(battleZones[s] && battleZones[s].battleCard)) buttons += guidedBtn('playcard', s, `Play a Battle Card (${s === 'attacker' ? 'Attacker' : 'Defender'})`) + guidedBtn('skip', s, `Skip (${s === 'attacker' ? 'Attacker' : 'Defender'})`); });
@@ -16461,7 +16464,6 @@
                 text = o.loser ? `${guidedSideLabel(o.loser)} has the lower total (${o.totals.attacker} vs ${o.totals.defender}) and faints. ` : 'The totals are tied: nobody faints. ';
                 text += 'Do your upkeep (pulsing badges: Poison, Burn, Curse, K.O.), then continue. ' + status(s => g.cleanDone[s] ? 'ready' : 'cleaning up');
                 if (o.loser && guidedIControl(o.loser)) { const lm = getBattleSlotMember(o.loser); if (lm && !lm.fainted) buttons += guidedBtn('faint', o.loser, `Mark ${(getBattleMemberDisplay(lm).name || 'Pok\u00e9mon')} Fainted`); }
-                buttons += guidedLevelUpHtml(g);
                 mine.forEach(s => { if (!g.cleanDone[s]) buttons += guidedBtn('cleandone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: continue`); });
             } else if (g.phase === 'replace') {
                 const r = g.rep || { step: 'next' };
@@ -16471,7 +16473,6 @@
                 } else if (r.step === 'winner') {
                     text = `${guidedSideLabel(r.winner)} won the round. Keep this Pok\u00e9mon in, or send a different one?`;
                     if (guidedIControl(r.winner) && guidedSlotKind(r.winner) === 'player') buttons += guidedBtn('keep', r.winner, 'Keep Pok\u00e9mon In') + guidedBtn('swap', r.winner, 'Send a Different Pok\u00e9mon');
-                    buttons += guidedLevelUpHtml(g);
                 } else if (r.step === 'send') {
                     const lm = getBattleSlotMember(r.loser);
                     text = `${guidedSideLabel(r.loser)} needs a new Pok\u00e9mon.`;
@@ -16485,18 +16486,6 @@
             }
             return `<div class="game-guided-title">Phase ${info[0]} of 6 \u00b7 ${escapeHtml(info[1])}</div><div class="game-guided-text">${escapeHtml(text)}</div><div class="game-guided-actions">${buttons}</div>`;
         }
-        function guidedLevelUpHtml(g) { // the winner may gain levels when the loser's level was at least as high
-            const o = g.outcome;
-            if (!o || !o.loser) return '';
-            const winner = o.loser === 'attacker' ? 'defender' : 'attacker';
-            if (guidedSlotKind(winner) !== 'player' || !guidedIControl(winner)) return '';
-            const wm = getBattleSlotMember(winner), lm = getBattleSlotMember(o.loser);
-            if (!wm || !lm || wm.fainted || getBattleMemberTotalLevel(lm) < getBattleMemberTotalLevel(wm)) return '';
-            return `<span class="game-guided-level">Level Up: ${escapeHtml(getBattleMemberDisplay(wm).name || 'Pok\u00e9mon')} beat a level ${getBattleMemberTotalLevel(lm)} opponent`
-                + ` <button type="button" class="filter-btn game-guided-btn" data-op="levelminus" data-slot="${winner}">&minus;</button><b>${guidedLevelGain}</b>`
-                + `<button type="button" class="filter-btn game-guided-btn" data-op="levelplus" data-slot="${winner}">+</button>`
-                + `<button type="button" class="filter-btn include game-guided-btn" data-op="levelapply" data-slot="${winner}">Level Up</button></span>`;
-        }
         function renderGuidedBar() {
             const toggle = document.getElementById('game-battle-guided-toggle');
             if (toggle) {
@@ -16509,6 +16498,7 @@
             const g = guidedState();
             bar.style.display = g ? '' : 'none';
             bar.innerHTML = g ? buildGuidedBarHtml(g) : '';
+            guidedUpdateLockButtons();
         }
 
         // ---- Arena options while a non-player Pok\u00e9mon (wild, Trainer, Gym Leader / Rival) is waiting ----
@@ -16554,14 +16544,32 @@
             return !!(g && g.phase === 'replace' && guidedSlotKind('defender') === 'wild' && wild && !wild.fainted);
         }
 
+
+        function guidedLockButtonVisible(slot) { // Guided rounds, phase 1: a Lock In button beside the side's Move list (and Random)
+            const g = guidedState();
+            return !!(g && g.phase === 'moves' && getBattleSlotMember(slot) && guidedIControl(slot) && !(g.resume && g.locked[slot]));
+        }
+        function guidedUpdateLockButtons() {
+            const g = guidedState();
+            GUIDED_SLOTS.forEach(slot => {
+                const row = document.getElementById(`game-battle-${slot}-random-row`);
+                const btn = row && row.querySelector('.game-battle-lock-btn');
+                if (!btn) return;
+                const show = guidedLockButtonVisible(slot), locked = !!(g && g.locked[slot]);
+                btn.hidden = !show;
+                btn.textContent = locked ? 'Change Move' : 'Lock In';
+                btn.disabled = !locked && !battleCalcMoveName[slot]; // a Move has to be chosen first
+                btn.classList.toggle('include', !locked);
+                const randomBtn = row.querySelector('.game-battle-random-btn');
+                row.hidden = !(show || (randomBtn && !randomBtn.hidden));
+            });
+        }
+
         function guidedHandleButton(op, slot) {
             if (op === 'playcard') { if (isVirtualDecksEnabledForActiveSave()) beginBattleCardHandPlay(slot); else showBattleArenaNotice('Tap the Battle Card zone to play a card.'); return; }
             if (op === 'forfeit') { if (lobbyState.role === null) endBattle(); else requestBattlePhase('end'); return; }
             if (op === 'faint') { const idx = guidedSlotIndexVar(slot); if (idx !== null && idx !== undefined) faintTeamMember(idx); guidedScheduleTick(); renderGuidedBar(); return; }
             if (op === 'pickswap') { guidedOpenSwapPicker(slot); return; }
-            if (op === 'levelminus') { guidedLevelGain = Math.max(1, guidedLevelGain - 1); renderGuidedBar(); return; }
-            if (op === 'levelplus') { guidedLevelGain = Math.min(10, guidedLevelGain + 1); renderGuidedBar(); return; }
-            if (op === 'levelapply') { const idx = guidedSlotIndexVar(slot); if (typeof idx === 'number') adjustTeamMemberLevel(idx, guidedLevelGain); guidedLevelGain = 1; renderGuidedBar(); return; }
             guidedOp(op, slot);
         }
 
@@ -17932,9 +17940,11 @@
             syncBattleMoveSelection(slotName);
             const randomRow = document.getElementById(`game-battle-${slotName}-random-row`);
             if (randomRow) {
-                randomRow.hidden = !(buttons.length > 1 && isBattleSlotOwnerless(slotName));
+                const randomShown = buttons.length > 1 && isBattleSlotOwnerless(slotName);
                 const randomBtn = randomRow.querySelector('.game-battle-random-btn');
-                if (randomBtn) randomBtn.classList.toggle('game-battle-move-locked', !canIChooseBattleMoves(slotName));
+                if (randomBtn) { randomBtn.hidden = !randomShown; randomBtn.classList.toggle('game-battle-move-locked', !canIChooseBattleMoves(slotName)); }
+                randomRow.hidden = !(randomShown || guidedLockButtonVisible(slotName)); // Guided rounds: Lock In shares the row
+                guidedUpdateLockButtons();
             }
         }
 
@@ -17993,6 +18003,12 @@
                 return;
             }
             const pick = usable[Math.floor(Math.random() * usable.length)];
+            const guidedPick = guidedState();
+            if (guidedPick && guidedPick.phase === 'moves' && !guidedPick.locked[slotName]) { // Guided rounds: the random Move is locked in straight away
+                if (battleCalcMoveName[slotName] !== pick.name) selectBattleMove(slotName, pick.name, pick.base || null); // (picking the Move that's already chosen must not un-choose it)
+                guidedOp('lock', slotName);
+                return;
+            }
             selectBattleMove(slotName, pick.name, pick.base || null);
         }
 
@@ -28465,6 +28481,12 @@
                 return;
             }
 
+            const battleLockBtn = e.target.closest('.game-battle-lock-btn');
+            if (battleLockBtn) { // Guided rounds: Lock In / Change Move
+                const lockSlot = battleLockBtn.dataset.battleSlot, lockState = guidedState();
+                guidedOp(lockState && lockState.locked[lockSlot] ? 'unlock' : 'lock', lockSlot);
+                return;
+            }
             const battleRandomBtn = e.target.closest('.game-battle-random-btn');
             if (battleRandomBtn) {
                 pickRandomBattleMove(battleRandomBtn.dataset.battleSlot);
