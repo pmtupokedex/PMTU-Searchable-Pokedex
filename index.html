@@ -16033,6 +16033,8 @@
                 borrowed: { attacker: null, defender: null },     // Switchout (Self): the Move the new Pok\u00e9mon uses, and the original's types (STAB)
                 resume: null,                                     // after Switchout (Opponent) the switched-in side re-picks, then play resumes here
                 switchedOpp: {}, switchedSelf: {},
+                applied: { attacker: null, defender: null },      // the Move Effects a side applied (kept if a status later turns its Move into Struggle)
+                struggled: { attacker: false, defender: false },  // a status took the Move away: the name of the Move it was (Struggle is used instead)
                 outcome: null,                                    // { loser, totals }
                 rep: null,                                        // phase 6 progress
             };
@@ -16078,6 +16080,12 @@
             g.pending = null;
             return true;
         }
+        function guidedCheckStruggle(g, ctx) { // a status (Sleep, Frozen, Paralyzed 2) applied in this phase means the chosen Move can't be used
+            let moved = false;
+            if (!g.struggled) g.struggled = { attacker: false, defender: false }; // a record from an older version
+            GUIDED_SLOTS.forEach(s => { if (!g.struggled[s] && ctx.struggleNeeded(s)) { g.struggled[s] = ctx.forceStruggle(s) || true; moved = true; } });
+            return moved;
+        }
         function guidedRepStart(outcome, ctx) {
             const loser = outcome && outcome.loser || null;
             if (!loser) return { step: 'next' }; // a tie: nobody faints
@@ -16117,6 +16125,7 @@
                     const decided = s => g.skipped[s] || ctx.cardPlaced(s);
                     if (decided('attacker') && decided('defender')) { ctx.reveal(); g.phase = 'switch'; moved = true; } // both decided: everything is revealed together
                 } else if (g.phase === 'switch') { // Switchout (Opponent): after the cards are revealed, before any Move Effects
+                    moved = guidedCheckStruggle(g, ctx) || moved;
                     if (g.pending) { moved = guidedResolvePending(g, ctx); if (g.pending) break; }
                     else {
                         const plan = ctx.switchOppPlan(g.switchedOpp);
@@ -16124,11 +16133,20 @@
                         else { g.phase = 'effects'; moved = true; }
                     }
                 } else if (g.phase === 'effects') { // the Attacker's Move Effects, then the Defender's, then Switchout (Self)
-                    if (g.pending) { moved = guidedResolvePending(g, ctx); if (g.pending) break; }
-                    else if (g.fxDone.attacker && g.fxDone.defender) {
-                        const user = ctx.switchSelfPlan(g.switchedSelf);
-                        if (user) { g.switchedSelf[user] = true; g.pending = { kind: 'switchSelf', slot: user, fromUid: ctx.occupantUid(user), move: ctx.captureBorrowed(user) }; moved = true; }
-                        else { g.phase = 'rolls'; moved = true; }
+                    moved = guidedCheckStruggle(g, ctx) || moved; // a status applied here can take a Pok\u00e9mon's Move away (its unapplied effects are lost)
+                    if (g.pending) { moved = guidedResolvePending(g, ctx) || moved; if (g.pending) break; }
+                    else {
+                        for (const s of GUIDED_SLOTS) { // Attacker first, then Defender; a side with nothing to apply by hand finishes by itself
+                            if (g.fxDone[s]) continue;
+                            if (s === 'defender' && !g.fxDone.attacker) break;
+                            if (ctx.effectsNeedManual(s)) break; // waiting for an Effect Die roll or for Status Conditions to be applied
+                            g.fxDone[s] = true; ctx.noteEffectsApplied(s, g); moved = true;
+                        }
+                        if (g.fxDone.attacker && g.fxDone.defender) {
+                            const user = ctx.switchSelfPlan(g.switchedSelf);
+                            if (user) { g.switchedSelf[user] = true; g.pending = { kind: 'switchSelf', slot: user, fromUid: ctx.occupantUid(user), move: ctx.captureBorrowed(user) }; moved = true; }
+                            else { g.phase = 'rolls'; moved = true; }
+                        }
                     }
                 } else if (g.phase === 'rolls') {
                     if (ctx.bothRolled()) { g.outcome = ctx.computeOutcome(); g.phase = 'cleanup'; moved = true; }
@@ -16163,7 +16181,7 @@
                 case 'fxdone':
                     if (g.phase !== 'effects' || g.pending) return 'Not ready for that yet.';
                     if (slot === 'defender' && !g.fxDone.attacker) return 'The Attacker\u2019s Move Effects come first.';
-                    g.fxDone[slot] = true; return '';
+                    g.fxDone[slot] = true; ctx.noteEffectsApplied(slot, g); return '';
                 case 'cleandone':
                     if (g.phase !== 'cleanup') return 'Not ready for that yet.';
                     g.cleanDone[slot] = true; return '';
@@ -16260,6 +16278,61 @@
                 if (move.selection && move.selection.manual) { battleCalcManualValue[slot] = move.selection.manual; renderBattleCalcReadout(slot); }
             } finally { guidedBypass = false; }
         }
+
+        // ---- Move Effects phase: which sides still have something to do by hand, and the Struggle rule ----
+        const GUIDED_STATUS_EFFECTS_SELF = ['conf_self', 'status'];                                         // Confusion (Self), Status Heal
+        const GUIDED_STATUS_EFFECTS_OPPONENT = ['conf_opp', 'burn', 'freeze', 'pois', 'sleep', 'curse', 'para']; // Status Conditions given to the opponent
+        // If a Move is replaced by Struggle after its effects applied, only these stay: Status Conditions it inflicted (they are cards attached to a Pok\u00e9mon)
+        // and Field Move cards it put into play. Everything else (Advantage, Add Die, Condition Boost, K.O., Life Recovery, ...) reverts.
+        const GUIDED_STICKY_STATUS_EFFECTS = ['conf_self', 'conf_opp', 'burn', 'freeze', 'pois', 'sleep', 'curse', 'para'];
+        function guidedEffectSticks(id) {
+            if (GUIDED_STICKY_STATUS_EFFECTS.includes(id)) return true;
+            const def = EFFECTS_DATA && EFFECTS_DATA.effects ? EFFECTS_DATA.effects[id] : null;
+            return !!(def && def.side === 'field' && id !== 'field_clear'); // Field Move effects that play a card (Field Clear only discards)
+        }
+        function guidedEffectsManualReason(slot) { // '' when the side has nothing to apply by hand; 'roll' = an Effect Die threshold waits for its roll; 'status' = Status Conditions to apply
+            if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return '';
+            const moveName = battleCalcMoveName[slot];
+            const entry = moveName ? getBattleMoveEntry(moveName) : null;
+            if (entry && getBattleEffectDieResult(slot) === null) { // a threshold on the Move (or one a card adds) needs the Effect Die first
+                const needsRoll = resolveMoveCodeList(entry, getBattleMoveCodeAdds(slot)).some(({ code, replaced }) => !replaced && effectDieCodeNeedsRoll(EFFECTS_DATA.codes[code]));
+                if (needsRoll) return 'roll';
+            }
+            const opponentShielded = !!battleShieldAgainst(getBattleOpposingSlotName(slot)); // Protection ignores them; Priority delays them to the end of the Round
+            const hasStatus = getBattleActiveMoveEffects(slot).some(e => GUIDED_STATUS_EFFECTS_SELF.includes(e.id) || (!opponentShielded && GUIDED_STATUS_EFFECTS_OPPONENT.includes(e.id)));
+            return hasStatus ? 'status' : '';
+        }
+        function guidedNoteEffectsApplied(slot, g) { // the side's Move Effects have applied: remember them
+            if (!g.applied) g.applied = { attacker: null, defender: null }; // a record from an older version
+            g.applied[slot] = getBattleActiveMoveEffects(slot).map(e => ({ id: e.id, code: e.code }));
+        }
+        function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
+            const g = guidedState();
+            if (!g || !g.struggled || !g.struggled[slotName] || !g.applied || !g.applied[slotName]) return null;
+            if (forMove && forMove !== battleCalcMoveName[slotName]) return null;
+            return g.applied[slotName].filter(e => guidedEffectSticks(e.id)).map(e => ({ id: e.id, code: e.code }));
+        }
+        function guidedStruggleNeeded(slot) {
+            const member = getBattleSlotMember(slot), moveName = battleCalcMoveName[slot];
+            if (!member || !moveName || moveName === BATTLE_STRUGGLE_MOVE_NAME) return false;
+            return !!getBattleStruggleStatus(member) || member.status === 'sleep'; // Sleep (either side), Paralyzed 2, Frozen
+        }
+        function guidedForceStruggle(slot) { // Struggle takes the place of the chosen Move; returns the name of the Move it was
+            const was = battleCalcMoveName[slot] || null;
+            if (lobbyState.role === 'host') {
+                const st = hostBattleArenaState;
+                if (!st.moves) st.moves = { attacker: null, defender: null };
+                st.moves[slot] = Object.assign({}, st.moves[slot] || {}, { moveName: BATTLE_STRUGGLE_MOVE_NAME, baseMove: null, manual: null });
+                battleCalcMoveName[slot] = BATTLE_STRUGGLE_MOVE_NAME; battleCalcBaseMove[slot] = null; battleCalcManualValue[slot] = null; // the host's copy is up to date right away
+            } else {
+                guidedBypass = true;
+                try { selectBattleMove(slot, BATTLE_STRUGGLE_MOVE_NAME, null); } finally { guidedBypass = false; }
+            }
+            const member = getBattleSlotMember(slot);
+            showBattleArenaNotice(`${member ? (getBattleMemberDisplay(member).name || 'The Pok\u00e9mon') : 'The Pok\u00e9mon'} can\u2019t use ${was || 'its Move'} and uses Struggle instead.`);
+            return was;
+        }
+
         function guidedBorrowedTypes(slotName, moveName) { // STAB for a borrowed Move comes from the Pok\u00e9mon that used Switchout
             const g = guidedState(), b = g && g.borrowed && g.borrowed[slotName];
             return (b && b.moveName === moveName && Array.isArray(b.types)) ? b.types : null;
@@ -16267,9 +16340,16 @@
         function guidedComputeOutcome() { // the lower Attack Total loses; a tie has no loser
             const totals = {};
             GUIDED_SLOTS.forEach(s => { const mv = battleCalcMoveName[s]; const b = mv ? computeBattleMoveBreakdown(s, mv, battleCalcBaseMove[s]) : null; totals[s] = b ? b.total : null; });
-            let loser = null;
-            if (Number.isFinite(totals.attacker) && Number.isFinite(totals.defender) && totals.attacker !== totals.defender) loser = totals.attacker < totals.defender ? 'attacker' : 'defender';
-            return { loser, totals };
+            let loser = null, tie = false;
+            if (Number.isFinite(totals.attacker) && Number.isFinite(totals.defender)) {
+                if (totals.attacker !== totals.defender) loser = totals.attacker < totals.defender ? 'attacker' : 'defender';
+                else { // a tie: a wild Pok\u00e9mon always loses it to a player-owned Pok\u00e9mon; any other tie has no loser
+                    const kinds = { attacker: guidedSlotKind('attacker'), defender: guidedSlotKind('defender') };
+                    if (kinds.attacker === 'wild' && kinds.defender === 'player') { loser = 'attacker'; tie = true; }
+                    else if (kinds.defender === 'wild' && kinds.attacker === 'player') { loser = 'defender'; tie = true; }
+                }
+            }
+            return { loser, totals, tie };
         }
         function guidedRevealCards() { if (hasFacedownBattleCard()) { hostRevealBattleCards(); afterBattleCardsChanged(); } }
         function guidedBurnCard(slot) { if (battleZones[slot] && battleZones[slot].battleCard) { hostClearBattleCards([slot], false); afterBattleCardsChanged(); } } // burned: gone, not discarded
@@ -16290,6 +16370,10 @@
                 computeOutcome: guidedComputeOutcome,
                 npcHasReplacement: guidedNpcHasReplacement,
                 nextRound: guidedDoNextRound,
+                effectsNeedManual: s => !!guidedEffectsManualReason(s),
+                noteEffectsApplied: guidedNoteEffectsApplied,
+                struggleNeeded: guidedStruggleNeeded,
+                forceStruggle: guidedForceStruggle,
             };
         }
 
@@ -16454,14 +16538,16 @@
                     text = `${guidedSideLabel(p.slot)} used Switchout: choose the Pok\u00e9mon to send in. It uses the same Move (the original\u2019s STAB still applies).`;
                     if (!p.failed && guidedIControl(p.slot) && guidedSlotKind(p.slot) === 'player') buttons += guidedBtn('pickswap', p.slot, 'Choose Replacement');
                 } else {
-                    text = 'Apply Move Effects: the Attacker\u2019s side first, then the Defender\u2019s. Roll the Effect and Status Dice here. ' + status(s => g.fxDone[s] ? 'done' : 'applying');
-                    mine.forEach(s => { if (!g.fxDone[s]) buttons += guidedBtn('fxdone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}\u2019s effects are done`, s === 'defender' && !g.fxDone.attacker); });
+                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
+                    text = 'Move Effects apply Attacker first, then Defender; a side with nothing to apply by hand continues by itself. ' + status(s => g.fxDone[s] ? 'done' : (s === 'defender' && !g.fxDone.attacker ? 'waiting' : reasonText(s)));
+                    GUIDED_SLOTS.forEach(s => { const was = g.struggled && g.struggled[s]; if (was) text += ` ${guidedSideLabel(s)} can\u2019t use ${was === true ? 'its Move' : was} and uses Struggle instead.`; });
+                    mine.forEach(s => { if (!g.fxDone[s] && guidedEffectsManualReason(s) === 'status') buttons += guidedBtn('fxdone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}\u2019s effects are done`, s === 'defender' && !g.fxDone.attacker); });
                 }
             } else if (g.phase === 'rolls') {
                 text = 'Roll your Attack Dice. When both sides have rolled, the totals decide the round. ' + status(s => (battleDiceResults[s] && battleDiceResults[s].attack && battleDiceResults[s].attack.length) ? 'rolled' : 'not rolled');
             } else if (g.phase === 'cleanup') {
                 const o = g.outcome || {};
-                text = o.loser ? `${guidedSideLabel(o.loser)} has the lower total (${o.totals.attacker} vs ${o.totals.defender}) and faints. ` : 'The totals are tied: nobody faints. ';
+                text = o.loser ? (o.tie ? `The totals are tied (${o.totals.attacker} each), and a wild Pok\u00e9mon always loses a tie: ${guidedSideLabel(o.loser)} faints. ` : `${guidedSideLabel(o.loser)} has the lower total (${o.totals.attacker} vs ${o.totals.defender}) and faints. `) : 'The totals are tied: nobody faints. ';
                 text += 'Do your upkeep (pulsing badges: Poison, Burn, Curse, K.O.), then continue. ' + status(s => g.cleanDone[s] ? 'ready' : 'cleaning up');
                 if (o.loser && guidedIControl(o.loser)) { const lm = getBattleSlotMember(o.loser); if (lm && !lm.fainted) buttons += guidedBtn('faint', o.loser, `Mark ${(getBattleMemberDisplay(lm).name || 'Pok\u00e9mon')} Fainted`); }
                 mine.forEach(s => { if (!g.cleanDone[s]) buttons += guidedBtn('cleandone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: continue`); });
@@ -17020,6 +17106,8 @@
         function getBattleActiveMoveEffects(slotName, forMove) { // every Move Effect in force for this side: [{ id, code }], one per source (the Move's codes after cards add or shift them, thresholds met, plus granted effects)
             const out = [];
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return out;
+            const frozen = guidedFrozenEffects(slotName, forMove); // Guided rounds: a Move replaced by Struggle after its effects applied
+            if (frozen) return frozen;
             const result = getBattleEffectDieResult(slotName);
             const moveName = forMove || battleCalcMoveName[slotName];
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
