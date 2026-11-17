@@ -8104,7 +8104,7 @@
             if (!st.diceCounts) st.diceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
             const half = st.dice[slot];
             if (req && st.record && st.record.guided && req.action !== 'guided') { // Guided rounds: the host keeps each action in its phase
-                const gateKind = { 'roll-attack': 'attackDie', 'reroll': 'attackDie', 'reroll-attack': 'attackDie', 'roll-effect': 'effectDie', 'roll-status': 'effectDie', 'set-counts': 'counts', 'toggle': 'exclude', 'use-item': 'item' }[req.action];
+                const gateKind = { 'roll-attack': 'attackDie', 'reroll': 'attackDie', 'reroll-attack': 'attackDie', 'roll-effect': 'effectDie', 'roll-status': 'statusDie', 'set-counts': 'counts', 'toggle': 'exclude', 'use-item': 'item' }[req.action];
                 const gateWhy = gateKind ? guidedGateReason(gateKind, slot, st.record.guided) : '';
                 if (gateWhy) { sendBattleNotice(peerKey, gateWhy); broadcastBattleArenaState(); return; }
             }
@@ -15774,7 +15774,7 @@
         }
 
         function rollBattleStatusDie(slotName) {
-            if (!guardBattleDiceAction(slotName, 'effectDie')) return;
+            if (!guardBattleDiceAction(slotName, 'statusDie')) return;
             if (lobbyState.role !== null) { requestBattleDice(slotName, { action: 'roll-status' }); return; }
             battleDiceResults[slotName].status = rollBattleFace(getBattleStatusDieFaces(getBattleSlotMember(slotName)));
             refreshBattleDice(slotName);
@@ -16046,10 +16046,11 @@
             return r && r.guided ? r.guided : null;
         }
 
-        const GUIDED_GATES = { attackDie: ['rolls'], effectDie: ['switch', 'effects'], counts: ['effects', 'rolls'], exclude: ['rolls', 'cleanup'], item: ['moves', 'cards', 'switch', 'effects'] };
+        const GUIDED_GATES = { attackDie: ['rolls'], effectDie: ['switch', 'effects'], statusDie: ['moves', 'cards', 'switch', 'effects', 'rolls', 'cleanup', 'replace'], // the Status Die is upkeep (Paralyzed, Sleep, Frozen): it starts the Round, so it is open in every phase
+                                   counts: ['effects', 'rolls'], exclude: ['rolls', 'cleanup'], item: ['moves', 'cards', 'switch', 'effects'] };
         const GUIDED_GATE_TEXT = {
             attackDie: 'Attack Dice are rolled in the Attack Rolls phase.',
-            effectDie: 'The Effect and Status Dice are rolled in the Move Effects phase.',
+            effectDie: 'The Effect Die is rolled in the Move Effects phase.',
             counts: 'The dice are set up during Move Effects and Attack Rolls.',
             exclude: 'Dice can be kept or dropped after the Attack Rolls.',
             item: 'That can\u2019t be used in this phase.',
@@ -16282,13 +16283,23 @@
         // ---- Move Effects phase: which sides still have something to do by hand, and the Struggle rule ----
         const GUIDED_STATUS_EFFECTS_SELF = ['conf_self', 'status'];                                         // Confusion (Self), Status Heal
         const GUIDED_STATUS_EFFECTS_OPPONENT = ['conf_opp', 'burn', 'freeze', 'pois', 'sleep', 'curse', 'para']; // Status Conditions given to the opponent
-        // If a Move is replaced by Struggle after its effects applied, only these stay: Status Conditions it inflicted (they are cards attached to a Pok\u00e9mon)
-        // and Field Move cards it put into play. Everything else (Advantage, Add Die, Condition Boost, K.O., Life Recovery, ...) reverts.
+        // If a Move is replaced by Struggle after its effects applied, only these stay:
+        //  - Status Conditions it inflicted (they are cards attached to a Pok\u00e9mon),
+        //  - Field Move cards it put into play, and Field Clear (all of the 'field' side),
+        //  - Revival and Status Heal (they have already happened).
+        // Everything else reverts: Advantage, Add Die, Condition Boost, K.O., Life Recovery, Reversal, Protection, Block Item, Escape Prevention, ...
         const GUIDED_STICKY_STATUS_EFFECTS = ['conf_self', 'conf_opp', 'burn', 'freeze', 'pois', 'sleep', 'curse', 'para'];
+        const GUIDED_STICKY_OTHER_EFFECTS = ['revival', 'status'];
         function guidedEffectSticks(id) {
-            if (GUIDED_STICKY_STATUS_EFFECTS.includes(id)) return true;
+            if (GUIDED_STICKY_STATUS_EFFECTS.includes(id) || GUIDED_STICKY_OTHER_EFFECTS.includes(id)) return true;
             const def = EFFECTS_DATA && EFFECTS_DATA.effects ? EFFECTS_DATA.effects[id] : null;
-            return !!(def && def.side === 'field' && id !== 'field_clear'); // Field Move effects that play a card (Field Clear only discards)
+            if (def && def.side === 'field') return true;
+            // TODO(Roll Effect Die Again: 'extra_self' / 'extra_opp', codes wextra1-6 / bextra1-6): this one is NOT settled. Whether it sticks depends on what the
+            // re-roll produced. A move with this effect has Special Move Effects keyed to the result (e.g. "odd: Disadvantage, even: Burned"): a Status
+            // Condition or Field card that came out of the re-roll should stick like any other, while dice effects (Disadvantage, Advantage, ...) should revert.
+            // Those moves aren't built out yet. When they are, classify each RESULT effect through this function (add the result's effects to the applied
+            // snapshot in guidedNoteEffectsApplied(), or to g.applied) instead of the bare 'extra_*' id, which currently reverts.
+            return false;
         }
         function guidedEffectsManualReason(slot) { // '' when the side has nothing to apply by hand; 'roll' = an Effect Die threshold waits for its roll; 'status' = Status Conditions to apply
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return '';
