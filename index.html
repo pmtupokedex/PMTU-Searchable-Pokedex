@@ -8101,6 +8101,10 @@
             }
             if (!st.moves) st.moves = { attacker: null, defender: null };
             st.moves[slot] = clean;
+            if (clean && !(st.dice && st.dice[slot] && st.dice[slot].attack && st.dice[slot].attack.length)) { // the counter follows the Move's die
+                if (!st.diceCounts) st.diceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
+                st.diceCounts[slot] = retargetBattleDiceToMove(st.diceCounts[slot], clean.moveName);
+            }
             broadcastBattleArenaState();
         }
 
@@ -15697,6 +15701,17 @@
             return faces[Math.floor(Math.random() * faces.length)];
         }
 
+        function battleMoveDieKey(moveName) { // the Attack Die a Move uses (d4 / d6 / d8); a Move with no listed die uses the d6
+            const entry = moveName ? getBattleMoveEntry(moveName) : null;
+            return (entry && (entry.die === 'd4' || entry.die === 'd8')) ? entry.die : 'd6';
+        }
+        function retargetBattleDiceToMove(counts, moveName) { // choosing a Move puts the player's dice on that Move's die size (same number of dice)
+            const key = battleMoveDieKey(moveName), sane = sanitizeBattleDiceCounts(counts);
+            const total = Math.max(1, Math.min(BATTLE_DICE_MAX, BATTLE_DICE.reduce((sum, d) => sum + sane[d.key], 0)));
+            const out = {};
+            BATTLE_DICE.forEach(d => { out[d.key] = d.key === key ? total : 0; });
+            return out;
+        }
         function sanitizeBattleDiceCounts(counts) {
             const clean = {};
             BATTLE_DICE.forEach(d => {
@@ -16238,6 +16253,12 @@
                     if (op === 'revdone' && ctx.noteRevived) ctx.noteRevived(slot);
                     return '';
                 }
+                case 'fielddone': { // a Field Move card was placed
+                    const pr = g.prompts && g.prompts[slot];
+                    if (g.phase !== 'effects' || !pr || !pr.fields || !pr.fields.length) return 'Not ready for that yet.';
+                    pr.fields.shift();
+                    return '';
+                }
                 case 'cleandone':
                     if (g.phase !== 'cleanup') return 'Not ready for that yet.';
                     g.cleanDone[slot] = true; return '';
@@ -16372,12 +16393,21 @@
         function guidedMakePrompts(slot) { // Revival and Status Heal need the owner to pick Pok\u00e9mon: null while the Effect Die is still to roll, else { revival?, heal? }
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return {};
             if (guidedEffectsRollPending(slot)) return null;
-            if (guidedSlotKind(slot) !== 'player') return {}; // NPC sides skip both
             const ids = getBattleActiveMoveEffects(slot).map(e => e.id), out = {};
+            const fields = ids.filter((id, i) => ids.indexOf(id) === i && id !== 'field_clear' && guidedFieldCardId(id)); // Field Move effects: the user chooses which slot gets the card
+            if (fields.length) out.fields = fields;
+            if (guidedSlotKind(slot) !== 'player') return out; // NPC sides skip Revival and Status Heal
             const rec = getBattleRecordStore(), key = guidedOwnerKey(slot);
             if (ids.includes('revival') && !(rec && rec.revived && key && rec.revived[key])) out.revival = 'pending';
             if (ids.includes('status')) out.heal = 'pending';
             return out;
+        }
+        function guidedFieldCardId(effectId) { // 'rain' -> the Rain Field Move card (field_rain), when the effect is a Field Move one
+            const def = EFFECTS_DATA && EFFECTS_DATA.effects ? EFFECTS_DATA.effects[effectId] : null;
+            if (!def || def.side !== 'field') return null;
+            const id = 'field_' + effectId;
+            const card = CARDS_BY_ID[id];
+            return (card && card.cardType === 'Field') ? id : null;
         }
         function guidedNoteRevived(slot) { // that team has used its one Revival this Battle
             const rec = getBattleRecordStore(), key = guidedOwnerKey(slot);
@@ -16387,7 +16417,7 @@
         }
         function guidedPromptPending(slot) {
             const g = guidedState(), pr = g && g.prompts && g.prompts[slot];
-            return !!(pr && (pr.revival === 'pending' || pr.heal === 'pending'));
+            return !!(pr && (pr.revival === 'pending' || pr.heal === 'pending' || (pr.fields && pr.fields.length)));
         }
         function guidedEffectsManualReason(slot) { // '' when the side has nothing to apply by hand; 'roll' = an Effect Die threshold waits for its roll; 'prompt' = Revival / Status Heal to choose; 'status' = Status Conditions to apply
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return '';
@@ -16447,6 +16477,8 @@
                 const st = hostBattleArenaState;
                 if (!st.moves) st.moves = { attacker: null, defender: null };
                 st.moves[slot] = Object.assign({}, st.moves[slot] || {}, { moveName: BATTLE_STRUGGLE_MOVE_NAME, baseMove: null, manual: null });
+                if (!st.diceCounts) st.diceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
+                st.diceCounts[slot] = retargetBattleDiceToMove(st.diceCounts[slot], BATTLE_STRUGGLE_MOVE_NAME);
                 battleCalcMoveName[slot] = BATTLE_STRUGGLE_MOVE_NAME; battleCalcBaseMove[slot] = null; battleCalcManualValue[slot] = null; // the host's copy is up to date right away
             } else {
                 guidedBypass = true;
@@ -16592,6 +16624,26 @@
             if (!pr || g.phase !== 'effects') return;
             if (pr.revival === 'pending') guidedRunRevival(slot);
             else if (pr.heal === 'pending') guidedRunHeal(slot);
+            else if (pr.fields && pr.fields.length) guidedRunField(slot);
+        }
+        function guidedFieldCardImg(cardId, cls) {
+            const c = cardId ? CARDS_BY_ID[cardId] : null;
+            return (c && c.imageUrl) ? `<img class="${cls}" src="${escapeHtml(c.imageUrl)}" alt="${escapeHtml(c.name)}" loading="lazy" decoding="async">` : '';
+        }
+        function guidedRunField(slot) { // Field Move effect: show the card, show what is in each slot, and let the user choose where it goes
+            const g = guidedState(), pr = g && g.prompts && g.prompts[slot];
+            if (!pr || !pr.fields || !pr.fields.length || isActiveSaveReadOnly()) return;
+            const cardId = guidedFieldCardId(pr.fields[0]), card = cardId ? CARDS_BY_ID[cardId] : null;
+            if (!card) { guidedOp('fielddone', slot); return; }
+            const slotBtn = target => {
+                const cur = battleZones[target] && battleZones[target].fieldEffect, curCard = cur && CARDS_BY_ID[cur.cardId];
+                const body = curCard ? (guidedFieldCardImg(curCard.id, 'game-fieldpick-img') + `<span class="game-fieldpick-cur">${escapeHtml(curCard.name)} will be replaced</span>`) : '<span class="game-fieldpick-empty">Empty</span>';
+                return `<button class="game-frontier-level-btn game-fieldpick-btn" type="button" data-slot="${target}" data-by="${slot}" data-card-id="${escapeHtml(cardId)}"><span class="game-frontier-level-label">${escapeHtml(guidedSideLabel(target))}</span>${body}</button>`;
+            };
+            const scope = card.appliesTo === 'own' ? 'Only affects the Pok\u00e9mon on the side it is placed on.' : 'Affects both Pok\u00e9mon in the battle.';
+            const html = `<div class="game-fieldpick"><div class="game-fieldpick-play">${guidedFieldCardImg(cardId, 'game-fieldpick-img game-fieldpick-img-main')}<span class="game-fieldpick-scope">${escapeHtml(scope)}</span></div>`
+                + `<div class="game-fieldpick-slots">${slotBtn('attacker')}${slotBtn('defender')}</div></div>`;
+            boardFrontierShow('Play ' + card.name, `${getBattleMemberDisplay(getBattleSlotMember(slot) || {}).name || 'Your Pok\u00e9mon'}\u2019s Move puts ${card.name} into play. Choose which slot it goes in.`, html);
         }
         function guidedPickBusy() {
             if (teamRevivePick || teamStatusPick || vendingTeamBusy()) { showBattleArenaNotice('Finish what you are doing in Team Tracker first, then press the Choose button.'); return true; }
@@ -16650,8 +16702,8 @@
             if (g.phase === 'effects' && !p) { // Revival first, then Status Heal, on the device of the Pok\u00e9mon's owner
                 for (const slot of GUIDED_SLOTS) {
                     const pr = g.prompts && g.prompts[slot];
-                    if (!pr || guidedSlotKind(slot) !== 'player' || !guidedIControl(slot)) continue;
-                    const kind = pr.revival === 'pending' ? 'rev' : (pr.heal === 'pending' ? 'heal' : '');
+                    if (!pr || !guidedSlotKind(slot) || !guidedIControl(slot)) continue;
+                    const kind = pr.revival === 'pending' ? 'rev' : (pr.heal === 'pending' ? 'heal' : ((pr.fields && pr.fields.length) ? 'field' + pr.fields.join('+') : ''));
                     if (!kind) continue;
                     const key = `${kind}:${roundKey}:${slot}`;
                     if (key === guidedExecKey) return;
@@ -16722,10 +16774,10 @@
                     text = `${guidedSideLabel(p.slot)} used Switchout: choose the Pok\u00e9mon to send in. It uses the same Move (the original\u2019s STAB still applies).`;
                     if (!p.failed && guidedIControl(p.slot) && guidedSlotKind(p.slot) === 'player') buttons += guidedBtn('pickswap', p.slot, 'Choose Replacement');
                 } else {
-                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'prompt' ? 'choose Pok\u00e9mon (Revival / Status Heal)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
+                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'prompt' ? 'make a choice (Revival / Status Heal / Field Move)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
                     text = 'Move Effects apply Attacker first, then Defender; a side with nothing to apply by hand continues by itself. ' + status(s => g.fxDone[s] ? 'done' : (s === 'defender' && !g.fxDone.attacker ? 'waiting' : reasonText(s)));
                     GUIDED_SLOTS.forEach(s => { const was = g.struggled && g.struggled[s]; if (was) text += ` ${guidedSideLabel(s)} can\u2019t use ${was === true ? 'its Move' : was} and uses Struggle instead.`; });
-                    mine.forEach(s => { if (!g.fxDone[s] && guidedSlotKind(s) === 'player' && guidedPromptPending(s)) buttons += guidedBtn('pickprompt', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: choose Pok\u00e9mon for ${g.prompts[s].revival === 'pending' ? 'Revival' : 'Status Heal'}`); });
+                    mine.forEach(s => { if (!g.fxDone[s] && guidedPromptPending(s)) { const pr = g.prompts[s]; buttons += guidedBtn('pickprompt', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: ${pr.revival === 'pending' ? 'choose Pok\u00e9mon for Revival' : pr.heal === 'pending' ? 'choose Pok\u00e9mon for Status Heal' : 'place the Field Move card'}`); } });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedEffectsManualReason(s) === 'status') buttons += guidedBtn('fxdone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}\u2019s effects are done`, s === 'defender' && !g.fxDone.attacker); });
                 }
             } else if (g.phase === 'rolls') {
@@ -18155,6 +18207,10 @@
             battleCalcManualValue[pending.slotName] = { moveName: pending.manualName, value };
             battleCalcMoveName[pending.slotName] = pending.moveName;
             battleCalcBaseMove[pending.slotName] = pending.baseMoveName;
+            if (lobbyState.role === null && !(battleDiceResults[pending.slotName] && battleDiceResults[pending.slotName].attack && battleDiceResults[pending.slotName].attack.length)) {
+                battleDiceCounts[pending.slotName] = retargetBattleDiceToMove(battleDiceCounts[pending.slotName], pending.moveName);
+                renderBattleDice(pending.slotName);
+            }
             renderBattleCalcReadout(pending.slotName);
             shareBattleMoveSelection(pending.slotName);
         }
@@ -18318,6 +18374,10 @@
             }
             battleCalcMoveName[slot] = moveName;
             battleCalcBaseMove[slot] = baseMove;
+            if (lobbyState.role === null && !(battleDiceResults[slot] && battleDiceResults[slot].attack && battleDiceResults[slot].attack.length)) {
+                battleDiceCounts[slot] = retargetBattleDiceToMove(battleDiceCounts[slot], moveName); // the counter follows the Move's die (the host does this for everyone else)
+                if (typeof renderBattleDice === 'function') renderBattleDice(slot);
+            }
             renderBattleCalcReadout(slot);
             shareBattleMoveSelection(slot);
         }
@@ -26073,6 +26133,14 @@
                     if (lobbyState.role !== null) requestBattlePhase('end', { forfeit: true });
                     else endBattle();
                 }
+                return;
+            }
+            const fpBtn = e.target.closest('.game-fieldpick-btn');
+            if (fpBtn) { // Field Move effect: the card goes into the chosen slot
+                closeFrontierOverlay();
+                const cid = fpBtn.dataset.cardId;
+                if (cid && CARDS_BY_ID[cid]) { requestBattleFieldEffect(fpBtn.dataset.slot, cid); showGameToast(CARDS_BY_ID[cid].name + ' is now in play on the ' + (fpBtn.dataset.slot === 'attacker' ? 'Attacker' : 'Defender') + '\u2019s side.'); }
+                guidedOp('fielddone', fpBtn.dataset.by);
                 return;
             }
             const wrBtn = e.target.closest('.game-weatherrock-btn');
