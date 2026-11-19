@@ -4692,6 +4692,11 @@
                 if (teamSwapPick) {
                     const left = teamSwapPick.max - teamSwapPick.picks.length;
                     sendToBattleBannerText.textContent = 'Tap ' + (left === 1 ? 'a Pok\u00e9mon' : 'up to ' + left + ' Pok\u00e9mon') + ' on your team to trade away.' + (teamSwapPick.picks.length ? ' (' + teamSwapPick.picks.length + ' chosen)' : '');
+                } else if (teamStatusPick && teamStatusPick.guided) {
+                    const sg = teamStatusPick.guided;
+                    sendToBattleBannerText.textContent = 'Status Heal (d4: ' + sg.rolled + ') \u2014 tap ' + (sg.left === 1 ? 'a Pok\u00e9mon' : 'up to ' + sg.left + ' Pok\u00e9mon') + ' to remove a Status Condition, or tap Cancel to stop.';
+                } else if (teamRevivePick && teamRevivePick.guided) {
+                    sendToBattleBannerText.textContent = 'Revival \u2014 tap a Fainted Pok\u00e9mon on your team to Revive. Only one per Battle; Cancel keeps it for later.';
                 } else if (teamStatusPick) {
                     sendToBattleBannerText.textContent = (teamStatusPick.cardId ? (CARDS_BY_ID[teamStatusPick.cardId] || {}).name || 'Full Heal' : 'Soda Pop') + ' \u2014 tap a Pok\u00e9mon to remove its Status Condition.';
                 } else if (teamRevivePick && teamRevivePick.card) {
@@ -5120,10 +5125,11 @@
             if (teamSquadPick) { squadPickCancel(); return; } // Cancel on a squad battle's Pok\u00e9mon pick
             if (teamSwapPick) { clearTeamSwapPick(); return; } // Cancel on a card's trade pick
             if (teamLevelPick) { clearTeamLevelPick(); return; } // Cancel on a card's Level pick
-            if (teamStatusPick) { clearTeamStatusPick(); return; } // Cancel on Soda Pop's pick
+            if (teamStatusPick) { const sp = teamStatusPick; clearTeamStatusPick(); if (sp.guided) guidedOp('healdone', sp.guided.slot); return; } // Cancel on Soda Pop's pick (Status Heal: stopping early is fine)
             if (teamRevivePick) { // Cancel on the post-blackout Revive pick (or Lemonade's, or a Revive card's)
                 const pk = teamRevivePick;
                 clearTeamRevivePick();
+                if (pk.guided) { guidedOp('revskip', pk.guided.slot); return; } // Revival: nothing revived, so it isn't used up
                 if (pk.card && pk.done > 0) { cardEffectDone(pk.card); showGameToast(((CARDS_BY_ID[pk.card] || {}).name || 'Revive') + ': revived ' + pk.done + ' Pok\u00e9mon.'); } // stopping early still uses the card; with none revived it is kept
                 return;
             }
@@ -7582,6 +7588,12 @@
                 broadcastBattleArenaState(); // puts the sender's screen back to what's actually there
                 return;
             }
+            { const occ = hostBattleArenaState[slot] && hostBattleArenaState[slot].member; // Escape Prevention: the occupant can't be switched out
+              if (member && occ && hostBattleArenaState.inProgress && battleMemberEscapeLocked(hostBattleArenaState.record, occ) && !(member.uid && member.uid === occ.uid)) {
+                sendBattleNotice(peerKey, `${getBattleMemberDisplay(occ).name || 'This Pok\u00e9mon'} can\u2019t be switched out (Escape Prevention).`);
+                broadcastBattleArenaState();
+                return;
+              } }
             ensureMemberUid(member); // (no-op for an empty half)
             if (wild && slot === 'defender' && member) { const prevWild = hostBattleArenaState.defender; if (prevWild && !prevWild.ownerId && prevWild.member && prevWild.member.levelOverride && prevWild.member.uid && prevWild.member.uid === member.uid && !member.levelOverride) member.levelOverride = prevWild.member.levelOverride; } // Black Flute survives a re-send of the same wild Pok\u00e9mon
             if (wild && slot === 'defender') boardBindEncounter(peerKey, member); // Virtual Game Board: this is the encounter's Pok\u00e9mon
@@ -14494,6 +14506,21 @@
             const i = BATTLE_DIE_LADDER.indexOf(key);
             return i < 0 ? key : BATTLE_DIE_LADDER[Math.min(BATTLE_DIE_LADDER.length - 1, i + Math.max(0, stages | 0))];
         }
+        function battleSlotForcesD4(slotName) { // D4 (on Effect Die): the Effect Die met the threshold, so the Attack Die becomes a d4 (before any upgrade)
+            return !!(typeof battleSlotHasMoveEffect === 'function' && battleSlotHasMoveEffect(slotName, 'd4_conditional'));
+        }
+        function collapseBattleCountsToD4(counts) { // every die the player chose becomes a d4 (up to the maximum)
+            const sane = sanitizeBattleDiceCounts(counts);
+            const total = BATTLE_DICE.reduce((sum, d) => sum + sane[d.key], 0);
+            const out = {};
+            BATTLE_DICE.forEach(d => { out[d.key] = 0; });
+            out.d4 = Math.max(1, Math.min(BATTLE_DICE_MAX, total));
+            return out;
+        }
+        function battleManualCounts(slotName, manualCounts) { // the counters the player set, with a forced d4 applied
+            const sane = sanitizeBattleDiceCounts(manualCounts || battleDiceCounts[slotName]);
+            return battleSlotForcesD4(slotName) ? collapseBattleCountsToD4(sane) : sane;
+        }
         function unshiftBattleDieKey(key, stages) { // the die to set on the counter so it shows `key` after the upgrade; null when no die can end up there
             const i = BATTLE_DIE_LADDER.indexOf(key) - Math.max(0, stages | 0);
             return i >= 0 ? BATTLE_DIE_LADDER[i] : null;
@@ -14757,6 +14784,13 @@
         }
         function setBattleAttackerIndex(index) {
             if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
+            if (typeof index === 'number' && battleInProgress) { // Escape Prevention: the Pok\u00e9mon in the Arena can't be switched out
+                const occ = getBattleSlotMember('attacker'), incoming = (getActiveSaveData().team.members || [])[index];
+                if (occ && incoming && occ !== incoming && !(occ.uid && occ.uid === incoming.uid) && battleMemberEscapeLocked(getBattleRecordStore(), occ)) {
+                    showBattleArenaNotice(`${getBattleMemberDisplay(occ).name || 'This Pok\u00e9mon'} can\u2019t be switched out (Escape Prevention).`);
+                    return;
+                }
+            }
             const newTeamId = index !== null ? getActiveTeamId() : null;
             const isNewOccupant = index !== null && (battleAttackerMemberIndex !== index || battleAttackerTeamId !== newTeamId);
             if (index === null || isNewOccupant) { revertDynamaxAt(battleAttackerTeamId, battleAttackerMemberIndex); arenaLeaveCleanupAt(battleAttackerTeamId, battleAttackerMemberIndex); }
@@ -14789,6 +14823,13 @@
 
         function setBattleDefenderIndex(index) {
             if (typeof index === 'number' && isBattleIneligibleMember((getActiveSaveData().team.members || [])[index])) return;
+            if (typeof index === 'number' && battleInProgress) { // Escape Prevention: the Pok\u00e9mon in the Arena can't be switched out
+                const occ = getBattleSlotMember('defender'), incoming = (getActiveSaveData().team.members || [])[index];
+                if (occ && incoming && occ !== incoming && !(occ.uid && occ.uid === incoming.uid) && battleMemberEscapeLocked(getBattleRecordStore(), occ)) {
+                    showBattleArenaNotice(`${getBattleMemberDisplay(occ).name || 'This Pok\u00e9mon'} can\u2019t be switched out (Escape Prevention).`);
+                    return;
+                }
+            }
             const newTeamId = index !== null ? getActiveTeamId() : null;
             const isNewOccupant = index !== null && (battleDefenderMemberIndex !== index || battleDefenderTeamId !== newTeamId);
             if (index === null || isNewOccupant) { revertDynamaxAt(battleDefenderTeamId, battleDefenderMemberIndex); arenaLeaveCleanupAt(battleDefenderTeamId, battleDefenderMemberIndex); }
@@ -15684,12 +15725,14 @@
         }
 
         function stepBattleDice(slotName, dieKey, step) { // dieKey is the die as the counter shows it, i.e. after any upgrade a card made
-            const counts = battleDiceCounts[slotName];
-            if (!counts || !(dieKey in counts)) return;
+            if (!battleDiceCounts[slotName] || !(dieKey in battleDiceCounts[slotName])) return;
+            const forcedD4 = battleSlotForcesD4(slotName);
+            const counts = forcedD4 ? collapseBattleCountsToD4(battleDiceCounts[slotName]) : battleDiceCounts[slotName];
             const stages = battleSlotUpgradesMoveDie(slotName);
             const activeKey = getBattleActiveDieKey(counts);
             const setKey = (activeKey && shiftBattleDieKey(activeKey, stages) === dieKey) ? activeKey : unshiftBattleDieKey(dieKey, stages); // the die to store so the counter shows dieKey
             if (!setKey || !(setKey in counts)) return; // a die below the upgraded one can't be chosen
+            if (forcedD4 && setKey !== 'd4') return; // the Effect Die made it a d4: no other die can be chosen
             const next = Math.max(0, Math.min(BATTLE_DICE_MAX, counts[setKey] + step));
             if (next === counts[setKey]) return;
             const otherDice = BATTLE_DICE.reduce((sum, d) => sum + (d.key === setKey ? 0 : (counts[d.key] | 0)), 0);
@@ -15795,7 +15838,8 @@
             container.style.display = battleInProgress ? '' : 'none';
             container.classList.toggle('game-battle-dice-locked', !canIChooseBattleMoves(slotName));
             const counts = effectiveBattleDiceCounts(slotName);
-            const manualCounts = sanitizeBattleDiceCounts(battleDiceCounts[slotName]);
+            const forcedD4 = battleSlotForcesD4(slotName);
+            const manualCounts = battleManualCounts(slotName);
             const manualTotal = BATTLE_DICE.reduce((sum, d) => sum + manualCounts[d.key], 0);
             const results = battleDiceResults[slotName];
             const dieStages = battleSlotUpgradesMoveDie(slotName);
@@ -15805,9 +15849,9 @@
                 const isActive = d.key === shownActiveKey;
                 const lastDie = isActive && manualCounts[manualActiveKey] <= 1 && manualTotal === manualCounts[manualActiveKey];
                 const minusOff = !isActive || lastDie;
-                const plusOff = isActive ? counts[d.key] >= BATTLE_DICE_MAX : unshiftBattleDieKey(d.key, dieStages) === null;
+                const plusOff = isActive ? counts[d.key] >= BATTLE_DICE_MAX : (forcedD4 || unshiftBattleDieKey(d.key, dieStages) === null);
                 const minusTitle = lastDie ? ' title="There is always at least one die to roll. Add to another counter to switch dice."' : '';
-                const plusTitle = (!isActive && plusOff) ? ' title="A card raised the attack die, so a lower die can\u2019t be chosen."' : '';
+                const plusTitle = (!isActive && plusOff) ? (forcedD4 ? ' title="The Effect Die turned the attack die into a d4."' : ' title="A card raised the attack die, so a lower die can\u2019t be chosen."') : '';
                 return `
                 <div class="game-battle-dice-counter">
                     <span class="game-battle-dice-counter-label">${battleDieIconMarkup(d.key) || d.label}</span>
@@ -16028,6 +16072,7 @@
                 locked: { attacker: false, defender: false },
                 skipped: { attacker: false, defender: false },   // chose not to play a Battle Card
                 fxDone: { attacker: false, defender: false },    // finished applying their Move Effects
+                prompts: { attacker: null, defender: null },      // Revival / Status Heal choices: { revival, heal } = 'pending' | 'done' (null until that side's turn in the effects phase)
                 cleanDone: { attacker: false, defender: false },
                 pending: null,                                    // a Switchout waiting for the Pok\u00e9mon to be swapped: { kind, slot, fromUid, ... }
                 borrowed: { attacker: null, defender: null },     // Switchout (Self): the Move the new Pok\u00e9mon uses, and the original's types (STAB)
@@ -16084,7 +16129,7 @@
         function guidedCheckStruggle(g, ctx) { // a status (Sleep, Frozen, Paralyzed 2) applied in this phase means the chosen Move can't be used
             let moved = false;
             if (!g.struggled) g.struggled = { attacker: false, defender: false }; // a record from an older version
-            GUIDED_SLOTS.forEach(s => { if (!g.struggled[s] && ctx.struggleNeeded(s)) { g.struggled[s] = ctx.forceStruggle(s) || true; moved = true; } });
+            GUIDED_SLOTS.forEach(s => { if (!g.struggled[s] && ctx.struggleNeeded(s)) { const hadApplied = !!(g.fxDone && g.fxDone[s]); g.struggled[s] = ctx.forceStruggle(s) || true; if (ctx.revertLasting) ctx.revertLasting(s, hadApplied); moved = true; } });
             return moved;
         }
         function guidedRepStart(outcome, ctx) {
@@ -16140,6 +16185,8 @@
                         for (const s of GUIDED_SLOTS) { // Attacker first, then Defender; a side with nothing to apply by hand finishes by itself
                             if (g.fxDone[s]) continue;
                             if (s === 'defender' && !g.fxDone.attacker) break;
+                            if (!g.prompts) g.prompts = { attacker: null, defender: null }; // a record from an older version
+                            if (!g.prompts[s] && ctx.makePrompts) { const made = ctx.makePrompts(s); if (made) { g.prompts[s] = made; moved = true; } } // Revival / Status Heal: once the Effect Die (if needed) is known
                             if (ctx.effectsNeedManual(s)) break; // waiting for an Effect Die roll or for Status Conditions to be applied
                             g.fxDone[s] = true; ctx.noteEffectsApplied(s, g); moved = true;
                         }
@@ -16171,9 +16218,10 @@
                 case 'lock':
                     if (g.phase !== 'moves') return 'Moves can only be locked in during the Choose Moves phase.';
                     if (!ctx.moveChosen(slot)) return 'Choose a Move first.';
-                    g.locked[slot] = true; return '';
+                    g.locked[slot] = true; if (ctx.onLock) ctx.onLock(slot); return '';
                 case 'unlock':
                     if (g.phase !== 'moves' || g.resume) return 'That Move is final now.';
+                    if (ctx.blockItemTookEffect && ctx.blockItemTookEffect(slot)) return 'Block Item has already taken effect, so this Move is final.';
                     g.locked[slot] = false; return '';
                 case 'skip':
                     if (g.phase !== 'cards') return 'That\u2019s only for the Battle Card phase.';
@@ -16183,6 +16231,13 @@
                     if (g.phase !== 'effects' || g.pending) return 'Not ready for that yet.';
                     if (slot === 'defender' && !g.fxDone.attacker) return 'The Attacker\u2019s Move Effects come first.';
                     g.fxDone[slot] = true; ctx.noteEffectsApplied(slot, g); return '';
+                case 'revdone': case 'revskip': case 'healdone': { // a Revival / Status Heal choice is finished ('revskip': nothing was revived, so the once-per-Battle use is kept)
+                    const pr = g.prompts && g.prompts[slot], key = op === 'healdone' ? 'heal' : 'revival';
+                    if (g.phase !== 'effects' || !pr || pr[key] !== 'pending') return 'Not ready for that yet.';
+                    pr[key] = 'done';
+                    if (op === 'revdone' && ctx.noteRevived) ctx.noteRevived(slot);
+                    return '';
+                }
                 case 'cleandone':
                     if (g.phase !== 'cleanup') return 'Not ready for that yet.';
                     g.cleanDone[slot] = true; return '';
@@ -16240,6 +16295,7 @@
                 const target = getBattleOpposingSlotName(user);
                 if (!guidedCanSwitch(guidedSlotKind(user)) || !guidedCanSwitch(guidedSlotKind(target))) continue;
                 if (battleSlotHasMoveEffect(target, 'priority') || battleSlotHasMoveEffect(target, 'prot')) continue; // a Move with Priority or Protection can't be switched out
+                if (battleMemberEscapeLocked(getBattleRecordStore(), getBattleSlotMember(target))) continue; // Escape Prevention
                 if (guidedSlotKind(target) === 'trainer' && !guidedTrainerQueue().length) continue;
                 return { user, target };
             }
@@ -16250,6 +16306,7 @@
                 if (done[user] || !battleSlotHasMoveEffect(user, 'switch_self')) continue;
                 const kind = guidedSlotKind(user);
                 if (!guidedCanSwitch(kind)) continue;
+                if (battleMemberEscapeLocked(getBattleRecordStore(), getBattleSlotMember(user))) continue; // Escape Prevention
                 if (kind === 'trainer' && !guidedTrainerQueue().length) continue;
                 return user;
             }
@@ -16281,7 +16338,7 @@
         }
 
         // ---- Move Effects phase: which sides still have something to do by hand, and the Struggle rule ----
-        const GUIDED_STATUS_EFFECTS_SELF = ['conf_self', 'status'];                                         // Confusion (Self), Status Heal
+        const GUIDED_STATUS_EFFECTS_SELF = ['conf_self'];                                                   // Confusion (Self); Status Heal and Revival are prompts now
         const GUIDED_STATUS_EFFECTS_OPPONENT = ['conf_opp', 'burn', 'freeze', 'pois', 'sleep', 'curse', 'para']; // Status Conditions given to the opponent
         // If a Move is replaced by Struggle after its effects applied, only these stay:
         //  - Status Conditions it inflicted (they are cards attached to a Pok\u00e9mon),
@@ -16301,14 +16358,43 @@
             // snapshot in guidedNoteEffectsApplied(), or to g.applied) instead of the bare 'extra_*' id, which currently reverts.
             return false;
         }
-        function guidedEffectsManualReason(slot) { // '' when the side has nothing to apply by hand; 'roll' = an Effect Die threshold waits for its roll; 'status' = Status Conditions to apply
+        function guidedEffectsRollPending(slot) { // a threshold on the Move (or one a card adds) is waiting for the Effect Die
+            const moveName = battleCalcMoveName[slot];
+            const entry = moveName ? getBattleMoveEntry(moveName) : null;
+            if (!entry || getBattleEffectDieResult(slot) !== null) return false;
+            return resolveMoveCodeList(entry, getBattleMoveCodeAdds(slot)).some(({ code, replaced }) => !replaced && effectDieCodeNeedsRoll(EFFECTS_DATA.codes[code]));
+        }
+        function guidedOwnerKey(slot) { // who 'a team' belongs to for Revival's once-per-Battle limit
+            if (lobbyState.role === null) return 'solo';
+            const e = getArenaSlotEntry(slot);
+            return (e && e.ownerId) || null;
+        }
+        function guidedMakePrompts(slot) { // Revival and Status Heal need the owner to pick Pok\u00e9mon: null while the Effect Die is still to roll, else { revival?, heal? }
+            if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return {};
+            if (guidedEffectsRollPending(slot)) return null;
+            if (guidedSlotKind(slot) !== 'player') return {}; // NPC sides skip both
+            const ids = getBattleActiveMoveEffects(slot).map(e => e.id), out = {};
+            const rec = getBattleRecordStore(), key = guidedOwnerKey(slot);
+            if (ids.includes('revival') && !(rec && rec.revived && key && rec.revived[key])) out.revival = 'pending';
+            if (ids.includes('status')) out.heal = 'pending';
+            return out;
+        }
+        function guidedNoteRevived(slot) { // that team has used its one Revival this Battle
+            const rec = getBattleRecordStore(), key = guidedOwnerKey(slot);
+            if (!rec || !key) return;
+            if (!rec.revived || typeof rec.revived !== 'object') rec.revived = {};
+            rec.revived[key] = true;
+        }
+        function guidedPromptPending(slot) {
+            const g = guidedState(), pr = g && g.prompts && g.prompts[slot];
+            return !!(pr && (pr.revival === 'pending' || pr.heal === 'pending'));
+        }
+        function guidedEffectsManualReason(slot) { // '' when the side has nothing to apply by hand; 'roll' = an Effect Die threshold waits for its roll; 'prompt' = Revival / Status Heal to choose; 'status' = Status Conditions to apply
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return '';
             const moveName = battleCalcMoveName[slot];
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
-            if (entry && getBattleEffectDieResult(slot) === null) { // a threshold on the Move (or one a card adds) needs the Effect Die first
-                const needsRoll = resolveMoveCodeList(entry, getBattleMoveCodeAdds(slot)).some(({ code, replaced }) => !replaced && effectDieCodeNeedsRoll(EFFECTS_DATA.codes[code]));
-                if (needsRoll) return 'roll';
-            }
+            if (guidedEffectsRollPending(slot)) return 'roll';
+            if (guidedPromptPending(slot)) return 'prompt';
             const opponentShielded = !!battleShieldAgainst(getBattleOpposingSlotName(slot)); // Protection ignores them; Priority delays them to the end of the Round
             const hasStatus = getBattleActiveMoveEffects(slot).some(e => GUIDED_STATUS_EFFECTS_SELF.includes(e.id) || (!opponentShielded && GUIDED_STATUS_EFFECTS_OPPONENT.includes(e.id)));
             return hasStatus ? 'status' : '';
@@ -16316,6 +16402,33 @@
         function guidedNoteEffectsApplied(slot, g) { // the side's Move Effects have applied: remember them
             if (!g.applied) g.applied = { attacker: null, defender: null }; // a record from an older version
             g.applied[slot] = getBattleActiveMoveEffects(slot).map(e => ({ id: e.id, code: e.code }));
+            battleApplyLastingEffects(getBattleRecordStore(), slot);
+        }
+        function guidedClearMove(slot) { // the chosen Move is gone: nothing is selected for that side
+            if (lobbyState.role === 'host') {
+                const st = hostBattleArenaState;
+                if (st.moves) st.moves[slot] = null;
+                battleCalcMoveName[slot] = null; battleCalcBaseMove[slot] = null; battleCalcManualValue[slot] = null; // the host's copy is up to date right away
+            } else resetBattleCalcResult(slot);
+        }
+        function guidedOnLock(slot) { // a Move was locked in (Phase 1): Block Item takes effect now (Disable will too, later)
+            const rec = getBattleRecordStore();
+            if (!rec) return;
+            const oppSlot = getBattleOpposingSlotName(slot), opp = getBattleSlotMember(oppSlot), me = getBattleSlotMember(slot);
+            if (me && me.uid && opp && opp.uid && rec.blocked && rec.blocked[me.uid] === opp.uid && battleShieldAgainst(slot)) delete rec.blocked[me.uid]; // this Move has Protection / Priority: what the opponent's Block Item would do to it is ignored (Priority: it comes back at the end of the Round)
+            if (!opp || !me) return;
+            battleApplyLastingEffects(rec, slot, 'blockitem');
+            if (!battleMemberAttachBlocked(opp)) return;
+            const moveName = battleCalcMoveName[oppSlot], base = battleCalcBaseMove[oppSlot] || null;
+            if (!moveName || moveName === BATTLE_STRUGGLE_MOVE_NAME) return;
+            if (getBattleMemberMoveButtons(opp).some(b => b.name === moveName && (b.base || null) === base)) return;
+            const g = rec.guided; // the opponent's chosen Move came from the blocked card: it chooses again
+            guidedClearMove(oppSlot);
+            if (g) g.locked[oppSlot] = false;
+        }
+        function guidedRevertLasting(slot, hadApplied) { // it became Struggle: Block Item (applied at Lock In) reverts always; Escape Prevention only if its effects had applied
+            const m = getBattleSlotMember(slot);
+            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked'] : ['blocked']);
         }
         function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
             const g = guidedState();
@@ -16383,6 +16496,12 @@
                 nextRound: guidedDoNextRound,
                 effectsNeedManual: s => !!guidedEffectsManualReason(s),
                 noteEffectsApplied: guidedNoteEffectsApplied,
+                revertLasting: guidedRevertLasting,
+                makePrompts: guidedMakePrompts,
+                noteRevived: guidedNoteRevived,
+                onLock: guidedOnLock,
+                blockItemTookEffect: s => { const rec = getBattleRecordStore(), me = getBattleSlotMember(s); return !!(rec && me && me.uid && rec.blocked && Object.keys(rec.blocked).some(k => rec.blocked[k] === me.uid)); },
+                clearMove: guidedClearMove,
                 struggleNeeded: guidedStruggleNeeded,
                 forceStruggle: guidedForceStruggle,
             };
@@ -16466,6 +16585,46 @@
             const hand = getLocalHandArray();
             return hand.some(entry => isBattleCardTagged(CARDS_BY_ID[typeof entry === 'string' ? entry : (entry && entry.cardId)]));
         }
+        // Revival / Status Heal: the owner picks in the Team Tracker (it borrows the pick mode and banner that Revive cards and Full Heal use)
+        let guidedHealRoll = null;
+        function guidedRunPrompt(slot) { // opens the next pending pick for this side
+            const g = guidedState(), pr = g && g.prompts && g.prompts[slot];
+            if (!pr || g.phase !== 'effects') return;
+            if (pr.revival === 'pending') guidedRunRevival(slot);
+            else if (pr.heal === 'pending') guidedRunHeal(slot);
+        }
+        function guidedPickBusy() {
+            if (teamRevivePick || teamStatusPick || vendingTeamBusy()) { showBattleArenaNotice('Finish what you are doing in Team Tracker first, then press the Choose button.'); return true; }
+            return false;
+        }
+        function guidedBeginTeamPick() {
+            openGamePanel();
+            setGameScreen('team');
+            teamSendToBattleModeActive = true;
+            teamSendToBattleTargetSlot = null;
+            teamSendToBattleFaintSlot = null;
+            teamSendToBattleNote = null;
+            renderTeamGrid();
+        }
+        function guidedRunRevival(slot) {
+            if (isActiveSaveReadOnly()) return;
+            if (!boardTeamIndexes(m => m.fainted).length) { showBattleArenaNotice('Revival: none of your Pok\u00e9mon are Fainted, so it does nothing and can still be used later.'); guidedOp('revskip', slot); return; }
+            if (guidedPickBusy()) return;
+            teamRevivePick = { left: 1, done: 0, guided: { slot } };
+            guidedBeginTeamPick();
+        }
+        function guidedRunHeal(slot) {
+            if (isActiveSaveReadOnly()) return;
+            const withStatus = boardTeamIndexes(m => m.status);
+            if (!withStatus.length) { showBattleArenaNotice('Status Heal: none of your Pok\u00e9mon have a Status Condition.'); guidedOp('healdone', slot); return; }
+            if (guidedPickBusy()) return;
+            const rollKey = statusAttnRoundKey() + ':' + slot;
+            if (!guidedHealRoll || guidedHealRoll.key !== rollKey) guidedHealRoll = { key: rollKey, n: 1 + Math.floor(Math.random() * 4) }; // the d4 (kept if the picker is reopened)
+            const n = guidedHealRoll.n;
+            showBattleArenaNotice(`Status Heal: rolled a d4 \u2014 ${n}. Remove up to ${n} Status Condition${n === 1 ? '' : 's'}.`);
+            teamStatusPick = { guided: { slot, rolled: n, left: Math.min(n, withStatus.length), done: 0 } };
+            guidedBeginTeamPick();
+        }
         let guidedExecKey = '';
         function guidedOwnerTick() {
             const g = guidedState();
@@ -16486,6 +16645,20 @@
                 if (key === guidedExecKey) return;
                 guidedExecKey = key;
                 guidedExecutePending(p);
+                return;
+            }
+            if (g.phase === 'effects' && !p) { // Revival first, then Status Heal, on the device of the Pok\u00e9mon's owner
+                for (const slot of GUIDED_SLOTS) {
+                    const pr = g.prompts && g.prompts[slot];
+                    if (!pr || guidedSlotKind(slot) !== 'player' || !guidedIControl(slot)) continue;
+                    const kind = pr.revival === 'pending' ? 'rev' : (pr.heal === 'pending' ? 'heal' : '');
+                    if (!kind) continue;
+                    const key = `${kind}:${roundKey}:${slot}`;
+                    if (key === guidedExecKey) return;
+                    guidedExecKey = key;
+                    guidedRunPrompt(slot);
+                    return;
+                }
             }
         }
 
@@ -16549,9 +16722,10 @@
                     text = `${guidedSideLabel(p.slot)} used Switchout: choose the Pok\u00e9mon to send in. It uses the same Move (the original\u2019s STAB still applies).`;
                     if (!p.failed && guidedIControl(p.slot) && guidedSlotKind(p.slot) === 'player') buttons += guidedBtn('pickswap', p.slot, 'Choose Replacement');
                 } else {
-                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
+                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'prompt' ? 'choose Pok\u00e9mon (Revival / Status Heal)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
                     text = 'Move Effects apply Attacker first, then Defender; a side with nothing to apply by hand continues by itself. ' + status(s => g.fxDone[s] ? 'done' : (s === 'defender' && !g.fxDone.attacker ? 'waiting' : reasonText(s)));
                     GUIDED_SLOTS.forEach(s => { const was = g.struggled && g.struggled[s]; if (was) text += ` ${guidedSideLabel(s)} can\u2019t use ${was === true ? 'its Move' : was} and uses Struggle instead.`; });
+                    mine.forEach(s => { if (!g.fxDone[s] && guidedSlotKind(s) === 'player' && guidedPromptPending(s)) buttons += guidedBtn('pickprompt', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: choose Pok\u00e9mon for ${g.prompts[s].revival === 'pending' ? 'Revival' : 'Status Heal'}`); });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedEffectsManualReason(s) === 'status') buttons += guidedBtn('fxdone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}\u2019s effects are done`, s === 'defender' && !g.fxDone.attacker); });
                 }
             } else if (g.phase === 'rolls') {
@@ -16667,6 +16841,7 @@
             if (op === 'forfeit') { if (lobbyState.role === null) endBattle(); else requestBattlePhase('end'); return; }
             if (op === 'faint') { const idx = guidedSlotIndexVar(slot); if (idx !== null && idx !== undefined) faintTeamMember(idx); guidedScheduleTick(); renderGuidedBar(); return; }
             if (op === 'pickswap') { guidedOpenSwapPicker(slot); return; }
+            if (op === 'pickprompt') { guidedRunPrompt(slot); return; }
             guidedOp(op, slot);
         }
 
@@ -16962,7 +17137,7 @@
         function collectBattleBonusCards(member, zoneState) {
             const cards = [];
             if (member) {
-                [member.attachCardId, member.natureCardId].forEach(id => {
+                battleMemberCardIds(member).forEach(id => {
                     const c = id ? CARDS_BY_ID[id] : null;
                     if (c && c.cardDeck === 'Tera Type Deck' && !isMemberTerastallized(member)) return; // a Tera Type card only works once its Pok\u00e9mon has Terastallized
                     if (c) cards.push(c);
@@ -17031,13 +17206,13 @@
         // (see "wiringNote" on those cards). Mild's general penalty below is already applied to every Effect Die roll.
         function battleEffectDiePenalty(record, opponentMember) { // Mild: the opponent's Effect Die roll is N lower during the first Round the holder takes part in
             if (!record || !opponentMember || !opponentMember.uid || !record.firstRound || record.firstRound[opponentMember.uid] !== record.round) return 0;
-            return [opponentMember.attachCardId, opponentMember.natureCardId].reduce((sum, id) => {
+            return battleMemberCardIds(opponentMember).reduce((sum, id) => {
                 const c = id ? CARDS_BY_ID[id] : null;
                 return sum + Math.max(0, c ? (parseInt(c.firstRoundOpponentEffectDiePenalty, 10) || 0) : 0);
             }, 0);
         }
         function getBattleStatusDieFaces(member) { // Lax: while Paralyzed, the Status Die is a d6 instead of a d4
-            const wide = !!member && member.status === 'paralyzed' && [member.attachCardId, member.natureCardId].some(id => { const c = id ? CARDS_BY_ID[id] : null; return !!c && c.paralyzedStatusDie === 'd6'; });
+            const wide = !!member && member.status === 'paralyzed' && battleMemberCardIds(member).some(id => { const c = id ? CARDS_BY_ID[id] : null; return !!c && c.paralyzedStatusDie === 'd6'; });
             return wide ? [1, 2, 3, 4, 5, 6] : BATTLE_STATUS_DIE_FACES;
         }
         function battleEffectDieBonus(record, slotName, member, zoneState) { // Wide Lens: +N on the next Effect Die roll
@@ -17178,6 +17353,62 @@
                 if (!record.statDown || typeof record.statDown !== 'object') record.statDown = {};
                 if (record.statDown[uid] === undefined) record.statDown[uid] = record.round;
             }
+            battleApplyLastingEffects(record, slotName); // Block Item, Escape Prevention (already applied in Guided Rounds' Move Effects phase)
+            if (!record.rolled || typeof record.rolled !== 'object') record.rolled = {};
+            record.rolled[slotName] = record.round;
+            if (record.rolled.attacker === record.round && record.rolled.defender === record.round) { // both Attack Rolls are made: what Priority held back now applies
+                battleApplyLastingEffects(record, 'attacker', null, true);
+                battleApplyLastingEffects(record, 'defender', null, true);
+            }
+            // Repeat: remember the streak of every Move (idempotent within a round), so a Move with Repeat can read it
+            if (!record.moveStreak || typeof record.moveStreak !== 'object') record.moveStreak = {};
+            const prev = record.moveStreak[uid];
+            if (!prev || prev.round !== record.round) {
+                const continues = !!(prev && prev.move === moveName && prev.round === record.round - 1);
+                record.moveStreak[uid] = { move: moveName, round: record.round, n: continues ? prev.n + 1 : 1 };
+            }
+        }
+        function battleRepeatBonusFor(record, member, moveName) { // Repeat: +1 per successive Round this Move was used before this one, max +3
+            if (!record || !member || !member.uid || !moveName || !record.moveStreak) return 0;
+            const e = record.moveStreak[member.uid];
+            if (!e || e.move !== moveName) return 0;
+            let before = 0; // Rounds in a row it was used before the current Round
+            if (e.round === record.round) before = e.n - 1; // this Round's roll is already counted
+            else if (e.round === record.round - 1) before = e.n;
+            return Math.max(0, Math.min(3, before));
+        }
+        // ---- Block Item (bblock) and Escape Prevention (block): lasting effects on the opponent's Pokémon, kept in the Battle Record by the target's uid (value = the uid that caused it) ----
+        function battleApplyLastingEffects(record, slotName, only, delayed) { // the side's Move Effects have applied (or its Attack Roll was made): idempotent. only: 'blockitem' | 'lock' | null (both). delayed: the end-of-Round pass for a target that had Priority
+            if (!record || !slotName) return;
+            const member = getBattleSlotMember(slotName), target = getBattleSlotMember(getBattleOpposingSlotName(slotName));
+            if (!member || !target) return;
+            const shield = battleShieldAgainst(getBattleOpposingSlotName(slotName));
+            if (shield === 'prot' || (shield === 'priority' && !delayed)) return; // Protection ignores them for good; Priority holds them back until the end of the Round
+            const src = ensureMemberUid(member), dst = ensureMemberUid(target);
+            if ((!only || only === 'blockitem') && battleSlotHasMoveEffect(slotName, 'blockitem')) {
+                if (!record.blocked || typeof record.blocked !== 'object') record.blocked = {};
+                if (record.blocked[dst] === undefined) record.blocked[dst] = src;
+            }
+            if ((!only || only === 'lock') && battleSlotHasMoveEffect(slotName, 'lock')) {
+                if (!record.locked || typeof record.locked !== 'object') record.locked = {};
+                if (record.locked[dst] === undefined) record.locked[dst] = src;
+            }
+        }
+        function battleRevertLastingEffects(record, srcUid, kinds) { // the Move that caused them became Struggle: Block Item and Escape Prevention revert
+            if (!record || !srcUid) return;
+            (kinds || ['blocked', 'locked']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
+        }
+        function battleMemberAttachBlocked(member) { // Block Item: the attached card does nothing until the Battle ends or the Pokémon is switched out
+            if (!member || !member.uid || !battleInProgress) return false;
+            const rec = getBattleRecordStore();
+            return !!(rec && rec.blocked && rec.blocked[member.uid] !== undefined);
+        }
+        function battleMemberCardIds(member) { // the Attach and Nature cards that count in this Battle (a blocked Attach Card is left out)
+            if (!member) return [];
+            return [battleMemberAttachBlocked(member) ? null : member.attachCardId, member.natureCardId];
+        }
+        function battleMemberEscapeLocked(record, member) { // Escape Prevention: can't be switched out (a Fainted Pokémon can still be replaced)
+            return !!(record && member && member.uid && !member.fainted && record.locked && record.locked[member.uid] !== undefined);
         }
         function battleShieldAgainst(targetSlot) { // what keeps the opponent's Move Effects off this side: 'prot' (Protection), 'priority' (Priority) or null
             const source = getBattleOpposingSlotName(targetSlot);
@@ -17188,6 +17419,9 @@
         function clearBattleMemberState(record, uid) { // switched out: Recharge Moves are usable again and Stat Down is gone
             if (!record || !uid) return;
             if (record.statDown) delete record.statDown[uid];
+            if (record.moveStreak) delete record.moveStreak[uid]; // Repeat starts over
+            if (record.blocked) delete record.blocked[uid]; // Block Item ends when the Pokémon is switched out
+            if (record.locked) delete record.locked[uid];
             if (record.usedMoves) Object.keys(record.usedMoves).forEach(k => { if (k.startsWith(uid + '|')) delete record.usedMoves[k]; });
         }
         function getBattleDiceAdvantage(slotName) { // { net, extra, mode, add }: net > 0 Advantage (extra dice, lowest dropped), net < 0 Disadvantage (highest dropped); add = Add Die dice (nothing dropped)
@@ -17217,7 +17451,7 @@
             return key;
         }
         function effectiveBattleDiceCounts(slotName, manualCounts) { // what will be rolled: the counters the player set, moved up by any Attack Die upgrade (Dire Hit, Razor Claw), plus Advantage / Disadvantage dice
-            const manual = sanitizeBattleDiceCounts(manualCounts || battleDiceCounts[slotName]);
+            const manual = battleManualCounts(slotName, manualCounts); // D4 on Effect Die first, then the upgrade ladder
             const stages = battleSlotUpgradesMoveDie(slotName);
             const counts = {};
             BATTLE_DICE.forEach(d => { counts[d.key] = 0; });
@@ -17300,7 +17534,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -17675,7 +17909,10 @@
             const stab = (moveType && moveCanGetStab(eff.name) && (guidedBorrowedTypes(slotName, moveName) || getBattleMemberTypes(member, { original: true })).includes(moveType)) // a Move borrowed through Switchout keeps the original's STAB
                 ? BATTLE_STAB_BONUS : 0;
             const bonuses = evaluateBattleCardRules(slotName, 'strength', 'normal', moveName, power).concat(
-                (!(opts && opts.ignoreMoveEffects) && battleConditionBoostActive(slotName, moveName)) ? [{ label: 'Condition Boost', bonus: 1 }] : []);
+                (!(opts && opts.ignoreMoveEffects) && battleConditionBoostActive(slotName, moveName)) ? [{ label: 'Condition Boost', bonus: 1 }] : []).concat(
+                (!(opts && opts.ignoreMoveEffects) && battleSlotHasMoveEffect(slotName, 'repeat', moveName)
+                    && battleRepeatBonusFor(getBattleRecordStore(), member, moveName) > 0)
+                    ? [{ label: 'Repeat', bonus: battleRepeatBonusFor(getBattleRecordStore(), member, moveName) }] : []);
             const bonusSum = bonuses.reduce((sum, b) => sum + b.bonus, 0);
             return { power, stab, bonuses, total: Math.max(0, power + stab + bonusSum) };
         }
@@ -17818,7 +18055,7 @@
             if (battleSlotHasMoveEffect(slotName, 'reversal', moveName)) { // the opponent's selected Move's Attack Strength
                 const reversalSlot = getBattleOpposingSlotName(slotName), reversalMove = battleCalcMoveName[reversalSlot];
                 const theirs = (reversalMove && getBattleSlotMember(reversalSlot))
-                    ? getBattleAdjustedAttackStrength(reversalSlot, reversalMove, battleCalcBaseMove[reversalSlot], { ignoreMoveEffects: !battleEffectsAppliedBefore(reversalSlot, slotName) }) : null; // the Defender's Move Effects haven't applied yet when the Attacker reads it
+                    ? getBattleAdjustedAttackStrength(reversalSlot, reversalMove, battleCalcBaseMove[reversalSlot], { ignoreMoveEffects: !battleEffectsAppliedBefore(reversalSlot, slotName) }) : null; // the Defender's Move Effects haven't applied yet when the Attacker reads it (Condition Boost, Repeat)
                 if (theirs && theirs.total > 0) modifiers.push({ label: 'Reversal', bonus: theirs.total });
             }
             const modifierTotal = modifiers.reduce((sum, m) => sum + m.bonus, 0);
@@ -17998,7 +18235,7 @@
         }
 
         function getBattleMemberAttachCardMoves(member) {
-            const card = (member && member.attachCardId) ? CARDS_BY_ID[member.attachCardId] : null;
+            const card = (member && member.attachCardId && !battleMemberAttachBlocked(member)) ? CARDS_BY_ID[member.attachCardId] : null; // Block Item hides what the card teaches
             if (!card) return [];
             const names = [];
             if (typeof card.taught_move === 'string' && card.taught_move) names.push(card.taught_move);
@@ -23813,6 +24050,13 @@
             const name = getBattleMemberDisplay(member).name || 'Pokémon';
             pick.left--;
             pick.done = (pick.done || 0) + 1;
+            if (pick.guided) { // Revival (Move Effect): one Pok\u00e9mon, once per Battle for this team
+                const gs = pick.guided;
+                clearTeamRevivePick();
+                guidedOp('revdone', gs.slot);
+                showGameToast('Revival: ' + name + ' was revived.');
+                return;
+            }
             if (pick.card) { // Revive / Max Revive: the card is used up once the last pick is made (or they stop early with Cancel -- see exitTeamSendToBattleMode)
                 const cname = (CARDS_BY_ID[pick.card] || {}).name || 'Revive';
                 if (pick.left <= 0 || !boardTeamIndexes(x => x.fainted).length) { const id = pick.card; clearTeamRevivePick(); cardEffectDone(id); showGameToast(cname + ': ' + name + ' was revived.'); }
@@ -25244,6 +25488,14 @@
             if (!pick || !m) return;
             if (!m.status) { showGameToast('That Pokémon has no Status Condition — choose another.'); return; }
             const who = getBattleMemberDisplay(m).name || 'Pokémon';
+            if (pick.guided) { // Status Heal (Move Effect): up to the d4 result, one Pok\u00e9mon at a time
+                const sg = pick.guided;
+                boardClearTeamStatus(index);
+                sg.left--; sg.done++;
+                if (sg.left <= 0 || !boardTeamIndexes(x => x.status).length) { clearTeamStatusPick(); guidedOp('healdone', sg.slot); showGameToast('Status Heal: ' + sg.done + ' Status Condition' + (sg.done === 1 ? '' : 's') + ' removed.'); }
+                else { showGameToast('Status Heal: ' + who + '\u2019s Status Condition was removed. Choose up to ' + sg.left + ' more, or tap Cancel to stop.'); renderTeamGrid(); }
+                return;
+            }
             boardClearTeamStatus(index);
             clearTeamStatusPick();
             if (pick.cardId) { showGameToast((CARDS_BY_ID[pick.cardId] || {}).name + ': ' + who + '’s Status Condition was removed.'); cardEffectDone(pick.cardId); return; }
@@ -32426,7 +32678,8 @@
             if (MOVE_ICONS_SHOW_DIE_AND_LEVEL) {
                 const baseDie = entry.die || 'd6', baseStage = BATTLE_DIE_LADDER.indexOf(baseDie); // a move with no listed die uses the d6
                 const stages = Math.max(0, Number(opts && opts.upgradeDie) || 0);
-                let upgradedDie = (stages > 0 && baseStage >= 0) ? BATTLE_DIE_LADDER[Math.min(BATTLE_DIE_LADDER.length - 1, baseStage + stages)] : null;
+                const startStage = (opts && opts.forceD4) ? 0 : baseStage; // D4 (on Effect Die): the die becomes a d4 first, then any upgrade applies
+                let upgradedDie = ((stages > 0 || (opts && opts.forceD4)) && startStage >= 0) ? BATTLE_DIE_LADDER[Math.min(BATTLE_DIE_LADDER.length - 1, startStage + stages)] : null;
                 if (upgradedDie === baseDie) upgradedDie = null; // already as high as it goes
                 if (entry.die === 'd4' || entry.die === 'd8') {
                     const dieItem = fromEffect(entry.die, entry.die);
@@ -32612,7 +32865,7 @@
             });
             const firstMember = battleInProgress ? getBattleSlotMember(slotName) : null; // Docile / Hasty: only in the first Round this Pok\u00e9mon takes part in
             if (firstMember && firstMember.uid && battleRecord && battleRecord.firstRound && battleRecord.firstRound[firstMember.uid] === battleRecord.round) {
-                [firstMember.attachCardId, firstMember.natureCardId].forEach(id => {
+                battleMemberCardIds(firstMember).forEach(id => {
                     const c = id ? CARDS_BY_ID[id] : null;
                     (c && Array.isArray(c.firstRoundMoveEffects) ? c.firstRoundMoveEffects : []).forEach(addId);
                 });
@@ -32646,6 +32899,7 @@
             const breakdown = moveName ? computeBattleMoveBreakdown(slotName, moveName, battleCalcBaseMove[slotName]) : null;
             const grantedIds = getBattleGrantedMoveEffects(slotName);
             const upgradeDie = battleSlotUpgradesMoveDie(slotName);
+            const forceD4 = battleSlotForcesD4(slotName);
             const effectDieResult = getBattleEffectDieResult(slotName);
             const shieldOnOpponent = battleShieldAgainst(getBattleOpposingSlotName(slotName)); // Protection ignores this Move's effects on the opponent; Priority only until the Attack Rolls are made
             const ignoreOpponentEffects = shieldOnOpponent === 'prot' || (shieldOnOpponent === 'priority' && !statusAttnBothRolled());
@@ -32675,16 +32929,16 @@
             if (!box.querySelector('.gbd-left')) box.innerHTML = '<div class="gbd-inner"><div class="gbd-left"></div><div class="gbd-right"></div></div>';
             const left = box.querySelector('.gbd-left');
             const right = box.querySelector('.gbd-right');
-            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|up${upgradeDie}|e${effectDieResult === null ? '' : effectDieResult}|ign${ignoreOpponentEffects ? 1 : 0}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
+            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|up${upgradeDie}|d4${forceD4 ? 1 : 0}|e${effectDieResult === null ? '' : effectDieResult}|ign${ignoreOpponentEffects ? 1 : 0}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
             if (box.dataset.moveKey !== key) {
                 box.dataset.moveKey = key;
                 hideEffectToast();
                 let detail = '';
-                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, codeAdds, effectDieResult, ignoreOpponentEffects }).bodyHtml;
+                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, forceD4, codeAdds, effectDieResult, ignoreOpponentEffects }).bodyHtml;
                 else if (entry && EFFECTS_STATE === 'failed') detail = '<div class="pim-note">effects.json could not be loaded (is it in the repo root?)</div>';
                 let body = detail;
                 if (entry && EFFECTS_STATE === 'ok') {
-                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, codeAdds, effectDieResult, ignoreOpponentEffects });
+                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, forceD4, codeAdds, effectDieResult, ignoreOpponentEffects });
                     const extra = buildGrantedMoveEffectsHtml(grantedIds, !!parts.iconsHtml);
                     // the granted effects join the move's own icon row (right-aligned); the row wraps if they don't fit
                     body = ((parts.iconsHtml || extra) ? `<div class="pim-move-icons gbd-icons-row">${parts.iconsHtml}${extra}</div>` : '') + parts.uniqueHtml + parts.tableHtml;
