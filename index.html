@@ -7620,7 +7620,7 @@
             }
             if (!sameOccupant && previous && previous.member && previous.member.uid && hostBattleArenaState.record) clearBattleMemberState(hostBattleArenaState.record, previous.member.uid); // switched out: Recharge / Stat Down end
             if (!sameOccupant && hostBattleArenaState.moves) hostBattleArenaState.moves[slot] = null;
-            if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, effectFirst: null, status: null, rerolled: false, condBoost: false };
+            if (!sameOccupant && hostBattleArenaState.dice) hostBattleArenaState.dice[slot] = { attack: null, effect: null, effectFirst: null, effectSecond: null, status: null, rerolled: false, condBoost: false };
             if (!sameOccupant && hostBattleArenaState.diceCounts) hostBattleArenaState.diceCounts[slot] = makeDefaultBattleDiceCounts(); // a different Pok\u00e9mon starts from the default dice
             if (!hostBattleArenaState.rerolls) hostBattleArenaState.rerolls = { attacker: 0, defender: 0 };
             if (!member || !sameOccupant) hostBattleArenaState.rerolls[slot] = 0;
@@ -8146,6 +8146,7 @@
                 half.effectBonus = lensBonus - penalty;
                 half.effectRaw = lensRaw;
                 if (firstEffectRoll) half.effectFirst = half.effect;
+                else if (!Number.isFinite(half.effectSecond)) half.effectSecond = half.effect; // 'Roll the Effect Die again': the second roll
             } else if (req && req.action === 'roll-status') {
                 half.status = rollBattleFace(getBattleStatusDieFaces(st[slot] && st[slot].member));
             } else if (req && req.action === 'reroll-attack') {
@@ -8343,6 +8344,7 @@
                     effectBonus: (rolled && rolled.effectBonus) | 0,
                     effectRaw: (rolled && rolled.effectRaw) | 0,
                     effectFirst: (rolled && Number.isFinite(rolled.effectFirst)) ? rolled.effectFirst : null,
+                    effectSecond: (rolled && Number.isFinite(rolled.effectSecond)) ? rolled.effectSecond : null,
                     condBoost: !!(rolled && rolled.condBoost),
                     status: (rolled && rolled.status !== undefined) ? rolled.status : null,
                     rerolled: !!(rolled && rolled.rerolled),
@@ -8358,7 +8360,9 @@
                 attacker: (payload.rerolls && payload.rerolls.attacker) | 0,
                 defender: (payload.rerolls && payload.rerolls.defender) | 0,
             };
+            const recordBeforeEnd = battleRecord;
             battleRecord = payload.record ? JSON.parse(JSON.stringify(payload.record)) : makeEmptyBattleRecord();
+            if (bfPrev && !battleInProgress) battlePayDayClaim(recordBeforeEnd); // the Battle just ended
             noteBattleParticipationSnapshot(battleRecord);
             renderBattleCardZones(payload.cards);
             if (payload.fields) renderBattleFieldZones(payload.fields);
@@ -15694,7 +15698,7 @@
         }
 
         function makeEmptyBattleDice() {
-            return { attacker: { attack: null, effect: null, effectFirst: null, status: null, rerolled: false, condBoost: false }, defender: { attack: null, effect: null, effectFirst: null, status: null, rerolled: false, condBoost: false } };
+            return { attacker: { attack: null, effect: null, effectFirst: null, effectSecond: null, status: null, rerolled: false, condBoost: false }, defender: { attack: null, effect: null, effectFirst: null, effectSecond: null, status: null, rerolled: false, condBoost: false } };
         }
 
         function rollBattleFace(faces) {
@@ -15731,7 +15735,7 @@
         }
 
         function clearBattleDiceResults(slotName) {
-            battleDiceResults[slotName] = { attack: null, effect: null, effectFirst: null, status: null, rerolled: false, condBoost: false };
+            battleDiceResults[slotName] = { attack: null, effect: null, effectFirst: null, effectSecond: null, status: null, rerolled: false, condBoost: false };
         }
 
         function refreshBattleDice(slotName) {
@@ -15828,6 +15832,7 @@
             battleDiceResults[slotName].effectBonus = lensBonus - penalty;
             battleDiceResults[slotName].effectRaw = lensRaw;
             if (firstEffectRoll) battleDiceResults[slotName].effectFirst = battleDiceResults[slotName].effect;
+            else if (!Number.isFinite(battleDiceResults[slotName].effectSecond)) battleDiceResults[slotName].effectSecond = battleDiceResults[slotName].effect; // 'Roll the Effect Die again': the second roll
             refreshBattleDice(slotName);
         }
 
@@ -16398,7 +16403,7 @@
         }
         function guidedMakePrompts(slot) { // Revival and Status Heal need the owner to pick Pok\u00e9mon: null while the Effect Die is still to roll, else { revival?, heal? }
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return {};
-            if (guidedEffectsRollPending(slot)) return null;
+            if (guidedEffectsRollPending(slot) || battleExtraRollPending(slot)) return null;
             const ids = getBattleActiveMoveEffects(slot).map(e => e.id), out = {};
             const fields = ids.filter((id, i) => ids.indexOf(id) === i && id !== 'field_clear' && guidedFieldCardId(id)); // Field Move effects: the user chooses which slot gets the card
             if (fields.length) out.fields = fields;
@@ -16430,6 +16435,7 @@
             const moveName = battleCalcMoveName[slot];
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
             if (guidedEffectsRollPending(slot)) return 'roll';
+            if (battleExtraRollPending(slot)) return 'reroll'; // Roll Effect Die Again
             if (guidedPromptPending(slot)) return 'prompt';
             const opponentShielded = !!battleShieldAgainst(getBattleOpposingSlotName(slot)); // Protection ignores them; Priority delays them to the end of the Round
             const hasStatus = getBattleActiveMoveEffects(slot).some(e => GUIDED_STATUS_EFFECTS_SELF.includes(e.id) || (!opponentShielded && GUIDED_STATUS_EFFECTS_OPPONENT.includes(e.id)));
@@ -16439,6 +16445,7 @@
             if (!g.applied) g.applied = { attacker: null, defender: null }; // a record from an older version
             g.applied[slot] = getBattleActiveMoveEffects(slot).map(e => ({ id: e.id, code: e.code }));
             battleApplyLastingEffects(getBattleRecordStore(), slot);
+            battleNotePayDay(getBattleRecordStore(), slot);
             if (g.applied[slot].some(e => e.id === 'field_clear')) { // Field Clear: both Field Move slots are emptied (any Effect Die roll the Move needed has already been made)
                 ['attacker', 'defender'].forEach(s => { if (battleZones[s] && battleZones[s].fieldEffect) requestBattleFieldEffect(s, null); });
                 showBattleArenaNotice('Field Clear: both Field Move slots were cleared.');
@@ -16468,7 +16475,7 @@
         }
         function guidedRevertLasting(slot, hadApplied) { // it became Struggle: Block Item (applied at Lock In) reverts always; Escape Prevention only if its effects had applied
             const m = getBattleSlotMember(slot);
-            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked'] : ['blocked']);
+            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay'] : ['blocked']);
         }
         function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
             const g = guidedState();
@@ -16564,7 +16571,7 @@
                 if (old && !old.fainted) st.trainerQueue.push(old);
                 st.attacker = { member: next, ownerId: null, trainer: true };
                 if (st.moves) st.moves.attacker = null;
-                if (st.dice) st.dice.attacker = { attack: null, effect: null, effectFirst: null, status: null, rerolled: false, condBoost: false };
+                if (st.dice) st.dice.attacker = { attack: null, effect: null, effectFirst: null, effectSecond: null, status: null, rerolled: false, condBoost: false };
                 if (st.rerolls) st.rerolls.attacker = 0;
                 if (st.record && st.record.guided) st.record.guided.locked.attacker = false;
                 playMemberCry(next);
@@ -16784,7 +16791,7 @@
                     text = `${guidedSideLabel(p.slot)} used Switchout: choose the Pok\u00e9mon to send in. It uses the same Move (the original\u2019s STAB still applies).`;
                     if (!p.failed && guidedIControl(p.slot) && guidedSlotKind(p.slot) === 'player') buttons += guidedBtn('pickswap', p.slot, 'Choose Replacement');
                 } else {
-                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'prompt' ? 'make a choice (Revival / Status Heal / Field Move)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
+                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'reroll' ? 'roll the Effect Die again' : r === 'prompt' ? 'make a choice (Revival / Status Heal / Field Move)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
                     text = 'Move Effects apply Attacker first, then Defender; a side with nothing to apply by hand continues by itself. ' + status(s => g.fxDone[s] ? 'done' : (s === 'defender' && !g.fxDone.attacker ? 'waiting' : reasonText(s)));
                     GUIDED_SLOTS.forEach(s => { const was = g.struggled && g.struggled[s]; if (was) text += ` ${guidedSideLabel(s)} can\u2019t use ${was === true ? 'its Move' : was} and uses Struggle instead.`; });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedPromptPending(s)) { const pr = g.prompts[s]; buttons += guidedBtn('pickprompt', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: ${pr.revival === 'pending' ? 'choose Pok\u00e9mon for Revival' : pr.heal === 'pending' ? 'choose Pok\u00e9mon for Status Heal' : 'place the Field Move card'}`); } });
@@ -16956,6 +16963,7 @@
             const noOutcome = !!(opts && opts.noOutcome === true);
             if (lobbyState.role !== null) { requestBattlePhase('end', noOutcome ? { noOutcome: true } : undefined); return; }
             const earnedLeaderId = (!noOutcome && battleInProgress && !isSoloAttackerSideSpent()) ? getDefeatedGymLeaderIdInDefender() : null;
+            if (battleInProgress) battlePayDayClaim(battleRecord);
             battleInProgress = false;
             battleFormsOnChange(true);
             syncBattleMusicToArena(); // solo Play a Game session: back to Route
@@ -17351,6 +17359,36 @@
             return Number.isFinite(power) && power > 0;
         }
         function effectDieCodeNeedsRoll(def) { return !!def && Number.isFinite(def.threshold) && def.requiresRoll !== false && def.threshold > 1; }
+        // ---- Roll Effect Die Again (extra_self / extra_opp): what each Move does with the second roll ----
+        // reroll: the side rolls the Effect Die again once the first roll met the threshold. outcome(roll) -> the effect ids that roll produces (they apply like any other Move Effect).
+        const EXTRA_ROLL_MOVES = {
+            'Dire Claw': { reroll: true, outcome: r => [r % 2 ? 'pois' : 'para'] },       // odd: Poisoned, even: Paralyzed
+            'Fire Fang': { reroll: true, outcome: r => [r % 2 ? 'burn' : 'dis'] },        // odd: Burned, even: Disadvantage this Round
+            'Ice Fang': { reroll: true, outcome: r => [r % 2 ? 'freeze' : 'dis'] },       // odd: Frozen, even: Disadvantage this Round
+            'Thunder Fang': { reroll: true, outcome: r => [r % 2 ? 'para' : 'dis'] },     // odd: Paralyzed, even: Disadvantage this Round
+            'Pay Day': { reroll: false },                                                  // no second roll: a reward at the end of the Battle
+        };
+        function battleExtraRollTriggered(slotName, moveName) { // the Move's Roll Effect Die Again code has met its threshold
+            const entry = moveName ? getBattleMoveEntry(moveName) : null;
+            if (!entry || !EXTRA_ROLL_MOVES[moveName] || !EFFECTS_DATA) return false;
+            const result = getBattleEffectDieResult(slotName);
+            return resolveMoveCodeList(entry, getBattleMoveCodeAdds(slotName)).some(({ code, replaced }) => {
+                const def = EFFECTS_DATA.codes[code];
+                if (replaced || !def || !(def.effects || []).some(id => id === 'extra_self' || id === 'extra_opp')) return false;
+                return !effectDieCodeNeedsRoll(def) || effectDieThresholdMet(code, result) === true;
+            });
+        }
+        function battleExtraRollPending(slotName) { // true while the side still has to roll the Effect Die again
+            const moveName = battleCalcMoveName[slotName], cfg = moveName ? EXTRA_ROLL_MOVES[moveName] : null;
+            if (!cfg || !cfg.reroll || !battleExtraRollTriggered(slotName, moveName)) return false;
+            const half = battleDiceResults[slotName];
+            return !(half && Number.isFinite(half.effectSecond));
+        }
+        function getBattleExtraRollOutcome(slotName, moveName) { // the effect ids the second roll produced
+            const cfg = moveName ? EXTRA_ROLL_MOVES[moveName] : null, half = battleDiceResults[slotName];
+            if (!cfg || !cfg.reroll || !half || !Number.isFinite(half.effectSecond) || !battleExtraRollTriggered(slotName, moveName)) return [];
+            return cfg.outcome(half.effectSecond);
+        }
         function getBattleActiveMoveEffects(slotName, forMove) { // every Move Effect in force for this side: [{ id, code }], one per source (the Move's codes after cards add or shift them, thresholds met, plus granted effects)
             const out = [];
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return out;
@@ -17367,6 +17405,7 @@
                     (Array.isArray(def.effects) ? def.effects : []).forEach(id => out.push({ id, code }));
                 });
             }
+            getBattleExtraRollOutcome(slotName, moveName).forEach(id => out.push({ id, code: 'extra:' + id })); // Roll Effect Die Again: what the second roll gave
             getBattleGrantedMoveEffects(slotName, true).forEach(id => out.push({ id, code: id }));
             return out;
         }
@@ -17416,6 +17455,7 @@
                 if (record.statDown[uid] === undefined) record.statDown[uid] = record.round;
             }
             battleApplyLastingEffects(record, slotName); // Block Item, Escape Prevention (already applied in Guided Rounds' Move Effects phase)
+            battleNotePayDay(record, slotName);
             if (!record.rolled || typeof record.rolled !== 'object') record.rolled = {};
             record.rolled[slotName] = record.round;
             if (record.rolled.attacker === record.round && record.rolled.defender === record.round) { // both Attack Rolls are made: what Priority held back now applies
@@ -17456,9 +17496,32 @@
                 if (record.locked[dst] === undefined) record.locked[dst] = src;
             }
         }
+        function battleNotePayDay(record, slotName) { // Pay Day: its Effect Die threshold was met; the owner picks the reward when the Battle ends (once per Battle per player)
+            if (!record || battleCalcMoveName[slotName] !== 'Pay Day' || !battleSlotHasMoveEffect(slotName, 'extra_self')) return;
+            if (guidedSlotKind(slotName) !== 'player') return; // ignored when the user isn't owned by a player
+            const key = guidedOwnerKey(slotName), member = getBattleSlotMember(slotName);
+            if (!key || !member) return;
+            if (!record.payDay || typeof record.payDay !== 'object') record.payDay = {};
+            if (record.payDay[key] !== undefined) return;
+            record.payDay[key] = ensureMemberUid(member);
+            showBattleArenaNotice('Pay Day paid out! You will choose your reward when the Battle ends.');
+        }
+        function battlePayDayClaim(record) { // the Battle has ended: this player's reward from Pay Day
+            if (!record || !record.payDay || isActiveSaveReadOnly()) return;
+            const key = lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host');
+            if (record.payDay[key] === undefined) return;
+            delete record.payDay[key];
+            setTimeout(() => {
+                const coins = isPokeCoinsEnabledForActiveSave(), decks = isVirtualDecksEnabledForActiveSave();
+                if (!coins && !decks) { showGameToast('Pay Day: draw an Item card from your Item Deck or collect 3 Pok\u00e9Coins.'); return; }
+                boardFrontierShow('Pay Day', 'Pay Day paid off! Choose your reward:',
+                    (decks ? `<button class="filter-btn include game-payday-btn" type="button" data-act="item">Draw an Item Card</button>` : '')
+                    + (coins ? `<button class="filter-btn include game-payday-btn" type="button" data-act="coins">Collect 3 Pok\u00e9Coins</button>` : ''));
+            }, 700);
+        }
         function battleRevertLastingEffects(record, srcUid, kinds) { // the Move that caused them became Struggle: Block Item and Escape Prevention revert
             if (!record || !srcUid) return;
-            (kinds || ['blocked', 'locked']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
+            (kinds || ['blocked', 'locked', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
         }
         function battleMemberAttachBlocked(member) { // Block Item: the attached card does nothing until the Battle ends or the Pokémon is switched out
             if (!member || !member.uid || !battleInProgress) return false;
@@ -26143,6 +26206,13 @@
                     if (lobbyState.role !== null) requestBattlePhase('end', { forfeit: true });
                     else endBattle();
                 }
+                return;
+            }
+            const pdBtn = e.target.closest('.game-payday-btn');
+            if (pdBtn) { // Pay Day's reward
+                closeFrontierOverlay();
+                if (pdBtn.dataset.act === 'coins') { adjustPokeCoins(3); showGameToast('Pay Day: collected 3 Pok\u00e9Coins.'); }
+                else { requestDrawCard('Item Deck'); boardShowHand(); showGameToast('Pay Day: drew a card from the Item Deck.'); battleItemRewardBonus(); }
                 return;
             }
             const fpBtn = e.target.closest('.game-fieldpick-btn');
