@@ -16341,11 +16341,16 @@
             else selection = { baseMove: battleCalcBaseMove[slot] || null, manual: battleCalcManualValue[slot] ? JSON.parse(JSON.stringify(battleCalcManualValue[slot])) : null };
             let types = null;
             try { types = getBattleMemberTypes(member, { original: true }); } catch (err) { types = null; }
-            return { moveName, selection, types: Array.isArray(types) ? types.slice() : null };
+            const counts = lobbyState.role === 'host' ? (hostBattleArenaState.diceCounts && hostBattleArenaState.diceCounts[slot]) : battleDiceCounts[slot];
+            return { moveName, selection, types: Array.isArray(types) ? types.slice() : null, counts: counts ? JSON.parse(JSON.stringify(counts)) : null }; // counts: the original's attack die counter
         }
         function guidedApplyBorrowed(slot, move) {
             if (!move) return;
             if (lobbyState.role === 'host') {
+                if (move.counts) { // the newcomer uses the original's Move, so it keeps the original's counter
+                    if (!hostBattleArenaState.diceCounts) hostBattleArenaState.diceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
+                    hostBattleArenaState.diceCounts[slot] = sanitizeBattleDiceCounts(move.counts);
+                }
                 if (!move.selection) return;
                 if (!hostBattleArenaState.moves) hostBattleArenaState.moves = { attacker: null, defender: null };
                 hostBattleArenaState.moves[slot] = JSON.parse(JSON.stringify(move.selection));
@@ -16355,6 +16360,7 @@
             try {
                 selectBattleMove(slot, move.moveName, (move.selection && move.selection.baseMove) || null);
                 if (move.selection && move.selection.manual) { battleCalcManualValue[slot] = move.selection.manual; renderBattleCalcReadout(slot); }
+                if (move.counts) { battleDiceCounts[slot] = sanitizeBattleDiceCounts(move.counts); renderBattleDice(slot); }
             } finally { guidedBypass = false; }
         }
 
@@ -16433,6 +16439,10 @@
             if (!g.applied) g.applied = { attacker: null, defender: null }; // a record from an older version
             g.applied[slot] = getBattleActiveMoveEffects(slot).map(e => ({ id: e.id, code: e.code }));
             battleApplyLastingEffects(getBattleRecordStore(), slot);
+            if (g.applied[slot].some(e => e.id === 'field_clear')) { // Field Clear: both Field Move slots are emptied (any Effect Die roll the Move needed has already been made)
+                ['attacker', 'defender'].forEach(s => { if (battleZones[s] && battleZones[s].fieldEffect) requestBattleFieldEffect(s, null); });
+                showBattleArenaNotice('Field Clear: both Field Move slots were cleared.');
+            }
         }
         function guidedClearMove(slot) { // the chosen Move is gone: nothing is selected for that side
             if (lobbyState.role === 'host') {
