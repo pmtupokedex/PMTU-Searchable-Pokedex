@@ -8293,6 +8293,8 @@
                 defender: [battleDefenderTeamId, battleDefenderMemberIndex],
             };
             const prevRound = battleRecord ? battleRecord.round : 1;
+            const prevFirst = { attacker: battleDiceResults.attacker && battleDiceResults.attacker.effectFirst, defender: battleDiceResults.defender && battleDiceResults.defender.effectFirst };
+            const prevSecond = { attacker: battleDiceResults.attacker && battleDiceResults.attacker.effectSecond, defender: battleDiceResults.defender && battleDiceResults.defender.effectSecond };
             const attackerEntry = payload.attacker;
             if (attackerEntry && !attackerEntry.ownerId) {
                 battleTrainerPokemon = attackerEntry.member;
@@ -8360,6 +8362,14 @@
                 attacker: (payload.rerolls && payload.rerolls.attacker) | 0,
                 defender: (payload.rerolls && payload.rerolls.defender) | 0,
             };
+            ['attacker', 'defender'].forEach(slot => { // the first Effect Die roll of a 'Roll the Effect Die:' Move just arrived
+                const now = battleDiceResults[slot] && battleDiceResults[slot].effectFirst;
+                if (!Number.isFinite(prevFirst[slot]) && Number.isFinite(now)) { const summary = battleEffectDieMoveSummary(slot); if (summary) showBattleArenaNotice(summary); }
+            });
+            ['attacker', 'defender'].forEach(slot => { // a second Effect Die roll (Roll Effect Die Again) just arrived: say what it did
+                const before = prevSecond[slot], now = battleDiceResults[slot] && battleDiceResults[slot].effectSecond;
+                if (!Number.isFinite(before) && Number.isFinite(now)) { const summary = battleExtraRollSummary(slot); if (summary) showBattleArenaNotice(summary); }
+            });
             const recordBeforeEnd = battleRecord;
             battleRecord = payload.record ? JSON.parse(JSON.stringify(payload.record)) : makeEmptyBattleRecord();
             if (bfPrev && !battleInProgress) battlePayDayClaim(recordBeforeEnd); // the Battle just ended
@@ -15831,8 +15841,15 @@
             battleDiceResults[slotName].effect = Math.max(Math.min(...BATTLE_EFFECT_DIE_FACES), Math.min(Math.max(...BATTLE_EFFECT_DIE_FACES), lensRaw + lensBonus - penalty)); // Wide Lens can't push the roll past the top face; Mild can't take it below the bottom one
             battleDiceResults[slotName].effectBonus = lensBonus - penalty;
             battleDiceResults[slotName].effectRaw = lensRaw;
-            if (firstEffectRoll) battleDiceResults[slotName].effectFirst = battleDiceResults[slotName].effect;
-            else if (!Number.isFinite(battleDiceResults[slotName].effectSecond)) battleDiceResults[slotName].effectSecond = battleDiceResults[slotName].effect; // 'Roll the Effect Die again': the second roll
+            if (firstEffectRoll) {
+                battleDiceResults[slotName].effectFirst = battleDiceResults[slotName].effect;
+                const summary = battleEffectDieMoveSummary(slotName);
+                if (summary) showBattleArenaNotice(summary);
+            } else if (!Number.isFinite(battleDiceResults[slotName].effectSecond)) {
+                battleDiceResults[slotName].effectSecond = battleDiceResults[slotName].effect; // 'Roll the Effect Die again': the second roll
+                const summary = battleExtraRollSummary(slotName);
+                if (summary) showBattleArenaNotice(summary);
+            }
             refreshBattleDice(slotName);
         }
 
@@ -16393,6 +16410,7 @@
         function guidedEffectsRollPending(slot) { // a threshold on the Move (or one a card adds) is waiting for the Effect Die
             const moveName = battleCalcMoveName[slot];
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
+            if (moveName && EFFECT_DIE_MOVES[moveName] && getBattleEffectDieResult(slot) === null) return true; // these Moves need the Effect Die whatever their codes say
             if (!entry || getBattleEffectDieResult(slot) !== null) return false;
             return resolveMoveCodeList(entry, getBattleMoveCodeAdds(slot)).some(({ code, replaced }) => !replaced && effectDieCodeNeedsRoll(EFFECTS_DATA.codes[code]));
         }
@@ -16793,6 +16811,7 @@
                 } else {
                     const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'reroll' ? 'roll the Effect Die again' : r === 'prompt' ? 'make a choice (Revival / Status Heal / Field Move)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
                     text = 'Move Effects apply Attacker first, then Defender; a side with nothing to apply by hand continues by itself. ' + status(s => g.fxDone[s] ? 'done' : (s === 'defender' && !g.fxDone.attacker ? 'waiting' : reasonText(s)));
+                    GUIDED_SLOTS.forEach(s => { const sum = battleExtraRollSummary(s) || battleEffectDieMoveSummary(s); if (sum) text += ' ' + guidedSideLabel(s) + ' \u2014 ' + sum; });
                     GUIDED_SLOTS.forEach(s => { const was = g.struggled && g.struggled[s]; if (was) text += ` ${guidedSideLabel(s)} can\u2019t use ${was === true ? 'its Move' : was} and uses Struggle instead.`; });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedPromptPending(s)) { const pr = g.prompts[s]; buttons += guidedBtn('pickprompt', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: ${pr.revival === 'pending' ? 'choose Pok\u00e9mon for Revival' : pr.heal === 'pending' ? 'choose Pok\u00e9mon for Status Heal' : 'place the Field Move card'}`); } });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedEffectsManualReason(s) === 'status') buttons += guidedBtn('fxdone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}\u2019s effects are done`, s === 'defender' && !g.fxDone.attacker); });
@@ -17180,7 +17199,7 @@
 
         function computeBattleTypeMatchup(slotName, moveName) {
             const target = getBattleSlotMember(getBattleOpposingSlotName(slotName));
-            const moveType = getBattleMoveType(moveName);
+            const moveType = getBattleMatchupMoveType(slotName, moveName); // (Techno Blast: the Type its roll gave; STAB is not affected)
             if (!target || !moveType) return null;
             if (battleSlotHasMoveEffect(slotName, 'ignore', moveName)) return { label: 'Neutral', bonus: 0, ignored: true }; // Ignore Type: no effectiveness bonus or penalty
             const targetTypes = getBattleMemberTypes(target);
@@ -17361,13 +17380,48 @@
         function effectDieCodeNeedsRoll(def) { return !!def && Number.isFinite(def.threshold) && def.requiresRoll !== false && def.threshold > 1; }
         // ---- Roll Effect Die Again (extra_self / extra_opp): what each Move does with the second roll ----
         // reroll: the side rolls the Effect Die again once the first roll met the threshold. outcome(roll) -> the effect ids that roll produces (they apply like any other Move Effect).
+        const EXTRA_ROLL_TEXT = { pois: 'the opponent is Poisoned', para: 'the opponent is Paralyzed', burn: 'the opponent is Burned', freeze: 'the opponent is Frozen', sleep: 'the opponent falls Asleep', conf_opp: 'the opponent is Confused', dis: 'the opponent gets Disadvantage this Round', adv: 'the user gets Advantage this Round' };
         const EXTRA_ROLL_MOVES = {
             'Dire Claw': { reroll: true, outcome: r => [r % 2 ? 'pois' : 'para'] },       // odd: Poisoned, even: Paralyzed
             'Fire Fang': { reroll: true, outcome: r => [r % 2 ? 'burn' : 'dis'] },        // odd: Burned, even: Disadvantage this Round
             'Ice Fang': { reroll: true, outcome: r => [r % 2 ? 'freeze' : 'dis'] },       // odd: Frozen, even: Disadvantage this Round
             'Thunder Fang': { reroll: true, outcome: r => [r % 2 ? 'para' : 'dis'] },     // odd: Paralyzed, even: Disadvantage this Round
+            'Secret Power': { reroll: true, outcome: r => [['dis', 'para', 'conf_opp', 'pois', 'sleep', 'adv'][Math.max(1, Math.min(6, r)) - 1]] }, // 1 Disadvantage, 2 Paralyzed, 3 Confused, 4 Poisoned, 5 Sleep, 6 the user gets Advantage
+            'Tri Attack': { reroll: true, outcome: r => [r <= 2 ? 'para' : (r <= 4 ? 'burn' : 'freeze')] }, // 1-2 Paralyzed, 3-4 Burned, 5-6 Frozen
             'Pay Day': { reroll: false },                                                  // no second roll: a reward at the end of the Battle
         };
+        // Moves whose own text says 'Roll the Effect Die:' (no code on the token): the side's first Effect Die roll of the Round decides.
+        const EFFECT_DIE_MOVES = {
+            'G-Max Befuddle': { outcome: r => [r <= 2 ? 'pois' : (r <= 4 ? 'para' : 'sleep')] }, // 1-2 Poisoned, 3-4 Paralyzed, 5-6 Sleep
+            'G-Max Stun Shock': { outcome: r => [r <= 3 ? 'pois' : 'para'] },                    // 1-3 Poisoned, 4-6 Paralyzed
+            'Techno Blast': { type: r => (r <= 2 ? 'normal' : ['fire', 'ice', 'water', 'electric'][Math.min(6, r) - 3]) }, // 1-2 Normal, 3 Fire, 4 Ice, 5 Water, 6 Electric (type matchups only; STAB stays)
+        };
+        function battleEffectDieMoveConfig(slotName, moveName) {
+            const cfg = moveName ? EFFECT_DIE_MOVES[moveName] : null;
+            const result = getBattleEffectDieResult(slotName);
+            return (cfg && Number.isFinite(result)) ? { cfg, result } : null;
+        }
+        function getBattleEffectDieMoveOutcome(slotName, moveName) { // effect ids the first roll produced for these moves
+            const c = battleEffectDieMoveConfig(slotName, moveName);
+            return (c && c.cfg.outcome) ? c.cfg.outcome(c.result) : [];
+        }
+        function getBattleMatchupMoveType(slotName, moveName) { // the Type used for the type matchup: Techno Blast takes the Type its roll gave; everything else uses the Move's own Type
+            const c = battleEffectDieMoveConfig(slotName, moveName);
+            return (c && c.cfg.type) ? c.cfg.type(c.result) : getBattleMoveType(moveName);
+        }
+        function battleEffectDieMoveSummary(slotName) { // what the first roll did, for the notice and the phase bar
+            const moveName = battleCalcMoveName[slotName], c = battleEffectDieMoveConfig(slotName, moveName);
+            if (!c) return '';
+            if (c.cfg.type) { const t = c.cfg.type(c.result); return `${moveName}: rolled ${c.result}, so it is ${t.charAt(0).toUpperCase() + t.slice(1)} Type for type matchups.`; }
+            const ids = c.cfg.outcome(c.result);
+            return `${moveName}: rolled ${c.result}, so ${ids.map(id => EXTRA_ROLL_TEXT[id] || id).join(' and ')}.`;
+        }
+        function battleExtraRollSummary(slotName) { // 'Fire Fang: rolled 4, so the opponent gets Disadvantage this Round' once the second roll is made
+            const moveName = battleCalcMoveName[slotName], half = battleDiceResults[slotName];
+            if (!moveName || !half || !Number.isFinite(half.effectSecond)) return '';
+            const ids = getBattleExtraRollOutcome(slotName, moveName);
+            return ids.length ? `${moveName}: rolled ${half.effectSecond}, so ${ids.map(id => EXTRA_ROLL_TEXT[id] || id).join(' and ')}.` : '';
+        }
         function battleExtraRollTriggered(slotName, moveName) { // the Move's Roll Effect Die Again code has met its threshold
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
             if (!entry || !EXTRA_ROLL_MOVES[moveName] || !EFFECTS_DATA) return false;
@@ -17406,6 +17460,7 @@
                 });
             }
             getBattleExtraRollOutcome(slotName, moveName).forEach(id => out.push({ id, code: 'extra:' + id })); // Roll Effect Die Again: what the second roll gave
+            getBattleEffectDieMoveOutcome(slotName, moveName).forEach(id => out.push({ id, code: 'dieroll:' + id })); // G-Max Befuddle / Stun Shock: what the Effect Die gave
             getBattleGrantedMoveEffects(slotName, true).forEach(id => out.push({ id, code: id }));
             return out;
         }
@@ -17511,13 +17566,18 @@
             const key = lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host');
             if (record.payDay[key] === undefined) return;
             delete record.payDay[key];
-            setTimeout(() => {
+            let waited = 0;
+            const showWhenFree = () => { // after the Gym Badge / Champion screens (and anything else on screen) are done
+                const busy = gymBadgeAwardShowing || gymBadgeFading || pendingGymBadgeAwards.length
+                    || ['game-frontier-overlay', 'game-victory-overlay'].some(id => { const el = document.getElementById(id); return !!(el && el.classList.contains('visible')); });
+                if (busy && waited < 180000) { waited += 700; setTimeout(showWhenFree, 700); return; }
                 const coins = isPokeCoinsEnabledForActiveSave(), decks = isVirtualDecksEnabledForActiveSave();
                 if (!coins && !decks) { showGameToast('Pay Day: draw an Item card from your Item Deck or collect 3 Pok\u00e9Coins.'); return; }
                 boardFrontierShow('Pay Day', 'Pay Day paid off! Choose your reward:',
                     (decks ? `<button class="filter-btn include game-payday-btn" type="button" data-act="item">Draw an Item Card</button>` : '')
                     + (coins ? `<button class="filter-btn include game-payday-btn" type="button" data-act="coins">Collect 3 Pok\u00e9Coins</button>` : ''));
-            }, 700);
+            };
+            setTimeout(showWhenFree, 900);
         }
         function battleRevertLastingEffects(record, srcUid, kinds) { // the Move that caused them became Struggle: Block Item and Escape Prevention revert
             if (!record || !srcUid) return;
@@ -32923,8 +32983,9 @@
             showEffectToast(getEffectToastParts(btn.dataset.pimCode || '', btn.dataset.pimEffect || ''));
         });
 
-        function buildMoveTypeBadgeHtml(entry) {
-            const moveType = typeof entry.type === 'string' ? entry.type.trim() : '';
+        function buildMoveTypeBadgeHtml(entry, typeOverride) { // typeOverride: the Type a move took this round (Techno Blast); the badge shows it instead of the printed Type
+            const base = typeof entry.type === 'string' ? entry.type.trim() : '';
+            const moveType = (typeof typeOverride === 'string' && typeOverride) ? typeOverride.trim() : base;
             return moveType
                 ? `<span class="poke-type-badge poke-type-${escapeHtml(moveType.toLowerCase())}">${escapeHtml(capitalize(moveType))}</span>`
                 : '';
@@ -33077,7 +33138,8 @@
             if (!box.querySelector('.gbd-left')) box.innerHTML = '<div class="gbd-inner"><div class="gbd-left"></div><div class="gbd-right"></div></div>';
             const left = box.querySelector('.gbd-left');
             const right = box.querySelector('.gbd-right');
-            const key = `${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|up${upgradeDie}|d4${forceD4 ? 1 : 0}|e${effectDieResult === null ? '' : effectDieResult}|ign${ignoreOpponentEffects ? 1 : 0}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
+            const shownType = moveName ? getBattleMatchupMoveType(slotName, moveName) : '';
+            const key = `${shownType}|${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|up${upgradeDie}|d4${forceD4 ? 1 : 0}|e${effectDieResult === null ? '' : effectDieResult}|ign${ignoreOpponentEffects ? 1 : 0}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
             if (box.dataset.moveKey !== key) {
                 box.dataset.moveKey = key;
                 hideEffectToast();
@@ -33093,7 +33155,7 @@
                 } else if (grantedIds.length) {
                     body += `<div class="pim-move-icons gbd-icons-row">${buildGrantedMoveEffectsHtml(grantedIds, false)}</div>`;
                 }
-                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry) : ''}</div>${body}${itemsHtml}`;
+                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry, shownType) : ''}</div>${body}${itemsHtml}`;
             }
             right.innerHTML = breakdown ? buildBattleCalcHtml(breakdown) : '';
             right.hidden = !breakdown;
