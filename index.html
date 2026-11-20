@@ -17461,6 +17461,7 @@
             }
             getBattleExtraRollOutcome(slotName, moveName).forEach(id => out.push({ id, code: 'extra:' + id })); // Roll Effect Die Again: what the second roll gave
             getBattleEffectDieMoveOutcome(slotName, moveName).forEach(id => out.push({ id, code: 'dieroll:' + id })); // G-Max Befuddle / Stun Shock: what the Effect Die gave
+            if (moveName === 'Dream Eater' && battleOpponentIsAsleep(slotName)) out.push({ id: 'life', code: 'dreameater' }); // the opponent is asleep: it gains Life Recovery
             getBattleGrantedMoveEffects(slotName, true).forEach(id => out.push({ id, code: id }));
             return out;
         }
@@ -17480,6 +17481,43 @@
         function battleOpponentHasStatus(slotName) {
             const m = getBattleSlotMember(getBattleOpposingSlotName(slotName));
             return !!(m && !m.fainted && m.status && m.status !== 'none');
+        }
+        // ---- Moves whose own text adds to their Attack Strength when a condition holds (Acrobatics, Facade, Retaliate ...) ----
+        function battleMemberIsDynamaxed(member) { // Dynamaxed, or in a Gigantamax form
+            if (!member) return false;
+            if (member.dynamaxed) return true;
+            const form = member.formOverride ? POKEMON_BY_NAME[member.formOverride] : null;
+            return !!form && form.form_type === 'gmax';
+        }
+        function battleSideUsedBattleCard(slotName) { // a Battle Card played by this side and revealed
+            const z = battleZones[slotName], c = z && z.battleCard;
+            return !!(c && c.faceUp);
+        }
+        function battleSideUsedAttachCard(slotName) { // an Attach Card with a battle option (Wide Lens, Dire Hit ...) switched on this Round
+            return getBattleItemOptions(slotName).some(o => o.state === 'active');
+        }
+        function battleTeamHasFainted(slotName) { // someone on this side's team has Fainted in this Battle (a wild Pok\u00e9mon has no team)
+            const rec = getBattleRecordStore(), owner = getBattleSlotOwnerId(slotName);
+            return !!(rec && owner && (rec.faints || []).some(f => f.o === owner));
+        }
+        const BATTLE_STRENGTH_MOVES = {
+            'Acrobatics': slot => { const m = getBattleSlotMember(slot); return !!m && !m.attachCardId; },
+            'Behemoth Bash': slot => battleMemberIsDynamaxed(getBattleSlotMember(getBattleOpposingSlotName(slot))),
+            'Behemoth Blade': slot => battleMemberIsDynamaxed(getBattleSlotMember(getBattleOpposingSlotName(slot))),
+            'Dynamax Cannon': slot => battleMemberIsDynamaxed(getBattleSlotMember(getBattleOpposingSlotName(slot))),
+            'Dream Eater': slot => battleOpponentIsAsleep(slot),
+            'Facade': slot => { const m = getBattleSlotMember(slot); return !!(m && !m.fainted && m.status && m.status !== 'none'); },
+            'Lash Out': slot => getBattleDiceAdvantage(slot).net < 0,
+            'Payback': slot => { const o = getBattleOpposingSlotName(slot); return battleSideUsedBattleCard(o) || battleSideUsedAttachCard(o); },
+            'Retaliate': slot => battleTeamHasFainted(slot),
+        };
+        function battleOpponentIsAsleep(slotName) {
+            const m = getBattleSlotMember(getBattleOpposingSlotName(slotName));
+            return !!(m && !m.fainted && m.status === 'sleep');
+        }
+        function battleMoveStrengthBonus(slotName, moveName) { // { label, bonus } when the Move's own condition is met
+            const test = BATTLE_STRENGTH_MOVES[moveName];
+            return (test && test(slotName)) ? { label: moveName, bonus: 1 } : null;
         }
         function battleConditionBoostActive(slotName, moveName) { // decided when the Attack Roll was made (stored with the roll), for this Round only
             const half = battleDiceResults[slotName];
@@ -18097,7 +18135,8 @@
                 (!(opts && opts.ignoreMoveEffects) && battleConditionBoostActive(slotName, moveName)) ? [{ label: 'Condition Boost', bonus: 1 }] : []).concat(
                 (!(opts && opts.ignoreMoveEffects) && battleSlotHasMoveEffect(slotName, 'repeat', moveName)
                     && battleRepeatBonusFor(getBattleRecordStore(), member, moveName) > 0)
-                    ? [{ label: 'Repeat', bonus: battleRepeatBonusFor(getBattleRecordStore(), member, moveName) }] : []);
+                    ? [{ label: 'Repeat', bonus: battleRepeatBonusFor(getBattleRecordStore(), member, moveName) }] : []).concat(
+                (() => { if (opts && opts.ignoreMoveEffects) return []; const b = battleMoveStrengthBonus(slotName, eff.name); return b ? [b] : []; })());
             const bonusSum = bonuses.reduce((sum, b) => sum + b.bonus, 0);
             return { power, stab, bonuses, total: Math.max(0, power + stab + bonusSum) };
         }
