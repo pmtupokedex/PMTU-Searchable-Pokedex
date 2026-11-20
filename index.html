@@ -16492,7 +16492,7 @@
             if (!battleMemberAttachBlocked(opp)) return;
             const moveName = battleCalcMoveName[oppSlot], base = battleCalcBaseMove[oppSlot] || null;
             if (!moveName || moveName === BATTLE_STRUGGLE_MOVE_NAME) return;
-            if (getBattleMemberMoveButtons(opp).some(b => b.name === moveName && (b.base || null) === base)) return;
+            if (getBattleMemberMoveButtons(opp, oppSlot).some(b => b.name === moveName && (b.base || null) === base)) return;
             const g = rec.guided; // the opponent's chosen Move came from the blocked card: it chooses again
             guidedClearMove(oppSlot);
             if (g) g.locked[oppSlot] = false;
@@ -17165,7 +17165,7 @@
             const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
             return (eff && eff.strength.mode === 'manual' && !BATTLE_LIVE_STRENGTH[eff.name] && !BATTLE_AUTO_PICK_MOVES.includes(eff.name)) ? eff.name : null;
         }
-        const BATTLE_AUTO_PICK_MOVES = ['Steel Roller', 'Spit Up', 'Order Up', 'Beat Up', 'Last Respects', 'Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment', 'Flying Press', 'Conversion', 'Conversion 2']; // worked out (or asked) as the Move is picked: see battlePreSelect
+        const BATTLE_AUTO_PICK_MOVES = ['Steel Roller', 'Spit Up', 'Order Up', 'Beat Up', 'Last Respects', 'Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment', 'Flying Press', 'Conversion', 'Conversion 2', 'Metronome', 'Nature Power', 'Sleep Talk', 'Sketch', 'Transform']; // worked out (or asked) as the Move is picked: see battlePreSelect
         function battlePreSelect(slot, moveName, baseMove) { // true when it opened a question (the pick carries on from its answer)
             const eff = getBattleEffectiveStrength(slot, moveName, baseMove), name = eff ? eff.name : moveName;
             if (name === 'Order Up' || name === 'Beat Up' || name === 'Last Respects') { // the team is read here, on the owner's device, and the host relays the answer with the Move pick (like the number a player types)
@@ -17214,8 +17214,8 @@
 
         function getBattleMemberTypes(member, opts) { // opts.original: ignore Terastallization (STAB still comes from the original types)
             if (!member) return [];
-            const rec = battleInProgress ? getBattleRecordStore() : null; // Conversion / Conversion 2: the Type it took until the Battle ends
-            const taken = (rec && rec.typeOverride && member.uid) ? rec.typeOverride[member.uid] : null;
+            const rec = battleInProgress ? getBattleRecordStore() : null; // Conversion / Conversion 2: the Type it took until the Battle ends (not for STAB, and Terastallization wins over it)
+            const taken = (rec && rec.typeOverride && member.uid && !(opts && opts.original) && !getBattleMemberTeraType(member)) ? rec.typeOverride[member.uid] : null;
             if (Array.isArray(taken) && taken.length) return taken.slice();
             const gymMon = getGymLeaderMemberData(member);
             if (gymMon) {
@@ -17262,8 +17262,7 @@
             const rec = getBattleRecordStore(), user = getBattleSlotMember(slotName);
             if (moveName === 'Nihil Light' && counted.includes('fairy')) return { label: 'Neutral', bonus: 0, ignored: true }; // no Type Effectiveness against Fairy Type
             if (counted.includes('ghost') && rec && rec.odorSleuth && user && user.uid && rec.odorSleuth[user.uid] !== undefined) return { label: 'Neutral', bonus: 0, ignored: true }; // Odor Sleuth
-            if (moveName === 'Salt Cure' && (counted.includes('rock') || counted.includes('water'))) { const b = parseInt(MATCHUP_BONUS_MAP.EFFECTIVE, 10); return { label: 'EFFECTIVE', bonus: Number.isNaN(b) ? 0 : b }; } // considered Effective
-            const result = computeTypeMatchup(moveType, targetTypes[0], targetTypes[1] || null, rule.dual, rule.immunities);
+            const result = computeTypeMatchup(moveType, targetTypes[0], targetTypes[1] || null, rule.dual, rule.immunities, moveName === 'Salt Cure' ? ['rock', 'water'] : null); // Salt Cure: Rock and Water Types count as Effective, every other Type uses the chart
             if (!result) return null;
             const bonus = parseInt(result.bonus, 10);
             return { label: result.label, bonus: Number.isNaN(bonus) ? 0 : bonus };
@@ -17635,6 +17634,7 @@
         }
         // Moves whose Attack Strength works itself out from the table (no number to type): read live
         const BATTLE_LIVE_STRENGTH = {
+            'Mimic': () => 0, 'Sketch': () => 0, 'Transform': () => 0, // nothing to copy yet: Attack Strength 0
             'Dark Void': slot => { const o = getBattleSlotMember(getBattleOpposingSlotName(slot)); return o ? (o.status === 'sleep' && !o.fainted ? 2 : 0) : null; },
             'Poltergeist': slot => { const o = getBattleSlotMember(getBattleOpposingSlotName(slot)); return o ? (o.attachCardId ? 3 : 0) : null; },
         };
@@ -17718,6 +17718,7 @@
             }
             battleNotePledge(record, slotName, moveName);
             battleNoteTypeMoves(record, slotName, moveName);
+            battleNoteBecomes(record, slotName, member);
             battleApplyLastingEffects(record, slotName); // Block Item, Escape Prevention (already applied in Guided Rounds' Move Effects phase)
             battleNotePayDay(record, slotName);
             if (!record.rolled || typeof record.rolled !== 'object') record.rolled = {};
@@ -17757,6 +17758,10 @@
                 if ((mv === 'Conversion' || mv === 'Conversion 2') && manual && manual.moveName === mv && BATTLE_MOVE_TYPE_NAMES.includes(manual.type)) {
                     if (!record.typeOverride || typeof record.typeOverride !== 'object') record.typeOverride = {};
                     record.typeOverride[selfUid] = [manual.type];
+                }
+                if (battleCalcBaseMove[slotName] === 'Transform' && BATTLE_MOVE_TYPE_NAMES.includes(getBattleMoveType(mv))) { // Transform: the user's Type becomes that Move's Type
+                    if (!record.typeOverride || typeof record.typeOverride !== 'object') record.typeOverride = {};
+                    record.typeOverride[selfUid] = [getBattleMoveType(mv)];
                 }
                 if (mv === 'Odor Sleuth') {
                     if (!record.odorSleuth || typeof record.odorSleuth !== 'object') record.odorSleuth = {};
@@ -17951,7 +17956,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, odorSleuth: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, odorSleuth: {}, mimic: {}, transform: {}, sketch: {}, lastUsed: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -18542,8 +18547,8 @@
             const inp = document.getElementById('game-battle-manual-input');
             inp.hidden = mode === 'yesno';
             document.getElementById('game-battle-manual-confirm-btn').hidden = mode === 'yesno';
-            document.getElementById('game-battle-manual-roll-btn').hidden = mode !== 'd4' && !(mode === 'type' && !(opts && opts.noRoll));
-            document.getElementById('game-battle-manual-roll-btn').textContent = mode === 'type' ? 'Roll the Type Die' : 'Roll d4';
+            document.getElementById('game-battle-manual-roll-btn').hidden = mode !== 'd4' && !(mode === 'type' && !(opts && opts.noRoll)) && !(mode === 'oppmove' && opts && opts.roll);
+            document.getElementById('game-battle-manual-roll-btn').textContent = mode === 'type' ? 'Roll the Type Die' : (mode === 'oppmove' ? 'Roll the Nature Power Die' : 'Roll d4');
             const typeBox = document.getElementById('game-battle-manual-types');
             typeBox.hidden = !picker;
             if (mode === 'oppmove') typeBox.innerHTML = ((opts && opts.moves) || []).map(n => { const t = getBattleMoveType(n); return `<button class="filter-btn game-battle-manual-type-btn game-battle-manual-move-btn${t ? ' poke-type-' + t : ''}" type="button" data-move="${escapeHtml(n)}">${escapeHtml(n)}</button>`; }).join('');
@@ -18592,6 +18597,11 @@
         function confirmBattleManualOverlay(answer) { // answer: the Yes (1) / No (0) of a yes-or-no question, or { type } from the Type Die
             const pending = battleManualPending;
             if (!pending) return;
+            if (answer && typeof answer === 'object' && typeof answer.choice === 'string' && pending.mode === 'oppmove' && BATTLE_BECOME_PICKS.includes(pending.manualName)) { // Sketch / Transform / Nature Power: this Move becomes the one picked
+                closeBattleManualOverlay();
+                battleFinishBecomePick(pending.slotName, pending.manualName, answer.choice);
+                return;
+            }
             if (answer && typeof answer === 'object' && typeof answer.choice === 'string' && pending.mode === 'oppmove') { // an opponent's Move (Conversion, Conversion 2)
                 const moveType = getBattleMoveType(answer.choice);
                 if (pending.manualName === 'Conversion 2') { // next: a Type that resists it
@@ -18690,11 +18700,98 @@
             return { id: info.id, name: info.name };
         }
 
-        function getBattleMemberMoveButtons(member) {
+        // ---- Moves that become another Move (Mimic, Sketch, Transform, Metronome, Nature Power, Sleep Talk): the button shows the new Move, in its Type colour, with "from <original>" underneath (like a Max Move) ----
+        const BATTLE_BECOME_MOVES = ['Mimic', 'Sketch', 'Transform', 'Metronome', 'Nature Power', 'Sleep Talk'];
+        const BATTLE_BECOME_PICKS = ['Sketch', 'Transform', 'Nature Power']; // the player picks the new Move in a prompt
+        function battleBecomeValid(name) { return typeof name === 'string' && !!name && !!getBattleMoveEntry(name); }
+        function battleMimicCandidate(slotName) { // the Move the opponent used in the previous Battle Round
+            const rec = getBattleRecordStore(), last = rec && rec.lastUsed && rec.lastUsed[getBattleOpposingSlotName(slotName)];
+            return (last && last.round === rec.round - 1 && last.move !== BATTLE_STRUGGLE_MOVE_NAME && battleBecomeValid(last.move)) ? last.move : null;
+        }
+        function battleBecomesMove(slotName, member, name) { // the Move this button has turned into, or null
+            if (!BATTLE_BECOME_MOVES.includes(name) || !member) return null;
+            const rec = getBattleRecordStore(), uid = member.uid;
+            let kept = null;
+            if (name === 'Mimic') kept = (rec && rec.mimic && uid && rec.mimic[uid]) || battleMimicCandidate(slotName); // for the rest of the Battle once used
+            else if (name === 'Sketch') kept = (battleBecomeValid(member.sketchMove) && member.sketchMove) || (rec && rec.sketch && uid && rec.sketch[uid]); // saved on the Pok\u00e9mon: until the end of the game
+            else if (name === 'Transform') kept = rec && rec.transform && uid && rec.transform[uid]; // for the rest of the Battle
+            if (battleBecomeValid(kept)) return kept;
+            if (battleCalcBaseMove[slotName] === name && battleBecomeValid(battleCalcMoveName[slotName])) return battleCalcMoveName[slotName]; // this Round's pick (Metronome, Nature Power, Sleep Talk, and the first use of the others)
+            return null;
+        }
+        function battleNoteBecomes(record, slotName, member) { // the Attack Roll was made
+            const moveName = battleCalcMoveName[slotName], base = battleCalcBaseMove[slotName] || null, uid = member && member.uid;
+            if (!record || !moveName) return;
+            if (!record.lastUsed || typeof record.lastUsed !== 'object') record.lastUsed = {};
+            record.lastUsed[slotName] = { round: record.round, move: moveName }; // what Mimic copies next Round
+            if (!uid || !base) return;
+            const key = { 'Mimic': 'mimic', 'Transform': 'transform', 'Sketch': 'sketch' }[base];
+            if (!key) return;
+            if (!record[key] || typeof record[key] !== 'object') record[key] = {};
+            if (record[key][uid] === undefined) record[key][uid] = moveName;
+        }
+        function battleMetronomeDraw(member) { // a random token of the user's colour: it uses the first Move on that token
+            const colorOf = e => { const tags = (e && Array.isArray(e.tags)) ? e.tags : []; return ['pink', 'green', 'blue', 'yellow', 'red'].find(c => tags.includes(c)) || null; };
+            const mine = colorOf(POKEMON_BY_NAME[member.formOverride || member.name] || POKEMON_BY_NAME[member.name]);
+            const pool = Object.values(POKEMON_BY_NAME).filter(e => e && colorOf(e) === mine && Array.isArray(e.known_moves) && e.known_moves.length
+                && !BATTLE_BECOME_MOVES.includes(e.known_moves[0]) && battleBecomeValid(e.known_moves[0]));
+            if (!pool.length) return null;
+            const token = pool[Math.floor(Math.random() * pool.length)];
+            return { token: token.name, move: token.known_moves[0] };
+        }
+        function battleResolveBecoming(slot, name) { // a Move that turns into another when it is picked; true when it took over the pick
+            if (!BATTLE_BECOME_MOVES.includes(name)) return false;
+            const member = getBattleSlotMember(slot);
+            if (!member || member.dynamaxed) return false;
+            const opp = getBattleSlotMember(getBattleOpposingSlotName(slot));
+            const oppMoves = opp ? getBattleMemberMoves(opp).filter(battleBecomeValid) : [];
+            if (name === 'Metronome') {
+                const drawn = battleMetronomeDraw(member);
+                if (!drawn) { showBattleArenaNotice('Metronome has no token to draw.'); return true; }
+                showBattleArenaNotice(`Metronome drew ${drawn.token}: ${drawn.move}.`);
+                selectBattleMove(slot, drawn.move, 'Metronome');
+                return true;
+            }
+            if (name === 'Sleep Talk') {
+                if (member.status !== 'sleep') { showBattleArenaNotice('Sleep Talk can only be selected while the user has Sleep.'); return true; }
+                const others = getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n));
+                if (!others.length) { showBattleArenaNotice('Sleep Talk has no other Move to use.'); return true; }
+                const pick = others[Math.floor(Math.random() * others.length)];
+                showBattleArenaNotice(`Sleep Talk picked ${pick}.`);
+                selectBattleMove(slot, pick, 'Sleep Talk');
+                return true;
+            }
+            if (name === 'Nature Power') {
+                const moves = ((getBattleMoveEntry('Nature Power') || {}).uniqueEffectTable || []).map(r => r && r.move).filter(battleBecomeValid);
+                if (!moves.length) return false;
+                openBattleManualOverlay(slot, name, null, name, 'oppmove', { moves, roll: true, text: 'Roll the Nature Power Die (or pick the Move it shows). This Move becomes that Move for this Battle Round.' });
+                return true;
+            }
+            if ((name === 'Sketch' || name === 'Transform') && oppMoves.length) { // not chosen yet
+                openBattleManualOverlay(slot, name, null, name, 'oppmove', { moves: oppMoves, text: `${name}: select one of the opponent Pok\u00e9mon\u2019s Moves. This Move becomes that Move${name === 'Transform' ? ', and the user\u2019s Type becomes its Type for the rest of this Battle' : ' until the end of the game'}.` });
+                return true;
+            }
+            return false; // Mimic (the button already shows what it became), or nothing to copy: Attack Strength 0
+        }
+        function battleFinishBecomePick(slot, via, choice) { // the player picked the Move that Sketch / Transform / Nature Power turns into
+            if (!battleBecomeValid(choice)) return;
+            if (via === 'Sketch') { // Sketch stays on the Pok\u00e9mon for the rest of the game
+                const idx = slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+                const mem = typeof idx === 'number' ? getTeamSlotMember(idx) : null;
+                if (mem && !isActiveSaveReadOnly() && getBattleSlotMember(slot) === mem) { mem.sketchMove = choice; persistTeamSlotChange(idx); }
+            }
+            selectBattleMove(slot, choice, via);
+        }
+        function getBattleMemberMoveButtons(member, slotName) {
             const forcedBy = getBattleStruggleStatus(member);
-            if (forcedBy) return [{ name: BATTLE_STRUGGLE_MOVE_NAME, base: null, forcedBy: forcedBy.name }];
             const moves = getBattleMemberMoves(member);
-            if (!member.dynamaxed) return moves.map(name => ({ name, base: null }));
+            const become = n => { const to = (slotName && !member.dynamaxed) ? battleBecomesMove(slotName, member, n) : null; return to ? { name: to, base: n } : { name: n, base: null }; };
+            if (forcedBy) { // Sleep still allows Snore and Sleep Talk
+                const list = [{ name: BATTLE_STRUGGLE_MOVE_NAME, base: null, forcedBy: forcedBy.name }];
+                if (forcedBy.id === 'sleep') moves.filter(n => n === 'Snore' || n === 'Sleep Talk').forEach(n => list.push(become(n)));
+                return list;
+            }
+            if (!member.dynamaxed) return moves.map(become);
             return moves.map(move => {
                 const alreadyMax = /^(Max |G-Max )/.test(move);
                 const maxName = alreadyMax ? null : getMaxMoveForKnownMove(move);
@@ -18734,7 +18831,7 @@
             const container = document.getElementById(`game-battle-${slotName}-moves`);
             if (!container) return;
             const member = getBattleSlotMember(slotName);
-            const buttons = (member && battleInProgress) ? getBattleMemberMoveButtons(member) : [];
+            const buttons = (member && battleInProgress) ? getBattleMemberMoveButtons(member, slotName) : [];
             const selectedName = battleCalcMoveName[slotName];
             if (selectedName && !buttons.some(b => b.name === selectedName && (b.base || null) === (battleCalcBaseMove[slotName] || null))) {
                 resetBattleCalcResult(slotName);
@@ -18784,6 +18881,7 @@
             }
             const guidedMoveWhy = guidedGateReason('move', slot); // Guided rounds: Moves are chosen in phase 1, until locked in
             if (guidedMoveWhy) { showBattleArenaNotice(guidedMoveWhy); return; }
+            if (!baseMove && battleResolveBecoming(slot, moveName)) return;
             if (battlePreSelect(slot, moveName, baseMove)) return;
             const manualName = getBattleManualSourceName(slot, moveName, baseMove);
             if (manualName) {
@@ -18813,7 +18911,7 @@
             }
             const member = getBattleSlotMember(slotName);
             if (!member || !battleInProgress) return;
-            const usable = getBattleMemberMoveButtons(member).filter(b => !isBattleMoveSpent(slotName, b.name)).filter(b => {
+            const usable = getBattleMemberMoveButtons(member, slotName).filter(b => !isBattleMoveSpent(slotName, b.name)).filter(b => {
                 const base = b.base || null;
                 const eff = getBattleEffectiveStrength(slotName, b.name, base);
                 return !!getBattleManualSourceName(slotName, b.name, base) || !!(eff && BATTLE_AUTO_PICK_MOVES.includes(eff.name))
@@ -20649,11 +20747,11 @@
             return (TYPE_CHART[moveType] && TYPE_CHART[moveType][defType]) || null;
         }
 
-        function computeTypeMatchup(moveType, defType1, defType2, useDualTypes, useImmunities) {
+        function computeTypeMatchup(moveType, defType1, defType2, useDualTypes, useImmunities, alwaysEffectiveVs) { // alwaysEffectiveVs: Types this Move counts as Effective against (Salt Cure)
             if (!moveType || !defType1) return null;
-
-            let k1 = typeEffectivenessSymbol(moveType, defType1);
-            let k2 = (useDualTypes && defType2) ? typeEffectivenessSymbol(moveType, defType2) : null;
+            const sym = d => (Array.isArray(alwaysEffectiveVs) && alwaysEffectiveVs.includes(d)) ? '+' : typeEffectivenessSymbol(moveType, d);
+            let k1 = sym(defType1);
+            let k2 = (useDualTypes && defType2) ? sym(defType2) : null;
 
             if (!useImmunities) {
                 if (k1 === 'x') k1 = '-';
@@ -29832,6 +29930,9 @@
                 confirmBattleManualOverlay({ choice: e.target.closest('.game-battle-manual-move-btn').dataset.move });
             } else if (e.target.closest('.game-battle-manual-type-btn')) {
                 confirmBattleManualOverlay({ type: e.target.closest('.game-battle-manual-type-btn').dataset.type });
+            } else if (e.target.closest('#game-battle-manual-roll-btn') && battleManualPending && battleManualPending.mode === 'oppmove') {
+                const list = (battleManualPending.opts && battleManualPending.opts.moves) || [];
+                if (list.length) confirmBattleManualOverlay({ choice: list[Math.floor(Math.random() * list.length)] }); // the Nature Power Die: every row equally likely
             } else if (e.target.closest('#game-battle-manual-roll-btn') && battleManualPending && battleManualPending.mode === 'type') {
                 confirmBattleManualOverlay({ type: BATTLE_MOVE_TYPE_NAMES[Math.floor(Math.random() * BATTLE_MOVE_TYPE_NAMES.length)] }); // the d20 Type Die: 1 and 20 re-roll, so every Type is equally likely
             } else if (e.target.closest('#game-battle-manual-roll-btn')) {
