@@ -8095,7 +8095,8 @@
                     baseMove: typeof move.baseMove === 'string' ? move.baseMove.slice(0, 80) : null,
                     manual: (move.manual && typeof move.manual.moveName === 'string' && Number.isFinite(move.manual.value))
                         ? Object.assign({ moveName: move.manual.moveName.slice(0, 80), value: move.manual.value },
-                            (typeof move.manual.type === 'string' && BATTLE_MOVE_TYPE_NAMES.includes(move.manual.type)) ? { type: move.manual.type } : {}) : null,
+                            (typeof move.manual.type === 'string' && BATTLE_MOVE_TYPE_NAMES.includes(move.manual.type)) ? { type: move.manual.type } : {},
+                            (typeof move.manual.choice === 'string') ? { choice: move.manual.choice.slice(0, 80) } : {}) : null,
                     rule: (move.rule && typeof move.rule === 'object') ? { dual: !!move.rule.dual, immunities: !!move.rule.immunities } : null,
                 };
             }
@@ -16498,7 +16499,7 @@
         }
         function guidedRevertLasting(slot, hadApplied) { // it became Struggle: Block Item (applied at Lock In) reverts always; Escape Prevention only if its effects had applied
             const m = getBattleSlotMember(slot);
-            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent'] : ['blocked']);
+            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth'] : ['blocked']);
         }
         function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
             const g = guidedState();
@@ -17164,7 +17165,7 @@
             const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
             return (eff && eff.strength.mode === 'manual' && !BATTLE_LIVE_STRENGTH[eff.name] && !BATTLE_AUTO_PICK_MOVES.includes(eff.name)) ? eff.name : null;
         }
-        const BATTLE_AUTO_PICK_MOVES = ['Steel Roller', 'Spit Up', 'Order Up', 'Beat Up', 'Last Respects', 'Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment']; // worked out (or asked) as the Move is picked: see battlePreSelect
+        const BATTLE_AUTO_PICK_MOVES = ['Steel Roller', 'Spit Up', 'Order Up', 'Beat Up', 'Last Respects', 'Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment', 'Flying Press', 'Conversion', 'Conversion 2']; // worked out (or asked) as the Move is picked: see battlePreSelect
         function battlePreSelect(slot, moveName, baseMove) { // true when it opened a question (the pick carries on from its answer)
             const eff = getBattleEffectiveStrength(slot, moveName, baseMove), name = eff ? eff.name : moveName;
             if (name === 'Order Up' || name === 'Beat Up' || name === 'Last Respects') { // the team is read here, on the owner's device, and the host relays the answer with the Move pick (like the number a player types)
@@ -17175,6 +17176,14 @@
                 else { const down = team ? team.filter(m => m.fainted).length : 0; value = down > 0 ? down : 2; } // wild / non-player, or none Fainted: 2
                 battleCalcManualValue[slot] = { moveName: name, value };
                 return false;
+            }
+            if (name === 'Flying Press') { openBattleManualOverlay(slot, moveName, baseMove, name, 'type', { types: ['fighting', 'flying'], noRoll: true, text: 'Flying Press: treat this Move as Fighting Type or as Flying Type this Round.' }); return true; }
+            if (name === 'Conversion' || name === 'Conversion 2') {
+                const opp = getBattleSlotMember(getBattleOpposingSlotName(slot));
+                const moves = opp ? getBattleMemberMoves(opp).filter(n => getBattleMoveType(n)) : [];
+                if (!moves.length) return false; // nothing to pick from: no effect
+                openBattleManualOverlay(slot, moveName, baseMove, name, 'oppmove', { moves, text: `${name}: select one of the opponent Pok\u00e9mon\u2019s Moves.` });
+                return true;
             }
             if (name === 'Camouflage') { openBattleManualOverlay(slot, moveName, baseMove, name, 'type'); return true; } // a new Type every Round
             if (name === 'Hidden Power' || name === 'Multi-Attack') {
@@ -17205,6 +17214,9 @@
 
         function getBattleMemberTypes(member, opts) { // opts.original: ignore Terastallization (STAB still comes from the original types)
             if (!member) return [];
+            const rec = battleInProgress ? getBattleRecordStore() : null; // Conversion / Conversion 2: the Type it took until the Battle ends
+            const taken = (rec && rec.typeOverride && member.uid) ? rec.typeOverride[member.uid] : null;
+            if (Array.isArray(taken) && taken.length) return taken.slice();
             const gymMon = getGymLeaderMemberData(member);
             if (gymMon) {
                 return (Array.isArray(gymMon.types) ? gymMon.types : [])
@@ -17246,6 +17258,11 @@
             const targetTypes = getBattleMemberTypes(target);
             if (!targetTypes.length) return null;
             const rule = getBattleTypeRuleToggles(slotName);
+            const counted = rule.dual ? targetTypes : targetTypes.slice(0, 1); // the Types the matchup looks at
+            const rec = getBattleRecordStore(), user = getBattleSlotMember(slotName);
+            if (moveName === 'Nihil Light' && counted.includes('fairy')) return { label: 'Neutral', bonus: 0, ignored: true }; // no Type Effectiveness against Fairy Type
+            if (counted.includes('ghost') && rec && rec.odorSleuth && user && user.uid && rec.odorSleuth[user.uid] !== undefined) return { label: 'Neutral', bonus: 0, ignored: true }; // Odor Sleuth
+            if (moveName === 'Salt Cure' && (counted.includes('rock') || counted.includes('water'))) { const b = parseInt(MATCHUP_BONUS_MAP.EFFECTIVE, 10); return { label: 'EFFECTIVE', bonus: Number.isNaN(b) ? 0 : b }; } // considered Effective
             const result = computeTypeMatchup(moveType, targetTypes[0], targetTypes[1] || null, rule.dual, rule.immunities);
             if (!result) return null;
             const bonus = parseInt(result.bonus, 10);
@@ -17471,6 +17488,7 @@
             'Hidden Power': slot => battleKeptType(slot, 'Hidden Power'),
             'Multi-Attack': slot => battleKeptType(slot, 'Multi-Attack'),
             'Judgment': slot => battleBoosterType(slot) || battlePickedType(slot, 'Judgment'),
+            'Flying Press': slot => { const t = battlePickedType(slot, 'Flying Press'); return (t === 'fighting' || t === 'flying') ? t : null; },
             'Tera Blast': slot => (getBattleMemberTypes(getBattleSlotMember(slot))[0] || null), // the user's primary Type
             'Terrain Pulse': slot => {
                 for (const z of [slot, getBattleOpposingSlotName(slot)]) {
@@ -17734,6 +17752,17 @@
                 const spitUid = ensureMemberUid(member);
                 if (record.attachSpent[spitUid] === undefined) record.attachSpent[spitUid] = record.round;
             }
+            if (member && (!only || only === 'self')) { // the user's own Type / Ghost effects
+                const mv = battleCalcMoveName[slotName], manual = battleCalcManualValue[slotName], selfUid = ensureMemberUid(member);
+                if ((mv === 'Conversion' || mv === 'Conversion 2') && manual && manual.moveName === mv && BATTLE_MOVE_TYPE_NAMES.includes(manual.type)) {
+                    if (!record.typeOverride || typeof record.typeOverride !== 'object') record.typeOverride = {};
+                    record.typeOverride[selfUid] = [manual.type];
+                }
+                if (mv === 'Odor Sleuth') {
+                    if (!record.odorSleuth || typeof record.odorSleuth !== 'object') record.odorSleuth = {};
+                    if (record.odorSleuth[selfUid] === undefined) record.odorSleuth[selfUid] = record.round;
+                }
+            }
             if (!member || !target) return;
             const shield = battleShieldAgainst(getBattleOpposingSlotName(slotName));
             if (shield === 'prot' || (shield === 'priority' && !delayed)) return; // Protection ignores them for good; Priority holds them back until the end of the Round
@@ -17777,7 +17806,7 @@
         }
         function battleRevertLastingEffects(record, srcUid, kinds) { // the Move that caused them became Struggle: Block Item and Escape Prevention revert
             if (!record || !srcUid) return;
-            if (record.attachSpent && record.attachSpent[srcUid] !== undefined && (!kinds || kinds.includes('attachSpent'))) delete record.attachSpent[srcUid]; // Spit Up
+            ['attachSpent', 'typeOverride', 'odorSleuth'].forEach(k => { if (record[k] && record[k][srcUid] !== undefined && (!kinds || kinds.includes(k))) delete record[k][srcUid]; }); // Spit Up, Conversion, Odor Sleuth
             (kinds || ['blocked', 'locked', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
         }
         function battleMemberAttachBlocked(member) { // Block Item: the attached card does nothing until the Battle ends or the Pokémon is switched out
@@ -17793,6 +17822,10 @@
         }
         function battleMemberEscapeLocked(record, member) { // Escape Prevention: can't be switched out (a Fainted Pokémon can still be replaced)
             return !!(record && member && member.uid && !member.fainted && record.locked && record.locked[member.uid] !== undefined);
+        }
+        function battleOdorSleuthWards(slotName) { // Odor Sleuth (rest of the Battle): a Ghost Type opponent can't give this side's user Disadvantage or Double Disadvantage
+            const rec = getBattleRecordStore(), user = getBattleSlotMember(slotName), opp = getBattleSlotMember(getBattleOpposingSlotName(slotName));
+            return !!(rec && rec.odorSleuth && user && user.uid && rec.odorSleuth[user.uid] !== undefined && opp && getBattleMemberTypes(opp).includes('ghost'));
         }
         function battleShieldAgainst(targetSlot) { // what keeps the opponent's Move Effects off this side: 'prot' (Protection), 'priority' (Priority) or null
             const source = getBattleOpposingSlotName(targetSlot);
@@ -17811,7 +17844,7 @@
         function getBattleDiceAdvantage(slotName) { // { net, extra, mode, add }: net > 0 Advantage (extra dice, lowest dropped), net < 0 Disadvantage (highest dropped); add = Add Die dice (nothing dropped)
             let net = 0, add = 0;
             getBattleAdvantageSources(slotName).forEach(s => { if (s.kind === 'adv') net += s.n; else if (s.kind === 'add') add += s.n; });
-            if (!battleShieldAgainst(slotName)) { // Protection / Priority: the opponent's Move Effects (their Disadvantage) don't reach this side
+            if (!battleShieldAgainst(slotName) && !battleOdorSleuthWards(slotName)) { // Protection / Priority (and Odor Sleuth against a Ghost Type): the opponent's Move Effects (their Disadvantage) don't reach this side
                 getBattleAdvantageSources(getBattleOpposingSlotName(slotName)).forEach(s => { if (s.kind === 'dis') net -= s.n; });
             }
             if (battleStatDownActive(slotName)) net -= 1; // Stat Down: the user's own Moves suffer Disadvantage
@@ -17918,7 +17951,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false,
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, odorSleuth: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -18503,27 +18536,29 @@
 
         let battleManualPending = null; // { slotName, moveName, baseMoveName, manualName } | null
 
-        function openBattleManualOverlay(slotName, moveName, baseMoveName, manualName, mode) { // mode: 'd4' (Spit Up: roll or type 1-4), 'yesno' (Order Up: is Tatsugiri on the team?), else a typed number
-            battleManualPending = { slotName, moveName, baseMoveName: baseMoveName || null, manualName, mode: mode || null };
+        function openBattleManualOverlay(slotName, moveName, baseMoveName, manualName, mode, opts) { // mode: 'd4' (Spit Up: roll or type 1-4), 'yesno' (Order Up: is Tatsugiri on the team?), else a typed number
+            battleManualPending = { slotName, moveName, baseMoveName: baseMoveName || null, manualName, mode: mode || null, opts: opts || null };
+            const picker = mode === 'type' || mode === 'oppmove';
             const inp = document.getElementById('game-battle-manual-input');
             inp.hidden = mode === 'yesno';
             document.getElementById('game-battle-manual-confirm-btn').hidden = mode === 'yesno';
-            document.getElementById('game-battle-manual-roll-btn').hidden = mode !== 'd4' && mode !== 'type';
+            document.getElementById('game-battle-manual-roll-btn').hidden = mode !== 'd4' && !(mode === 'type' && !(opts && opts.noRoll));
             document.getElementById('game-battle-manual-roll-btn').textContent = mode === 'type' ? 'Roll the Type Die' : 'Roll d4';
             const typeBox = document.getElementById('game-battle-manual-types');
-            typeBox.hidden = mode !== 'type';
-            if (mode === 'type') typeBox.innerHTML = BATTLE_MOVE_TYPE_NAMES.map(t => `<button class="filter-btn game-battle-manual-type-btn poke-type-${t}" type="button" data-type="${t}">${t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('');
-            if (mode === 'type') { inp.hidden = true; document.getElementById('game-battle-manual-confirm-btn').hidden = true; }
+            typeBox.hidden = !picker;
+            if (mode === 'oppmove') typeBox.innerHTML = ((opts && opts.moves) || []).map(n => { const t = getBattleMoveType(n); return `<button class="filter-btn game-battle-manual-type-btn game-battle-manual-move-btn${t ? ' poke-type-' + t : ''}" type="button" data-move="${escapeHtml(n)}">${escapeHtml(n)}</button>`; }).join('');
+            if (mode === 'type') typeBox.innerHTML = ((opts && opts.types) || BATTLE_MOVE_TYPE_NAMES).map(t => `<button class="filter-btn game-battle-manual-type-btn poke-type-${t}" type="button" data-type="${t}">${t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('');
+            if (picker) { inp.hidden = true; document.getElementById('game-battle-manual-confirm-btn').hidden = true; }
             document.getElementById('game-battle-manual-yes-btn').hidden = mode !== 'yesno';
             document.getElementById('game-battle-manual-no-btn').hidden = mode !== 'yesno';
-            document.getElementById('game-battle-manual-error').textContent = mode === 'type' ? 'Pick a Type.' : mode === 'd4' ? 'Enter a number from 1 to 4.' : 'Enter a whole number, 0 or higher.';
+            document.getElementById('game-battle-manual-error').textContent = mode === 'type' ? 'Pick a Type.' : mode === 'oppmove' ? 'Pick a Move.' : mode === 'd4' ? 'Enter a number from 1 to 4.' : 'Enter a whole number, 0 or higher.';
             const entry = getBattleMoveEntry(manualName);
             document.getElementById('game-battle-manual-title').textContent =
                 manualName === moveName ? moveName : `${moveName} (${manualName})`;
             const effectText = entry && typeof entry.uniqueEffect === 'string' ? entry.uniqueEffect.trim() : '';
             const hasEffect = effectText !== '' && effectText.toUpperCase() !== 'TBD';
             const effectEl = document.getElementById('game-battle-manual-effect');
-            effectEl.textContent = mode === 'type' && manualName === 'Judgment' ? 'No Type Booster is attached, so roll the Type Die (or pick a Type) for this Move\u2019s Type, or choose Normal to leave it as it is.'
+            effectEl.textContent = (opts && opts.text) ? opts.text : mode === 'type' && manualName === 'Judgment' ? 'No Type Booster is attached, so roll the Type Die (or pick a Type) for this Move\u2019s Type, or choose Normal to leave it as it is.'
                 : mode === 'yesno' ? 'Is Tatsugiri on your team? (Add 2 to this Move\u2019s Attack Strength if it is.)'
                 : hasEffect
                 ? effectText
@@ -18544,26 +18579,44 @@
             document.getElementById('game-battle-manual-overlay').classList.remove('visible');
         }
 
+        function finishBattleManualPick(pending) { // the picked value is in place: select the Move and share it
+            battleCalcMoveName[pending.slotName] = pending.moveName;
+            battleCalcBaseMove[pending.slotName] = pending.baseMoveName;
+            if (lobbyState.role === null && !(battleDiceResults[pending.slotName] && battleDiceResults[pending.slotName].attack && battleDiceResults[pending.slotName].attack.length)) {
+                battleDiceCounts[pending.slotName] = retargetBattleDiceToMove(battleDiceCounts[pending.slotName], pending.moveName);
+                renderBattleDice(pending.slotName);
+            }
+            renderBattleCalcReadout(pending.slotName);
+            shareBattleMoveSelection(pending.slotName);
+        }
         function confirmBattleManualOverlay(answer) { // answer: the Yes (1) / No (0) of a yes-or-no question, or { type } from the Type Die
             const pending = battleManualPending;
             if (!pending) return;
+            if (answer && typeof answer === 'object' && typeof answer.choice === 'string' && pending.mode === 'oppmove') { // an opponent's Move (Conversion, Conversion 2)
+                const moveType = getBattleMoveType(answer.choice);
+                if (pending.manualName === 'Conversion 2') { // next: a Type that resists it
+                    const resists = BATTLE_MOVE_TYPE_NAMES.filter(t => ['-', 'x'].includes(typeEffectivenessSymbol(moveType, t)));
+                    if (!moveType || !resists.length) { closeBattleManualOverlay(); return; }
+                    openBattleManualOverlay(pending.slotName, pending.moveName, pending.baseMoveName, pending.manualName, 'type',
+                        { types: resists, noRoll: true, choice: answer.choice, text: `${answer.choice} is ${moveType.charAt(0).toUpperCase() + moveType.slice(1)} Type. Pick a Type that resists it: the user becomes that Type until the end of the Battle.` });
+                    return;
+                }
+                closeBattleManualOverlay();
+                if (!getBattleSlotMember(pending.slotName) || !moveType) return;
+                battleCalcManualValue[pending.slotName] = { moveName: pending.manualName, value: 0, choice: answer.choice, type: moveType };
+                finishBattleManualPick(pending);
+                return;
+            }
             if (answer && typeof answer === 'object' && BATTLE_MOVE_TYPE_NAMES.includes(answer.type)) {
                 closeBattleManualOverlay();
                 if (!getBattleSlotMember(pending.slotName)) return;
-                battleCalcManualValue[pending.slotName] = { moveName: pending.manualName, value: 0, type: answer.type };
+                battleCalcManualValue[pending.slotName] = Object.assign({ moveName: pending.manualName, value: 0, type: answer.type }, (pending.opts && pending.opts.choice) ? { choice: pending.opts.choice } : {});
                 if (pending.manualName === 'Hidden Power') { // the Type stays on the Pok\u00e9mon for the rest of the game
                     const idx = pending.slotName === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
                     const mem = typeof idx === 'number' ? getTeamSlotMember(idx) : null;
                     if (mem && !isActiveSaveReadOnly() && getBattleSlotMember(pending.slotName) === mem) { mem.hiddenPowerType = answer.type; persistTeamSlotChange(idx); }
                 }
-                battleCalcMoveName[pending.slotName] = pending.moveName;
-                battleCalcBaseMove[pending.slotName] = pending.baseMoveName;
-                if (lobbyState.role === null && !(battleDiceResults[pending.slotName] && battleDiceResults[pending.slotName].attack && battleDiceResults[pending.slotName].attack.length)) {
-                    battleDiceCounts[pending.slotName] = retargetBattleDiceToMove(battleDiceCounts[pending.slotName], pending.moveName);
-                    renderBattleDice(pending.slotName);
-                }
-                renderBattleCalcReadout(pending.slotName);
-                shareBattleMoveSelection(pending.slotName);
+                finishBattleManualPick(pending);
                 return;
             }
             const raw = Number.isInteger(answer) ? String(answer) : document.getElementById('game-battle-manual-input').value.trim();
@@ -29775,6 +29828,8 @@
             }
             if (e.target.closest('#game-battle-manual-confirm-btn')) {
                 confirmBattleManualOverlay();
+            } else if (e.target.closest('.game-battle-manual-move-btn')) {
+                confirmBattleManualOverlay({ choice: e.target.closest('.game-battle-manual-move-btn').dataset.move });
             } else if (e.target.closest('.game-battle-manual-type-btn')) {
                 confirmBattleManualOverlay({ type: e.target.closest('.game-battle-manual-type-btn').dataset.type });
             } else if (e.target.closest('#game-battle-manual-roll-btn') && battleManualPending && battleManualPending.mode === 'type') {
