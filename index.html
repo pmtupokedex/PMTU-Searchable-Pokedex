@@ -1607,6 +1607,7 @@
             <div class="game-confirm-card">
                 <p class="game-confirm-title" id="game-battle-manual-title">Manual Move</p>
                 <p class="game-battle-manual-effect" id="game-battle-manual-effect"></p>
+                <div class="game-battle-manual-types" id="game-battle-manual-types" hidden></div>
                 <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" class="game-battle-manual-input" id="game-battle-manual-input" placeholder="Enter the number" aria-label="Number to use for this move's power">
                 <p class="game-battle-manual-error" id="game-battle-manual-error">Enter a whole number, 0 or higher.</p>
                 <div class="game-save-slot-actions">
@@ -8093,7 +8094,8 @@
                     moveName: move.moveName.slice(0, 80),
                     baseMove: typeof move.baseMove === 'string' ? move.baseMove.slice(0, 80) : null,
                     manual: (move.manual && typeof move.manual.moveName === 'string' && Number.isFinite(move.manual.value))
-                        ? { moveName: move.manual.moveName.slice(0, 80), value: move.manual.value } : null,
+                        ? Object.assign({ moveName: move.manual.moveName.slice(0, 80), value: move.manual.value },
+                            (typeof move.manual.type === 'string' && BATTLE_MOVE_TYPE_NAMES.includes(move.manual.type)) ? { type: move.manual.type } : {}) : null,
                     rule: (move.rule && typeof move.rule === 'object') ? { dual: !!move.rule.dual, immunities: !!move.rule.immunities } : null,
                 };
             }
@@ -16496,7 +16498,7 @@
         }
         function guidedRevertLasting(slot, hadApplied) { // it became Struggle: Block Item (applied at Lock In) reverts always; Escape Prevention only if its effects had applied
             const m = getBattleSlotMember(slot);
-            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay'] : ['blocked']);
+            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent'] : ['blocked']);
         }
         function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
             const g = guidedState();
@@ -17154,7 +17156,7 @@
 
         function isBattleMoveWaitingOnTarget(slotName, moveName, baseMoveName) {
             const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
-            return !!(eff && eff.strength.mode === 'half_level' && eff.strength.of === 'target'
+            return !!(eff && ((eff.strength.mode === 'half_level' && eff.strength.of === 'target') || BATTLE_LIVE_STRENGTH[eff.name]) // Dark Void / Poltergeist read the opponent too
                 && !getBattleSlotMember(getBattleOpposingSlotName(slotName)));
         }
 
@@ -17162,9 +17164,30 @@
             const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
             return (eff && eff.strength.mode === 'manual' && !BATTLE_LIVE_STRENGTH[eff.name] && !BATTLE_AUTO_PICK_MOVES.includes(eff.name)) ? eff.name : null;
         }
-        const BATTLE_AUTO_PICK_MOVES = ['Steel Roller', 'Spit Up']; // worked out (or asked) as the Move is picked: see battlePreSelect
+        const BATTLE_AUTO_PICK_MOVES = ['Steel Roller', 'Spit Up', 'Order Up', 'Beat Up', 'Last Respects', 'Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment']; // worked out (or asked) as the Move is picked: see battlePreSelect
         function battlePreSelect(slot, moveName, baseMove) { // true when it opened a question (the pick carries on from its answer)
             const eff = getBattleEffectiveStrength(slot, moveName, baseMove), name = eff ? eff.name : moveName;
+            if (name === 'Order Up' || name === 'Beat Up' || name === 'Last Respects') { // the team is read here, on the owner's device, and the host relays the answer with the Move pick (like the number a player types)
+                const member = getBattleSlotMember(slot), team = battleOwnTeamMembers(slot);
+                let value;
+                if (name === 'Order Up') value = (team && team.some(m => typeof m.name === 'string' && m.name.indexOf('Tatsugiri') === 0)) ? 1 : 0;
+                else if (name === 'Beat Up') value = team ? Math.min(4, team.filter(m => !m.fainted && m !== member && !(member && m.uid && m.uid === member.uid)).length) : 2; // wild / non-player: 2
+                else { const down = team ? team.filter(m => m.fainted).length : 0; value = down > 0 ? down : 2; } // wild / non-player, or none Fainted: 2
+                battleCalcManualValue[slot] = { moveName: name, value };
+                return false;
+            }
+            if (name === 'Camouflage') { openBattleManualOverlay(slot, moveName, baseMove, name, 'type'); return true; } // a new Type every Round
+            if (name === 'Hidden Power' || name === 'Multi-Attack') {
+                const kept = battleStoredType(slot, name);
+                if (kept) { battleCalcManualValue[slot] = { moveName: name, value: 0, type: kept }; return false; } // already has its Type: no roll
+                openBattleManualOverlay(slot, moveName, baseMove, name, 'type');
+                return true;
+            }
+            if (name === 'Judgment') {
+                if (battleBoosterType(slot)) return false; // a Type Booster sets the Type
+                openBattleManualOverlay(slot, moveName, baseMove, name, 'type'); // none attached: roll the Type Die, or leave it Normal
+                return true;
+            }
             if (name === 'Steel Roller') { // 4 if a Field Move card was in play when the Round began (the pick is made before any Field effect applies), otherwise 2
                 battleCalcManualValue[slot] = { moveName: name, value: battleFieldCardInPlay() ? 4 : 2 };
                 return false;
@@ -17175,7 +17198,6 @@
                 openBattleManualOverlay(slot, moveName, baseMove, name, 'd4');
                 return true;
             }
-            if (name === 'Order Up') { openBattleManualOverlay(slot, moveName, baseMove, name, 'yesno'); return true; }
             return false;
         }
 
@@ -17425,9 +17447,56 @@
             const c = battleEffectDieMoveConfig(slotName, moveName);
             return (c && c.cfg.outcome) ? c.cfg.outcome(c.result) : [];
         }
-        function getBattleMatchupMoveType(slotName, moveName) { // the Type used for the type matchup: Techno Blast takes the Type its roll gave; everything else uses the Move's own Type
+        // ---- Moves that change their own Type. The effective Type drives the matchup, Field card modifiers and Type Booster bonuses (not STAB) ----
+        const BATTLE_TERRAIN_PULSE_TYPES = { field_grassy_terrain: 'grass', field_electric_terrain: 'electric', field_misty_terrain: 'fairy', field_psychic_terrain: 'psychic' };
+        function battlePickedType(slotName, moveName) { // the Type chosen (or rolled) when the Move was picked, shared with the pick
+            const m = battleCalcManualValue[slotName];
+            return (m && m.moveName === moveName && BATTLE_MOVE_TYPE_NAMES.includes(m.type)) ? m.type : null;
+        }
+        function battleStoredType(slotName, moveName) { // Hidden Power / Multi-Attack: the Type it already took (this Battle's record, or saved on the Pok\u00e9mon for Hidden Power)
+            const member = getBattleSlotMember(slotName), rec = getBattleRecordStore();
+            const kept = (rec && rec.moveTypes && member && member.uid) ? rec.moveTypes[`${member.uid}|${moveName}`] : null;
+            if (BATTLE_MOVE_TYPE_NAMES.includes(kept)) return kept;
+            if (moveName === 'Hidden Power' && member && BATTLE_MOVE_TYPE_NAMES.includes(member.hiddenPowerType)) return member.hiddenPowerType;
+            return null;
+        }
+        function battleKeptType(slotName, moveName) { return battleStoredType(slotName, moveName) || battlePickedType(slotName, moveName); } // else the one just picked
+        function battleBoosterType(slotName) { // the Type of a Type Booster Attach Card (Judgment); a blocked card doesn't count
+            const member = getBattleSlotMember(slotName), id = member ? battleMemberCardIds(member)[0] : null, card = id ? CARDS_BY_ID[id] : null;
+            const t = (card && card.cardDeck === 'Type-Enhancer Deck' && Array.isArray(card.bonusMoveTypes)) ? String(card.bonusMoveTypes[0] || '').toLowerCase() : '';
+            return BATTLE_MOVE_TYPE_NAMES.includes(t) ? t : null;
+        }
+        const BATTLE_OWN_TYPE_MOVES = {
+            'Camouflage': slot => battlePickedType(slot, 'Camouflage'),
+            'Hidden Power': slot => battleKeptType(slot, 'Hidden Power'),
+            'Multi-Attack': slot => battleKeptType(slot, 'Multi-Attack'),
+            'Judgment': slot => battleBoosterType(slot) || battlePickedType(slot, 'Judgment'),
+            'Tera Blast': slot => (getBattleMemberTypes(getBattleSlotMember(slot))[0] || null), // the user's primary Type
+            'Terrain Pulse': slot => {
+                for (const z of [slot, getBattleOpposingSlotName(slot)]) {
+                    const f = battleZones[z] && battleZones[z].fieldEffect;
+                    if (f && BATTLE_TERRAIN_PULSE_TYPES[f.cardId]) return BATTLE_TERRAIN_PULSE_TYPES[f.cardId];
+                }
+                return 'normal';
+            },
+        };
+        function getBattleMatchupMoveType(slotName, moveName) { // the Move's Type this Round: its own, or the one it took (Techno Blast's roll, Camouflage ... ), with Plasma Fists turning Normal into Electric
             const c = battleEffectDieMoveConfig(slotName, moveName);
-            return (c && c.cfg.type) ? c.cfg.type(c.result) : getBattleMoveType(moveName);
+            let t = (c && c.cfg.type) ? c.cfg.type(c.result) : getBattleMoveType(moveName);
+            const own = BATTLE_OWN_TYPE_MOVES[moveName] ? BATTLE_OWN_TYPE_MOVES[moveName](slotName) : null;
+            if (own) t = own;
+            const rec = getBattleRecordStore();
+            if (t === 'normal' && rec && rec.plasma) t = 'electric'; // Plasma Fists: every Normal Type Move this Battle
+            return t;
+        }
+        function battleNoteTypeMoves(record, slotName, moveName) { // the Attack Roll was made: Hidden Power / Multi-Attack keep their Type for the Battle; Plasma Fists is in effect
+            if (!record) return;
+            if (moveName === 'Plasma Fists') record.plasma = true;
+            if (moveName !== 'Hidden Power' && moveName !== 'Multi-Attack') return;
+            const member = getBattleSlotMember(slotName), type = battleKeptType(slotName, moveName);
+            if (!member || !member.uid || !type) return;
+            if (!record.moveTypes || typeof record.moveTypes !== 'object') record.moveTypes = {};
+            if (record.moveTypes[`${member.uid}|${moveName}`] === undefined) record.moveTypes[`${member.uid}|${moveName}`] = type;
         }
         function battleEffectDieMoveSummary(slotName) { // what the first roll did, for the notice and the phase bar
             const moveName = battleCalcMoveName[slotName], c = battleEffectDieMoveConfig(slotName, moveName);
@@ -17551,6 +17620,34 @@
             'Dark Void': slot => { const o = getBattleSlotMember(getBattleOpposingSlotName(slot)); return o ? (o.status === 'sleep' && !o.fainted ? 2 : 0) : null; },
             'Poltergeist': slot => { const o = getBattleSlotMember(getBattleOpposingSlotName(slot)); return o ? (o.attachCardId ? 3 : 0) : null; },
         };
+        function battleOwnTeamMembers(slotName) { // the user's team, when this device is the one that owns it (null: a wild / non-player Pok\u00e9mon, or another player's)
+            if (!getBattleSlotOwnerId(slotName)) return null;
+            const entry = getArenaSlotEntry(slotName);
+            if (entry && entry.ownerId && entry.ownerId !== getMyLobbyPlayerId()) return null;
+            return (getActiveSaveData().team.members || []).filter(Boolean);
+        }
+        const BATTLE_PLEDGES = ['Fire Pledge', 'Grass Pledge', 'Water Pledge'];
+        function battlePledgeTeamKey(slotName) { return slotName; } // only Pok\u00e9mon on the same side of the Arena (Attacker or Defender) count
+        function battlePledgeDoubled(slotName, moveName) { // a different Pledge was used earlier in this Battle by this team
+            if (!BATTLE_PLEDGES.includes(moveName)) return false;
+            const rec = getBattleRecordStore(), used = (rec && rec.pledges && rec.pledges[battlePledgeTeamKey(slotName)]) || [];
+            return used.some(n => n !== moveName && BATTLE_PLEDGES.includes(n));
+        }
+        function battleNotePledge(record, slotName, moveName) { // the Attack Roll was made: this team has used the Pledge
+            if (!record || !BATTLE_PLEDGES.includes(moveName)) return;
+            if (!record.pledges || typeof record.pledges !== 'object') record.pledges = {};
+            const key = battlePledgeTeamKey(slotName);
+            if (!Array.isArray(record.pledges[key])) record.pledges[key] = [];
+            if (!record.pledges[key].includes(moveName)) record.pledges[key].push(moveName);
+        }
+        function battleFieldCardIdInPlay(cardId) { return ['attacker', 'defender'].some(s => !!(battleZones[s] && battleZones[s].fieldEffect && battleZones[s].fieldEffect.cardId === cardId)); }
+        function battleMoveFieldTweaks(moveName, modifiers) { // Moves that change what a Field Move card does to their user's Attack Total
+            if (moveName === 'Hydro Steam' && battleFieldCardIdInPlay('field_harsh_sunlight')) { // +1 instead of Harsh Sunlight's -1
+                return modifiers.filter(m => m.label !== 'Harsh Sunlight').concat([{ label: 'Harsh Sunlight (Hydro Steam)', bonus: 1 }]);
+            }
+            if (moveName === 'Psyblade' && battleFieldCardIdInPlay('field_electric_terrain')) return modifiers.concat([{ label: 'Electric Terrain (Psyblade)', bonus: 1 }]);
+            return modifiers;
+        }
         function battleFieldCardInPlay() { return ['attacker', 'defender'].some(s => !!(battleZones[s] && battleZones[s].fieldEffect)); }
         const BATTLE_STRENGTH_MOVES = {
             'Tera Starstorm': slot => isMemberTerastallized(getBattleSlotMember(getBattleOpposingSlotName(slot))),
@@ -17601,10 +17698,8 @@
                 if (!record.statDown || typeof record.statDown !== 'object') record.statDown = {};
                 if (record.statDown[uid] === undefined) record.statDown[uid] = record.round;
             }
-            if (moveName === 'Spit Up') {
-                if (!record.attachSpent || typeof record.attachSpent !== 'object') record.attachSpent = {};
-                if (record.attachSpent[uid] === undefined) record.attachSpent[uid] = record.round;
-            }
+            battleNotePledge(record, slotName, moveName);
+            battleNoteTypeMoves(record, slotName, moveName);
             battleApplyLastingEffects(record, slotName); // Block Item, Escape Prevention (already applied in Guided Rounds' Move Effects phase)
             battleNotePayDay(record, slotName);
             if (!record.rolled || typeof record.rolled !== 'object') record.rolled = {};
@@ -17634,6 +17729,11 @@
         function battleApplyLastingEffects(record, slotName, only, delayed) { // the side's Move Effects have applied (or its Attack Roll was made): idempotent. only: 'blockitem' | 'lock' | null (both). delayed: the end-of-Round pass for a target that had Priority
             if (!record || !slotName) return;
             const member = getBattleSlotMember(slotName), target = getBattleSlotMember(getBattleOpposingSlotName(slotName));
+            if (member && (!only || only === 'spitup') && battleCalcMoveName[slotName] === 'Spit Up') { // Spit Up (a self effect, so Protection / Priority don't hold it back): no Attach Card use from this Round on
+                if (!record.attachSpent || typeof record.attachSpent !== 'object') record.attachSpent = {};
+                const spitUid = ensureMemberUid(member);
+                if (record.attachSpent[spitUid] === undefined) record.attachSpent[spitUid] = record.round;
+            }
             if (!member || !target) return;
             const shield = battleShieldAgainst(getBattleOpposingSlotName(slotName));
             if (shield === 'prot' || (shield === 'priority' && !delayed)) return; // Protection ignores them for good; Priority holds them back until the end of the Round
@@ -17677,6 +17777,7 @@
         }
         function battleRevertLastingEffects(record, srcUid, kinds) { // the Move that caused them became Struggle: Block Item and Escape Prevention revert
             if (!record || !srcUid) return;
+            if (record.attachSpent && record.attachSpent[srcUid] !== undefined && (!kinds || kinds.includes('attachSpent'))) delete record.attachSpent[srcUid]; // Spit Up
             (kinds || ['blocked', 'locked', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
         }
         function battleMemberAttachBlocked(member) { // Block Item: the attached card does nothing until the Battle ends or the Pokémon is switched out
@@ -17684,8 +17785,7 @@
             const rec = getBattleRecordStore();
             if (!rec) return false;
             if (rec.blocked && rec.blocked[member.uid] !== undefined) return true;
-            const spit = rec.attachSpent && rec.attachSpent[member.uid]; // Spit Up: from the Round after it was used, for the rest of the Battle (switching out doesn't lift it)
-            return Number.isFinite(spit) && rec.round > spit;
+            return !!(rec.attachSpent && rec.attachSpent[member.uid] !== undefined); // Spit Up: from the Round it was used, for the rest of the Battle (switching out doesn't lift it)
         }
         function battleMemberCardIds(member) { // the Attach and Nature cards that count in this Battle (a blocked Attach Card is left out)
             if (!member) return [];
@@ -17818,7 +17918,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false,
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -18046,7 +18146,7 @@
                 owner: getBattleSlotOwnerId(slotName),
                 uid: member ? member.uid : null,
                 moveName,
-                moveType: getBattleMoveType(moveName),
+                moveType: getBattleMatchupMoveType(slotName, moveName),
                 power,
                 level: member ? getBattleMemberTotalLevel(member) : 0,
                 oppLevel: opponent ? getBattleMemberTotalLevel(opponent) : null,
@@ -18187,8 +18287,10 @@
             const member = getBattleSlotMember(slotName);
             if (!member) return null;
             const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
-            const power = resolveBattleMovePower(slotName, eff);
+            let power = resolveBattleMovePower(slotName, eff);
             if (power === null) return null;
+            const doubled = !(opts && opts.ignoreMoveEffects) && battlePledgeDoubled(slotName, eff.name); // the Pledge moves: doubled once another Pledge was used
+            if (doubled) power *= 2;
             const moveType = getBattleMoveType(eff.name);
             const stab = (moveType && moveCanGetStab(eff.name) && (guidedBorrowedTypes(slotName, moveName) || getBattleMemberTypes(member, { original: true })).includes(moveType)) // a Move borrowed through Switchout keeps the original's STAB
                 ? BATTLE_STAB_BONUS : 0;
@@ -18199,11 +18301,11 @@
                     ? [{ label: 'Repeat', bonus: battleRepeatBonusFor(getBattleRecordStore(), member, moveName) }] : []).concat(
                 (() => { if (opts && opts.ignoreMoveEffects) return []; const b = battleMoveStrengthBonus(slotName, eff.name); return b ? [b] : []; })());
             const bonusSum = bonuses.reduce((sum, b) => sum + b.bonus, 0);
-            return { power, stab, bonuses, total: Math.max(0, power + stab + bonusSum) };
+            return { power, stab, bonuses, doubled, total: Math.max(0, power + stab + bonusSum) };
         }
 
         function getBattleZoneModifiers(slotName, moveName) {
-            const moveType = getBattleMoveType(moveName);
+            const moveType = getBattleMatchupMoveType(slotName, moveName);
             const userTypes = getBattleMemberTypes(getBattleSlotMember(slotName));
             const otherSlot = getBattleOpposingSlotName(slotName);
             const counted = new Set();
@@ -18228,7 +18330,7 @@
                     });
                 }
             });
-            return modifiers;
+            return battleMoveFieldTweaks(moveName, modifiers);
         }
 
         function getBattlePokemonModifierBonus(slotName, userTypes, m) {
@@ -18406,17 +18508,23 @@
             const inp = document.getElementById('game-battle-manual-input');
             inp.hidden = mode === 'yesno';
             document.getElementById('game-battle-manual-confirm-btn').hidden = mode === 'yesno';
-            document.getElementById('game-battle-manual-roll-btn').hidden = mode !== 'd4';
+            document.getElementById('game-battle-manual-roll-btn').hidden = mode !== 'd4' && mode !== 'type';
+            document.getElementById('game-battle-manual-roll-btn').textContent = mode === 'type' ? 'Roll the Type Die' : 'Roll d4';
+            const typeBox = document.getElementById('game-battle-manual-types');
+            typeBox.hidden = mode !== 'type';
+            if (mode === 'type') typeBox.innerHTML = BATTLE_MOVE_TYPE_NAMES.map(t => `<button class="filter-btn game-battle-manual-type-btn poke-type-${t}" type="button" data-type="${t}">${t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('');
+            if (mode === 'type') { inp.hidden = true; document.getElementById('game-battle-manual-confirm-btn').hidden = true; }
             document.getElementById('game-battle-manual-yes-btn').hidden = mode !== 'yesno';
             document.getElementById('game-battle-manual-no-btn').hidden = mode !== 'yesno';
-            document.getElementById('game-battle-manual-error').textContent = mode === 'd4' ? 'Enter a number from 1 to 4.' : 'Enter a whole number, 0 or higher.';
+            document.getElementById('game-battle-manual-error').textContent = mode === 'type' ? 'Pick a Type.' : mode === 'd4' ? 'Enter a number from 1 to 4.' : 'Enter a whole number, 0 or higher.';
             const entry = getBattleMoveEntry(manualName);
             document.getElementById('game-battle-manual-title').textContent =
                 manualName === moveName ? moveName : `${moveName} (${manualName})`;
             const effectText = entry && typeof entry.uniqueEffect === 'string' ? entry.uniqueEffect.trim() : '';
             const hasEffect = effectText !== '' && effectText.toUpperCase() !== 'TBD';
             const effectEl = document.getElementById('game-battle-manual-effect');
-            effectEl.textContent = mode === 'yesno' ? 'Is Tatsugiri on your team? (Add 2 to this Move\u2019s Attack Strength if it is.)'
+            effectEl.textContent = mode === 'type' && manualName === 'Judgment' ? 'No Type Booster is attached, so roll the Type Die (or pick a Type) for this Move\u2019s Type, or choose Normal to leave it as it is.'
+                : mode === 'yesno' ? 'Is Tatsugiri on your team? (Add 2 to this Move\u2019s Attack Strength if it is.)'
                 : hasEffect
                 ? effectText
                 : "How to work out this move's number hasn't been added yet.";
@@ -18432,12 +18540,32 @@
         function closeBattleManualOverlay() {
             battleManualPending = null;
             document.getElementById('game-battle-manual-input').hidden = false;
+            document.getElementById('game-battle-manual-types').hidden = true;
             document.getElementById('game-battle-manual-overlay').classList.remove('visible');
         }
 
-        function confirmBattleManualOverlay(answer) { // answer: the Yes (1) / No (0) of a yes-or-no question
+        function confirmBattleManualOverlay(answer) { // answer: the Yes (1) / No (0) of a yes-or-no question, or { type } from the Type Die
             const pending = battleManualPending;
             if (!pending) return;
+            if (answer && typeof answer === 'object' && BATTLE_MOVE_TYPE_NAMES.includes(answer.type)) {
+                closeBattleManualOverlay();
+                if (!getBattleSlotMember(pending.slotName)) return;
+                battleCalcManualValue[pending.slotName] = { moveName: pending.manualName, value: 0, type: answer.type };
+                if (pending.manualName === 'Hidden Power') { // the Type stays on the Pok\u00e9mon for the rest of the game
+                    const idx = pending.slotName === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+                    const mem = typeof idx === 'number' ? getTeamSlotMember(idx) : null;
+                    if (mem && !isActiveSaveReadOnly() && getBattleSlotMember(pending.slotName) === mem) { mem.hiddenPowerType = answer.type; persistTeamSlotChange(idx); }
+                }
+                battleCalcMoveName[pending.slotName] = pending.moveName;
+                battleCalcBaseMove[pending.slotName] = pending.baseMoveName;
+                if (lobbyState.role === null && !(battleDiceResults[pending.slotName] && battleDiceResults[pending.slotName].attack && battleDiceResults[pending.slotName].attack.length)) {
+                    battleDiceCounts[pending.slotName] = retargetBattleDiceToMove(battleDiceCounts[pending.slotName], pending.moveName);
+                    renderBattleDice(pending.slotName);
+                }
+                renderBattleCalcReadout(pending.slotName);
+                shareBattleMoveSelection(pending.slotName);
+                return;
+            }
             const raw = Number.isInteger(answer) ? String(answer) : document.getElementById('game-battle-manual-input').value.trim();
             const value = parseInt(raw, 10);
             if (!/^[0-9]+$/.test(raw) || !Number.isInteger(value) || value < 0 || (pending.mode === 'd4' && (value < 1 || value > 4))) {
@@ -18634,7 +18762,8 @@
             if (!member || !battleInProgress) return;
             const usable = getBattleMemberMoveButtons(member).filter(b => !isBattleMoveSpent(slotName, b.name)).filter(b => {
                 const base = b.base || null;
-                return !!getBattleManualSourceName(slotName, b.name, base)
+                const eff = getBattleEffectiveStrength(slotName, b.name, base);
+                return !!getBattleManualSourceName(slotName, b.name, base) || !!(eff && BATTLE_AUTO_PICK_MOVES.includes(eff.name))
                     || computeBattleMoveValue(slotName, b.name, base) !== null;
             });
             if (!usable.length) {
@@ -29646,6 +29775,10 @@
             }
             if (e.target.closest('#game-battle-manual-confirm-btn')) {
                 confirmBattleManualOverlay();
+            } else if (e.target.closest('.game-battle-manual-type-btn')) {
+                confirmBattleManualOverlay({ type: e.target.closest('.game-battle-manual-type-btn').dataset.type });
+            } else if (e.target.closest('#game-battle-manual-roll-btn') && battleManualPending && battleManualPending.mode === 'type') {
+                confirmBattleManualOverlay({ type: BATTLE_MOVE_TYPE_NAMES[Math.floor(Math.random() * BATTLE_MOVE_TYPE_NAMES.length)] }); // the d20 Type Die: 1 and 20 re-roll, so every Type is equally likely
             } else if (e.target.closest('#game-battle-manual-roll-btn')) {
                 document.getElementById('game-battle-manual-input').value = String(1 + Math.floor(Math.random() * 4));
                 confirmBattleManualOverlay();
