@@ -7904,6 +7904,7 @@
                 if (st.inProgress && !ownerlessSpent) {
                     const record = getBattleRecordStore();
                     collectOnceBonusKeys().forEach(key => { record.spent[key] = true; });
+                    battleNoteRoundEnd(record);
                     record.round += 1;
                     if (record.guided) guidedResetRound(record.guided);
                     record.sleepNow = lullabySleepers(record, slot => st[slot] && st[slot].member);
@@ -8086,7 +8087,7 @@
                 broadcastBattleArenaState(); // puts the sender's screen back to what's actually chosen
                 return;
             }
-            const guidedMoveWhy = st.record && st.record.guided ? guidedGateReason('move', slot, st.record.guided) : '';
+            const guidedMoveWhy = st.record && st.record.guided ? guidedGateReason('move', slot, st.record.guided, move) : '';
             if (guidedMoveWhy) { sendBattleNotice(peerKey, guidedMoveWhy); broadcastBattleArenaState(); return; } // Guided rounds
             let clean = null;
             if (move && typeof move.moveName === 'string' && move.moveName) {
@@ -8106,6 +8107,7 @@
                 return;
             }
             if (!st.moves) st.moves = { attacker: null, defender: null };
+            if (clean && BATTLE_ROUND_LOCKED_BECOMES.includes(clean.baseMove) && st.record && st[slot] && st[slot].member) battleNoteMetronomeDrawn(st.record, ensureMemberUid(st[slot].member) && st[slot].member, clean.moveName, clean.manual, clean.baseMove);
             st.moves[slot] = clean;
             if (clean && !(st.dice && st.dice[slot] && st.dice[slot].attack && st.dice[slot].attack.length)) { // the counter follows the Move's die
                 if (!st.diceCounts) st.diceCounts = { attacker: makeDefaultBattleDiceCounts(), defender: makeDefaultBattleDiceCounts() };
@@ -13060,12 +13062,14 @@
 
         function beginBattleWildPickMode(attachContext, kind) {
             boardNotePickStart(); // picking happens in the gallery; the board is returned to afterwards
-            battlePickKind = kind === 'trainer' ? 'trainer' : (kind === 'contest' ? 'contest' : 'wild');
+            battlePickKind = kind === 'trainer' ? 'trainer' : (kind === 'contest' ? 'contest' : (kind === 'metronome' ? 'metronome' : 'wild'));
             battleWildPickAttach = battlePickKind === 'wild' ? (attachContext || null) : null;
             const attachCardForBanner = battleWildPickAttach ? CARDS_BY_ID[battleWildPickAttach.cardId] : null;
             const bannerText = document.getElementById('battle-wild-pick-mode-banner-text');
             if (bannerText) {
-                bannerText.textContent = battlePickKind === 'contest'
+                bannerText.textContent = battlePickKind === 'metronome'
+                    ? 'Tap the token you drew for Metronome. Its first Move is the one Metronome uses.'
+                    : battlePickKind === 'contest'
                     ? `Tap a ${contestSession && contestSession.color ? (contestSession.color === 'orange' ? 'Legendary' : contestSession.color) + ' ' : ''}Pok\u00e9mon to choose it as your Contest Opponent.`
                     : battlePickKind === 'trainer'
                     ? BATTLE_TRAINER_BANNER_TEXT
@@ -13079,6 +13083,13 @@
             refreshBackButtonState();
         }
 
+        let metronomePickCb = null, metronomePickResolving = false;
+        function beginMetronomePick(color, cb) { // Metronome with physical tokens: the player picks the token they drew (of the user's colour) from the gallery
+            metronomePickCb = cb;
+            closeGamePanel();
+            beginBattleWildPickMode(null, 'metronome');
+            if (color && NOTE_COLORS.includes(color)) lockBattleTrainerPickColor(color);
+        }
         function beginBattleTrainerPickMode() {
             battleTrainerPickTarget = 0;
             battleTrainerPicks = [];
@@ -14235,6 +14246,7 @@
         function exitBattleWildPickMode() {
             if (!battleWildPickModeActive) return;
             const wasContestPick = battlePickKind === 'contest';
+            const wasMetronomePick = battlePickKind === 'metronome';
             battleWildPickModeActive = false;
             battleWildCandidateImg = null;
             battleWildPickAttach = null;
@@ -14249,6 +14261,11 @@
             filterGallery();
             boardResumeAfterPick();
             if (wasContestPick && !contestPickResolving) contestAbort(); // left the opponent pick without choosing: the Contest is off
+            if (wasMetronomePick && !metronomePickResolving) { // left without choosing: back to the Battle Arena, nothing drawn
+                const cb = metronomePickCb; metronomePickCb = null;
+                openGamePanel(); setGameScreen('battle');
+                if (cb) cb(false);
+            }
             refreshBackButtonState();
         }
 
@@ -14270,6 +14287,7 @@
             const forceShiny = cardForcesShiny(attachCard);
             const isTrainerPick = battlePickKind === 'trainer';
             const isContestPick = battlePickKind === 'contest';
+            const isMetronomePick = battlePickKind === 'metronome';
             if (titleEl) {
                 titleEl.textContent = isTrainerPick
                     ? BATTLE_TRAINER_CONFIRM_TITLE
@@ -14289,6 +14307,12 @@
                 if (keepBtn) keepBtn.textContent = 'Keep Searching.';
                 if (cancelBtn) cancelBtn.textContent = 'Cancel the Contest.';
             }
+            if (isMetronomePick) {
+                if (titleEl) titleEl.textContent = 'Use This Token for Metronome?';
+                if (sendBtn) sendBtn.textContent = 'This Is the Token I Drew.';
+                if (keepBtn) keepBtn.textContent = 'Keep Searching.';
+                if (cancelBtn) cancelBtn.textContent = 'Cancel Metronome.';
+            }
             if (shinyCheckbox) {
                 shinyCheckbox.checked = forceShiny && hasShiny;
                 shinyCheckbox.disabled = forceShiny || !hasShiny;
@@ -14306,7 +14330,7 @@
                 noteEl.style.display = noShinyFallback ? '' : 'none';
             }
             if (sendBtn) sendBtn.disabled = false;
-            if (isContestPick && shinyCheckbox) { shinyCheckbox.checked = false; shinyCheckbox.disabled = true; } // a Contest token is never shiny
+            if ((isContestPick || isMetronomePick) && shinyCheckbox) { shinyCheckbox.checked = false; shinyCheckbox.disabled = true; } // a Contest token is never shiny
             const overlay = document.getElementById('gallery-battle-wild-confirm-overlay');
             if (overlay) overlay.classList.add('visible');
         }
@@ -14359,6 +14383,24 @@
                 shinysrc: img.dataset.shinysrc || '',
                 shiny,
             };
+            if (pickKind === 'metronome') {
+                const tokenName = img.alt || '';
+                const mv = battleMetronomeMoveOf(POKEMON_BY_NAME[tokenName]);
+                if (!mv) { // Metronome can't use its first Move: back in the pool, draw again
+                    closeGalleryBattleWildConfirm();
+                    const first = POKEMON_BY_NAME[tokenName] && POKEMON_BY_NAME[tokenName].known_moves && POKEMON_BY_NAME[tokenName].known_moves[0];
+                    showGameToast(first ? `${tokenName}\u2019s first Move (${first}) can\u2019t be used by Metronome \u2014 put it back and pick the token you draw next.` : `${tokenName || 'That token'} has no Move Metronome can use \u2014 put it back and pick the token you draw next.`);
+                    return;
+                }
+                const cb = metronomePickCb; metronomePickCb = null;
+                metronomePickResolving = true;
+                exitBattleWildPickMode();
+                metronomePickResolving = false;
+                openGamePanel();
+                setGameScreen('battle');
+                if (cb) cb(tokenName);
+                return;
+            }
             if (pickKind === 'contest') {
                 contestPickResolving = true;
                 exitBattleWildPickMode();
@@ -16115,6 +16157,7 @@
                 locked: { attacker: false, defender: false },
                 skipped: { attacker: false, defender: false },   // chose not to play a Battle Card
                 fxDone: { attacker: false, defender: false },    // finished applying their Move Effects
+                become: { attacker: null, defender: null },       // Mimic / Sketch / Transform / Metronome / Nature Power / Sleep Talk: 'pending' until the Move has turned into the other one (null until that side's turn in the effects phase), then 'done'
                 prompts: { attacker: null, defender: null },      // Revival / Status Heal choices: { revival, heal } = 'pending' | 'done' (null until that side's turn in the effects phase)
                 cleanDone: { attacker: false, defender: false },
                 pending: null,                                    // a Switchout waiting for the Pok\u00e9mon to be swapped: { kind, slot, fromUid, ... }
@@ -16143,10 +16186,11 @@
             exclude: 'Dice can be kept or dropped after the Attack Rolls.',
             item: 'That can\u2019t be used in this phase.',
         };
-        function guidedGateReason(kind, slotName, g) { // '' when the action is allowed in the current phase, else why not
+        function guidedGateReason(kind, slotName, g, move) { // '' when the action is allowed in the current phase, else why not
             g = g || guidedState();
             if (!g || guidedBypass) return '';
             if (kind === 'move') {
+                if (g.phase === 'effects' && g.become && g.become[slotName] === 'pending' && move && BATTLE_BECOME_MOVES.includes(move.baseMove)) return ''; // the Move turning into the other one (Phase 3)
                 if (g.phase !== 'moves') return 'Moves are chosen in the Choose Moves phase.';
                 if (g.locked[slotName]) return 'That Move is locked in. Use Change Move first.';
                 return '';
@@ -16228,6 +16272,9 @@
                         for (const s of GUIDED_SLOTS) { // Attacker first, then Defender; a side with nothing to apply by hand finishes by itself
                             if (g.fxDone[s]) continue;
                             if (s === 'defender' && !g.fxDone.attacker) break;
+                            if (!g.become) g.become = { attacker: null, defender: null }; // a record from an older version
+                            if (!g.become[s]) { g.become[s] = (ctx.needsBecome && ctx.needsBecome(s)) ? 'pending' : 'done'; moved = true; } // Move switch first (Attacker, then Defender), then the new Move's effects apply as normal
+                            if (g.become[s] === 'pending') { if (ctx.needsBecome && ctx.needsBecome(s)) break; g.become[s] = 'done'; moved = true; } // waiting for the Move to turn into the other one
                             if (!g.prompts) g.prompts = { attacker: null, defender: null }; // a record from an older version
                             if (!g.prompts[s] && ctx.makePrompts) { const made = ctx.makePrompts(s); if (made) { g.prompts[s] = made; moved = true; } } // Revival / Status Heal: once the Effect Die (if needed) is known
                             if (ctx.effectsNeedManual(s)) break; // waiting for an Effect Die roll or for Status Conditions to be applied
@@ -16280,6 +16327,10 @@
                     pr[key] = 'done';
                     if (op === 'revdone' && ctx.noteRevived) ctx.noteRevived(slot);
                     return '';
+                }
+                case 'becomedone': { // the Move can't turn into another (nothing to copy, no token left): it stays as it is
+                    if (g.phase !== 'effects' || !g.become || g.become[slot] !== 'pending') return 'Not ready for that yet.';
+                    g.become[slot] = 'done'; return '';
                 }
                 case 'fielddone': { // a Field Move card was placed
                     const pr = g.prompts && g.prompts[slot];
@@ -16427,7 +16478,7 @@
         }
         function guidedMakePrompts(slot) { // Revival and Status Heal need the owner to pick Pok\u00e9mon: null while the Effect Die is still to roll, else { revival?, heal? }
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return {};
-            if (guidedEffectsRollPending(slot) || battleExtraRollPending(slot)) return null;
+            if (guidedBecomePending(slot) || guidedEffectsRollPending(slot) || battleExtraRollPending(slot)) return null;
             const ids = getBattleActiveMoveEffects(slot).map(e => e.id), out = {};
             const fields = ids.filter((id, i) => ids.indexOf(id) === i && id !== 'field_clear' && guidedFieldCardId(id)); // Field Move effects: the user chooses which slot gets the card
             if (fields.length) out.fields = fields;
@@ -16450,6 +16501,32 @@
             if (!rec.revived || typeof rec.revived !== 'object') rec.revived = {};
             rec.revived[key] = true;
         }
+        function guidedBecomeNeeded(slot) { // the side's chosen Move is one that turns into another (and hasn't yet)
+            const m = getBattleSlotMember(slot), name = battleCalcMoveName[slot];
+            return !!(m && !m.dynamaxed && name && !battleCalcBaseMove[slot] && BATTLE_BECOME_MOVES.includes(name));
+        }
+        function guidedBecomePending(slot) {
+            const g = guidedState();
+            return !!(g && g.phase === 'effects' && g.become && g.become[slot] === 'pending');
+        }
+        function guidedRunBecome(slot) { // the Move switch (Phase 3): Metronome draws, Sketch / Transform / Nature Power ask, Sleep Talk and Mimic pick by themselves
+            const g = guidedState();
+            if (!g || g.phase !== 'effects' || !guidedBecomePending(slot)) return;
+            const name = battleCalcMoveName[slot], member = getBattleSlotMember(slot);
+            const giveUp = why => { if (why) showBattleArenaNotice(why); guidedOp('becomedone', slot); };
+            if (!guidedBecomeNeeded(slot)) { guidedScheduleTick(); return; }
+            if (name === 'Mimic') {
+                const cand = battleMimicCandidate(slot);
+                if (!cand) { giveUp('Mimic: the opponent used no Move last Round, so this Move has an Attack Strength of 0.'); return; }
+                selectBattleMove(slot, cand, 'Mimic');
+                return;
+            }
+            if (name === 'Sleep Talk') {
+                const others = getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n));
+                if (member.status !== 'sleep' || !others.length) { giveUp(member.status !== 'sleep' ? 'Sleep Talk: the user is not asleep, so it has no effect.' : 'Sleep Talk has no other Move to use.'); return; }
+            }
+            if (!battleResolveBecoming(slot, name)) giveUp(name === 'Nature Power' ? '' : `${name} has nothing to turn into, so it has an Attack Strength of 0.`);
+        }
         function guidedPromptPending(slot) {
             const g = guidedState(), pr = g && g.prompts && g.prompts[slot];
             return !!(pr && (pr.revival === 'pending' || pr.heal === 'pending' || (pr.fields && pr.fields.length)));
@@ -16458,6 +16535,7 @@
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return '';
             const moveName = battleCalcMoveName[slot];
             const entry = moveName ? getBattleMoveEntry(moveName) : null;
+            if (guidedBecomePending(slot)) return 'become'; // the Move has to turn into the other one first
             if (guidedEffectsRollPending(slot)) return 'roll';
             if (battleExtraRollPending(slot)) return 'reroll'; // Roll Effect Die Again
             if (guidedPromptPending(slot)) return 'prompt';
@@ -16499,7 +16577,7 @@
         }
         function guidedRevertLasting(slot, hadApplied) { // it became Struggle: Block Item (applied at Lock In) reverts always; Escape Prevention only if its effects had applied
             const m = getBattleSlotMember(slot);
-            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth'] : ['blocked']);
+            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth', 'persistDis'] : ['blocked']);
         }
         function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
             const g = guidedState();
@@ -16510,7 +16588,9 @@
         function guidedStruggleNeeded(slot) {
             const member = getBattleSlotMember(slot), moveName = battleCalcMoveName[slot];
             if (!member || !moveName || moveName === BATTLE_STRUGGLE_MOVE_NAME) return false;
-            return !!getBattleStruggleStatus(member) || member.status === 'sleep'; // Sleep (either side), Paralyzed 2, Frozen
+            const forcing = getBattleStruggleStatus(member), base = battleCalcBaseMove[slot];
+            if (member.status === 'sleep' && (!forcing || forcing.id === 'sleep') && (['Snore', 'Sleep Talk'].includes(moveName) || ['Snore', 'Sleep Talk'].includes(base))) return false; // Sleep still allows Snore and Sleep Talk
+            return !!forcing || member.status === 'sleep'; // Sleep (either side), Paralyzed 2, Frozen
         }
         function guidedForceStruggle(slot) { // Struggle takes the place of the chosen Move; returns the name of the Move it was
             const was = battleCalcMoveName[slot] || null;
@@ -16568,6 +16648,7 @@
                 npcHasReplacement: guidedNpcHasReplacement,
                 nextRound: guidedDoNextRound,
                 effectsNeedManual: s => !!guidedEffectsManualReason(s),
+                needsBecome: guidedBecomeNeeded,
                 noteEffectsApplied: guidedNoteEffectsApplied,
                 revertLasting: guidedRevertLasting,
                 makePrompts: guidedMakePrompts,
@@ -16740,6 +16821,17 @@
                 guidedExecutePending(p);
                 return;
             }
+            if (g.phase === 'effects' && !p) { // the Move switch first (Attacker, then Defender), on the device that controls the Pok\u00e9mon
+                for (const slot of GUIDED_SLOTS) {
+                    if (!guidedBecomePending(slot)) continue;
+                    if (!guidedSlotKind(slot) || !guidedIControl(slot)) return; // the other device's turn: the other side waits for it
+                    const key = `become:${roundKey}:${slot}:${battleCalcMoveName[slot]}`;
+                    if (key === guidedExecKey) return;
+                    guidedExecKey = key;
+                    guidedRunBecome(slot);
+                    return;
+                }
+            }
             if (g.phase === 'effects' && !p) { // Revival first, then Status Heal, on the device of the Pok\u00e9mon's owner
                 for (const slot of GUIDED_SLOTS) {
                     const pr = g.prompts && g.prompts[slot];
@@ -16815,10 +16907,11 @@
                     text = `${guidedSideLabel(p.slot)} used Switchout: choose the Pok\u00e9mon to send in. It uses the same Move (the original\u2019s STAB still applies).`;
                     if (!p.failed && guidedIControl(p.slot) && guidedSlotKind(p.slot) === 'player') buttons += guidedBtn('pickswap', p.slot, 'Choose Replacement');
                 } else {
-                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'reroll' ? 'roll the Effect Die again' : r === 'prompt' ? 'make a choice (Revival / Status Heal / Field Move)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
+                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'reroll' ? 'roll the Effect Die again' : r === 'become' ? 'turn its Move into the other Move' : r === 'prompt' ? 'make a choice (Revival / Status Heal / Field Move)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
                     text = 'Move Effects apply Attacker first, then Defender; a side with nothing to apply by hand continues by itself. ' + status(s => g.fxDone[s] ? 'done' : (s === 'defender' && !g.fxDone.attacker ? 'waiting' : reasonText(s)));
                     GUIDED_SLOTS.forEach(s => { const sum = battleExtraRollSummary(s) || battleEffectDieMoveSummary(s); if (sum) text += ' ' + guidedSideLabel(s) + ' \u2014 ' + sum; });
                     GUIDED_SLOTS.forEach(s => { const was = g.struggled && g.struggled[s]; if (was) text += ` ${guidedSideLabel(s)} can\u2019t use ${was === true ? 'its Move' : was} and uses Struggle instead.`; });
+                    mine.forEach(s => { if (!g.fxDone[s] && guidedBecomePending(s)) buttons += guidedBtn('pickbecome', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: use ${battleCalcMoveName[s] || 'the Move'}`); });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedPromptPending(s)) { const pr = g.prompts[s]; buttons += guidedBtn('pickprompt', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: ${pr.revival === 'pending' ? 'choose Pok\u00e9mon for Revival' : pr.heal === 'pending' ? 'choose Pok\u00e9mon for Status Heal' : 'place the Field Move card'}`); } });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedEffectsManualReason(s) === 'status') buttons += guidedBtn('fxdone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}\u2019s effects are done`, s === 'defender' && !g.fxDone.attacker); });
                 }
@@ -16936,13 +17029,25 @@
             if (op === 'faint') { const idx = guidedSlotIndexVar(slot); if (idx !== null && idx !== undefined) faintTeamMember(idx); guidedScheduleTick(); renderGuidedBar(); return; }
             if (op === 'pickswap') { guidedOpenSwapPicker(slot); return; }
             if (op === 'pickprompt') { guidedRunPrompt(slot); return; }
+            if (op === 'pickbecome') { guidedRunBecome(slot); return; }
             guidedOp(op, slot);
         }
 
+        function battleNoteRoundEnd(record) { // the Round is over: Fell Stinger's winner gets Double Advantage in the next Round
+            if (!record) return;
+            let o = null;
+            try { o = guidedComputeOutcome(); } catch (err) { o = null; }
+            if (!o || !o.loser || o.tie) return;
+            const winner = getBattleOpposingSlotName(o.loser), member = getBattleSlotMember(winner);
+            if (!member || member.fainted || battleCalcMoveName[winner] !== 'Fell Stinger') return;
+            if (!record.nextAdv || typeof record.nextAdv !== 'object') record.nextAdv = {};
+            record.nextAdv[ensureMemberUid(member)] = { round: record.round + 1, n: 2 };
+        }
         function nextBattleRound() {
             if (!battleInProgress || isBattleNextRoundBlocked()) return;
             if (lobbyState.role !== null) { requestBattlePhase('next'); return; }
             collectOnceBonusKeys().forEach(key => { battleRecord.spent[key] = true; });
+            battleNoteRoundEnd(battleRecord);
             battleRecord.round += 1;
             if (battleRecord.guided) guidedResetRound(battleRecord.guided);
             const lullabyNow = lullabySleepers(battleRecord, slot => getBattleSlotMember(slot));
@@ -17431,7 +17536,7 @@
             const other = getBattleOpposingSlotName(slotName);
             const moveName = battleCalcMoveName[other];
             if (!moveName) return false;
-            if (battleSlotHasMoveEffect(slotName, 'prot')) return false; // this side's Protection makes the opponent's Attack Strength 0
+            if (battleMoveEffectsBase(slotName).some(e => e.id === 'prot')) return false; // this side's Protection makes the opponent's Attack Strength 0
             const power = resolveBattleMovePower(other, getBattleEffectiveStrength(other, moveName, battleCalcBaseMove[other]));
             return Number.isFinite(power) && power > 0;
         }
@@ -17549,7 +17654,57 @@
             if (!cfg || !cfg.reroll || !half || !Number.isFinite(half.effectSecond) || !battleExtraRollTriggered(slotName, moveName)) return [];
             return cfg.outcome(half.effectSecond);
         }
-        function getBattleActiveMoveEffects(slotName, forMove) { // every Move Effect in force for this side: [{ id, code }], one per source (the Move's codes after cards add or shift them, thresholds met, plus granted effects)
+        // ---- Moves whose own text grants effects the codes don't: Octolock / Fake Out (Disadvantage), Snatch / Spectral Thief (copy the opponent's), Burning Jealousy (Burned) ----
+        // Layers (so no side's effects ever depend on the other's in a circle): 0 = the Move's codes + Octolock / Fake Out; 1 = Snatch / Spectral Thief read the opponent's layer 0; 2 = Burning Jealousy reads the opponent's layers 0 + 1.
+        const BATTLE_GRANT_MOVES = ['Octolock', 'Fake Out', 'Snatch', 'Spectral Thief', 'Burning Jealousy'];
+        const BATTLE_PERSIST_DIS_MOVES = ['Max Flutterby', 'Max Quake', 'Max Steelspike', 'Max Wyrmwind', 'Octolock']; // the opponent has Disadvantage for the rest of the Battle (until switched out)
+        const BATTLE_DIS_WARD_MOVES = ['Brick Break', 'Psychic Fangs']; // the user is immune to the opponent's Disadvantage effects this Round
+        function battleLayer0Grants(slotName, mv, base) {
+            const out = [];
+            if (mv === 'Octolock' && !base.some(e => e.id === 'dis' || e.id === 'doubdis')) out.push({ id: 'dis', code: 'octolock' }); // (its code says Advantage for the user; its text says Disadvantage for the opponent)
+            if (mv === 'Fake Out') {
+                const member = getBattleSlotMember(slotName), rec = getBattleRecordStore();
+                if (member && member.uid && rec && rec.firstRound && (rec.firstRound[member.uid] === undefined || rec.firstRound[member.uid] === rec.round)) out.push({ id: 'dis', code: 'fakeout' }); // used on the user's first Round in the Battle
+            }
+            return out;
+        }
+        function battleLayer0Effects(slotName, forMove) {
+            const base = battleMoveEffectsBase(slotName, forMove), mv = forMove || battleCalcMoveName[slotName];
+            return (mv && BATTLE_GRANT_MOVES.includes(mv)) ? base.concat(battleLayer0Grants(slotName, mv, base)) : base;
+        }
+        function battleStealGrants(slotName, mv) { // Snatch: the opponent's Advantage becomes the user's. Spectral Thief: the user gets a copy, and the opponent gets the Disadvantage its Move would have given the user.
+            if (mv !== 'Snatch' && mv !== 'Spectral Thief') return [];
+            const opp = getBattleOpposingSlotName(slotName);
+            if (battleShieldAgainst(opp)) return []; // Protection / Priority keep this Move's effects off the opponent
+            const out = [], oppEff = battleLayer0Effects(opp);
+            oppEff.forEach(e => { const a = BATTLE_ADV_EFFECTS[e.id]; if (a && a.kind === 'adv' && !a.needsOpponentAttack) out.push({ id: e.id, code: 'steal:' + e.id }); });
+            if (mv === 'Spectral Thief' && !battleShieldAgainst(slotName)) oppEff.forEach(e => { if (e.id === 'dis' || e.id === 'doubdis') out.push({ id: e.id, code: 'steal:' + e.id }); });
+            return out;
+        }
+        function battleSideReceivesAdvantage(slotName) { // Advantage reaches this side this Round (its Move, a Move it stole, or last Round's Fell Stinger)
+            const mv = battleCalcMoveName[slotName];
+            const list = battleLayer0Effects(slotName).concat(battleStealGrants(slotName, mv));
+            if (list.some(e => { const a = BATTLE_ADV_EFFECTS[e.id]; return a && a.kind === 'adv'; })) return true; // (Enraged counts: the Move giving it is attacking)
+            const rec = getBattleRecordStore(), member = getBattleSlotMember(slotName), na = rec && rec.nextAdv && member && member.uid && rec.nextAdv[member.uid];
+            return !!(na && na.round === rec.round);
+        }
+        function battleConditionalGrants(slotName, forMove) {
+            const mv = forMove || battleCalcMoveName[slotName];
+            if (!mv || !BATTLE_GRANT_MOVES.includes(mv)) return [];
+            const base = battleMoveEffectsBase(slotName, forMove), out = battleLayer0Grants(slotName, mv, base).concat(battleStealGrants(slotName, mv));
+            if (mv === 'Burning Jealousy') { // when the opponent receives Advantage this Round, it gains Burned
+                const opp = getBattleOpposingSlotName(slotName);
+                if (!battleShieldAgainst(opp) && battleSideReceivesAdvantage(opp)) out.push({ id: 'burn', code: 'jealousy' });
+            }
+            return out;
+        }
+        function getBattleActiveMoveEffects(slotName, forMove) { // every Move Effect in force for this side, including the ones some Moves' text grants
+            const base = battleMoveEffectsBase(slotName, forMove);
+            if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok' || guidedFrozenEffects(slotName, forMove)) return base;
+            const extra = battleConditionalGrants(slotName, forMove);
+            return extra.length ? base.concat(extra) : base;
+        }
+        function battleMoveEffectsBase(slotName, forMove) { // every Move Effect in force for this side: [{ id, code }], one per source (the Move's codes after cards add or shift them, thresholds met, plus granted effects)
             const out = [];
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return out;
             const frozen = guidedFrozenEffects(slotName, forMove); // Guided rounds: a Move replaced by Struggle after its effects applied
@@ -17576,7 +17731,8 @@
             const out = [];
             let opponentAttacks = null; // worked out only if an effect needs it
             const applies = a => !a.needsOpponentAttack || (opponentAttacks === null ? (opponentAttacks = battleOpponentMoveAttacks(slotName)) : opponentAttacks);
-            getBattleActiveMoveEffects(slotName).forEach(({ id, code }) => { const a = BATTLE_ADV_EFFECTS[id]; if (a && applies(a)) out.push({ kind: a.kind, n: a.n, code }); });
+            const snatched = battleCalcMoveName[getBattleOpposingSlotName(slotName)] === 'Snatch' && !battleShieldAgainst(slotName); // Snatch: the opponent's Advantage goes to the Snatch user instead
+            getBattleActiveMoveEffects(slotName).forEach(({ id, code }) => { const a = BATTLE_ADV_EFFECTS[id]; if (a && applies(a) && !(snatched && a.kind === 'adv' && !String(code).startsWith('steal:'))) out.push({ kind: a.kind, n: a.n, code }); });
             return out;
         }
 
@@ -17634,7 +17790,7 @@
         }
         // Moves whose Attack Strength works itself out from the table (no number to type): read live
         const BATTLE_LIVE_STRENGTH = {
-            'Mimic': () => 0, 'Sketch': () => 0, 'Transform': () => 0, // nothing to copy yet: Attack Strength 0
+            'Mimic': () => 0, 'Sketch': () => 0, 'Transform': () => 0, 'Metronome': () => 0, 'Nature Power': () => 0, 'Sleep Talk': () => 0, // nothing to copy yet: Attack Strength 0 (Guided rounds turn them into the other Move in Phase 3)
             'Dark Void': slot => { const o = getBattleSlotMember(getBattleOpposingSlotName(slot)); return o ? (o.status === 'sleep' && !o.fainted ? 2 : 0) : null; },
             'Poltergeist': slot => { const o = getBattleSlotMember(getBattleOpposingSlotName(slot)); return o ? (o.attachCardId ? 3 : 0) : null; },
         };
@@ -17782,6 +17938,14 @@
                 if (!record.blocked || typeof record.blocked !== 'object') record.blocked = {};
                 if (record.blocked[dst] === undefined) record.blocked[dst] = src;
             }
+            const lastMove = battleCalcMoveName[slotName];
+            if ((!only || only === 'persistdis') && BATTLE_PERSIST_DIS_MOVES.includes(lastMove) && !battleMoveWardsDisadvantage(getBattleOpposingSlotName(slotName)) && !battleOdorSleuthWards(getBattleOpposingSlotName(slotName))) {
+                if (!record.persistDis || typeof record.persistDis !== 'object') record.persistDis = {};
+                if (record.persistDis[dst] === undefined) {
+                    record.persistDis[dst] = { round: record.round, src, n: 1 };
+                    showBattleArenaNotice(`${getBattleMemberDisplay(target).name || 'The opponent'} has Disadvantage for the rest of the Battle (until it is switched out).`);
+                }
+            }
             if ((!only || only === 'lock') && battleSlotHasMoveEffect(slotName, 'lock')) {
                 if (!record.locked || typeof record.locked !== 'object') record.locked = {};
                 if (record.locked[dst] === undefined) record.locked[dst] = src;
@@ -17823,6 +17987,7 @@
                 else delete record.typeOverride[srcUid];
                 delete record.typeOverrideRound[srcUid];
             }
+            if (record.persistDis && (!kinds || kinds.includes('persistDis'))) Object.keys(record.persistDis).forEach(uid => { const pd = record.persistDis[uid]; if (pd && pd.src === srcUid && pd.round === record.round) delete record.persistDis[uid]; }); // lasting Disadvantage from this Round's Move
             (kinds || ['blocked', 'locked', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
         }
         function battleMemberAttachBlocked(member) { // Block Item: the attached card does nothing until the Battle ends or the Pokémon is switched out
@@ -17843,10 +18008,12 @@
             const rec = getBattleRecordStore(), user = getBattleSlotMember(slotName), opp = getBattleSlotMember(getBattleOpposingSlotName(slotName));
             return !!(rec && rec.odorSleuth && user && user.uid && rec.odorSleuth[user.uid] !== undefined && opp && getBattleMemberTypes(opp).includes('ghost'));
         }
+        function battleMoveWardsDisadvantage(slotName) { return BATTLE_DIS_WARD_MOVES.includes(battleCalcMoveName[slotName]); } // Brick Break / Psychic Fangs
         function battleShieldAgainst(targetSlot) { // what keeps the opponent's Move Effects off this side: 'prot' (Protection), 'priority' (Priority) or null
             const source = getBattleOpposingSlotName(targetSlot);
-            if (battleSlotHasMoveEffect(targetSlot, 'prot')) return 'prot';
-            if (battleSlotHasMoveEffect(targetSlot, 'priority') && !battleSlotHasMoveEffect(source, 'prot')) return 'priority'; // Priority has no effect against Protection
+            const has = (slot, id) => battleMoveEffectsBase(slot).some(e => e.id === id); // (the Move's own codes only, so Snatch and friends can't loop)
+            if (has(targetSlot, 'prot')) return 'prot';
+            if (has(targetSlot, 'priority') && !has(source, 'prot')) return 'priority'; // Priority has no effect against Protection
             return null;
         }
         function clearBattleMemberState(record, uid) { // switched out: Recharge Moves are usable again and Stat Down is gone
@@ -17855,14 +18022,21 @@
             if (record.moveStreak) delete record.moveStreak[uid]; // Repeat starts over
             if (record.blocked) delete record.blocked[uid]; // Block Item ends when the Pokémon is switched out
             if (record.locked) delete record.locked[uid];
+            if (record.persistDis) delete record.persistDis[uid]; // lasting Disadvantage and Fell Stinger's bonus end with a switch-out
+            if (record.nextAdv) delete record.nextAdv[uid];
             if (record.usedMoves) Object.keys(record.usedMoves).forEach(k => { if (k.startsWith(uid + '|')) delete record.usedMoves[k]; });
         }
         function getBattleDiceAdvantage(slotName) { // { net, extra, mode, add }: net > 0 Advantage (extra dice, lowest dropped), net < 0 Disadvantage (highest dropped); add = Add Die dice (nothing dropped)
             let net = 0, add = 0;
             getBattleAdvantageSources(slotName).forEach(s => { if (s.kind === 'adv') net += s.n; else if (s.kind === 'add') add += s.n; });
-            if (!battleShieldAgainst(slotName) && !battleOdorSleuthWards(slotName)) { // Protection / Priority (and Odor Sleuth against a Ghost Type): the opponent's Move Effects (their Disadvantage) don't reach this side
+            const warded = battleMoveWardsDisadvantage(slotName), rec = getBattleRecordStore(), me = getBattleSlotMember(slotName);
+            if (!warded && !battleShieldAgainst(slotName) && !battleOdorSleuthWards(slotName)) { // Protection / Priority (and Odor Sleuth against a Ghost Type, Brick Break / Psychic Fangs): the opponent's Move Effects (their Disadvantage) don't reach this side
                 getBattleAdvantageSources(getBattleOpposingSlotName(slotName)).forEach(s => { if (s.kind === 'dis') net -= s.n; });
             }
+            const pd = rec && me && me.uid && rec.persistDis && rec.persistDis[me.uid];
+            if (!warded && pd && pd.round < rec.round) net -= pd.n; // Disadvantage that lasts (from an earlier Round; this Round's comes through the Move itself)
+            const na = rec && me && me.uid && rec.nextAdv && rec.nextAdv[me.uid];
+            if (na && na.round === rec.round) net += na.n; // Fell Stinger's win last Round
             if (battleStatDownActive(slotName)) net -= 1; // Stat Down: the user's own Moves suffer Disadvantage
             return { net, extra: Math.abs(net), mode: net > 0 ? 'adv' : (net < 0 ? 'dis' : null), add };
         }
@@ -17967,7 +18141,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, sketch: {}, lastUsed: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, sketch: {}, lastUsed: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -18723,7 +18897,7 @@
             if (!BATTLE_BECOME_MOVES.includes(name) || !member) return null;
             const rec = getBattleRecordStore(), uid = member.uid;
             let kept = null;
-            if (name === 'Mimic') kept = (rec && rec.mimic && uid && rec.mimic[uid]) || battleMimicCandidate(slotName); // for the rest of the Battle once used
+            if (name === 'Mimic') kept = (rec && rec.mimic && uid && rec.mimic[uid]) || (guidedState() ? null : battleMimicCandidate(slotName)); // for the rest of the Battle once used (Guided rounds: the first copy happens in Phase 3)
             else if (name === 'Sketch') kept = (battleBecomeValid(member.sketchMove) && member.sketchMove) || (rec && rec.sketch && uid && rec.sketch[uid]); // saved on the Pok\u00e9mon: until the end of the game
             else if (name === 'Transform') kept = rec && rec.transform && uid && rec.transform[uid]; // for the rest of the Battle
             if (battleBecomeValid(kept)) return kept;
@@ -18744,6 +18918,28 @@
             if (!record.copyTypes || typeof record.copyTypes !== 'object') record.copyTypes = {};
             if (record.copyTypes[uid + '|' + base] === undefined && stabTypes.length) record.copyTypes[uid + '|' + base] = stabTypes.slice();
         }
+        const BATTLE_ROUND_LOCKED_BECOMES = ['Metronome', 'Nature Power', 'Sleep Talk']; // the draw / die / random pick is made once per Round per Pok\u00e9mon (clicking the Move again can't re-roll it)
+        function battleNoteMetronomeDrawn(record, member, moveName, manual, base) {
+            base = base || 'Metronome';
+            if (!record || !member || !member.uid || !moveName || !BATTLE_ROUND_LOCKED_BECOMES.includes(base)) return;
+            if (!record.metroDrawn || typeof record.metroDrawn !== 'object') record.metroDrawn = {};
+            const key = member.uid + '|' + base, cur = record.metroDrawn[key];
+            if (cur && cur.round === record.round) return;
+            record.metroDrawn[key] = { round: record.round, move: moveName, token: (base === 'Metronome' && manual && manual.moveName === 'Metronome' && typeof manual.choice === 'string') ? manual.choice : null };
+        }
+        function battleMetronomeLocked(member, base) { // this Round's result for that Move, or null
+            const rec = getBattleRecordStore(), cur = rec && rec.metroDrawn && member && member.uid && rec.metroDrawn[member.uid + '|' + (base || 'Metronome')];
+            return (cur && cur.round === rec.round && battleBecomeValid(cur.move)) ? cur : null;
+        }
+        function battleReuseBecome(slot, member, base) { // already resolved this Round: the same Move again, not a new draw / roll / pick
+            const locked = battleMetronomeLocked(member, base);
+            if (!locked) return false;
+            showBattleArenaNotice(`${base} already turned into ${locked.token ? locked.token + ': ' : ''}${locked.move} this Round.`);
+            if (battleCalcBaseMove[slot] === base && battleCalcMoveName[slot] === locked.move) return true; // still selected
+            if (base === 'Metronome' && locked.token) battleCalcManualValue[slot] = { moveName: 'Metronome', value: 0, choice: locked.token };
+            selectBattleMove(slot, locked.move, base);
+            return true;
+        }
         let metronomeDrawCb = null;
         const battleMetronomePending = { attacker: 0, defender: 0 }; // when the draw was asked for (the pool answers asynchronously)
         function battleMetronomeColor(member) { // the colour of the user's token (Gym Leader cards show it beside the Move instead), or null
@@ -18755,14 +18951,6 @@
         function battleMetronomeMoveOf(entry) { // the first Move on a token, if Metronome can use it
             const mv = entry && Array.isArray(entry.known_moves) && entry.known_moves.length ? entry.known_moves[0] : null;
             return (mv && !BATTLE_BECOME_MOVES.includes(mv) && battleBecomeValid(mv)) ? mv : null;
-        }
-        function battleMetronomeDraw(member) { // no pool to draw from (physical tokens / no map): a random token of the user's colour
-            const mine = battleMetronomeColor(member);
-            const colorOfEntry = e => { const tags = (e && Array.isArray(e.tags)) ? e.tags : []; return ['pink', 'green', 'blue', 'yellow', 'red'].find(c => tags.includes(c)) || null; };
-            const pool = Object.values(POKEMON_BY_NAME).filter(e => e && colorOfEntry(e) === mine && battleMetronomeMoveOf(e));
-            if (!pool.length) return null;
-            const token = pool[Math.floor(Math.random() * pool.length)];
-            return { token: token.name, move: battleMetronomeMoveOf(token), skipped: 0 };
         }
         function battleMetronomeHostDraw(c, color) { // the real token pool: a token whose Move Metronome can't use is thrown back and another drawn; the one used goes back too
             const rejected = [];
@@ -18777,12 +18965,19 @@
             if (found) c.settlePoolToken(found.token, 'returned');
             return found ? { token: found.token, move: found.move, skipped: rejected.length } : null;
         }
-        function battleMetronomeRequestDraw(member, cb) {
+        function battleMetronomeRequestDraw(member, cb) { // cb(draw) or cb(null, cancelled)
             const color = battleMetronomeColor(member);
-            const local = () => cb(battleMetronomeDraw(member));
-            if (!color || !usesVirtualTokensForActiveSave() || !getRegionMapSettingsForActiveSave().enabled) { local(); return; }
-            if (lobbyState.role === 'guest') { metronomeDrawCb = r => (r ? cb(r) : local()); boardSend({ type: 'board-metronome-draw', color }); return; }
-            boardEnsureBoard().then(c => battleMetronomeHostDraw(c, color), () => null).then(r => (r ? cb(r) : local()));
+            if (!usesVirtualTokensForActiveSave() || !getRegionMapSettingsForActiveSave().enabled) { // physical tokens: the player picks the token they drew from the gallery
+                beginMetronomePick(color, name => { // name: the token, or false when the pick was cancelled
+                    if (!name) { cb(null, true); return; }
+                    const mv = battleMetronomeMoveOf(POKEMON_BY_NAME[name]);
+                    cb(mv ? { token: name, move: mv, skipped: 0 } : null);
+                });
+                return;
+            }
+            if (!color) { cb(null); return; }
+            if (lobbyState.role === 'guest') { metronomeDrawCb = r => cb(r); boardSend({ type: 'board-metronome-draw', color }); return; }
+            boardEnsureBoard().then(c => battleMetronomeHostDraw(c, color), () => null).then(r => cb(r));
         }
         function boardHandleMetronomeDraw(peerId, data) {
             const color = String(data.color || '');
@@ -18818,17 +19013,19 @@
             const opp = getBattleSlotMember(getBattleOpposingSlotName(slot));
             const oppMoves = opp ? getBattleMemberMoves(opp).filter(battleBecomeValid) : [];
             if (name === 'Metronome') {
+                if (battleReuseBecome(slot, member, 'Metronome')) return true;
                 if (Date.now() - battleMetronomePending[slot] < 10000) return true; // a draw is already on its way
                 battleMetronomePending[slot] = Date.now();
-                battleMetronomeRequestDraw(member, drawn => {
+                battleMetronomeRequestDraw(member, (drawn, cancelled) => {
                     battleMetronomePending[slot] = 0;
-                    if (!drawn) { showBattleArenaNotice('Metronome has no token to draw.'); return; }
+                    if (!drawn) { if (!cancelled) showBattleArenaNotice('No Tokens Left to Draw.'); return; }
                     showBattleArenaNotice(`Metronome drew ${drawn.token}: ${drawn.move}.` + (drawn.skipped ? ` (${drawn.skipped} token${drawn.skipped === 1 ? '' : 's'} with a Move Metronome can\u2019t use went back to the pool.)` : ''));
                     battleCalcManualValue[slot] = { moveName: 'Metronome', value: 0, choice: drawn.token }; // carries the token (for its STAB) with the pick; a Move that needs its own pick replaces it
                     selectBattleMove(slot, drawn.move, 'Metronome');
                 });
                 return true;
             }
+            if ((name === 'Sleep Talk' || name === 'Nature Power') && battleReuseBecome(slot, member, name)) return true;
             if (name === 'Sleep Talk') {
                 if (member.status !== 'sleep') { showBattleArenaNotice('Sleep Talk can only be selected while the user has Sleep.'); return true; }
                 const others = getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n));
@@ -18960,9 +19157,11 @@
                 showBattleArenaNotice(`${moveName} was already used this Battle (Recharge).`);
                 return;
             }
-            const guidedMoveWhy = guidedGateReason('move', slot); // Guided rounds: Moves are chosen in phase 1, until locked in
+            const guidedMoveWhy = guidedGateReason('move', slot, null, { baseMove }); // Guided rounds: Moves are chosen in phase 1, until locked in
             if (guidedMoveWhy) { showBattleArenaNotice(guidedMoveWhy); return; }
-            if (!baseMove && battleResolveBecoming(slot, moveName)) return;
+            const guidedSel = guidedState(), deferBecome = !!(guidedSel && guidedSel.phase === 'moves' && !baseMove && BATTLE_BECOME_MOVES.includes(moveName) && getBattleSlotMember(slot) && !getBattleSlotMember(slot).dynamaxed);
+            if (deferBecome && moveName === 'Sleep Talk' && getBattleSlotMember(slot).status !== 'sleep') { showBattleArenaNotice('Sleep Talk can only be selected while the user has Sleep.'); return; }
+            if (!baseMove && !deferBecome && battleResolveBecoming(slot, moveName)) return; // Guided rounds: the Move turns into the other one in Phase 3 instead
             if (battlePreSelect(slot, moveName, baseMove)) return;
             const manualName = getBattleManualSourceName(slot, moveName, baseMove);
             if (manualName) {
@@ -18981,6 +19180,7 @@
                 battleDiceCounts[slot] = retargetBattleDiceToMove(battleDiceCounts[slot], moveName); // the counter follows the Move's die (the host does this for everyone else)
                 if (typeof renderBattleDice === 'function') renderBattleDice(slot);
             }
+            if (BATTLE_ROUND_LOCKED_BECOMES.includes(baseMove) && lobbyState.role === null) battleNoteMetronomeDrawn(battleRecord, getBattleSlotMember(slot), moveName, battleCalcManualValue[slot], baseMove);
             renderBattleCalcReadout(slot);
             shareBattleMoveSelection(slot);
         }
