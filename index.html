@@ -17745,6 +17745,14 @@
             return Math.max(0, Math.min(3, before));
         }
         // ---- Block Item (bblock) and Escape Prevention (block): lasting effects on the opponent's Pokémon, kept in the Battle Record by the target's uid (value = the uid that caused it) ----
+        function battleSetTypeOverride(record, uid, types) { // remembers the Round it was set in (and the Type it replaced), so a Struggle swap only undoes this Round's change
+            ['typeOverride', 'typeOverrideRound', 'typeOverridePrev'].forEach(k => { if (!record[k] || typeof record[k] !== 'object') record[k] = {}; });
+            if (record.typeOverrideRound[uid] !== record.round) {
+                if (record.typeOverride[uid] !== undefined) record.typeOverridePrev[uid] = record.typeOverride[uid]; else delete record.typeOverridePrev[uid];
+                record.typeOverrideRound[uid] = record.round;
+            }
+            record.typeOverride[uid] = types;
+        }
         function battleApplyLastingEffects(record, slotName, only, delayed) { // the side's Move Effects have applied (or its Attack Roll was made): idempotent. only: 'blockitem' | 'lock' | null (both). delayed: the end-of-Round pass for a target that had Priority
             if (!record || !slotName) return;
             const member = getBattleSlotMember(slotName), target = getBattleSlotMember(getBattleOpposingSlotName(slotName));
@@ -17756,12 +17764,10 @@
             if (member && (!only || only === 'self')) { // the user's own Type / Ghost effects
                 const mv = battleCalcMoveName[slotName], manual = battleCalcManualValue[slotName], selfUid = ensureMemberUid(member);
                 if ((mv === 'Conversion' || mv === 'Conversion 2') && manual && manual.moveName === mv && BATTLE_MOVE_TYPE_NAMES.includes(manual.type)) {
-                    if (!record.typeOverride || typeof record.typeOverride !== 'object') record.typeOverride = {};
-                    record.typeOverride[selfUid] = [manual.type];
+                    battleSetTypeOverride(record, selfUid, [manual.type]);
                 }
                 if (battleCalcBaseMove[slotName] === 'Transform' && BATTLE_MOVE_TYPE_NAMES.includes(getBattleMoveType(mv))) { // Transform: the user's Type becomes that Move's Type
-                    if (!record.typeOverride || typeof record.typeOverride !== 'object') record.typeOverride = {};
-                    record.typeOverride[selfUid] = [getBattleMoveType(mv)];
+                    battleSetTypeOverride(record, selfUid, [getBattleMoveType(mv)]);
                 }
                 if (mv === 'Odor Sleuth') {
                     if (!record.odorSleuth || typeof record.odorSleuth !== 'object') record.odorSleuth = {};
@@ -17811,7 +17817,12 @@
         }
         function battleRevertLastingEffects(record, srcUid, kinds) { // the Move that caused them became Struggle: Block Item and Escape Prevention revert
             if (!record || !srcUid) return;
-            ['attachSpent', 'typeOverride', 'odorSleuth'].forEach(k => { if (record[k] && record[k][srcUid] !== undefined && (!kinds || kinds.includes(k))) delete record[k][srcUid]; }); // Spit Up, Conversion, Odor Sleuth
+            ['attachSpent', 'odorSleuth'].forEach(k => { if (record[k] && record[k][srcUid] === record.round && (!kinds || kinds.includes(k))) delete record[k][srcUid]; }); // Spit Up, Odor Sleuth: only what this Round set (they store the Round)
+            if (record.typeOverride && record.typeOverride[srcUid] !== undefined && (!kinds || kinds.includes('typeOverride')) && record.typeOverrideRound && record.typeOverrideRound[srcUid] === record.round) { // Conversion, Transform: back to what it was before this Round
+                if (record.typeOverridePrev && record.typeOverridePrev[srcUid] !== undefined) { record.typeOverride[srcUid] = record.typeOverridePrev[srcUid]; delete record.typeOverridePrev[srcUid]; }
+                else delete record.typeOverride[srcUid];
+                delete record.typeOverrideRound[srcUid];
+            }
             (kinds || ['blocked', 'locked', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
         }
         function battleMemberAttachBlocked(member) { // Block Item: the attached card does nothing until the Battle ends or the Pokémon is switched out
@@ -17956,7 +17967,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, odorSleuth: {}, mimic: {}, transform: {}, sketch: {}, lastUsed: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, sketch: {}, lastUsed: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -18330,7 +18341,7 @@
             const doubled = !(opts && opts.ignoreMoveEffects) && battlePledgeDoubled(slotName, eff.name); // the Pledge moves: doubled once another Pledge was used
             if (doubled) power *= 2;
             const moveType = getBattleMoveType(eff.name);
-            const stab = (moveType && moveCanGetStab(eff.name) && (guidedBorrowedTypes(slotName, moveName) || getBattleMemberTypes(member, { original: true })).includes(moveType)) // a Move borrowed through Switchout keeps the original's STAB
+            const stab = (moveType && moveCanGetStab(eff.name) && (guidedBorrowedTypes(slotName, moveName) || battleCopyStabTypes(slotName, moveName) || getBattleMemberTypes(member, { original: true })).includes(moveType)) // a Move borrowed through Switchout keeps the original's STAB
                 ? BATTLE_STAB_BONUS : 0;
             const bonuses = evaluateBattleCardRules(slotName, 'strength', 'normal', moveName, power).concat(
                 (!(opts && opts.ignoreMoveEffects) && battleConditionBoostActive(slotName, moveName)) ? [{ label: 'Condition Boost', bonus: 1 }] : []).concat(
@@ -18723,21 +18734,82 @@
             const moveName = battleCalcMoveName[slotName], base = battleCalcBaseMove[slotName] || null, uid = member && member.uid;
             if (!record || !moveName) return;
             if (!record.lastUsed || typeof record.lastUsed !== 'object') record.lastUsed = {};
-            record.lastUsed[slotName] = { round: record.round, move: moveName }; // what Mimic copies next Round
+            const stabTypes = battleCopyStabTypes(slotName, moveName) || getBattleMemberTypes(member, { original: true });
+            record.lastUsed[slotName] = { round: record.round, move: moveName, types: stabTypes.slice() }; // what Mimic copies next Round (and the Types its STAB comes from)
             if (!uid || !base) return;
             const key = { 'Mimic': 'mimic', 'Transform': 'transform', 'Sketch': 'sketch' }[base];
             if (!key) return;
             if (!record[key] || typeof record[key] !== 'object') record[key] = {};
             if (record[key][uid] === undefined) record[key][uid] = moveName;
+            if (!record.copyTypes || typeof record.copyTypes !== 'object') record.copyTypes = {};
+            if (record.copyTypes[uid + '|' + base] === undefined && stabTypes.length) record.copyTypes[uid + '|' + base] = stabTypes.slice();
         }
-        function battleMetronomeDraw(member) { // a random token of the user's colour: it uses the first Move on that token
-            const colorOf = e => { const tags = (e && Array.isArray(e.tags)) ? e.tags : []; return ['pink', 'green', 'blue', 'yellow', 'red'].find(c => tags.includes(c)) || null; };
-            const mine = colorOf(POKEMON_BY_NAME[member.formOverride || member.name] || POKEMON_BY_NAME[member.name]);
-            const pool = Object.values(POKEMON_BY_NAME).filter(e => e && colorOf(e) === mine && Array.isArray(e.known_moves) && e.known_moves.length
-                && !BATTLE_BECOME_MOVES.includes(e.known_moves[0]) && battleBecomeValid(e.known_moves[0]));
+        let metronomeDrawCb = null;
+        const battleMetronomePending = { attacker: 0, defender: 0 }; // when the draw was asked for (the pool answers asynchronously)
+        function battleMetronomeColor(member) { // the colour of the user's token (Gym Leader cards show it beside the Move instead), or null
+            const colors = ['pink', 'green', 'blue', 'yellow', 'red'];
+            const colorOf = e => { const tags = (e && Array.isArray(e.tags)) ? e.tags : []; return colors.find(c => tags.includes(c)) || null; };
+            const gym = getGymLeaderMemberData(member), gymColor = gym && gym.moveColors && String(gym.moveColors.Metronome || '').toLowerCase().trim();
+            return colors.includes(gymColor) ? gymColor : colorOf(POKEMON_BY_NAME[member.formOverride || member.name] || POKEMON_BY_NAME[member.name]);
+        }
+        function battleMetronomeMoveOf(entry) { // the first Move on a token, if Metronome can use it
+            const mv = entry && Array.isArray(entry.known_moves) && entry.known_moves.length ? entry.known_moves[0] : null;
+            return (mv && !BATTLE_BECOME_MOVES.includes(mv) && battleBecomeValid(mv)) ? mv : null;
+        }
+        function battleMetronomeDraw(member) { // no pool to draw from (physical tokens / no map): a random token of the user's colour
+            const mine = battleMetronomeColor(member);
+            const colorOfEntry = e => { const tags = (e && Array.isArray(e.tags)) ? e.tags : []; return ['pink', 'green', 'blue', 'yellow', 'red'].find(c => tags.includes(c)) || null; };
+            const pool = Object.values(POKEMON_BY_NAME).filter(e => e && colorOfEntry(e) === mine && battleMetronomeMoveOf(e));
             if (!pool.length) return null;
             const token = pool[Math.floor(Math.random() * pool.length)];
-            return { token: token.name, move: token.known_moves[0] };
+            return { token: token.name, move: battleMetronomeMoveOf(token), skipped: 0 };
+        }
+        function battleMetronomeHostDraw(c, color) { // the real token pool: a token whose Move Metronome can't use is thrown back and another drawn; the one used goes back too
+            const rejected = [];
+            let found = null;
+            for (let i = 0; i < 1000 && !found; i++) {
+                const name = c.drawFromPool(color);
+                if (!name) break;
+                const mv = battleMetronomeMoveOf(POKEMON_BY_NAME[name]);
+                if (mv) found = { token: name, move: mv }; else rejected.push(name);
+            }
+            rejected.forEach(n => c.settlePoolToken(n, 'returned')); // only after the loop, so a returned token can't be drawn again
+            if (found) c.settlePoolToken(found.token, 'returned');
+            return found ? { token: found.token, move: found.move, skipped: rejected.length } : null;
+        }
+        function battleMetronomeRequestDraw(member, cb) {
+            const color = battleMetronomeColor(member);
+            const local = () => cb(battleMetronomeDraw(member));
+            if (!color || !usesVirtualTokensForActiveSave() || !getRegionMapSettingsForActiveSave().enabled) { local(); return; }
+            if (lobbyState.role === 'guest') { metronomeDrawCb = r => (r ? cb(r) : local()); boardSend({ type: 'board-metronome-draw', color }); return; }
+            boardEnsureBoard().then(c => battleMetronomeHostDraw(c, color), () => null).then(r => (r ? cb(r) : local()));
+        }
+        function boardHandleMetronomeDraw(peerId, data) {
+            const color = String(data.color || '');
+            const reply = r => boardSendToPeer(peerId, { type: 'board-metronome-drawn', token: r ? r.token : null, move: r ? r.move : null, skipped: r ? r.skipped : 0 });
+            if (!getRegionMapSettingsForActiveSave().enabled || !['pink', 'green', 'blue', 'yellow', 'red'].includes(color)) { reply(null); return; }
+            boardEnsureBoard().then(c => reply(battleMetronomeHostDraw(c, color))).catch(() => reply(null));
+        }
+        function battleCopyStabTypes(slotName, moveName) { // a copied Move's STAB comes from the Pok\u00e9mon it was copied from (the Attack Strength on its token already has that Pok\u00e9mon's STAB in it), or null for the user's own
+            const base = battleCalcBaseMove[slotName];
+            if (!base || !moveName || !['Mimic', 'Sketch', 'Transform', 'Metronome'].includes(base)) return null;
+            const clean = a => (Array.isArray(a) ? a.map(t => String(t).toLowerCase().trim()).filter(t => BATTLE_MOVE_TYPE_NAMES.includes(t)) : []);
+            if (base === 'Metronome') { // the drawn token's own Types
+                const m = battleCalcManualValue[slotName], e = (m && m.moveName === 'Metronome' && typeof m.choice === 'string') ? POKEMON_BY_NAME[m.choice] : null;
+                const t = e ? clean(e.types) : [];
+                return t.length ? t : null;
+            }
+            const member = getBattleSlotMember(slotName), opp = getBattleSlotMember(getBattleOpposingSlotName(slotName)), rec = getBattleRecordStore();
+            if (!member) return null;
+            const locked = rec && rec.copyTypes && member.uid && rec.copyTypes[member.uid + '|' + base];
+            if (Array.isArray(locked) && locked.length) return locked.slice();
+            if (base === 'Sketch' && member.sketchMove === moveName && Array.isArray(member.sketchTypes) && member.sketchTypes.length) return member.sketchTypes.slice();
+            if (base === 'Mimic') {
+                const last = rec && rec.lastUsed && rec.lastUsed[getBattleOpposingSlotName(slotName)];
+                if (last && last.move === moveName && Array.isArray(last.types) && last.types.length) return last.types.slice();
+            }
+            const live = opp ? getBattleMemberTypes(opp, { original: true }) : [];
+            return live.length ? live : null;
         }
         function battleResolveBecoming(slot, name) { // a Move that turns into another when it is picked; true when it took over the pick
             if (!BATTLE_BECOME_MOVES.includes(name)) return false;
@@ -18746,10 +18818,15 @@
             const opp = getBattleSlotMember(getBattleOpposingSlotName(slot));
             const oppMoves = opp ? getBattleMemberMoves(opp).filter(battleBecomeValid) : [];
             if (name === 'Metronome') {
-                const drawn = battleMetronomeDraw(member);
-                if (!drawn) { showBattleArenaNotice('Metronome has no token to draw.'); return true; }
-                showBattleArenaNotice(`Metronome drew ${drawn.token}: ${drawn.move}.`);
-                selectBattleMove(slot, drawn.move, 'Metronome');
+                if (Date.now() - battleMetronomePending[slot] < 10000) return true; // a draw is already on its way
+                battleMetronomePending[slot] = Date.now();
+                battleMetronomeRequestDraw(member, drawn => {
+                    battleMetronomePending[slot] = 0;
+                    if (!drawn) { showBattleArenaNotice('Metronome has no token to draw.'); return; }
+                    showBattleArenaNotice(`Metronome drew ${drawn.token}: ${drawn.move}.` + (drawn.skipped ? ` (${drawn.skipped} token${drawn.skipped === 1 ? '' : 's'} with a Move Metronome can\u2019t use went back to the pool.)` : ''));
+                    battleCalcManualValue[slot] = { moveName: 'Metronome', value: 0, choice: drawn.token }; // carries the token (for its STAB) with the pick; a Move that needs its own pick replaces it
+                    selectBattleMove(slot, drawn.move, 'Metronome');
+                });
                 return true;
             }
             if (name === 'Sleep Talk') {
@@ -18778,7 +18855,11 @@
             if (via === 'Sketch') { // Sketch stays on the Pok\u00e9mon for the rest of the game
                 const idx = slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
                 const mem = typeof idx === 'number' ? getTeamSlotMember(idx) : null;
-                if (mem && !isActiveSaveReadOnly() && getBattleSlotMember(slot) === mem) { mem.sketchMove = choice; persistTeamSlotChange(idx); }
+                if (mem && !isActiveSaveReadOnly() && getBattleSlotMember(slot) === mem) {
+                    const foe = getBattleSlotMember(getBattleOpposingSlotName(slot));
+                    mem.sketchMove = choice; mem.sketchTypes = foe ? getBattleMemberTypes(foe, { original: true }) : []; // STAB follows the Pok\u00e9mon it was sketched from
+                    persistTeamSlotChange(idx);
+                }
             }
             selectBattleMove(slot, choice, via);
         }
@@ -22762,6 +22843,8 @@
                     boardHandleFrontierDraw(conn.peer, data);
                 } else if (data.type === 'board-egg-hatch' && typeof data.color === 'string') {
                     boardHandleEggHatch(conn.peer, data);
+                } else if (data.type === 'board-metronome-draw' && typeof data.color === 'string') {
+                    boardHandleMetronomeDraw(conn.peer, data);
                 } else if (data.type === 'board-contest-counts') {
                     boardHandleContestCounts(conn.peer);
                 } else if (data.type === 'board-contest-draw' && typeof data.color === 'string') {
@@ -28614,6 +28697,10 @@
                     const cb = contestCountsCb;
                     contestCountsCb = null;
                     if (cb) cb(data.counts);
+                } else if (data.type === 'board-metronome-drawn') {
+                    const cb = metronomeDrawCb;
+                    metronomeDrawCb = null;
+                    if (cb) cb(typeof data.token === 'string' && typeof data.move === 'string' ? { token: data.token.slice(0, 80), move: data.move.slice(0, 80), skipped: Math.max(0, parseInt(data.skipped, 10) || 0) } : null);
                 } else if (data.type === 'board-egg-hatched') {
                     const cb = eggHatchCb;
                     eggHatchCb = null;
