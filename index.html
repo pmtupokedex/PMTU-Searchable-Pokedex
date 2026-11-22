@@ -4524,7 +4524,7 @@
 
         function memberHasUnresolvedOneTimeCard(member, index) {
             if (!member || index === 'readonly' || !isVirtualDecksEnabledForActiveSave() || isActiveSaveReadOnly()) return false;
-            return [member.attachCardId, member.natureCardId].some(id => id && getCardOneTimeEffect(CARDS_BY_ID[id]));
+            return [battleAttachIdOf(member), member.natureCardId].some(id => id && getCardOneTimeEffect(CARDS_BY_ID[id]));
         }
 
         function buildCardsBadge(member, index, naturesEnabled) {
@@ -8186,6 +8186,14 @@
                         { moveChosen: !!(st.moves && st.moves[slot]), effectRolled: half.effect !== null && half.effect !== undefined })
                     : 'Unknown card.';
                 if (reason) { sendBattleNotice(peerKey, reason); broadcastBattleArenaState(); return; }
+            } else if (req && req.action === 'replenish-used') { // a guest used G-Max Replenish: once per Battle per player
+                if (!st.record) st.record = makeEmptyBattleRecord();
+                const ownerId = st[slot] && st[slot].ownerId;
+                if (ownerId) { if (!st.record.replenish || typeof st.record.replenish !== 'object') st.record.replenish = {}; st.record.replenish[ownerId] = 1; }
+            } else if (req && req.action === 'attach-used') { // a guest's Pok\u00e9mon used up the Attach Card it holds (borrowed or its own)
+                if (!st.record) st.record = makeEmptyBattleRecord();
+                const mem = st[slot] && st[slot].member;
+                if (mem && typeof req.cardId === 'string') { battleMarkAttachUsed(st.record, mem, req.cardId); if (typeof battleReconcileHeldCards === 'function') battleReconcileHeldCards(); }
             } else if (req && req.action === 'toggle') {
                 const i = Number(req.index);
                 if (half.attack && Number.isInteger(i) && half.attack[i]) half.attack[i].excluded = !half.attack[i].excluded;
@@ -8382,6 +8390,7 @@
             battleRecord = payload.record ? JSON.parse(JSON.stringify(payload.record)) : makeEmptyBattleRecord();
             if (bfPrev && !battleInProgress) battlePayDayClaim(recordBeforeEnd); // the Battle just ended
             noteBattleParticipationSnapshot(battleRecord);
+            try { battleReconcileHeldCards(); } catch (e) { /* not ready */ }
             renderBattleCardZones(payload.cards);
             if (payload.fields) renderBattleFieldZones(payload.fields);
             renderBattleAttackerSlot();
@@ -9389,10 +9398,16 @@
             if (!isVirtualDecksEnabledForActiveSave()) return;
             const member = getTeamSlotMember(index);
             if (!member) return;
-            const cardId = slot === 'attach' ? member.attachCardId : member.natureCardId;
+            const cardId = slot === 'attach' ? battleAttachIdOf(member) : member.natureCardId;
             const card = cardId ? CARDS_BY_ID[cardId] : null;
             const fx = getCardOneTimeEffect(card);
             if (!fx) return;
+            if (slot === 'attach' && cardId !== (member.attachCardId || null)) { // a borrowed card: only a plain use-and-discard works (no replacement draw / shuffle / Permanent zone)
+                if (fx.attachTopCard || fx.replace || fx.then === 'permanent' || fx.then === 'shuffle') { showGameToast(card.name + ' can\u2019t be resolved while it is borrowed (Covet / Thief / Switcheroo / Trick). It goes back to its owner at the end of the Battle.'); return; }
+                if (detachUsedAttachCard(index, member, cardId) === 'blocked') return;
+                showGameToast(card.name + ' was resolved.');
+                return;
+            }
             if (fx.then === 'permanent' && !cardCanPermanentFromAttach(card)) return;
             if (fx.then === 'shuffle' && !cardHasDiscardShuffle(card)) return;
             if (lobbyState.role === 'guest' && !(lobbyState.hostConn && lobbyState.hostConn.open)) {
@@ -9414,12 +9429,11 @@
         function useCureStatusCard(index) { // Berry: removes the Pok\u00e9mon's Status Condition, and the card is used up
             if (index === null || isActiveSaveReadOnly() || teamReplacePendingMember || teamReleaseModeActive || isTradeNegotiationActive() || handAttachPendingCardId) return;
             const member = getTeamSlotMember(index);
-            const card = member && member.attachCardId ? CARDS_BY_ID[member.attachCardId] : null;
+            const card = member && battleAttachIdOf(member) ? CARDS_BY_ID[battleAttachIdOf(member)] : null;
             if (!card || card.cureStatus !== 'yes') return;
             if (!member.status) { showGameToast(card.name + ': ' + (getBattleMemberDisplay(member).name || 'this Pok\u00e9mon') + ' has no Status Condition to remove.'); return; }
             boardClearTeamStatus(index);
-            commitTeamMemberCard(index, 'attach', null);
-            if (isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(card.id);
+            if (detachUsedAttachCard(index, member, card.id) === 'blocked') return;
             persistTeamSlotChange(index);
             showGameToast(card.name + ': ' + (getBattleMemberDisplay(member).name || 'the Pok\u00e9mon') + '\u2019s Status Condition was removed.');
         }
@@ -10517,8 +10531,12 @@
         // battleFormUsed.tera = this player has already Terastallized a Pok\u00e9mon this Battle (it stays set even if that Pok\u00e9mon faints or reverts).
         function getMemberTeraCard(member) { // the Tera Type card attached to this Pok\u00e9mon, if any
             if (!member) return null;
-            for (const id of [member.attachCardId, member.natureCardId]) {
+            for (const id of [battleAttachIdOf(member), member.natureCardId]) {
                 const c = id ? CARDS_BY_ID[id] : null;
+                if (c && c.cardDeck === 'Tera Type Deck') return c;
+            }
+            if (member.terastallized && battleInProgress && member.uid) { // its Tera Type card was stolen / swapped away: it stays Terastallized
+                const rec = getBattleRecordStore(), id = rec && rec.formCard && rec.formCard[member.uid], c = id ? CARDS_BY_ID[id] : null;
                 if (c && c.cardDeck === 'Tera Type Deck') return c;
             }
             return null;
@@ -10589,7 +10607,7 @@
                 .some(([teamId, index]) => teamId === getActiveTeamId() && typeof index === 'number' && getTeamSlotMember(index) === member);
         }
         function memberHoldsMegaStone(member) {
-            const card = member && member.attachCardId ? CARDS_BY_ID[member.attachCardId] : null;
+            const id = battleAttachIdOf(member), card = id ? CARDS_BY_ID[id] : null;
             return !!card && card.name === 'Mega Stone';
         }
         function canMemberMega(member) {
@@ -10832,14 +10850,13 @@
 
         function cardRevivesOnFaint(card) { return !!card && card.reviveOnFaint === 'yes'; } // Potion / Max Potion: attached, it saves the Pok\u00e9mon from fainting once
         function savePokemonWithAttachedCard(index, member) { // the Pok\u00e9mon faints and is revived on the spot: the faint's clean-up still happens, the card is used up, HP is restored
-            const cardId = member.attachCardId, card = CARDS_BY_ID[cardId];
+            const cardId = battleAttachIdOf(member), card = CARDS_BY_ID[cardId];
             member.status = null;
             member.statusCounter = undefined;
             member.statusCardSide = undefined;
             member.formOverride = null;
             member.dynamaxed = false;
-            commitTeamMemberCard(index, 'attach', null); // detaches the card (and saves)
-            if (isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(cardId);
+            detachUsedAttachCard(index, member, cardId); // detaches the card (a borrowed one goes to its owner's discard pile) and saves
             const max = getTeamMemberHpMax(member, getHpRule(getActiveSaveData()));
             if (max !== null) member.hp = max;
             persistTeamSlotChange(index);
@@ -10850,7 +10867,7 @@
             const member = getTeamSlotMember(index);
             if (!member || member.fainted) return;
             koAttnResolve(member); // the K.O. is being dealt with (even if a Potion saves it): the HP badge stops pulsing for this Round
-            if (typeof index === 'number' && !isActiveSaveReadOnly() && member.attachCardId && cardRevivesOnFaint(CARDS_BY_ID[member.attachCardId])) { savePokemonWithAttachedCard(index, member); return; }
+            if (typeof index === 'number' && !isActiveSaveReadOnly() && battleAttachIdOf(member) && cardRevivesOnFaint(CARDS_BY_ID[battleAttachIdOf(member)])) { savePokemonWithAttachedCard(index, member); return; }
             reportBattleFaint(member, false, index === 'wild' || index === 'trainer'); // see makeEmptyBattleRecord()
             member.fainted = true;
             member.faintedWithStatus = !!member.status;
@@ -10997,9 +11014,10 @@
         }
 
         function computeTeamCardsState(member, naturesEnabled) {
-            const attachIcon = member ? cardIconFor(member.attachCardId) : null;
+            const heldId = member ? battleAttachIdOf(member) : null;
+            const attachIcon = member ? cardIconFor(heldId) : null;
             const natureIcon = (naturesEnabled && member) ? cardIconFor(member.natureCardId) : null;
-            const attachCount = (member && cardHasItemCounter(CARDS_BY_ID[member.attachCardId]))
+            const attachCount = (member && heldId === (member.attachCardId || null) && cardHasItemCounter(CARDS_BY_ID[heldId]))
                 ? (member.attachCounter ?? 0)
                 : null;
             if (attachIcon && natureIcon) {
@@ -11018,10 +11036,14 @@
         let teamCardsOverlayAddingSlot = null;
         let teamCardsOverlayExpandedDecks = new Set();
 
-        function commitTeamMemberCard(index, slot, cardId) {
+        function commitTeamMemberCard(index, slot, cardId, internal) {
             if (index === null || (slot !== 'attach' && slot !== 'nature')) return;
             const member = getTeamSlotMember(index);
             if (!member) return;
+            if (!internal && slot === 'attach' && battleInProgress && member.uid) { // Covet / Thief / Switcheroo / Trick: its card is swapped for this Battle, so the saved slot can't be edited meanwhile
+                const rec = getBattleRecordStore();
+                if (rec && rec.attachHeld && rec.attachHeld[member.uid] !== undefined) { showGameToast('This Pok\u00e9mon\u2019s Attach Card is swapped for this Battle. Its cards go back when the Battle ends.'); return; }
+            }
             const teraBefore = getMemberTeraCard(member);
             if (slot === 'attach') {
                 member.attachCardId = cardId;
@@ -11115,7 +11137,7 @@
         function renderTeamCardsOverlay() {
             const member = teamCardsOverlayIndex !== null ? getTeamSlotMember(teamCardsOverlayIndex) : null;
 
-            renderTeamCardSlotPanel('game-team-cards-attach-detail', 'attach', member ? member.attachCardId : null, 'No Attach Card equipped.', teamCardsOverlayAddingSlot, teamCardsOverlayExpandedDecks, (member && cardHasItemCounter(CARDS_BY_ID[member.attachCardId])) ? (member.attachCounter ?? 0) : null);
+            renderTeamCardSlotPanel('game-team-cards-attach-detail', 'attach', member ? battleAttachIdOf(member) : null, 'No Attach Card equipped.', teamCardsOverlayAddingSlot, teamCardsOverlayExpandedDecks, (member && battleAttachIdOf(member) === (member.attachCardId || null) && cardHasItemCounter(CARDS_BY_ID[member.attachCardId])) ? (member.attachCounter ?? 0) : null);
 
             const natureSectionEl = document.getElementById('game-team-cards-nature-section');
             const titleEl = document.getElementById('game-team-cards-title');
@@ -11190,7 +11212,8 @@
             if (!cfg || !cfg.reverts || !cfg.targets) return;
             const target = cfg.targets[member.formOverride];
             if (!target) return;
-            if (member.attachCardId && member.attachCardId === target.cardId) return;
+            const heldNow = battleAttachIdOf(member);
+            if (heldNow && heldNow === target.cardId) return;
             const oldMax = getTeamMemberHpMax(member, hpRule);
             member.formOverride = null;
             reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax, 1);
@@ -11652,7 +11675,7 @@
                 if (!reverts || !member.fainted) {
                     Object.keys(cfg.targets).forEach(name => {
                         const target = cfg.targets[name] || {};
-                        const eligible = !gated || (!!member.attachCardId && member.attachCardId === target.cardId);
+                        const heldId = battleAttachIdOf(member), eligible = !gated || (!!heldId && heldId === target.cardId);
                         if (eligible) {
                             options.push({
                                 category: 'legendary',
@@ -11986,7 +12009,7 @@
             const member = (data.team.members || [])[teamDetailIndex];
             if (!member) return;
 
-            renderTeamCardSlotPanel('game-team-detail-attach-card-detail', 'attach', member.attachCardId, 'No Attach Card equipped.', teamDetailCardsAddingSlot, teamDetailCardsExpandedDecks, cardHasItemCounter(CARDS_BY_ID[member.attachCardId]) ? (member.attachCounter ?? 0) : null);
+            renderTeamCardSlotPanel('game-team-detail-attach-card-detail', 'attach', battleAttachIdOf(member), 'No Attach Card equipped.', teamDetailCardsAddingSlot, teamDetailCardsExpandedDecks, (battleAttachIdOf(member) === (member.attachCardId || null) && cardHasItemCounter(CARDS_BY_ID[member.attachCardId])) ? (member.attachCounter ?? 0) : null);
 
             const natureSectionEl = document.getElementById('game-team-detail-nature-card-section');
             const naturesEnabled = isNaturesEnabledForActiveSave();
@@ -15882,9 +15905,8 @@
             const me = lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host');
             if (getBattleSlotOwnerId(slotName) !== me) return;
             const m = getTeamSlotMember(idx);
-            if (!m || m.attachCardId !== grant.discardCardId) return;
-            commitTeamMemberCard(idx, 'attach', null);
-            if (isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(grant.discardCardId);
+            if (!m || battleAttachIdOf(m) !== grant.discardCardId) return;
+            detachUsedAttachCard(idx, m, grant.discardCardId);
             persistTeamSlotChange(idx);
             showGameToast(grant.label + ' was used up for the reroll.');
         }
@@ -16591,7 +16613,7 @@
         }
         function guidedRevertLasting(slot, hadApplied) { // it became Struggle: Block Item (applied at Lock In) reverts always; Escape Prevention only if its effects had applied
             const m = getBattleSlotMember(slot);
-            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth', 'persistDis', 'dynaBuff', 'attach'] : ['blocked']);
+            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth', 'persistDis', 'dynaBuff'] : ['blocked']);
         }
         function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
             const g = guidedState();
@@ -17507,11 +17529,49 @@
             }
             return `<button type="button" class="${cls}" data-battle-slot="${slotName}" data-card-id="${escapeHtml(o.card.id)}"${disabled ? ' disabled' : ''}>${escapeHtml(text)}</button>`;
         }
+        // G-Max Replenish: once per Battle per player, the user takes any Attach Card from the Item discard pile into their hand
+        let battleReplenishOpen = { attacker: false, defender: false };
+        function battleReplenishEligibleIds() { // any Attach Card in the Item discard pile, whichever deck it came from (Key Items can't be reclaimed)
+            const info = getDeckInfoMap()['Item Deck'], pile = (info && info.discardPile) || [];
+            return pile.filter(id => { const c = CARDS_BY_ID[id]; return !!c && c.canAttach === 'yes' && getAttachSlotForCard(id) === 'attach' && !cardIsKeyItem(c); });
+        }
+        function battleReplenishUsedBy(ownerId) { const rec = getBattleRecordStore(); return !!(rec && rec.replenish && rec.replenish[ownerId]); }
+        function buildBattleReplenishHtml(slotName) {
+            if (battleCalcMoveName[slotName] !== 'G-Max Replenish' || !battleInProgress) return '';
+            const me = lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host');
+            const owner = getBattleSlotOwnerId(slotName);
+            if (!owner || owner !== me) return '';
+            if (battleReplenishUsedBy(owner)) return '<div class="gbd-replenish"><span class="gbd-replenish-note">G-Max Replenish: used this Battle.</span></div>';
+            if (!isVirtualDecksEnabledForActiveSave()) return '<div class="gbd-replenish"><span class="gbd-replenish-note">G-Max Replenish: take any Attach Card from the Item discard pile into your hand (once per Battle).</span></div>';
+            const ids = battleReplenishEligibleIds(), open = !!battleReplenishOpen[slotName];
+            const list = ids.length ? ids.map(id => { const c = CARDS_BY_ID[id]; return `<button type="button" class="filter-btn game-replenish-pick" data-battle-slot="${slotName}" data-card-id="${escapeHtml(id)}">${c.imageUrl ? `<img src="${escapeHtml(c.imageUrl)}" alt="" loading="lazy">` : ''}<span>${escapeHtml(c.name)}</span></button>`; }).join('') : '<span class="gbd-replenish-note">No Attach Cards in the Item discard pile.</span>';
+            return `<div class="gbd-replenish"><button type="button" class="filter-btn game-replenish-toggle" data-battle-slot="${slotName}" aria-expanded="${open ? 'true' : 'false'}">G-Max Replenish: choose an Attach Card from the discard pile (${ids.length}) ${open ? '\u25B2' : '\u25BC'}</button>${open ? `<div class="gbd-replenish-list">${list}</div>` : ''}</div>`;
+        }
+        function battleReplenishPick(slotName, cardId) {
+            const me = lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host');
+            if (isActiveSaveReadOnly() || getBattleSlotOwnerId(slotName) !== me || battleCalcMoveName[slotName] !== 'G-Max Replenish') return;
+            if (battleReplenishUsedBy(me)) { showBattleArenaNotice('G-Max Replenish can only be used once per Battle.'); return; }
+            if (!battleReplenishEligibleIds().includes(cardId)) { showBattleArenaNotice('That card is no longer in the discard pile.'); renderBattleMoveDetails(slotName); return; }
+            if (lobbyState.role === 'guest') {
+                if (!(lobbyState.hostConn && lobbyState.hostConn.open)) { showGameToast('Can\u2019t reach the Host right now \u2014 try again in a moment.'); return; }
+                requestBattleDice(slotName, { action: 'replenish-used' });
+                const rec = getBattleRecordStore(); if (rec) { if (!rec.replenish) rec.replenish = {}; rec.replenish[me] = 1; } // until the Host's state arrives
+            } else {
+                const rec = getBattleRecordStore();
+                if (!rec.replenish || typeof rec.replenish !== 'object') rec.replenish = {};
+                rec.replenish[me] = 1;
+                if (lobbyState.role === 'host') broadcastBattleArenaState();
+            }
+            requestReturnDiscardToHand('Item Deck', cardId);
+            battleReplenishOpen[slotName] = false;
+            showGameToast((CARDS_BY_ID[cardId] ? CARDS_BY_ID[cardId].name : 'The card') + ' was added to your hand.');
+            renderBattleMoveDetails(slotName);
+        }
         function buildBattleItemChoicesHtml(slotName) { // the choices that need a Move picked first, shown with the Move's details
             const buttons = getBattleItemOptions(slotName)
                 .filter(o => o.opt.needsMove && o.eligible)
                 .map(o => buildBattleItemButtonHtml(slotName, o, false));
-            return buttons.length ? `<div class="gbd-item-row">${buttons.join('')}</div>` : '';
+            return (buttons.length ? `<div class="gbd-item-row">${buttons.join('')}</div>` : '') + buildBattleReplenishHtml(slotName);
         }
         function getBattleMoveCodeAdds(slotName) { // King's Rock, Zoom Lens: a Move Effect code the card adds to every Move used
             const out = [];
@@ -18042,13 +18102,6 @@
                 else delete record.typeOverride[srcUid];
                 delete record.typeOverrideRound[srcUid];
             }
-            if (record.attachSwaps && record.attachHeld && (!kinds || kinds.includes('attach'))) { // Covet / Thief / Switcheroo / Trick of this Round: the Attach Cards go back
-                const sw = record.attachSwaps[record.round + '|' + srcUid];
-                if (sw && !sw.none) {
-                    [['a', 'prevHeldA'], ['b', 'prevHeldB']].forEach(([who, prev]) => { if (sw[prev] === undefined) delete record.attachHeld[sw[who]]; else record.attachHeld[sw[who]] = sw[prev]; });
-                }
-                delete record.attachSwaps[record.round + '|' + srcUid];
-            }
             if (record.dynaBuff && (!kinds || kinds.includes('dynaBuff'))) Object.keys(record.dynaBuff).forEach(uid => { if (uid !== srcUid) return; const mine = record.dynaBuff[uid]; Object.keys(mine).forEach(id => { if (mine[id] === record.round) delete mine[id]; }); }); // Max Darkness and friends: only what this Round set
             if (record.persistDis && (!kinds || kinds.includes('persistDis'))) Object.keys(record.persistDis).forEach(uid => { const pd = record.persistDis[uid]; if (pd && pd.src === srcUid && pd.round === record.round) delete record.persistDis[uid]; }); // lasting Disadvantage from this Round's Move
             (kinds || ['blocked', 'locked', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
@@ -18083,7 +18136,14 @@
             if (record.attachSwaps[key]) return;
             const ca = battleAttachIdOf(member), cb = battleAttachIdOf(target);
             if (take ? !cb : (!ca && !cb)) { record.attachSwaps[key] = { none: true }; return; } // nothing to take / swap
-            record.attachSwaps[key] = { a, b, prevHeldA: record.attachHeld[a], prevHeldB: record.attachHeld[b] };
+            record.attachSwaps[key] = { a, b };
+            if (!record.attachHome || typeof record.attachHome !== 'object') record.attachHome = {};
+            if (!record.formCard || typeof record.formCard !== 'object') record.formCard = {};
+            [[a, ca, member], [b, cb, target]].forEach(([uid, cid, mem]) => { // who a card belongs to (it goes back there; a used-up one is lost to its owner); a Tera Type card the holder is Terastallized by is remembered, so the Tera state outlasts the card
+                if (cid && record.attachHome[cid] === undefined) record.attachHome[cid] = uid;
+                const c = cid ? CARDS_BY_ID[cid] : null;
+                if (c && c.cardDeck === 'Tera Type Deck' && mem.terastallized) record.formCard[uid] = cid;
+            });
             record.attachHeld[a] = cb || '';
             record.attachHeld[b] = take ? '' : (ca || '');
             [a, b].forEach(uid => { if (record.blocked) delete record.blocked[uid]; if (record.attachSpent) delete record.attachSpent[uid]; }); // the card arrives fresh: no Block Item / Spit Up carried over
@@ -18092,6 +18152,64 @@
             showBattleArenaNotice(take
                 ? `${nm(member)} took ${cn(cb)} from ${nm(target)}.${ca ? ' ' + cn(ca) + ' is set aside until the Battle ends.' : ''} All Attach Cards return at the end of the Battle.`
                 : `${nm(member)} and ${nm(target)} swapped Attach Cards (${nm(member)} now holds ${cn(cb)}, ${nm(target)} ${cn(ca)}). They return at the end of the Battle.`);
+            if (typeof battleReconcileHeldCards === 'function') battleReconcileHeldCards();
+        }
+        function battleMarkAttachUsed(record, member, cardId) { // a card the Pok\u00e9mon holds was used up. true: it was borrowed (stolen / swapped in): it is gone, and the owner's saved card goes with it (the owner's device clears it); false: its own card (the normal detach applies)
+            if (!record || !member || !member.uid || !record.attachHeld || record.attachHeld[member.uid] === undefined) return false;
+            if (record.attachHeld[member.uid] !== cardId) return false;
+            record.attachHeld[member.uid] = '';
+            if (cardId === member.attachCardId) return false;
+            const home = record.attachHome && record.attachHome[cardId];
+            if (home) { if (!record.attachLost || typeof record.attachLost !== 'object') record.attachLost = {}; record.attachLost[home] = cardId; }
+            return true;
+        }
+        function battleSlotOfMember(member) { return ['attacker', 'defender'].find(sl => getBattleSlotMember(sl) === member) || null; }
+        function detachUsedAttachCard(index, member, cardId) { // the Pok\u00e9mon used up the Attach Card it holds (Berry, Potion, a one-time card): it goes to the discard pile
+            const rec = (battleInProgress && member && member.uid) ? getBattleRecordStore() : null;
+            if (rec && rec.attachHeld && rec.attachHeld[member.uid] !== undefined) {
+                if (lobbyState.role === 'guest') { // the Host keeps the record
+                    const sl = battleSlotOfMember(member);
+                    if (!sl) { showGameToast('A borrowed card can only be used up while its holder is in the Battle Arena.'); return 'blocked'; }
+                    requestBattleDice(sl, { action: 'attach-used', cardId });
+                    if (cardId !== member.attachCardId) return 'borrowed';
+                } else if (battleMarkAttachUsed(rec, member, cardId)) {
+                    battleReconcileHeldCards();
+                    if (lobbyState.role === 'host') broadcastBattleArenaState();
+                    return 'borrowed';
+                } else if (lobbyState.role === 'host') broadcastBattleArenaState();
+            }
+            commitTeamMemberCard(index, 'attach', null, true);
+            if (isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(cardId);
+            return 'own';
+        }
+        function battleReconcileHeldCards() { // each device tidies its own Pok\u00e9mon after Covet / Thief / Switcheroo / Trick: a stolen card that was used up leaves the owner's saved card, and a Legendary form whose card has gone reverts (Tera / Mega states stay)
+            if (!battleInProgress) return;
+            const rec = getBattleRecordStore();
+            if (!rec || !rec.attachHeld) return;
+            let changed = false;
+            try {
+                const data = getActiveSaveData(), members = ((data.team || {}).members) || [];
+                members.forEach((m, i) => {
+                    if (!m || !m.uid || isActiveSaveReadOnly()) return;
+                    const lost = rec.attachLost && rec.attachLost[m.uid];
+                    if (lost && m.attachCardId === lost) {
+                        m.attachCardId = null; m.attachCounter = undefined;
+                        if (isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(lost);
+                        else showGameToast((CARDS_BY_ID[lost] ? CARDS_BY_ID[lost].name : 'The card') + ' was used up: discard it.');
+                        persistTeamSlotChange(i); changed = true;
+                    }
+                    if (rec.attachHeld[m.uid] !== undefined && m.formOverride) {
+                        const before = m.formOverride;
+                        reconcileLegendaryEvolutionOnCardChange(m, getHpRule(data));
+                        if (m.formOverride !== before) { persistTeamSlotChange(i); changed = true; }
+                    }
+                });
+                if (lobbyState.role !== 'guest') [battleWildPokemon, battleTrainerPokemon].forEach(m => {
+                    const lost = m && m.uid && rec.attachLost && rec.attachLost[m.uid];
+                    if (lost && m.attachCardId === lost) { m.attachCardId = null; if (isVirtualDecksEnabledForActiveSave()) discardUnattachedCard(lost); }
+                });
+            } catch (e) { /* save not ready */ }
+            if (changed) { try { renderTeamGrid(); } catch (e) { /* not on screen */ } }
         }
         function battleMemberCardIds(member) { // the Attach and Nature cards that count in this Battle (a blocked Attach Card is left out)
             if (!member) return [];
@@ -18238,7 +18356,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, dynaBuff: {}, attachHeld: {}, attachSwaps: {}, sketch: {}, lastUsed: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, dynaBuff: {}, attachHeld: {}, attachSwaps: {}, attachHome: {}, attachLost: {}, formCard: {}, replenish: {}, sketch: {}, lastUsed: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -29768,6 +29886,18 @@
             const battleRerollAttackBtn = e.target.closest('.game-battle-reroll-attack-btn');
             if (battleRerollAttackBtn) {
                 rerollBattleAttackDice(battleRerollAttackBtn.dataset.battleSlot);
+                return;
+            }
+            const replenishToggle = e.target.closest('.game-replenish-toggle');
+            if (replenishToggle) {
+                const sl = replenishToggle.dataset.battleSlot;
+                battleReplenishOpen[sl] = !battleReplenishOpen[sl];
+                renderBattleMoveDetails(sl);
+                return;
+            }
+            const replenishPick = e.target.closest('.game-replenish-pick');
+            if (replenishPick) {
+                battleReplenishPick(replenishPick.dataset.battleSlot, replenishPick.dataset.cardId);
                 return;
             }
             const battleItemBtn = e.target.closest('.game-battle-item-btn');
