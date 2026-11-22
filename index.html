@@ -14583,8 +14583,18 @@
             out.d4 = Math.max(1, Math.min(BATTLE_DICE_MAX, total));
             return out;
         }
-        function battleManualCounts(slotName, manualCounts) { // the counters the player set, with a forced d4 applied
+        function battleHazed(slotName) { return battleCalcMoveName[getBattleOpposingSlotName(slotName)] === 'Haze'; } // the opponent's Haze: this side's Attack Die modifications are ignored (it rolls d6s)
+        function collapseBattleCountsToD6(counts) {
+            const sane = sanitizeBattleDiceCounts(counts);
+            const total = BATTLE_DICE.reduce((sum, d) => sum + sane[d.key], 0);
+            const out = {};
+            BATTLE_DICE.forEach(d => { out[d.key] = 0; });
+            out.d6 = Math.max(1, Math.min(BATTLE_DICE_MAX, total));
+            return out;
+        }
+        function battleManualCounts(slotName, manualCounts) { // the counters the player set, with a forced d4 applied (or, against Haze, every die a d6)
             const sane = sanitizeBattleDiceCounts(manualCounts || battleDiceCounts[slotName]);
+            if (battleHazed(slotName)) return collapseBattleCountsToD6(sane);
             return battleSlotForcesD4(slotName) ? collapseBattleCountsToD4(sane) : sane;
         }
         function unshiftBattleDieKey(key, stages) { // the die to set on the counter so it shows `key` after the upgrade; null when no die can end up there
@@ -15804,12 +15814,14 @@
         function stepBattleDice(slotName, dieKey, step) { // dieKey is the die as the counter shows it, i.e. after any upgrade a card made
             if (!battleDiceCounts[slotName] || !(dieKey in battleDiceCounts[slotName])) return;
             const forcedD4 = battleSlotForcesD4(slotName);
-            const counts = forcedD4 ? collapseBattleCountsToD4(battleDiceCounts[slotName]) : battleDiceCounts[slotName];
+            const hazed = battleHazed(slotName);
+            const counts = hazed ? collapseBattleCountsToD6(battleDiceCounts[slotName]) : (forcedD4 ? collapseBattleCountsToD4(battleDiceCounts[slotName]) : battleDiceCounts[slotName]);
             const stages = battleSlotUpgradesMoveDie(slotName);
             const activeKey = getBattleActiveDieKey(counts);
             const setKey = (activeKey && shiftBattleDieKey(activeKey, stages) === dieKey) ? activeKey : unshiftBattleDieKey(dieKey, stages); // the die to store so the counter shows dieKey
             if (!setKey || !(setKey in counts)) return; // a die below the upgraded one can't be chosen
             if (forcedD4 && setKey !== 'd4') return; // the Effect Die made it a d4: no other die can be chosen
+            if (hazed && setKey !== 'd6') return; // Haze: only d6s
             const next = Math.max(0, Math.min(BATTLE_DICE_MAX, counts[setKey] + step));
             if (next === counts[setKey]) return;
             const otherDice = BATTLE_DICE.reduce((sum, d) => sum + (d.key === setKey ? 0 : (counts[d.key] | 0)), 0);
@@ -16479,6 +16491,7 @@
         function guidedMakePrompts(slot) { // Revival and Status Heal need the owner to pick Pok\u00e9mon: null while the Effect Die is still to roll, else { revival?, heal? }
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return {};
             if (guidedBecomePending(slot) || guidedEffectsRollPending(slot) || battleExtraRollPending(slot)) return null;
+            if (guidedEffectsManualReason(slot) === 'oppRoll') return null;
             const ids = getBattleActiveMoveEffects(slot).map(e => e.id), out = {};
             const fields = ids.filter((id, i) => ids.indexOf(id) === i && id !== 'field_clear' && guidedFieldCardId(id)); // Field Move effects: the user chooses which slot gets the card
             if (fields.length) out.fields = fields;
@@ -16538,6 +16551,7 @@
             if (guidedBecomePending(slot)) return 'become'; // the Move has to turn into the other one first
             if (guidedEffectsRollPending(slot)) return 'roll';
             if (battleExtraRollPending(slot)) return 'reroll'; // Roll Effect Die Again
+            if (BATTLE_READS_OPPONENT_ROLLS.includes(moveName)) { const foe = getBattleOpposingSlotName(slot); if (guidedEffectsRollPending(foe) || battleExtraRollPending(foe)) return 'oppRoll'; } // wait for the opponent's roll(s)
             if (guidedPromptPending(slot)) return 'prompt';
             const opponentShielded = !!battleShieldAgainst(getBattleOpposingSlotName(slot)); // Protection ignores them; Priority delays them to the end of the Round
             const hasStatus = getBattleActiveMoveEffects(slot).some(e => GUIDED_STATUS_EFFECTS_SELF.includes(e.id) || (!opponentShielded && GUIDED_STATUS_EFFECTS_OPPONENT.includes(e.id)));
@@ -16577,7 +16591,7 @@
         }
         function guidedRevertLasting(slot, hadApplied) { // it became Struggle: Block Item (applied at Lock In) reverts always; Escape Prevention only if its effects had applied
             const m = getBattleSlotMember(slot);
-            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth', 'persistDis'] : ['blocked']);
+            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth', 'persistDis', 'dynaBuff', 'attach'] : ['blocked']);
         }
         function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
             const g = guidedState();
@@ -16907,7 +16921,7 @@
                     text = `${guidedSideLabel(p.slot)} used Switchout: choose the Pok\u00e9mon to send in. It uses the same Move (the original\u2019s STAB still applies).`;
                     if (!p.failed && guidedIControl(p.slot) && guidedSlotKind(p.slot) === 'player') buttons += guidedBtn('pickswap', p.slot, 'Choose Replacement');
                 } else {
-                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'reroll' ? 'roll the Effect Die again' : r === 'become' ? 'turn its Move into the other Move' : r === 'prompt' ? 'make a choice (Revival / Status Heal / Field Move)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
+                    const reasonText = s => { const r = guidedEffectsManualReason(s); return r === 'roll' ? 'roll the Effect Die' : r === 'reroll' ? 'roll the Effect Die again' : r === 'oppRoll' ? 'wait for the opponent\u2019s Effect Die roll (its Move Effects depend on it)' : r === 'become' ? 'turn its Move into the other Move' : r === 'prompt' ? 'make a choice (Revival / Status Heal / Field Move)' : (r === 'status' ? 'apply Status Conditions, then press done' : 'nothing to apply'); };
                     text = 'Move Effects apply Attacker first, then Defender; a side with nothing to apply by hand continues by itself. ' + status(s => g.fxDone[s] ? 'done' : (s === 'defender' && !g.fxDone.attacker ? 'waiting' : reasonText(s)));
                     GUIDED_SLOTS.forEach(s => { const sum = battleExtraRollSummary(s) || battleEffectDieMoveSummary(s); if (sum) text += ' ' + guidedSideLabel(s) + ' \u2014 ' + sum; });
                     GUIDED_SLOTS.forEach(s => { const was = g.struggled && g.struggled[s]; if (was) text += ` ${guidedSideLabel(s)} can\u2019t use ${was === true ? 'its Move' : was} and uses Struggle instead.`; });
@@ -17308,7 +17322,7 @@
             }
             if (name === 'Spit Up') {
                 const member = getBattleSlotMember(slot);
-                if (!member || !member.attachCardId) { battleCalcManualValue[slot] = { moveName: name, value: 0 }; return false; } // no Attach Card: Attack Strength 0
+                if (!member || !battleAttachIdOf(member)) { battleCalcManualValue[slot] = { moveName: name, value: 0 }; return false; } // no Attach Card: Attack Strength 0
                 openBattleManualOverlay(slot, moveName, baseMove, name, 'd4');
                 return true;
             }
@@ -17536,7 +17550,7 @@
             const other = getBattleOpposingSlotName(slotName);
             const moveName = battleCalcMoveName[other];
             if (!moveName) return false;
-            if (battleMoveEffectsBase(slotName).some(e => e.id === 'prot')) return false; // this side's Protection makes the opponent's Attack Strength 0
+            if (battleShieldBase(slotName).some(e => e.id === 'prot')) return false; // this side's Protection makes the opponent's Attack Strength 0
             const power = resolveBattleMovePower(other, getBattleEffectiveStrength(other, moveName, battleCalcBaseMove[other]));
             return Number.isFinite(power) && power > 0;
         }
@@ -17656,11 +17670,31 @@
         }
         // ---- Moves whose own text grants effects the codes don't: Octolock / Fake Out (Disadvantage), Snatch / Spectral Thief (copy the opponent's), Burning Jealousy (Burned) ----
         // Layers (so no side's effects ever depend on the other's in a circle): 0 = the Move's codes + Octolock / Fake Out; 1 = Snatch / Spectral Thief read the opponent's layer 0; 2 = Burning Jealousy reads the opponent's layers 0 + 1.
-        const BATTLE_GRANT_MOVES = ['Octolock', 'Fake Out', 'Snatch', 'Spectral Thief', 'Burning Jealousy'];
+        const BATTLE_READS_OPPONENT_ROLLS = ['Magic Coat', 'Burning Jealousy']; // their effects depend on what the opponent's Effect Die(s) gave
+        const BATTLE_GRANT_MOVES = ['Octolock', 'Fake Out', 'Snatch', 'Spectral Thief', 'Burning Jealousy', 'Magic Coat'];
+        const BATTLE_IGNORE_PROT_MOVES = ['Mighty Cleave', 'G-Max One Blow', 'G-Max Rapid Flow']; // the opponent's Protection is ignored this Round
+        const BATTLE_DYNA_BUFF_MOVES = { 'Max Airstream': 'priority', 'Max Strike': 'priority', 'Max Darkness': 'adv', 'Max Knuckle': 'adv', 'Max Ooze': 'adv', 'Max Phantasm': 'adv' }; // the effect lasts while the user stays Dynamaxed / Gigantamaxed
+        function battleHazeFilter(slotName, list) { // Haze: the opponent's Move Effects that affect itself are ignored
+            if (battleCalcMoveName[getBattleOpposingSlotName(slotName)] !== 'Haze' || !EFFECTS_DATA || !EFFECTS_DATA.effects) return list;
+            return list.filter(e => { const def = EFFECTS_DATA.effects[e.id]; return !(def && def.side === 'self'); });
+        }
+        function battleMoveEffectsBase(slotName, forMove) { // the Move's own effects, minus a Protection the opponent's Move ignores
+            const out = battleMoveEffectsRaw(slotName, forMove);
+            return (BATTLE_IGNORE_PROT_MOVES.includes(battleCalcMoveName[getBattleOpposingSlotName(slotName)]) && out.some(e => e.id === 'prot')) ? out.filter(e => e.id !== 'prot') : out;
+        }
+        function battleDynaGrants(slotName, base) { // Max Airstream / Strike (Priority), Max Darkness / Knuckle / Ooze / Phantasm (Advantage): on every Round while the user stays Dynamaxed
+            const rec = getBattleRecordStore(), member = getBattleSlotMember(slotName), mine = rec && rec.dynaBuff && member && member.uid && rec.dynaBuff[member.uid];
+            if (!mine || !battleMemberIsDynamaxed(member)) return [];
+            return ['adv', 'priority'].filter(id => mine[id] !== undefined && !base.some(e => e.id === id)).map(id => ({ id, code: 'dynabuff' }));
+        }
+        function battleShieldBase(slotName) { // what decides Protection / Priority: the Move's codes, a Dynamax buff, Haze (never anything that reads the other side)
+            const base = battleMoveEffectsBase(slotName);
+            return battleHazeFilter(slotName, base.concat(battleDynaGrants(slotName, base)));
+        }
         const BATTLE_PERSIST_DIS_MOVES = ['Max Flutterby', 'Max Quake', 'Max Steelspike', 'Max Wyrmwind', 'Octolock']; // the opponent has Disadvantage for the rest of the Battle (until switched out)
         const BATTLE_DIS_WARD_MOVES = ['Brick Break', 'Psychic Fangs']; // the user is immune to the opponent's Disadvantage effects this Round
         function battleLayer0Grants(slotName, mv, base) {
-            const out = [];
+            const out = battleDynaGrants(slotName, base);
             if (mv === 'Octolock' && !base.some(e => e.id === 'dis' || e.id === 'doubdis')) out.push({ id: 'dis', code: 'octolock' }); // (its code says Advantage for the user; its text says Disadvantage for the opponent)
             if (mv === 'Fake Out') {
                 const member = getBattleSlotMember(slotName), rec = getBattleRecordStore();
@@ -17670,7 +17704,22 @@
         }
         function battleLayer0Effects(slotName, forMove) {
             const base = battleMoveEffectsBase(slotName, forMove), mv = forMove || battleCalcMoveName[slotName];
-            return (mv && BATTLE_GRANT_MOVES.includes(mv)) ? base.concat(battleLayer0Grants(slotName, mv, base)) : base;
+            return battleHazeFilter(slotName, base.concat(battleLayer0Grants(slotName, mv, base)));
+        }
+        function battleReflectGrants(slotName, mv) { // Magic Coat: the Move Effects the opponent's Move aims at the user are aimed at the opponent too (the user still gets them)
+            if (mv !== 'Magic Coat') return [];
+            const out = [];
+            battleLayer0Effects(getBattleOpposingSlotName(slotName)).forEach(e => {
+                const def = EFFECTS_DATA && EFFECTS_DATA.effects && EFFECTS_DATA.effects[e.id];
+                if (def && def.side === 'opponent' && e.id !== 'extra_opp') out.push({ id: e.id, code: 'reflect:' + e.id });
+            });
+            return out;
+        }
+        function battleImposedGrants(slotName, forMove) { // G-Max Depletion: the Move the opponent uses this Round gains Recharge
+            if (forMove && forMove !== battleCalcMoveName[slotName]) return [];
+            if (battleCalcMoveName[getBattleOpposingSlotName(slotName)] !== 'G-Max Depletion' || !battleCalcMoveName[slotName]) return [];
+            if (battleShieldAgainst(slotName)) return []; // Protection / Priority keep its effects off
+            return battleMoveEffectsBase(slotName, forMove).some(e => e.id === 'recharge') ? [] : [{ id: 'recharge', code: 'depletion' }];
         }
         function battleStealGrants(slotName, mv) { // Snatch: the opponent's Advantage becomes the user's. Spectral Thief: the user gets a copy, and the opponent gets the Disadvantage its Move would have given the user.
             if (mv !== 'Snatch' && mv !== 'Spectral Thief') return [];
@@ -17690,8 +17739,8 @@
         }
         function battleConditionalGrants(slotName, forMove) {
             const mv = forMove || battleCalcMoveName[slotName];
-            if (!mv || !BATTLE_GRANT_MOVES.includes(mv)) return [];
-            const base = battleMoveEffectsBase(slotName, forMove), out = battleLayer0Grants(slotName, mv, base).concat(battleStealGrants(slotName, mv));
+            const base = battleMoveEffectsBase(slotName, forMove), out = battleLayer0Grants(slotName, mv, base).concat(battleStealGrants(slotName, mv), battleReflectGrants(slotName, mv), battleImposedGrants(slotName, forMove));
+            if (!mv || !BATTLE_GRANT_MOVES.includes(mv)) return out;
             if (mv === 'Burning Jealousy') { // when the opponent receives Advantage this Round, it gains Burned
                 const opp = getBattleOpposingSlotName(slotName);
                 if (!battleShieldAgainst(opp) && battleSideReceivesAdvantage(opp)) out.push({ id: 'burn', code: 'jealousy' });
@@ -17702,9 +17751,9 @@
             const base = battleMoveEffectsBase(slotName, forMove);
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok' || guidedFrozenEffects(slotName, forMove)) return base;
             const extra = battleConditionalGrants(slotName, forMove);
-            return extra.length ? base.concat(extra) : base;
+            return battleHazeFilter(slotName, extra.length ? base.concat(extra) : base);
         }
-        function battleMoveEffectsBase(slotName, forMove) { // every Move Effect in force for this side: [{ id, code }], one per source (the Move's codes after cards add or shift them, thresholds met, plus granted effects)
+        function battleMoveEffectsRaw(slotName, forMove) { // every Move Effect in force for this side: [{ id, code }], one per source (the Move's codes after cards add or shift them, thresholds met, plus granted effects)
             const out = [];
             if (!EFFECTS_DATA || EFFECTS_STATE !== 'ok') return out;
             const frozen = guidedFrozenEffects(slotName, forMove); // Guided rounds: a Move replaced by Struggle after its effects applied
@@ -17792,7 +17841,7 @@
         const BATTLE_LIVE_STRENGTH = {
             'Mimic': () => 0, 'Sketch': () => 0, 'Transform': () => 0, 'Metronome': () => 0, 'Nature Power': () => 0, 'Sleep Talk': () => 0, // nothing to copy yet: Attack Strength 0 (Guided rounds turn them into the other Move in Phase 3)
             'Dark Void': slot => { const o = getBattleSlotMember(getBattleOpposingSlotName(slot)); return o ? (o.status === 'sleep' && !o.fainted ? 2 : 0) : null; },
-            'Poltergeist': slot => { const o = getBattleSlotMember(getBattleOpposingSlotName(slot)); return o ? (o.attachCardId ? 3 : 0) : null; },
+            'Poltergeist': slot => { const o = getBattleSlotMember(getBattleOpposingSlotName(slot)); return o ? (battleAttachIdOf(o) ? 3 : 0) : null; },
         };
         function battleOwnTeamMembers(slotName) { // the user's team, when this device is the one that owns it (null: a wild / non-player Pok\u00e9mon, or another player's)
             if (!getBattleSlotOwnerId(slotName)) return null;
@@ -17826,7 +17875,7 @@
         const BATTLE_STRENGTH_MOVES = {
             'Tera Starstorm': slot => isMemberTerastallized(getBattleSlotMember(getBattleOpposingSlotName(slot))),
             'Order Up': slot => battlePromptAnswer(slot, 'Order Up') === 1,
-            'Acrobatics': slot => { const m = getBattleSlotMember(slot); return !!m && !m.attachCardId; },
+            'Acrobatics': slot => { const m = getBattleSlotMember(slot); return !!m && !battleAttachIdOf(m); },
             'Behemoth Bash': slot => battleMemberIsDynamaxed(getBattleSlotMember(getBattleOpposingSlotName(slot))),
             'Behemoth Blade': slot => battleMemberIsDynamaxed(getBattleSlotMember(getBattleOpposingSlotName(slot))),
             'Dynamax Cannon': slot => battleMemberIsDynamaxed(getBattleSlotMember(getBattleOpposingSlotName(slot))),
@@ -17925,6 +17974,11 @@
                 if (battleCalcBaseMove[slotName] === 'Transform' && BATTLE_MOVE_TYPE_NAMES.includes(getBattleMoveType(mv))) { // Transform: the user's Type becomes that Move's Type
                     battleSetTypeOverride(record, selfUid, [getBattleMoveType(mv)]);
                 }
+                if (BATTLE_DYNA_BUFF_MOVES[mv] && battleMemberIsDynamaxed(member)) { // Max Airstream / Strike / Darkness / Knuckle / Ooze / Phantasm: lasts while the user stays Dynamaxed
+                    if (!record.dynaBuff || typeof record.dynaBuff !== 'object') record.dynaBuff = {};
+                    const mine = record.dynaBuff[selfUid] || (record.dynaBuff[selfUid] = {});
+                    if (mine[BATTLE_DYNA_BUFF_MOVES[mv]] === undefined) mine[BATTLE_DYNA_BUFF_MOVES[mv]] = record.round;
+                }
                 if (mv === 'Odor Sleuth') {
                     if (!record.odorSleuth || typeof record.odorSleuth !== 'object') record.odorSleuth = {};
                     if (record.odorSleuth[selfUid] === undefined) record.odorSleuth[selfUid] = record.round;
@@ -17934,6 +17988,7 @@
             const shield = battleShieldAgainst(getBattleOpposingSlotName(slotName));
             if (shield === 'prot' || (shield === 'priority' && !delayed)) return; // Protection ignores them for good; Priority holds them back until the end of the Round
             const src = ensureMemberUid(member), dst = ensureMemberUid(target);
+            if (!only || only === 'attach') battleApplyAttachSwap(record, slotName);
             if ((!only || only === 'blockitem') && battleSlotHasMoveEffect(slotName, 'blockitem')) {
                 if (!record.blocked || typeof record.blocked !== 'object') record.blocked = {};
                 if (record.blocked[dst] === undefined) record.blocked[dst] = src;
@@ -17987,6 +18042,14 @@
                 else delete record.typeOverride[srcUid];
                 delete record.typeOverrideRound[srcUid];
             }
+            if (record.attachSwaps && record.attachHeld && (!kinds || kinds.includes('attach'))) { // Covet / Thief / Switcheroo / Trick of this Round: the Attach Cards go back
+                const sw = record.attachSwaps[record.round + '|' + srcUid];
+                if (sw && !sw.none) {
+                    [['a', 'prevHeldA'], ['b', 'prevHeldB']].forEach(([who, prev]) => { if (sw[prev] === undefined) delete record.attachHeld[sw[who]]; else record.attachHeld[sw[who]] = sw[prev]; });
+                }
+                delete record.attachSwaps[record.round + '|' + srcUid];
+            }
+            if (record.dynaBuff && (!kinds || kinds.includes('dynaBuff'))) Object.keys(record.dynaBuff).forEach(uid => { if (uid !== srcUid) return; const mine = record.dynaBuff[uid]; Object.keys(mine).forEach(id => { if (mine[id] === record.round) delete mine[id]; }); }); // Max Darkness and friends: only what this Round set
             if (record.persistDis && (!kinds || kinds.includes('persistDis'))) Object.keys(record.persistDis).forEach(uid => { const pd = record.persistDis[uid]; if (pd && pd.src === srcUid && pd.round === record.round) delete record.persistDis[uid]; }); // lasting Disadvantage from this Round's Move
             (kinds || ['blocked', 'locked', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
         }
@@ -17997,9 +18060,42 @@
             if (rec.blocked && rec.blocked[member.uid] !== undefined) return true;
             return !!(rec.attachSpent && rec.attachSpent[member.uid] !== undefined); // Spit Up: from the Round it was used, for the rest of the Battle (switching out doesn't lift it)
         }
+        const BATTLE_ATTACH_TAKE_MOVES = ['Covet', 'Thief']; // take the opponent's Attach Card (the user's own is set aside until the Battle ends)
+        const BATTLE_ATTACH_SWAP_MOVES = ['Switcheroo', 'Trick']; // swap the two Attach Cards
+        function battleAttachIdOf(member) { // the Attach Card this Pok\u00e9mon holds in this Battle: a Covet / Thief / Switcheroo / Trick overlay wins over the saved card (the saved cards are never touched, so they are back as soon as the Battle ends)
+            if (!member) return null;
+            if (battleInProgress && member.uid) {
+                const rec = getBattleRecordStore();
+                if (rec && rec.attachHeld && rec.attachHeld[member.uid] !== undefined) return rec.attachHeld[member.uid] || null;
+            }
+            return member.attachCardId || null;
+        }
+        function battleApplyAttachSwap(record, slotName) { // Covet / Thief / Switcheroo / Trick: idempotent per Round
+            const mv = battleCalcMoveName[slotName];
+            const take = BATTLE_ATTACH_TAKE_MOVES.includes(mv), swap = BATTLE_ATTACH_SWAP_MOVES.includes(mv);
+            if (!take && !swap) return;
+            const member = getBattleSlotMember(slotName), target = getBattleSlotMember(getBattleOpposingSlotName(slotName));
+            if (!member || !target) return;
+            const a = ensureMemberUid(member), b = ensureMemberUid(target);
+            if (!record.attachHeld || typeof record.attachHeld !== 'object') record.attachHeld = {};
+            if (!record.attachSwaps || typeof record.attachSwaps !== 'object') record.attachSwaps = {};
+            const key = record.round + '|' + a;
+            if (record.attachSwaps[key]) return;
+            const ca = battleAttachIdOf(member), cb = battleAttachIdOf(target);
+            if (take ? !cb : (!ca && !cb)) { record.attachSwaps[key] = { none: true }; return; } // nothing to take / swap
+            record.attachSwaps[key] = { a, b, prevHeldA: record.attachHeld[a], prevHeldB: record.attachHeld[b] };
+            record.attachHeld[a] = cb || '';
+            record.attachHeld[b] = take ? '' : (ca || '');
+            [a, b].forEach(uid => { if (record.blocked) delete record.blocked[uid]; if (record.attachSpent) delete record.attachSpent[uid]; }); // the card arrives fresh: no Block Item / Spit Up carried over
+            const nm = x => (getBattleMemberDisplay(x).name || 'Pok\u00e9mon');
+            const cn = id => (id && CARDS_BY_ID[id]) ? CARDS_BY_ID[id].name : 'no Attach Card';
+            showBattleArenaNotice(take
+                ? `${nm(member)} took ${cn(cb)} from ${nm(target)}.${ca ? ' ' + cn(ca) + ' is set aside until the Battle ends.' : ''} All Attach Cards return at the end of the Battle.`
+                : `${nm(member)} and ${nm(target)} swapped Attach Cards (${nm(member)} now holds ${cn(cb)}, ${nm(target)} ${cn(ca)}). They return at the end of the Battle.`);
+        }
         function battleMemberCardIds(member) { // the Attach and Nature cards that count in this Battle (a blocked Attach Card is left out)
             if (!member) return [];
-            return [battleMemberAttachBlocked(member) ? null : member.attachCardId, member.natureCardId];
+            return [battleMemberAttachBlocked(member) ? null : battleAttachIdOf(member), member.natureCardId];
         }
         function battleMemberEscapeLocked(record, member) { // Escape Prevention: can't be switched out (a Fainted Pokémon can still be replaced)
             return !!(record && member && member.uid && !member.fainted && record.locked && record.locked[member.uid] !== undefined);
@@ -18011,7 +18107,7 @@
         function battleMoveWardsDisadvantage(slotName) { return BATTLE_DIS_WARD_MOVES.includes(battleCalcMoveName[slotName]); } // Brick Break / Psychic Fangs
         function battleShieldAgainst(targetSlot) { // what keeps the opponent's Move Effects off this side: 'prot' (Protection), 'priority' (Priority) or null
             const source = getBattleOpposingSlotName(targetSlot);
-            const has = (slot, id) => battleMoveEffectsBase(slot).some(e => e.id === id); // (the Move's own codes only, so Snatch and friends can't loop)
+            const has = (slot, id) => battleShieldBase(slot).some(e => e.id === id); // (the Move's own codes, a Dynamax buff and Haze only, so Snatch and friends can't loop)
             if (has(targetSlot, 'prot')) return 'prot';
             if (has(targetSlot, 'priority') && !has(source, 'prot')) return 'priority'; // Priority has no effect against Protection
             return null;
@@ -18022,6 +18118,7 @@
             if (record.moveStreak) delete record.moveStreak[uid]; // Repeat starts over
             if (record.blocked) delete record.blocked[uid]; // Block Item ends when the Pokémon is switched out
             if (record.locked) delete record.locked[uid];
+            if (record.dynaBuff) delete record.dynaBuff[uid];
             if (record.persistDis) delete record.persistDis[uid]; // lasting Disadvantage and Fell Stinger's bonus end with a switch-out
             if (record.nextAdv) delete record.nextAdv[uid];
             if (record.usedMoves) Object.keys(record.usedMoves).forEach(k => { if (k.startsWith(uid + '|')) delete record.usedMoves[k]; });
@@ -18141,7 +18238,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, sketch: {}, lastUsed: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, dynaBuff: {}, attachHeld: {}, attachSwaps: {}, sketch: {}, lastUsed: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -18616,6 +18713,9 @@
         function getBattleAdjustedAttackStrength(slotName, moveName, baseMoveName, opts) {
             const attack = computeBattleAttackStrength(slotName, moveName, baseMoveName, opts);
             if (!attack) return null;
+            if (attack.total > 0 && battleCalcMoveName[getBattleOpposingSlotName(slotName)] === 'Mighty Cleave' && battleMoveEffectsRaw(slotName).some(e => e.id === 'prot')) { // Mighty Cleave: a Move that gives Protection has its Protection ignored and its Attack Strength becomes 0
+                return { power: attack.power, stab: attack.stab, bonuses: attack.bonuses.concat([{ label: 'Mighty Cleave', bonus: -attack.total }]), lastBonuses: [], total: 0, penalty: null, protectedBy: false };
+            }
             if (attack.total > 0 && battleSlotHasMoveEffect(getBattleOpposingSlotName(slotName), 'prot')) { // the opponent's Protection: this Move's Attack Strength becomes 0
                 return { power: attack.power, stab: attack.stab, bonuses: attack.bonuses.concat([{ label: 'Protection', bonus: -attack.total }]), lastBonuses: [], total: 0, penalty: null, protectedBy: true };
             }
@@ -19089,7 +19189,7 @@
         }
 
         function getBattleMemberAttachCardMoves(member) {
-            const card = (member && member.attachCardId && !battleMemberAttachBlocked(member)) ? CARDS_BY_ID[member.attachCardId] : null; // Block Item hides what the card teaches
+            const card = (member && battleAttachIdOf(member) && !battleMemberAttachBlocked(member)) ? CARDS_BY_ID[battleAttachIdOf(member)] : null; // Block Item hides what the card teaches
             if (!card) return [];
             const names = [];
             if (typeof card.taught_move === 'string' && card.taught_move) names.push(card.taught_move);
@@ -33578,9 +33678,10 @@
             };
             if (MOVE_ICONS_SHOW_DIE_AND_LEVEL) {
                 const baseDie = entry.die || 'd6', baseStage = BATTLE_DIE_LADDER.indexOf(baseDie); // a move with no listed die uses the d6
-                const stages = Math.max(0, Number(opts && opts.upgradeDie) || 0);
+                const hazed = !!(opts && opts.hazed); // Haze: the Attack Die is a d6 whatever the move or a card says
+                const stages = hazed ? 0 : Math.max(0, Number(opts && opts.upgradeDie) || 0);
                 const startStage = (opts && opts.forceD4) ? 0 : baseStage; // D4 (on Effect Die): the die becomes a d4 first, then any upgrade applies
-                let upgradedDie = ((stages > 0 || (opts && opts.forceD4)) && startStage >= 0) ? BATTLE_DIE_LADDER[Math.min(BATTLE_DIE_LADDER.length - 1, startStage + stages)] : null;
+                let upgradedDie = hazed ? (baseDie !== 'd6' ? 'd6' : null) : ((stages > 0 || (opts && opts.forceD4)) && startStage >= 0) ? BATTLE_DIE_LADDER[Math.min(BATTLE_DIE_LADDER.length - 1, startStage + stages)] : null;
                 if (upgradedDie === baseDie) upgradedDie = null; // already as high as it goes
                 if (entry.die === 'd4' || entry.die === 'd8') {
                     const dieItem = fromEffect(entry.die, entry.die);
@@ -33788,6 +33889,7 @@
             return `<span class="gbd-extra-group">${withPlus ? '<span class="gbd-extra-plus">+</span>' : ''}${items}</span>`; // sits at the end of the move's own icon row (wraps to a new line only if it doesn't fit)
         }
         function battleSlotUpgradesMoveDie(slotName) { // how many stages the move's Attack Die goes up: Dire Hit, and Razor Claw once the Effect Die meets its threshold
+            if (battleHazed(slotName)) return 0; // Haze ignores it
             let stages = getBattleBonusCards(slotName).some(card => parseBattleRuleFlag(card.upgradeMoveDie, false)) ? 1 : 0;
             stages += getBattleTriggeredEffects(slotName).upgradeMoveDie;
             return stages;
@@ -33802,6 +33904,7 @@
             const grantedIds = getBattleGrantedMoveEffects(slotName);
             const upgradeDie = battleSlotUpgradesMoveDie(slotName);
             const forceD4 = battleSlotForcesD4(slotName);
+            const hazed = battleHazed(slotName);
             const effectDieResult = getBattleEffectDieResult(slotName);
             const shieldOnOpponent = battleShieldAgainst(getBattleOpposingSlotName(slotName)); // Protection ignores this Move's effects on the opponent; Priority only until the Attack Rolls are made
             const ignoreOpponentEffects = shieldOnOpponent === 'prot' || (shieldOnOpponent === 'priority' && !statusAttnBothRolled());
@@ -33832,16 +33935,16 @@
             const left = box.querySelector('.gbd-left');
             const right = box.querySelector('.gbd-right');
             const shownType = moveName ? getBattleMatchupMoveType(slotName, moveName) : '';
-            const key = `${shownType}|${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|up${upgradeDie}|d4${forceD4 ? 1 : 0}|e${effectDieResult === null ? '' : effectDieResult}|ign${ignoreOpponentEffects ? 1 : 0}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
+            const key = `${shownType}|${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|up${upgradeDie}|d4${forceD4 ? 1 : 0}|hz${hazed ? 1 : 0}|e${effectDieResult === null ? '' : effectDieResult}|ign${ignoreOpponentEffects ? 1 : 0}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
             if (box.dataset.moveKey !== key) {
                 box.dataset.moveKey = key;
                 hideEffectToast();
                 let detail = '';
-                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, forceD4, codeAdds, effectDieResult, ignoreOpponentEffects }).bodyHtml;
+                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, forceD4, hazed, codeAdds, effectDieResult, ignoreOpponentEffects }).bodyHtml;
                 else if (entry && EFFECTS_STATE === 'failed') detail = '<div class="pim-note">effects.json could not be loaded (is it in the repo root?)</div>';
                 let body = detail;
                 if (entry && EFFECTS_STATE === 'ok') {
-                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, forceD4, codeAdds, effectDieResult, ignoreOpponentEffects });
+                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, forceD4, hazed, codeAdds, effectDieResult, ignoreOpponentEffects });
                     const extra = buildGrantedMoveEffectsHtml(grantedIds, !!parts.iconsHtml);
                     // the granted effects join the move's own icon row (right-aligned); the row wraps if they don't fit
                     body = ((parts.iconsHtml || extra) ? `<div class="pim-move-icons gbd-icons-row">${parts.iconsHtml}${extra}</div>` : '') + parts.uniqueHtml + parts.tableHtml;
