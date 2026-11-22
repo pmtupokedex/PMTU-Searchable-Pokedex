@@ -15353,12 +15353,15 @@
             if (cardId !== null) {
                 const card = typeof cardId === 'string' ? CARDS_BY_ID[cardId] : null;
                 if (!card || card.cardType !== 'Field') return;
+                const rec0 = hostBattleArenaState.record;
+                if (rec0 && rec0.noField) { sendBattleNotice(peerKey, 'G-Max Wind Rage: no more Field Move cards can be put into play this Battle.'); broadcastBattleArenaState(); return; }
             }
             getBattleFieldStore()[slot] = cardId;
             broadcastBattleArenaState();
         }
 
         function requestBattleFieldEffect(slot, cardId) {
+            if (cardId && battleFieldBlocked()) { showBattleArenaNotice('G-Max Wind Rage: no more Field Move cards can be put into play this Battle.'); return false; }
             if (lobbyState.role === 'guest') {
                 if (lobbyState.hostConn && lobbyState.hostConn.open) {
                     lobbyState.hostConn.send({ type: 'battle-field-set', slot, cardId: cardId || null });
@@ -16517,7 +16520,7 @@
             if (guidedBecomePending(slot) || guidedEffectsRollPending(slot) || battleExtraRollPending(slot)) return null;
             if (guidedEffectsManualReason(slot) === 'oppRoll') return null;
             const ids = getBattleActiveMoveEffects(slot).map(e => e.id), out = {};
-            const fields = ids.filter((id, i) => ids.indexOf(id) === i && id !== 'field_clear' && guidedFieldCardId(id)); // Field Move effects: the user chooses which slot gets the card
+            const fields = battleFieldBlocked() ? [] : ids.filter((id, i) => ids.indexOf(id) === i && id !== 'field_clear' && guidedFieldCardId(id)); // Field Move effects: the user chooses which slot gets the card
             if (fields.length) out.fields = fields;
             if (guidedSlotKind(slot) !== 'player') return out; // NPC sides skip Revival and Status Heal
             const rec = getBattleRecordStore(), key = guidedOwnerKey(slot);
@@ -17085,7 +17088,7 @@
             ['attacker', 'defender'].forEach(slot => {
                 const mv = battleCalcMoveName[slot], member = getBattleSlotMember(slot), oppSlot = getBattleOpposingSlotName(slot), opp = getBattleSlotMember(oppSlot);
                 if (!mv || !member) return;
-                if (mv === 'Rest' && !member.fainted && !record.noSleep) battleAddStatusTask(record, { kind: 'set', uid: ensureMemberUid(member), status: 'sleep', counter: 2, replace: true, why: 'Rest' });
+                if (mv === 'Rest' && !member.fainted) battleAddStatusTask(record, { kind: 'set', uid: ensureMemberUid(member), status: 'sleep', counter: 2, replace: true, why: 'Rest' });
                 if (!opp || opp.fainted || battleShieldAgainst(oppSlot) === 'prot') return; // Protection ignores them; Priority only delays them to here
                 if (mv === 'Smelling Salts' && opp.status) battleAddStatusTask(record, { kind: 'clear', uid: ensureMemberUid(opp), only: null, why: 'Smelling Salts' });
                 if (mv === 'Wake-Up Slap' && opp.status === 'sleep') battleAddStatusTask(record, { kind: 'clear', uid: ensureMemberUid(opp), only: 'sleep', why: 'Wake-Up Slap' });
@@ -17189,6 +17192,11 @@
             if (t.kind === 'set') {
                 const why = battleStatusWhy(member, index, t.status, !!t.replace);
                 const cnt = Number.isFinite(t.counter) ? ` with ${t.counter} Status Counter${t.counter === 1 ? '' : 's'}` : '';
+                if (why && t.replace) { // Rest: the old Status is discarded even when Sleep can't be applied
+                    if (!member.status || member.status === 'none') { battleStatusTaskFinish(key); return; }
+                    boardFrontierShow(t.why, `${name(member)} can't gain ${battleStatusName(t.status)}: ${why} Its current ${battleStatusName(member.status)} card is still discarded.`, btn('apply', 'Discard'));
+                    return;
+                }
                 if (why) { boardFrontierShow(t.why, `${name(member)} can't gain ${battleStatusName(t.status)}: ${why}`, btn('ok', 'OK')); return; }
                 boardFrontierShow(t.why, `${name(member)} gains ${battleStatusName(t.status)}${cnt}.` + (member.status && t.replace ? ` Its current ${battleStatusName(member.status)} card is discarded first.` : '') + (t.status === 'sleep' && !Number.isFinite(t.counter) ? ' Roll the Status Die (d4) and set the Sleep counter.' : ''), btn('apply', 'Apply'));
                 return;
@@ -17220,7 +17228,7 @@
                 if (t.kind === 'uproar') battleStatusOwnMembers().forEach(x => { if (x.member.status === 'sleep') battleStatusClear(x.index, x.member); });
                 else {
                     const found = battleStatusFind(t.uid);
-                    if (found && t.kind === 'set') { if (!battleStatusGive(found.index, found.member, t.status, t.counter, !!t.replace)) showGameToast(t.why + ': it fails.'); }
+                    if (found && t.kind === 'set') { if (!battleStatusGive(found.index, found.member, t.status, t.counter, !!t.replace)) { if (t.replace) battleStatusClear(found.index, found.member); else showGameToast(t.why + ': it fails.'); } }
                     else if (found && t.kind === 'clear' && (!t.only || found.member.status === t.only)) battleStatusClear(found.index, found.member);
                 }
             } else if (act === 'pick') {
@@ -17575,7 +17583,7 @@
             const rec = getBattleRecordStore(), user = getBattleSlotMember(slotName);
             if (moveName === 'Nihil Light' && counted.includes('fairy')) return { label: 'Neutral', bonus: 0, ignored: true }; // no Type Effectiveness against Fairy Type
             if (counted.includes('ghost') && rec && rec.odorSleuth && user && user.uid && rec.odorSleuth[user.uid] !== undefined) return { label: 'Neutral', bonus: 0, ignored: true }; // Odor Sleuth
-            const result = computeTypeMatchup(moveType, targetTypes[0], targetTypes[1] || null, rule.dual, rule.immunities, moveName === 'Salt Cure' ? ['rock', 'water'] : null); // Salt Cure: Rock and Water Types count as Effective, every other Type uses the chart
+            const result = computeTypeMatchup(moveType, targetTypes[0], targetTypes[1] || null, rule.dual, rule.immunities, moveName === 'Salt Cure' ? ['rock', 'water'] : null, battleNeutralPairs()); // Salt Cure: Rock and Water Types count as Effective, every other Type uses the chart
             if (!result) return null;
             const bonus = parseInt(result.bonus, 10);
             return { label: result.label, bonus: Number.isNaN(bonus) ? 0 : bonus };
@@ -18211,6 +18219,9 @@
                     const mine = record.dynaBuff[selfUid] || (record.dynaBuff[selfUid] = {});
                     if (mine[BATTLE_DYNA_BUFF_MOVES[mv]] === undefined) mine[BATTLE_DYNA_BUFF_MOVES[mv]] = record.round;
                 }
+                if (mv === 'G-Max Gravitas') record.gravitas = true;
+                if (mv === 'G-Max Wind Rage') record.noField = true;
+                if (mv === 'G-Max Stonesurge') { if (!record.stealthExempt || typeof record.stealthExempt !== 'object') record.stealthExempt = {}; record.stealthExempt[selfUid] = true; }
                 if (mv === 'Perish Song') battleAddStatusTask(record, { kind: 'set', uid: selfUid, status: 'cursed', replace: false, why: 'Perish Song' });
                 if (mv === 'Uproar' && !record.noSleep) { record.noSleep = true; battleAddStatusTask(record, { kind: 'uproar' }); }
                 if (mv === 'Odor Sleuth') {
@@ -18536,7 +18547,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, dynaBuff: {}, attachHeld: {}, attachSwaps: {}, attachHome: {}, attachLost: {}, formCard: {}, replenish: {}, statusTasks: [], statusDone: {}, noSleep: false, yawn: {}, sketch: {}, lastUsed: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, dynaBuff: {}, attachHeld: {}, attachSwaps: {}, attachHome: {}, attachLost: {}, formCard: {}, replenish: {}, statusTasks: [], statusDone: {}, noSleep: false, yawn: {}, gravitas: false, noField: false, stealthExempt: {}, sketch: {}, lastUsed: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -18933,6 +18944,7 @@
                 const card = state ? CARDS_BY_ID[state.cardId] : null;
                 if (!card) return;
                 if (!isOwn && card.appliesTo === 'own') return;
+                if (card.id === 'field_stealth_rock' && battleStealthExempt(slotName)) return;
                 if (counted.has(card.id)) return;
                 counted.add(card.id);
                 if (Array.isArray(card.typeModifiers) && moveType) {
@@ -18951,6 +18963,18 @@
             return battleMoveFieldTweaks(moveName, modifiers);
         }
 
+        function battleNeutralPairs() { // G-Max Gravitas: Ground vs Flying is a neutral matchup for the rest of the Battle (every other pairing keeps the table)
+            const rec = battleInProgress ? getBattleRecordStore() : null;
+            return (rec && rec.gravitas) ? [['ground', 'flying']] : null;
+        }
+        function battleStealthExempt(slotName) { // G-Max Stonesurge: its user takes no penalty from Stealth Rock for the rest of the Battle
+            const rec = battleInProgress ? getBattleRecordStore() : null, m = getBattleSlotMember(slotName);
+            return !!(rec && rec.stealthExempt && m && m.uid && rec.stealthExempt[m.uid]);
+        }
+        function battleFieldBlocked() { // G-Max Wind Rage: no Field Move cards can be played for the rest of the Battle
+            const rec = battleInProgress ? getBattleRecordStore() : null;
+            return !!(rec && rec.noField);
+        }
         function getBattlePokemonModifierBonus(slotName, userTypes, m) {
             if (!m || typeof m !== 'object') return 0;
             if (Array.isArray(m.unlessTypes)) {
@@ -18962,7 +18986,7 @@
                 const against = String(m.effectivenessVs || '').toLowerCase();
                 if (!BATTLE_MOVE_TYPE_NAMES.includes(against) || !userTypes.length) return 0;
                 const rule = getBattleTypeRuleToggles(slotName);
-                const result = computeTypeMatchup(against, userTypes[0], userTypes[1] || null, rule.dual, rule.immunities);
+                const result = computeTypeMatchup(against, userTypes[0], userTypes[1] || null, rule.dual, rule.immunities, null, battleNeutralPairs());
                 if (!result) return 0;
                 const n = parseInt(result.bonus, 10);
                 const key = n > 0 ? 'weak' : (n < 0 ? 'resist' : 'neutral');
@@ -21426,9 +21450,9 @@
             return (TYPE_CHART[moveType] && TYPE_CHART[moveType][defType]) || null;
         }
 
-        function computeTypeMatchup(moveType, defType1, defType2, useDualTypes, useImmunities, alwaysEffectiveVs) { // alwaysEffectiveVs: Types this Move counts as Effective against (Salt Cure)
+        function computeTypeMatchup(moveType, defType1, defType2, useDualTypes, useImmunities, alwaysEffectiveVs, neutralPairs) { // alwaysEffectiveVs: Types this Move counts as Effective against (Salt Cure)
             if (!moveType || !defType1) return null;
-            const sym = d => (Array.isArray(alwaysEffectiveVs) && alwaysEffectiveVs.includes(d)) ? '+' : typeEffectivenessSymbol(moveType, d);
+            const sym = d => (Array.isArray(neutralPairs) && neutralPairs.some(pr => pr[0] === moveType && pr[1] === d)) ? null : ((Array.isArray(alwaysEffectiveVs) && alwaysEffectiveVs.includes(d)) ? '+' : typeEffectivenessSymbol(moveType, d));
             let k1 = sym(defType1);
             let k2 = (useDualTypes && defType2) ? sym(defType2) : null;
 
@@ -27356,12 +27380,12 @@
             if (fpBtn) { // Field Move effect: the card goes into the chosen slot
                 closeFrontierOverlay();
                 const cid = fpBtn.dataset.cardId;
-                if (cid && CARDS_BY_ID[cid]) { requestBattleFieldEffect(fpBtn.dataset.slot, cid); showGameToast(CARDS_BY_ID[cid].name + ' is now in play on the ' + (fpBtn.dataset.slot === 'attacker' ? 'Attacker' : 'Defender') + '\u2019s side.'); }
+                if (cid && CARDS_BY_ID[cid] && !battleFieldBlocked()) { requestBattleFieldEffect(fpBtn.dataset.slot, cid); showGameToast(CARDS_BY_ID[cid].name + ' is now in play on the ' + (fpBtn.dataset.slot === 'attacker' ? 'Attacker' : 'Defender') + '\u2019s side.'); }
                 guidedOp('fielddone', fpBtn.dataset.by);
                 return;
             }
             const wrBtn = e.target.closest('.game-weatherrock-btn');
-            if (wrBtn) { closeFrontierOverlay(); if (wrBtn.dataset.cardId) { requestBattleFieldEffect(wrBtn.dataset.slot, wrBtn.dataset.cardId); showGameToast((CARDS_BY_ID[wrBtn.dataset.cardId] || {}).name + ' is now in play.'); } return; }
+            if (wrBtn) { closeFrontierOverlay(); if (wrBtn.dataset.cardId && !battleFieldBlocked()) { requestBattleFieldEffect(wrBtn.dataset.slot, wrBtn.dataset.cardId); showGameToast((CARDS_BY_ID[wrBtn.dataset.cardId] || {}).name + ' is now in play.'); } return; }
             const esBtn = e.target.closest('.game-expshare-btn');
             if (esBtn) { expShareAdd(esBtn.dataset.uid); return; }
             const herbaBtn = e.target.closest('.game-herba-btn');
