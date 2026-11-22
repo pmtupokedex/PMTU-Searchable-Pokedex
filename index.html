@@ -8391,6 +8391,7 @@
             if (bfPrev && !battleInProgress) battlePayDayClaim(recordBeforeEnd); // the Battle just ended
             noteBattleParticipationSnapshot(battleRecord);
             try { battleReconcileHeldCards(); } catch (e) { /* not ready */ }
+            setTimeout(battleProcessStatusTasks, 0);
             renderBattleCardZones(payload.cards);
             if (payload.fields) renderBattleFieldZones(payload.fields);
             renderBattleAttackerSlot();
@@ -11424,6 +11425,7 @@
             const counter = pendingTeamStatusCounter;
             const side = pendingTeamStatusCardSide;
             const prevStatusForFlute = member ? member.status : null;
+            if (statusId === 'sleep' && battleInProgress) { const rec0 = getBattleRecordStore(); if (rec0 && rec0.noSleep) { showGameToast('Uproar: no Pok\u00e9mon can gain the Sleep Status Condition for the rest of this Battle.'); return; } }
             if (member && member.status !== 'cursed') {
                 const cursedWhy = cursedBlockedFor(index, statusId);
                 if (cursedWhy) { showGameToast(cursedWhy); return; } // the picker stays open so another Status can be chosen
@@ -17069,7 +17071,177 @@
             guidedOp(op, slot);
         }
 
-        function battleNoteRoundEnd(record) { // the Round is over: Fell Stinger's winner gets Double Advantage in the next Round
+        // ---- Status moves: Perish Song, Rest, Yawn, Psycho Shift, Smelling Salts, Wake-Up Slap, Uproar. Each change is a task the owner of the affected Pok\u00e9mon confirms on their own device. ----
+        function battleAddStatusTask(record, task) {
+            if (!record || !task) return false;
+            if (!Array.isArray(record.statusTasks)) record.statusTasks = [];
+            task.id = task.id || ((record.round || 1) + '|' + task.kind + '|' + (task.uid || '*'));
+            if (record.statusTasks.some(t => t.id === task.id)) return false;
+            record.statusTasks.push(task);
+            if (typeof battleProcessStatusTasks === 'function') setTimeout(battleProcessStatusTasks, 0);
+            return true;
+        }
+        function battleStatusRoundEnd(record) { // "At the end of this Battle Round": Rest, Smelling Salts, Wake-Up Slap and Yawn (Yawn: at the start of the next Round, which is now)
+            ['attacker', 'defender'].forEach(slot => {
+                const mv = battleCalcMoveName[slot], member = getBattleSlotMember(slot), oppSlot = getBattleOpposingSlotName(slot), opp = getBattleSlotMember(oppSlot);
+                if (!mv || !member) return;
+                if (mv === 'Rest' && !member.fainted && !record.noSleep) battleAddStatusTask(record, { kind: 'set', uid: ensureMemberUid(member), status: 'sleep', counter: 2, replace: true, why: 'Rest' });
+                if (!opp || opp.fainted || battleShieldAgainst(oppSlot) === 'prot') return; // Protection ignores them; Priority only delays them to here
+                if (mv === 'Smelling Salts' && opp.status) battleAddStatusTask(record, { kind: 'clear', uid: ensureMemberUid(opp), only: null, why: 'Smelling Salts' });
+                if (mv === 'Wake-Up Slap' && opp.status === 'sleep') battleAddStatusTask(record, { kind: 'clear', uid: ensureMemberUid(opp), only: 'sleep', why: 'Wake-Up Slap' });
+            });
+            if (record.yawn && typeof record.yawn === 'object') Object.keys(record.yawn).forEach(uid => {
+                if (record.yawn[uid] !== record.round) return;
+                delete record.yawn[uid];
+                const here = ['attacker', 'defender'].some(sl => { const m = getBattleSlotMember(sl); return !!m && m.uid === uid && !m.fainted; }); // switched out: the Sleep is lost
+                if (here && !record.noSleep) battleAddStatusTask(record, { kind: 'set', uid, status: 'sleep', replace: false, why: 'Yawn' });
+            });
+        }
+        let battleStatusTaskLocal = new Set(), battleStatusTaskShowing = null;
+        function battleStatusMyId() { return lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host'); }
+        function battleStatusTaskKey(t) { return t.kind === 'uproar' ? t.id + '|' + battleStatusMyId() : t.id; }
+        function battleStatusFind(uid) { // the Pok\u00e9mon this device looks after: its own team, or (solo / Host) the wild / trainer / Gym Leader Pok\u00e9mon
+            if (!uid) return null;
+            const team = ((getActiveSaveData().team || {}).members) || [];
+            const i = team.findIndex(m => m && m.uid === uid);
+            if (i >= 0) return { member: team[i], index: i };
+            if (lobbyState.role !== 'guest') {
+                if (battleWildPokemon && battleWildPokemon.uid === uid) return { member: battleWildPokemon, index: 'wild' };
+                if (battleTrainerPokemon && battleTrainerPokemon.uid === uid) return { member: battleTrainerPokemon, index: 'trainer' };
+            }
+            return null;
+        }
+        function battleStatusOwnMembers() { // [{ member, index }] for everything this device looks after
+            const out = (((getActiveSaveData().team || {}).members) || []).map((m, i) => m ? { member: m, index: i } : null).filter(Boolean);
+            if (lobbyState.role !== 'guest') {
+                if (battleWildPokemon && battleDefenderMemberIndex === 'wild') out.push({ member: battleWildPokemon, index: 'wild' });
+                if (battleTrainerPokemon && battleAttackerMemberIndex === 'trainer') out.push({ member: battleTrainerPokemon, index: 'trainer' });
+            }
+            return out;
+        }
+        function battleStatusName(id) { const c = STATUS_CONDITIONS.find(x => x.id === id); return c ? c.name : String(id); }
+        function battleStatusWhy(member, index, statusId, replace) { // '' when the Status can be given, else why it fails
+            if (statusId === 'sleep') { const rec = getBattleRecordStore(); if (rec && rec.noSleep) return 'Uproar stops any Pok\u00e9mon gaining Sleep this Battle.'; }
+            if (!replace && member.status && member.status !== 'none') return 'it already has a Status Condition.';
+            if (statusId === 'cursed') { const why = cursedBlockedFor(index, 'cursed'); if (why) return why; }
+            return '';
+        }
+        function battleStatusPersist(index) {
+            if (index !== null && index !== undefined) persistTeamSlotChange(index);
+            if (lobbyState.role === 'host') broadcastBattleArenaState();
+            try { updateStatusAttentionBadges(); } catch (e) { /* not on screen */ }
+        }
+        function battleStatusGive(index, member, statusId, counter, replace) { // a fresh Status card: no counter carried over
+            if (battleStatusWhy(member, index, statusId, replace)) return false;
+            const prev = member.status;
+            if (statusId === 'cursed') noteCursedGained(index);
+            const config = STATUS_COUNTER_CONFIG[statusId];
+            member.status = statusId;
+            member.statusCounter = config ? (Number.isFinite(counter) ? counter : config.default) : undefined;
+            member.statusCardSide = STATUS_TWO_SIDED[statusId] ? 1 : undefined;
+            member.statusPulseAt = Date.now();
+            battleStatusPersist(index);
+            if (statusId === 'sleep' && prev !== 'sleep' && typeof index === 'number') fluteSleepCheck(index);
+            return true;
+        }
+        function battleStatusClear(index, member) {
+            if (!member || !member.status) return false;
+            member.status = null; member.statusCounter = undefined; member.statusCardSide = undefined;
+            battleStatusPersist(index);
+            return true;
+        }
+        function battleStatusTaskFinish(key) {
+            const rec = getBattleRecordStore();
+            battleStatusTaskLocal.add((rec ? rec.id : '') + '|' + key);
+            if (lobbyState.role === 'guest') { if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-status-task-done', key }); }
+            else if (rec) { if (!rec.statusDone || typeof rec.statusDone !== 'object') rec.statusDone = {}; rec.statusDone[key] = 1; if (lobbyState.role === 'host') broadcastBattleArenaState(); }
+            battleStatusTaskShowing = null;
+            closeFrontierOverlay();
+            setTimeout(battleProcessStatusTasks, 150);
+        }
+        function battleProcessStatusTasks() { // one prompt at a time, for the tasks that belong to this device
+            if (!battleInProgress || battleStatusTaskShowing || isActiveSaveReadOnly()) return;
+            const rec = getBattleRecordStore();
+            if (!rec || !Array.isArray(rec.statusTasks)) return;
+            for (const t of rec.statusTasks) {
+                const key = battleStatusTaskKey(t);
+                if ((rec.statusDone && rec.statusDone[key]) || battleStatusTaskLocal.has(rec.id + '|' + key)) continue;
+                if (t.kind !== 'uproar' && !battleStatusFind(t.uid)) continue;
+                battleStatusTaskShow(t, key, 0);
+                return;
+            }
+        }
+        function battleStatusTaskShow(t, key, waited) {
+            const busy = ['game-frontier-overlay', 'game-victory-overlay'].some(id => { const el = document.getElementById(id); return !!(el && el.classList.contains('visible')); });
+            battleStatusTaskShowing = key;
+            if (busy && waited < 120000) { setTimeout(() => { if (battleStatusTaskShowing === key) battleStatusTaskShow(t, key, waited + 800); }, 800); return; }
+            const btn = (act, label, extra) => `<button class="filter-btn ${act === 'skip' ? 'exclude' : 'include'} game-statustask-btn" type="button" data-act="${act}" data-key="${escapeHtml(key)}"${extra || ''}>${escapeHtml(label)}</button>`;
+            const found = t.kind === 'uproar' ? null : battleStatusFind(t.uid);
+            const name = m => (getBattleMemberDisplay(m).name || 'Pok\u00e9mon');
+            if (t.kind === 'uproar') {
+                const sleepers = battleStatusOwnMembers().filter(x => x.member.status === 'sleep');
+                if (!sleepers.length) { battleStatusTaskFinish(key); return; }
+                boardFrontierShow('Uproar', 'Discard the Sleep Status card from: ' + sleepers.map(x => name(x.member)).join(', ') + '. No Pok\u00e9mon can gain Sleep for the rest of the Battle.', btn('apply', 'Discard Sleep'));
+                return;
+            }
+            if (!found) { battleStatusTaskFinish(key); return; }
+            const { member, index } = found;
+            if (t.kind === 'set') {
+                const why = battleStatusWhy(member, index, t.status, !!t.replace);
+                const cnt = Number.isFinite(t.counter) ? ` with ${t.counter} Status Counter${t.counter === 1 ? '' : 's'}` : '';
+                if (why) { boardFrontierShow(t.why, `${name(member)} can't gain ${battleStatusName(t.status)}: ${why}`, btn('ok', 'OK')); return; }
+                boardFrontierShow(t.why, `${name(member)} gains ${battleStatusName(t.status)}${cnt}.` + (member.status && t.replace ? ` Its current ${battleStatusName(member.status)} card is discarded first.` : '') + (t.status === 'sleep' && !Number.isFinite(t.counter) ? ' Roll the Status Die (d4) and set the Sleep counter.' : ''), btn('apply', 'Apply'));
+                return;
+            }
+            if (t.kind === 'clear') {
+                if (!member.status || (t.only && member.status !== t.only)) { battleStatusTaskFinish(key); return; }
+                boardFrontierShow(t.why, `${name(member)} discards its ${battleStatusName(member.status)} Status card.`, btn('apply', 'Discard'));
+                return;
+            }
+            if (t.kind === 'shift') {
+                const slot = ['attacker', 'defender'].find(sl => { const m = getBattleSlotMember(sl); return !!m && m.uid === t.target; });
+                const tgt = slot ? getBattleSlotMember(slot) : null;
+                if (!tgt) { battleStatusTaskFinish(key); return; }
+                if (tgt.status && tgt.status !== 'none') { boardFrontierShow('Psycho Shift', `${name(tgt)} already has a Status Condition, so the shift fails.`, btn('ok', 'OK')); return; }
+                const cands = (index === 'trainer' ? [{ member: battleTrainerPokemon, index: 'trainer' }].concat((Array.isArray(battleTrainerQueue) ? battleTrainerQueue : []).map(m => ({ member: m, index: null }))) : index === 'wild' ? [{ member: battleWildPokemon, index: 'wild' }] : battleStatusOwnMembers().filter(x => typeof x.index === 'number'))
+                    .filter(x => x.member && x.member.status && x.member.status !== 'none' && !x.member.fainted);
+                if (!cands.length) { boardFrontierShow('Psycho Shift', 'None of your Pok\u00e9mon has a Status card to shift.', btn('ok', 'OK')); return; }
+                boardFrontierShow('Psycho Shift', `Choose which Pok\u00e9mon's Status card goes to ${name(tgt)}:`, '<div class="game-frontier-choices">' + cands.map((x, i) => btn('pick', `${name(x.member)} (${battleStatusName(x.member.status)})`, ` data-ci="${i}"`)).join('') + '</div>' + btn('skip', 'Don\u2019t Shift'));
+                battleStatusTaskShowing = { key, cands, tgtUid: tgt.uid };
+                return;
+            }
+            battleStatusTaskFinish(key);
+        }
+        function battleStatusTaskAct(act, key, ci) {
+            const rec = getBattleRecordStore();
+            const t = rec && (rec.statusTasks || []).find(x => battleStatusTaskKey(x) === key);
+            if (!t) { battleStatusTaskShowing = null; closeFrontierOverlay(); return; }
+            if (act === 'apply') {
+                if (t.kind === 'uproar') battleStatusOwnMembers().forEach(x => { if (x.member.status === 'sleep') battleStatusClear(x.index, x.member); });
+                else {
+                    const found = battleStatusFind(t.uid);
+                    if (found && t.kind === 'set') { if (!battleStatusGive(found.index, found.member, t.status, t.counter, !!t.replace)) showGameToast(t.why + ': it fails.'); }
+                    else if (found && t.kind === 'clear' && (!t.only || found.member.status === t.only)) battleStatusClear(found.index, found.member);
+                }
+            } else if (act === 'pick') {
+                const sh = battleStatusTaskShowing;
+                const c = sh && sh.cands ? sh.cands[Number(ci)] : null;
+                if (c && c.member && c.member.status) {
+                    const st = c.member.status;
+                    battleStatusClear(c.index, c.member);
+                    const task = { kind: 'set', uid: sh.tgtUid, status: st, replace: false, why: 'Psycho Shift', id: rec.round + '|shiftset|' + sh.tgtUid };
+                    if (lobbyState.role === 'guest') { if (lobbyState.hostConn && lobbyState.hostConn.open) lobbyState.hostConn.send({ type: 'battle-status-task-add', task }); }
+                    else { battleAddStatusTask(rec, task); if (lobbyState.role === 'host') broadcastBattleArenaState(); }
+                }
+            }
+            battleStatusTaskFinish(key);
+        }
+        function battleNoteRoundEnd(record) { // the Round is over: Fell Stinger's winner gets Double Advantage in the next Round; end-of-Round Status effects are put to their owners
+            if (!record) return;
+            try { battleStatusRoundEnd(record); } catch (err) { /* never block the next Round */ }
+            battleNoteFellStinger(record);
+        }
+        function battleNoteFellStinger(record) {
             if (!record) return;
             let o = null;
             try { o = guidedComputeOutcome(); } catch (err) { o = null; }
@@ -18039,6 +18211,8 @@
                     const mine = record.dynaBuff[selfUid] || (record.dynaBuff[selfUid] = {});
                     if (mine[BATTLE_DYNA_BUFF_MOVES[mv]] === undefined) mine[BATTLE_DYNA_BUFF_MOVES[mv]] = record.round;
                 }
+                if (mv === 'Perish Song') battleAddStatusTask(record, { kind: 'set', uid: selfUid, status: 'cursed', replace: false, why: 'Perish Song' });
+                if (mv === 'Uproar' && !record.noSleep) { record.noSleep = true; battleAddStatusTask(record, { kind: 'uproar' }); }
                 if (mv === 'Odor Sleuth') {
                     if (!record.odorSleuth || typeof record.odorSleuth !== 'object') record.odorSleuth = {};
                     if (record.odorSleuth[selfUid] === undefined) record.odorSleuth[selfUid] = record.round;
@@ -18049,6 +18223,11 @@
             if (shield === 'prot' || (shield === 'priority' && !delayed)) return; // Protection ignores them for good; Priority holds them back until the end of the Round
             const src = ensureMemberUid(member), dst = ensureMemberUid(target);
             if (!only || only === 'attach') battleApplyAttachSwap(record, slotName);
+            if (!only || only === 'status') {
+                const smv = battleCalcMoveName[slotName];
+                if (smv === 'Yawn') { if (!record.yawn || typeof record.yawn !== 'object') record.yawn = {}; if (record.yawn[dst] === undefined) record.yawn[dst] = record.round; }
+                if (smv === 'Psycho Shift') battleAddStatusTask(record, { kind: 'shift', uid: src, target: dst });
+            }
             if ((!only || only === 'blockitem') && battleSlotHasMoveEffect(slotName, 'blockitem')) {
                 if (!record.blocked || typeof record.blocked !== 'object') record.blocked = {};
                 if (record.blocked[dst] === undefined) record.blocked[dst] = src;
@@ -18239,6 +18418,7 @@
             if (record.dynaBuff) delete record.dynaBuff[uid];
             if (record.persistDis) delete record.persistDis[uid]; // lasting Disadvantage and Fell Stinger's bonus end with a switch-out
             if (record.nextAdv) delete record.nextAdv[uid];
+            if (record.yawn) delete record.yawn[uid]; // Yawn's Sleep is lost when its target switches out
             if (record.usedMoves) Object.keys(record.usedMoves).forEach(k => { if (k.startsWith(uid + '|')) delete record.usedMoves[k]; });
         }
         function getBattleDiceAdvantage(slotName) { // { net, extra, mode, add }: net > 0 Advantage (extra dice, lowest dropped), net < 0 Disadvantage (highest dropped); add = Add Die dice (nothing dropped)
@@ -18356,7 +18536,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, dynaBuff: {}, attachHeld: {}, attachSwaps: {}, attachHome: {}, attachLost: {}, formCard: {}, replenish: {}, sketch: {}, lastUsed: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, dynaBuff: {}, attachHeld: {}, attachSwaps: {}, attachHome: {}, attachLost: {}, formCard: {}, replenish: {}, statusTasks: [], statusDone: {}, noSleep: false, yawn: {}, sketch: {}, lastUsed: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -18456,7 +18636,7 @@
             });
             return out;
         }
-        function lullabyCanSleep(member) { return !!member && !member.fainted && (!member.status || member.status === 'none'); }
+        function lullabyCanSleep(member) { const rec = getBattleRecordStore(); return !!member && !member.fainted && !(rec && rec.noSleep) && (!member.status || member.status === 'none'); }
         function lullabyPutToSleep(member) {
             if (!lullabyCanSleep(member)) return false;
             member.status = 'sleep';
@@ -23265,6 +23445,12 @@
                     boardHandleMetronomeDraw(conn.peer, data);
                 } else if (data.type === 'board-contest-counts') {
                     boardHandleContestCounts(conn.peer);
+                } else if (data.type === 'battle-status-task-done' && typeof data.key === 'string') {
+                    const rec = hostBattleArenaState.record;
+                    if (rec) { if (!rec.statusDone || typeof rec.statusDone !== 'object') rec.statusDone = {}; rec.statusDone[data.key] = 1; broadcastBattleArenaState(); }
+                } else if (data.type === 'battle-status-task-add' && data.task && data.task.kind === 'set' && typeof data.task.uid === 'string' && typeof data.task.status === 'string') {
+                    const rec = hostBattleArenaState.record;
+                    if (rec && battleAddStatusTask(rec, { kind: 'set', uid: data.task.uid, status: data.task.status, replace: false, why: 'Psycho Shift', id: typeof data.task.id === 'string' ? data.task.id : undefined })) broadcastBattleArenaState();
                 } else if (data.type === 'board-contest-draw' && typeof data.color === 'string') {
                     boardHandleContestDraw(conn.peer, data);
                 } else if (data.type === 'board-contest-take' && typeof data.color === 'string' && typeof data.name === 'string') {
@@ -27182,6 +27368,8 @@
             if (herbaBtn) { if (!herbaBtn.disabled) cardHerbaChoose(herbaBtn.dataset.act, herbaBtn.dataset.cardId); return; }
             const sleepBtn = e.target.closest('.game-sleeproll-btn');
             if (sleepBtn) { fluteSleepRoll(sleepBtn.dataset.uid, sleepBtn.dataset.cardId); return; }
+            const statusTaskBtn = e.target.closest('.game-statustask-btn');
+            if (statusTaskBtn) { battleStatusTaskAct(statusTaskBtn.dataset.act, statusTaskBtn.dataset.key, statusTaskBtn.dataset.ci); return; }
             const eggBtn = e.target.closest('.game-egg-btn');
             if (eggBtn) { if (eggBtn.dataset.act === 'roll') luckyEggRoll(Number(eggBtn.dataset.index), eggBtn.dataset.uid); else closeFrontierOverlay(); return; }
             const amuletBtn = e.target.closest('.game-amulet-btn');
