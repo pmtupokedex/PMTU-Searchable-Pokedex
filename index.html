@@ -7594,7 +7594,7 @@
             }
             { const occ = hostBattleArenaState[slot] && hostBattleArenaState[slot].member; // Escape Prevention: the occupant can't be switched out
               if (member && occ && hostBattleArenaState.inProgress && battleMemberEscapeLocked(hostBattleArenaState.record, occ) && !(member.uid && member.uid === occ.uid)) {
-                sendBattleNotice(peerKey, `${getBattleMemberDisplay(occ).name || 'This Pok\u00e9mon'} can\u2019t be switched out (Escape Prevention).`);
+                sendBattleNotice(peerKey, `${getBattleMemberDisplay(occ).name || 'This Pok\u00e9mon'} can\u2019t be switched out (${battleEscapeLockName(hostBattleArenaState.record, occ)}).`);
                 broadcastBattleArenaState();
                 return;
               } }
@@ -14888,7 +14888,7 @@
             if (typeof index === 'number' && battleInProgress) { // Escape Prevention: the Pok\u00e9mon in the Arena can't be switched out
                 const occ = getBattleSlotMember('attacker'), incoming = (getActiveSaveData().team.members || [])[index];
                 if (occ && incoming && occ !== incoming && !(occ.uid && occ.uid === incoming.uid) && battleMemberEscapeLocked(getBattleRecordStore(), occ)) {
-                    showBattleArenaNotice(`${getBattleMemberDisplay(occ).name || 'This Pok\u00e9mon'} can\u2019t be switched out (Escape Prevention).`);
+                    showBattleArenaNotice(`${getBattleMemberDisplay(occ).name || 'This Pok\u00e9mon'} can\u2019t be switched out (${battleEscapeLockName(getBattleRecordStore(), occ)}).`);
                     return;
                 }
             }
@@ -14927,7 +14927,7 @@
             if (typeof index === 'number' && battleInProgress) { // Escape Prevention: the Pok\u00e9mon in the Arena can't be switched out
                 const occ = getBattleSlotMember('defender'), incoming = (getActiveSaveData().team.members || [])[index];
                 if (occ && incoming && occ !== incoming && !(occ.uid && occ.uid === incoming.uid) && battleMemberEscapeLocked(getBattleRecordStore(), occ)) {
-                    showBattleArenaNotice(`${getBattleMemberDisplay(occ).name || 'This Pok\u00e9mon'} can\u2019t be switched out (Escape Prevention).`);
+                    showBattleArenaNotice(`${getBattleMemberDisplay(occ).name || 'This Pok\u00e9mon'} can\u2019t be switched out (${battleEscapeLockName(getBattleRecordStore(), occ)}).`);
                     return;
                 }
             }
@@ -16618,7 +16618,7 @@
         }
         function guidedRevertLasting(slot, hadApplied) { // it became Struggle: Block Item (applied at Lock In) reverts always; Escape Prevention only if its effects had applied
             const m = getBattleSlotMember(slot);
-            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth', 'persistDis', 'dynaBuff', 'restrict'] : ['blocked', 'restrictLock']);
+            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'noRetreat', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth', 'persistDis', 'dynaBuff', 'restrict'] : ['blocked', 'restrictLock']);
         }
         function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
             const g = guidedState();
@@ -17089,6 +17089,7 @@
             ['attacker', 'defender'].forEach(slot => {
                 const mv = battleCalcMoveName[slot], member = getBattleSlotMember(slot), oppSlot = getBattleOpposingSlotName(slot), opp = getBattleSlotMember(oppSlot);
                 if (!mv || !member) return;
+                if (/^Aura Wheel/.test(mv) && !member.fainted && /^Morpeko/i.test(member.name || '')) battleAddStatusTask(record, { kind: 'form', uid: ensureMemberUid(member), why: 'Aura Wheel' }); // Struggle replaced the name if the Move couldn't be used
                 if (mv === 'Rest' && !member.fainted) battleAddStatusTask(record, { kind: 'set', uid: ensureMemberUid(member), status: 'sleep', counter: 2, replace: true, why: 'Rest' });
                 if (!opp || opp.fainted || battleShieldAgainst(oppSlot) === 'prot') return; // Protection ignores them; Priority only delays them to here
                 if (mv === 'Smelling Salts' && opp.status) battleAddStatusTask(record, { kind: 'clear', uid: ensureMemberUid(opp), only: null, why: 'Smelling Salts' });
@@ -17148,6 +17149,23 @@
             if (statusId === 'sleep' && prev !== 'sleep' && typeof index === 'number') fluteSleepCheck(index);
             return true;
         }
+        function battleMorpekoToggle(member, index) { // Full Belly Mode <-> Hangry Mode: the Pok\u00e9mon becomes the other token (Level, HP, Status and Dynamax are kept)
+            if (!member) return false;
+            const names = Object.keys(POKEMON_BY_NAME || {}).filter(n => /^morpeko/i.test(n));
+            const want = /hangry/i.test(member.name || '') ? /full belly/i : /hangry/i;
+            const target = names.find(n => want.test(n)) || names.find(n => n !== member.name);
+            const entry = target && POKEMON_BY_NAME[target];
+            if (!entry) { showGameToast('Aura Wheel: Morpeko should change form, but the other Morpeko form was not found in the Pok\u00e9mon data. Switch it by hand.'); return false; }
+            const hpRule = getHpRule(getActiveSaveData()), oldMax = getTeamMemberHpMax(member, hpRule);
+            member.dex = (entry.tags && entry.tags[0]) || member.dex || '';
+            member.name = entry.name;
+            member.src = entry.src;
+            member.shinysrc = entry.shinysrc || '';
+            reconcileTeamMemberHpAcrossFormChange(member, hpRule, oldMax, 1);
+            battleStatusPersist(index);
+            showGameToast('Aura Wheel: Morpeko changed to ' + entry.name + (member.dynamaxed ? ' (still Dynamaxed).' : '.'));
+            return true;
+        }
         function battleStatusClear(index, member) {
             if (!member || !member.status) return false;
             member.status = null; member.statusCounter = undefined; member.statusCardSide = undefined;
@@ -17190,6 +17208,11 @@
             }
             if (!found) { battleStatusTaskFinish(key); return; }
             const { member, index } = found;
+            if (t.kind === 'form') { // Aura Wheel: Morpeko switches between its two forms at the end of the Round (no prompt)
+                battleMorpekoToggle(member, index);
+                battleStatusTaskFinish(key);
+                return;
+            }
             if (t.kind === 'set') {
                 const why = battleStatusWhy(member, index, t.status, !!t.replace);
                 const cnt = Number.isFinite(t.counter) ? ` with ${t.counter} Status Counter${t.counter === 1 ? '' : 's'}` : '';
@@ -18230,6 +18253,7 @@
                 }
                 battleApplyRestrictions(record, slotName, 'lock'); // Disable / Taunt ignore the normal timing (and Protection)
                 if (mv === 'G-Max Gravitas') record.gravitas = true;
+                if (mv === 'No Retreat') { if (!record.noRetreat || typeof record.noRetreat !== 'object') record.noRetreat = {}; if (record.noRetreat[selfUid] === undefined) record.noRetreat[selfUid] = selfUid; } // can't be switched out for the rest of the Battle (ends when it Faints)
                 if (mv === 'G-Max Wind Rage') record.noField = true;
                 if (mv === 'G-Max Stonesurge') { if (!record.stealthExempt || typeof record.stealthExempt !== 'object') record.stealthExempt = {}; record.stealthExempt[selfUid] = true; }
                 if (mv === 'Perish Song') battleAddStatusTask(record, { kind: 'set', uid: selfUid, status: 'cursed', replace: false, why: 'Perish Song' });
@@ -18267,34 +18291,51 @@
                 if (record.locked[dst] === undefined) record.locked[dst] = src;
             }
         }
-        function battleNotePayDay(record, slotName) { // Pay Day: its Effect Die threshold was met; the owner picks the reward when the Battle ends (once per Battle per player)
-            if (!record || battleCalcMoveName[slotName] !== 'Pay Day' || !battleSlotHasMoveEffect(slotName, 'extra_self')) return;
+        const BATTLE_REWARD_MOVES = { 'Pay Day': { prefix: '', coins: 3, needsDie: true }, 'G-Max Gold Rush': { prefix: 'gr|', coins: 4 }, 'Make It Rain': { prefix: 'mir|', coins: 3 } }; // end-of-Battle rewards, once per Battle per player for each Move
+        function battleNotePayDay(record, slotName) { // Pay Day (its Effect Die threshold met), G-Max Gold Rush and Make It Rain: the owner picks the reward when the Battle ends (once per Battle per player, win or lose)
+            const mv = battleCalcMoveName[slotName], cfg = BATTLE_REWARD_MOVES[mv];
+            if (!record || !cfg) return;
+            if (cfg.needsDie && !battleSlotHasMoveEffect(slotName, 'extra_self')) return;
             if (guidedSlotKind(slotName) !== 'player') return; // ignored when the user isn't owned by a player
-            const key = guidedOwnerKey(slotName), member = getBattleSlotMember(slotName);
-            if (!key || !member) return;
+            const owner = guidedOwnerKey(slotName), member = getBattleSlotMember(slotName);
+            if (!owner || !member) return;
+            const key = cfg.prefix + owner;
             if (!record.payDay || typeof record.payDay !== 'object') record.payDay = {};
             if (record.payDay[key] !== undefined) return;
             record.payDay[key] = ensureMemberUid(member);
-            showBattleArenaNotice('Pay Day paid out! You will choose your reward when the Battle ends.');
+            showBattleArenaNotice(mv + ' paid out! You will choose your reward when the Battle ends.');
         }
-        function battlePayDayClaim(record) { // the Battle has ended: this player's reward from Pay Day
+        function battlePayDayClaim(record) { // the Battle has ended: this player's rewards from Pay Day / G-Max Gold Rush / Make It Rain
             if (!record || !record.payDay || isActiveSaveReadOnly()) return;
-            const key = lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host');
-            if (record.payDay[key] === undefined) return;
-            delete record.payDay[key];
+            const me = lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host');
+            const queue = [];
+            Object.keys(BATTLE_REWARD_MOVES).forEach(name => {
+                const cfg = BATTLE_REWARD_MOVES[name], key = cfg.prefix + me;
+                if (record.payDay[key] === undefined) return;
+                delete record.payDay[key];
+                queue.push({ name, coins: cfg.coins });
+            });
+            if (!queue.length) return;
             let waited = 0;
+            const showNext = () => {
+                const r = queue.shift();
+                if (!r) return;
+                battleRewardNext = showNext;
+                const coins = isPokeCoinsEnabledForActiveSave(), decks = isVirtualDecksEnabledForActiveSave();
+                if (!coins && !decks) { showGameToast(r.name + ': draw an Item card from your Item Deck or collect ' + r.coins + ' Pok\u00e9Coins.'); showNext(); return; }
+                boardFrontierShow(r.name, r.name + ' paid off! Choose your reward:',
+                    (decks ? `<button class="filter-btn include game-payday-btn" type="button" data-act="item" data-name="${escapeHtml(r.name)}">Draw an Item Card</button>` : '')
+                    + (coins ? `<button class="filter-btn include game-payday-btn" type="button" data-act="coins" data-name="${escapeHtml(r.name)}" data-coins="${r.coins}">Collect ${r.coins} Pok\u00e9Coins</button>` : ''));
+            };
             const showWhenFree = () => { // after the Gym Badge / Champion screens (and anything else on screen) are done
                 const busy = gymBadgeAwardShowing || gymBadgeFading || pendingGymBadgeAwards.length
                     || ['game-frontier-overlay', 'game-victory-overlay'].some(id => { const el = document.getElementById(id); return !!(el && el.classList.contains('visible')); });
                 if (busy && waited < 180000) { waited += 700; setTimeout(showWhenFree, 700); return; }
-                const coins = isPokeCoinsEnabledForActiveSave(), decks = isVirtualDecksEnabledForActiveSave();
-                if (!coins && !decks) { showGameToast('Pay Day: draw an Item card from your Item Deck or collect 3 Pok\u00e9Coins.'); return; }
-                boardFrontierShow('Pay Day', 'Pay Day paid off! Choose your reward:',
-                    (decks ? `<button class="filter-btn include game-payday-btn" type="button" data-act="item">Draw an Item Card</button>` : '')
-                    + (coins ? `<button class="filter-btn include game-payday-btn" type="button" data-act="coins">Collect 3 Pok\u00e9Coins</button>` : ''));
+                showNext();
             };
             setTimeout(showWhenFree, 900);
         }
+        let battleRewardNext = null;
         function battleRevertLastingEffects(record, srcUid, kinds) { // the Move that caused them became Struggle: Block Item and Escape Prevention revert
             if (!record || !srcUid) return;
             ['attachSpent', 'odorSleuth'].forEach(k => { if (record[k] && record[k][srcUid] === record.round && (!kinds || kinds.includes(k))) delete record[k][srcUid]; }); // Spit Up, Odor Sleuth: only what this Round set (they store the Round)
@@ -18307,7 +18348,7 @@
             else if (kinds.includes('restrictLock')) battleRevertRestrictions(record, srcUid, true);
             if (record.dynaBuff && (!kinds || kinds.includes('dynaBuff'))) Object.keys(record.dynaBuff).forEach(uid => { if (uid !== srcUid) return; const mine = record.dynaBuff[uid]; Object.keys(mine).forEach(id => { if (mine[id] === record.round) delete mine[id]; }); }); // Max Darkness and friends: only what this Round set
             if (record.persistDis && (!kinds || kinds.includes('persistDis'))) Object.keys(record.persistDis).forEach(uid => { const pd = record.persistDis[uid]; if (pd && pd.src === srcUid && pd.round === record.round) delete record.persistDis[uid]; }); // lasting Disadvantage from this Round's Move
-            (kinds || ['blocked', 'locked', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
+            (kinds || ['blocked', 'locked', 'noRetreat', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
         }
         function battleMemberAttachBlocked(member) { // Block Item: the attached card does nothing until the Battle ends or the Pokémon is switched out
             if (!member || !member.uid || !battleInProgress) return false;
@@ -18419,8 +18460,9 @@
             return [battleMemberAttachBlocked(member) ? null : battleAttachIdOf(member), member.natureCardId];
         }
         function battleMemberEscapeLocked(record, member) { // Escape Prevention: can't be switched out (a Fainted Pokémon can still be replaced)
-            return !!(record && member && member.uid && !member.fainted && record.locked && record.locked[member.uid] !== undefined);
+            return !!(record && member && member.uid && !member.fainted && ((record.locked && record.locked[member.uid] !== undefined) || (record.noRetreat && record.noRetreat[member.uid] !== undefined)));
         }
+        function battleEscapeLockName(record, member) { return (record && member && member.uid && record.noRetreat && record.noRetreat[member.uid] !== undefined) ? 'No Retreat' : 'Escape Prevention'; }
         function battleOdorSleuthWards(slotName) { // Odor Sleuth (rest of the Battle): a Ghost Type opponent can't give this side's user Disadvantage or Double Disadvantage
             const rec = getBattleRecordStore(), user = getBattleSlotMember(slotName), opp = getBattleSlotMember(getBattleOpposingSlotName(slotName));
             return !!(rec && rec.odorSleuth && user && user.uid && rec.odorSleuth[user.uid] !== undefined && opp && getBattleMemberTypes(opp).includes('ghost'));
@@ -18703,6 +18745,7 @@
                     && other && other.ownerId && other.member && other.member.uid) {
                     fall.d = other.ownerId + '|' + other.member.uid;
                     fall.cs = slot === 'attacker' ? 'defender' : 'attacker'; // the half credited
+                    if (battleCalcMoveName[fall.cs] === 'False Swipe') fall.fs = 1; // False Swipe won the Round it fainted in: +1 to the Catch Roll
                     record.defeats[fall.d] = (record.defeats[fall.d] || 0) + 1;
                 }
             });
@@ -19446,7 +19489,7 @@
             const member = getBattleSlotMember(slot);
             if (!member || member.dynamaxed) return false;
             const opp = getBattleSlotMember(getBattleOpposingSlotName(slot));
-            const oppMoves = opp ? getBattleMemberMoves(opp).filter(battleBecomeValid) : [];
+            const oppMoves = name === 'Transform' ? battleTransformChoices(slot, member) : (opp ? getBattleMemberMoves(opp).filter(battleBecomeValid) : []);
             if (name === 'Metronome') {
                 if (battleReuseBecome(slot, member, 'Metronome')) return true;
                 if (Date.now() - battleMetronomePending[slot] < 10000) return true; // a draw is already on its way
@@ -19498,14 +19541,44 @@
         // ---- Disable, Encore, Taunt, Torment, G-Max Meltdown: Moves the opponent's Pok\u00e9mon can't choose. They stay for the rest of the Battle (record.restrict: { kind, uid (the target), src, round, key }) ----
         const BATTLE_RESTRICT_MOVES = { 'Disable': 'disable', 'Taunt': 'taunt', 'Torment': 'torment', 'G-Max Meltdown': 'torment', 'Encore': 'encore' };
         function battleMoveKey(b) { return b.base || b.name; } // a Max / copied Move counts as the Move it came from
-        function battleMoveZeroStrength(slotName, member, key) { // Taunt: a Move whose Attack Strength is 0 (Spit Up with no Attach Card and Poltergeist against no card count)
+        function battleTransformChoices(slotName, member) { // the opponent's Moves Transform may pick: under Taunt, only those Taunt wouldn't block
+            const opp = getBattleSlotMember(getBattleOpposingSlotName(slotName)), rec = getBattleRecordStore();
+            const all = opp ? getBattleMemberMoves(opp).filter(battleBecomeValid) : [];
+            const taunted = !!(rec && Array.isArray(rec.restrict) && member && rec.restrict.some(r => r.kind === 'taunt' && r.uid === member.uid));
+            return taunted ? all.filter(n => !battleMoveZeroStrength(slotName, member, n, null)) : all;
+        }
+        function battleMoveZeroStrength(slotName, member, key, btn) { // Taunt: a Move whose Attack Strength is 0 (Spit Up with no Attach Card and Poltergeist against no card count)
+            if (key === 'Sleep Talk' && member) { // it turns into one of the user's own other Moves (public): blocked if any of them could have an Attack Strength of 0
+                return getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n)).some(n => battleMoveZeroStrength(slotName, member, n, null));
+            }
+            if (key === 'Mimic' || key === 'Sketch' || key === 'Transform') { // known information: judged by the Move it already is (or, for Transform, could be)
+                const rec = getBattleRecordStore(), uid = member && member.uid;
+                let kept = null;
+                if (key === 'Mimic') kept = (rec && rec.mimic && uid && rec.mimic[uid]) || battleMimicCandidate(slotName); // what it copied, or what the opponent used last Round
+                else if (key === 'Sketch') kept = (member && battleBecomeValid(member.sketchMove) && member.sketchMove) || (rec && rec.sketch && uid && rec.sketch[uid]);
+                else kept = rec && rec.transform && uid && rec.transform[uid];
+                if (battleBecomeValid(kept)) return battleMoveZeroStrength(slotName, member, kept, null);
+                if (key !== 'Transform') return true; // nothing to copy yet
+                return battleTransformChoices(slotName, member).length === 0; // Transform picks from the opponent's Moves, but never one that Taunt would block
+            }
+            if (BATTLE_BECOME_MOVES.includes(key)) return true; // Metronome / Nature Power: the result is hidden (or can be a 0 Attack Strength Move such as Stun Spore), so Taunt blocks them
             const entry = getBattleMoveEntry(key), a = entry && entry.attack_strength;
             if (!a) return false;
-            if (a.mode === 'fixed') return Number(a.value) === 0;
-            if (a.mode === 'half_level' && slotName) return getBattleHalfLevelPower(slotName, a) === 0; // half of Level 0 or 1, rounded down
+            if (a.mode === 'fixed' && Number(a.value) === 0) return true;
+            if (a.mode === 'half_level' && slotName && getBattleHalfLevelPower(slotName, a) === 0) return true; // half of Level 0 or 1, rounded down
             if (key === 'Beat Up' && slotName) { const team = battleOwnTeamMembers(slotName); return !!team && team.filter(t => !t.fainted && t !== member && !(member && t.uid && t.uid === member.uid)).length === 0; } // the user is the only one left standing (only this player's device can see their team)
             if (key === 'Spit Up') return !battleAttachIdOf(member);
             if ((key === 'Dark Void' || key === 'Dream Eater') && slotName) { const o = getBattleSlotMember(getBattleOpposingSlotName(slotName)); return !!o && o.status !== 'sleep'; } // 0 unless the opponent is asleep
+            if (a.mode !== 'manual' && slotName && btn) { // an outside effect (a Field card such as Rain, Harsh Sunlight or Misty Terrain, a Status penalty) can take it down to 0
+                try {
+                    const att = computeBattleAttackStrength(slotName, btn.name, btn.base || null);
+                    if (att) {
+                        const field = getBattleZoneModifiers(slotName, btn.name).reduce((sum, mod) => sum + (Number(mod.bonus) || 0), 0);
+                        const req = getBattleAttackStrengthPenalty(member), taken = req ? Math.min(req.amount, Math.max(0, att.total + field)) : 0;
+                        return att.total + field - taken <= 0;
+                    }
+                } catch (err) { /* fall through */ }
+            }
             if (key === 'Poltergeist' && slotName) { const o = getBattleSlotMember(getBattleOpposingSlotName(slotName)); return !!o && !battleAttachIdOf(o); }
             return false;
         }
@@ -19520,7 +19593,7 @@
             if (rs.some(r => r.kind === 'torment')) { const last = rec.lastChosen && rec.lastChosen[member.uid]; if (last && last.round === rec.round - 1) out = out.filter(b => battleMoveKey(b) !== last.key); }
             const enc = rs.filter(r => r.kind === 'encore').pop();
             if (enc) out = out.filter(b => battleMoveKey(b) === enc.key);
-            if (rs.some(r => r.kind === 'taunt')) { const nz = out.filter(b => !battleMoveZeroStrength(slotName, member, battleMoveKey(b))); if (nz.length) out = nz; } // "if possible"
+            if (rs.some(r => r.kind === 'taunt')) { const nz = out.filter(b => !battleMoveZeroStrength(slotName, member, battleMoveKey(b), b)); if (nz.length) out = nz; } // "if possible"
             return out;
         }
         function battleChosenKey(record, slotName) { // the Move this side chose this Round (even if Struggle took its place)
@@ -21130,7 +21203,7 @@
                 const wf = (record.faints || []).filter(f => !f.o && f.d && wild && f.u === wild.key).pop();
                 if (wf) {
                     const parts = String(wf.d).split('|');
-                    if (parts[0] === me) wildDefeat = { key: wild.key, uid: parts.slice(1).join('|'), diff: typeof wf.diff === 'number' ? wf.diff : null };
+                    if (parts[0] === me) wildDefeat = { key: wild.key, uid: parts.slice(1).join('|'), diff: typeof wf.diff === 'number' ? wf.diff : null, fs: !!wf.fs };
                 } else if (battleParticipationSnapshot.id === record.id && battleParticipationSnapshot.wildDefeat && wild && battleParticipationSnapshot.wildDefeat.key === wild.key && !wildMon) {
                     wildDefeat = battleParticipationSnapshot.wildDefeat;
                 }
@@ -27471,8 +27544,10 @@
             const pdBtn = e.target.closest('.game-payday-btn');
             if (pdBtn) { // Pay Day's reward
                 closeFrontierOverlay();
-                if (pdBtn.dataset.act === 'coins') { adjustPokeCoins(3); showGameToast('Pay Day: collected 3 Pok\u00e9Coins.'); }
-                else { requestDrawCard('Item Deck'); boardShowHand(); showGameToast('Pay Day: drew a card from the Item Deck.'); battleItemRewardBonus(); }
+                const pdName = pdBtn.dataset.name || 'Pay Day';
+                if (pdBtn.dataset.act === 'coins') { const n = parseInt(pdBtn.dataset.coins, 10) || 3; adjustPokeCoins(n); showGameToast(pdName + ': collected ' + n + ' Pok\u00e9Coins.'); }
+                else { requestDrawCard('Item Deck'); boardShowHand(); showGameToast(pdName + ': drew a card from the Item Deck.'); battleItemRewardBonus(); }
+                if (battleRewardNext) { const nx = battleRewardNext; battleRewardNext = null; setTimeout(nx, 500); }
                 return;
             }
             const fpBtn = e.target.closest('.game-fieldpick-btn');
@@ -31296,6 +31371,7 @@
                     if (closeEnough) lines.push({ label: c.name + (Number.isFinite(max) ? ' (Attack Totals within ' + max + ')' : ' (defeated it)'), amount: parseInt(cfg.bonus, 10) || 0 });
                 }
             }
+            if (d && d.fs && d.key === (target.uid || target.name)) lines.push({ label: 'False Swipe', amount: 1 });
             return lines.filter(l => l.amount);
         }
         function getCatchBonusLines(attempt) {
