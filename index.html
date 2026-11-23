@@ -16608,7 +16608,7 @@
             if (me && me.uid && opp && opp.uid && rec.blocked && rec.blocked[me.uid] === opp.uid && battleShieldAgainst(slot)) delete rec.blocked[me.uid]; // this Move has Protection / Priority: what the opponent's Block Item would do to it is ignored (Priority: it comes back at the end of the Round)
             if (!opp || !me) return;
             battleApplyLastingEffects(rec, slot, 'blockitem');
-            if (!battleMemberAttachBlocked(opp)) return;
+            battleApplyRestrictions(rec, slot, 'lock'); // Disable / Taunt apply now too
             const moveName = battleCalcMoveName[oppSlot], base = battleCalcBaseMove[oppSlot] || null;
             if (!moveName || moveName === BATTLE_STRUGGLE_MOVE_NAME) return;
             if (getBattleMemberMoveButtons(opp, oppSlot).some(b => b.name === moveName && (b.base || null) === base)) return;
@@ -16618,7 +16618,7 @@
         }
         function guidedRevertLasting(slot, hadApplied) { // it became Struggle: Block Item (applied at Lock In) reverts always; Escape Prevention only if its effects had applied
             const m = getBattleSlotMember(slot);
-            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth', 'persistDis', 'dynaBuff'] : ['blocked']);
+            if (m) battleRevertLastingEffects(getBattleRecordStore(), m.uid, hadApplied ? ['blocked', 'locked', 'payDay', 'attachSpent', 'typeOverride', 'odorSleuth', 'persistDis', 'dynaBuff', 'restrict'] : ['blocked', 'restrictLock']);
         }
         function guidedFrozenEffects(slotName, forMove) { // a Move that became Struggle after its effects applied: only the Status Conditions and Field Move cards it put in play stay
             const g = guidedState();
@@ -16635,6 +16635,7 @@
         }
         function guidedForceStruggle(slot) { // Struggle takes the place of the chosen Move; returns the name of the Move it was
             const was = battleCalcMoveName[slot] || null;
+            { const rec0 = getBattleRecordStore(); if (rec0 && rec0.guided && was) { if (!rec0.guided.struggleKey) rec0.guided.struggleKey = {}; rec0.guided.struggleKey[slot] = { round: rec0.round, key: battleCalcBaseMove[slot] || was }; } } // Encore / Torment still see the Move that was chosen
             if (lobbyState.role === 'host') {
                 const st = hostBattleArenaState;
                 if (!st.moves) st.moves = { attacker: null, defender: null };
@@ -17246,6 +17247,7 @@
         }
         function battleNoteRoundEnd(record) { // the Round is over: Fell Stinger's winner gets Double Advantage in the next Round; end-of-Round Status effects are put to their owners
             if (!record) return;
+            try { battleNoteLastChosen(record); } catch (err) { /* never block the next Round */ }
             try { battleStatusRoundEnd(record); } catch (err) { /* never block the next Round */ }
             battleNoteFellStinger(record);
         }
@@ -17486,7 +17488,7 @@
             const eff = getBattleEffectiveStrength(slotName, moveName, baseMoveName);
             return (eff && eff.strength.mode === 'manual' && !BATTLE_LIVE_STRENGTH[eff.name] && !BATTLE_AUTO_PICK_MOVES.includes(eff.name)) ? eff.name : null;
         }
-        const BATTLE_AUTO_PICK_MOVES = ['Steel Roller', 'Spit Up', 'Order Up', 'Beat Up', 'Last Respects', 'Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment', 'Flying Press', 'Conversion', 'Conversion 2', 'Metronome', 'Nature Power', 'Sleep Talk', 'Sketch', 'Transform']; // worked out (or asked) as the Move is picked: see battlePreSelect
+        const BATTLE_AUTO_PICK_MOVES = ['Steel Roller', 'Disable', 'Spit Up', 'Order Up', 'Beat Up', 'Last Respects', 'Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment', 'Flying Press', 'Conversion', 'Conversion 2', 'Metronome', 'Nature Power', 'Sleep Talk', 'Sketch', 'Transform']; // worked out (or asked) as the Move is picked: see battlePreSelect
         function battlePreSelect(slot, moveName, baseMove) { // true when it opened a question (the pick carries on from its answer)
             const eff = getBattleEffectiveStrength(slot, moveName, baseMove), name = eff ? eff.name : moveName;
             if (name === 'Order Up' || name === 'Beat Up' || name === 'Last Respects') { // the team is read here, on the owner's device, and the host relays the answer with the Move pick (like the number a player types)
@@ -17504,6 +17506,13 @@
                 const moves = opp ? getBattleMemberMoves(opp).filter(n => getBattleMoveType(n)) : [];
                 if (!moves.length) return false; // nothing to pick from: no effect
                 openBattleManualOverlay(slot, moveName, baseMove, name, 'oppmove', { moves, text: `${name}: select one of the opponent Pok\u00e9mon\u2019s Moves.` });
+                return true;
+            }
+            if (name === 'Disable') { // select one of the opponent's available Moves (applies when this Move is locked in)
+                const opp = getBattleSlotMember(getBattleOpposingSlotName(slot)), oppSlot = getBattleOpposingSlotName(slot);
+                const keys = opp ? getBattleMemberMoveButtons(opp, oppSlot).filter(b => !b.forcedBy && !isBattleMoveSpent(oppSlot, b.name)).map(battleMoveKey).filter((k, i, a) => a.indexOf(k) === i) : [];
+                if (keys.length <= 1) { battleCalcManualValue[slot] = { moveName: name, value: 0 }; showBattleArenaNotice('Disable has no effect: the opponent has only one available Move.'); return false; }
+                openBattleManualOverlay(slot, moveName, baseMove, name, 'oppmove', { moves: keys, text: 'Disable: select one of the opponent Pok\u00e9mon\u2019s Moves. They can\u2019t use it for the rest of the Battle.' });
                 return true;
             }
             if (name === 'Camouflage') { openBattleManualOverlay(slot, moveName, baseMove, name, 'type'); return true; } // a new Type every Round
@@ -18219,6 +18228,7 @@
                     const mine = record.dynaBuff[selfUid] || (record.dynaBuff[selfUid] = {});
                     if (mine[BATTLE_DYNA_BUFF_MOVES[mv]] === undefined) mine[BATTLE_DYNA_BUFF_MOVES[mv]] = record.round;
                 }
+                battleApplyRestrictions(record, slotName, 'lock'); // Disable / Taunt ignore the normal timing (and Protection)
                 if (mv === 'G-Max Gravitas') record.gravitas = true;
                 if (mv === 'G-Max Wind Rage') record.noField = true;
                 if (mv === 'G-Max Stonesurge') { if (!record.stealthExempt || typeof record.stealthExempt !== 'object') record.stealthExempt = {}; record.stealthExempt[selfUid] = true; }
@@ -18234,6 +18244,7 @@
             if (shield === 'prot' || (shield === 'priority' && !delayed)) return; // Protection ignores them for good; Priority holds them back until the end of the Round
             const src = ensureMemberUid(member), dst = ensureMemberUid(target);
             if (!only || only === 'attach') battleApplyAttachSwap(record, slotName);
+            if (!only || only === 'restrict') battleApplyRestrictions(record, slotName, 'effects'); // Torment, G-Max Meltdown, Encore (a Move's effects: Protection holds them back)
             if (!only || only === 'status') {
                 const smv = battleCalcMoveName[slotName];
                 if (smv === 'Yawn') { if (!record.yawn || typeof record.yawn !== 'object') record.yawn = {}; if (record.yawn[dst] === undefined) record.yawn[dst] = record.round; }
@@ -18292,6 +18303,8 @@
                 else delete record.typeOverride[srcUid];
                 delete record.typeOverrideRound[srcUid];
             }
+            if (!kinds || kinds.includes('restrict')) battleRevertRestrictions(record, srcUid, false);
+            else if (kinds.includes('restrictLock')) battleRevertRestrictions(record, srcUid, true);
             if (record.dynaBuff && (!kinds || kinds.includes('dynaBuff'))) Object.keys(record.dynaBuff).forEach(uid => { if (uid !== srcUid) return; const mine = record.dynaBuff[uid]; Object.keys(mine).forEach(id => { if (mine[id] === record.round) delete mine[id]; }); }); // Max Darkness and friends: only what this Round set
             if (record.persistDis && (!kinds || kinds.includes('persistDis'))) Object.keys(record.persistDis).forEach(uid => { const pd = record.persistDis[uid]; if (pd && pd.src === srcUid && pd.round === record.round) delete record.persistDis[uid]; }); // lasting Disadvantage from this Round's Move
             (kinds || ['blocked', 'locked', 'payDay']).forEach(k => { if (record[k]) Object.keys(record[k]).forEach(uid => { if (record[k][uid] === srcUid) delete record[k][uid]; }); });
@@ -18547,7 +18560,7 @@
         }
 
         function makeEmptyBattleRecord() {
-            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, dynaBuff: {}, attachHeld: {}, attachSwaps: {}, attachHome: {}, attachLost: {}, formCard: {}, replenish: {}, statusTasks: [], statusDone: {}, noSleep: false, yawn: {}, gravitas: false, noField: false, stealthExempt: {}, sketch: {}, lastUsed: {},
+            return { round: 1, faints: [], defeats: {}, seen: {}, spent: {}, earned: {}, items: {}, cursedBy: {}, usedMoves: {}, statDown: {}, blocked: {}, locked: {}, revived: {}, attachSpent: {}, pledges: {}, moveTypes: {}, plasma: false, typeOverride: {}, typeOverrideRound: {}, typeOverridePrev: {}, odorSleuth: {}, mimic: {}, transform: {}, copyTypes: {}, metroDrawn: {}, persistDis: {}, nextAdv: {}, dynaBuff: {}, attachHeld: {}, attachSwaps: {}, attachHome: {}, attachLost: {}, formCard: {}, replenish: {}, statusTasks: [], statusDone: {}, noSleep: false, yawn: {}, gravitas: false, noField: false, stealthExempt: {}, restrict: [], lastChosen: {}, sketch: {}, lastUsed: {},
                 id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lullaby: false, moved: {}, sleepNow: {}, firstRound: {} };
         }
         let battleRecord = makeEmptyBattleRecord();
@@ -19482,6 +19495,90 @@
             }
             selectBattleMove(slot, choice, via);
         }
+        // ---- Disable, Encore, Taunt, Torment, G-Max Meltdown: Moves the opponent's Pok\u00e9mon can't choose. They stay for the rest of the Battle (record.restrict: { kind, uid (the target), src, round, key }) ----
+        const BATTLE_RESTRICT_MOVES = { 'Disable': 'disable', 'Taunt': 'taunt', 'Torment': 'torment', 'G-Max Meltdown': 'torment', 'Encore': 'encore' };
+        function battleMoveKey(b) { return b.base || b.name; } // a Max / copied Move counts as the Move it came from
+        function battleMoveZeroStrength(slotName, member, key) { // Taunt: a Move whose Attack Strength is 0 (Spit Up with no Attach Card and Poltergeist against no card count)
+            const entry = getBattleMoveEntry(key), a = entry && entry.attack_strength;
+            if (!a) return false;
+            if (a.mode === 'fixed') return Number(a.value) === 0;
+            if (a.mode === 'half_level' && slotName) return getBattleHalfLevelPower(slotName, a) === 0; // half of Level 0 or 1, rounded down
+            if (key === 'Beat Up' && slotName) { const team = battleOwnTeamMembers(slotName); return !!team && team.filter(t => !t.fainted && t !== member && !(member && t.uid && t.uid === member.uid)).length === 0; } // the user is the only one left standing (only this player's device can see their team)
+            if (key === 'Spit Up') return !battleAttachIdOf(member);
+            if ((key === 'Dark Void' || key === 'Dream Eater') && slotName) { const o = getBattleSlotMember(getBattleOpposingSlotName(slotName)); return !!o && o.status !== 'sleep'; } // 0 unless the opponent is asleep
+            if (key === 'Poltergeist' && slotName) { const o = getBattleSlotMember(getBattleOpposingSlotName(slotName)); return !!o && !battleAttachIdOf(o); }
+            return false;
+        }
+        function battleRestrictFilter(member, slotName, list) {
+            const rec = (battleInProgress && member && member.uid) ? getBattleRecordStore() : null;
+            if (!rec || !Array.isArray(rec.restrict) || !rec.restrict.length) return list;
+            const rs = rec.restrict.filter(r => r.uid === member.uid);
+            if (!rs.length) return list;
+            let out = list.slice();
+            const disabled = rs.filter(r => r.kind === 'disable' && r.key).map(r => r.key);
+            if (disabled.length) out = out.filter(b => !disabled.includes(battleMoveKey(b)));
+            if (rs.some(r => r.kind === 'torment')) { const last = rec.lastChosen && rec.lastChosen[member.uid]; if (last && last.round === rec.round - 1) out = out.filter(b => battleMoveKey(b) !== last.key); }
+            const enc = rs.filter(r => r.kind === 'encore').pop();
+            if (enc) out = out.filter(b => battleMoveKey(b) === enc.key);
+            if (rs.some(r => r.kind === 'taunt')) { const nz = out.filter(b => !battleMoveZeroStrength(slotName, member, battleMoveKey(b))); if (nz.length) out = nz; } // "if possible"
+            return out;
+        }
+        function battleChosenKey(record, slotName) { // the Move this side chose this Round (even if Struggle took its place)
+            const g = record && record.guided, sk = g && g.struggleKey && g.struggleKey[slotName];
+            if (sk && sk.round === record.round && sk.key) return sk.key;
+            const name = battleCalcMoveName[slotName];
+            if (!name || name === BATTLE_STRUGGLE_MOVE_NAME) return null;
+            return battleCalcBaseMove[slotName] || name;
+        }
+        function battleNoteLastChosen(record) { // the Round is over: Torment looks at what each Pok\u00e9mon chose
+            ['attacker', 'defender'].forEach(slot => {
+                const m = getBattleSlotMember(slot), key = battleChosenKey(record, slot);
+                if (!m || !m.uid || !key) return;
+                if (!record.lastChosen || typeof record.lastChosen !== 'object') record.lastChosen = {};
+                record.lastChosen[m.uid] = { round: record.round, key };
+            });
+        }
+        function battleApplyRestrictions(record, slotName, stage) { // stage 'lock': Disable and Taunt (they apply when the Move is locked in, like Block Item); 'effects': also Torment and Encore. Idempotent.
+            const mv = battleCalcMoveName[slotName], kind = mv ? BATTLE_RESTRICT_MOVES[mv] : null;
+            if (!record || !kind) return;
+            if (stage === 'lock' && kind !== 'disable' && kind !== 'taunt') return;
+            const oppSlot = getBattleOpposingSlotName(slotName), member = getBattleSlotMember(slotName), opp = getBattleSlotMember(oppSlot);
+            if (!member || !opp) return;
+            const src = ensureMemberUid(member), dst = ensureMemberUid(opp), nm = getBattleMemberDisplay(opp).name || 'The opponent';
+            if (!Array.isArray(record.restrict)) record.restrict = [];
+            const mine = k => record.restrict.some(r => r.kind === k && r.src === src && r.uid === dst && r.round === record.round);
+            if (kind === 'disable') {
+                if (mine('disable')) return;
+                const m = battleCalcManualValue[slotName], key = (m && m.moveName === 'Disable' && typeof m.choice === 'string') ? m.choice : null;
+                const avail = getBattleMemberMoveButtons(opp, oppSlot).filter(b => !b.forcedBy && !isBattleMoveSpent(oppSlot, b.name));
+                if (avail.length <= 1 || !key) {
+                    record.restrict.push({ kind: 'disable', uid: dst, src, round: record.round, key: null });
+                    showBattleArenaNotice(avail.length <= 1 ? `Disable has no effect: ${nm} has only one available Move.` : 'Disable: no Move was picked, so it has no effect.');
+                    return;
+                }
+                record.restrict.push({ kind: 'disable', uid: dst, src, round: record.round, key });
+                showBattleArenaNotice(`${nm} can\u2019t use ${key} for the rest of the Battle (Disable).`);
+            } else if (kind === 'taunt') {
+                if (mine('taunt')) return;
+                record.restrict.push({ kind: 'taunt', uid: dst, src, round: record.round });
+                showBattleArenaNotice(`${nm} can\u2019t select a Move with an Attack Strength of 0 for the rest of the Battle (if it has any other) (Taunt).`);
+            } else if (kind === 'torment') {
+                if (record.restrict.some(r => r.kind === 'torment' && r.uid === dst)) return;
+                record.restrict.push({ kind: 'torment', uid: dst, src, round: record.round });
+                showBattleArenaNotice(`${nm} can\u2019t use the same Move in consecutive Rounds for the rest of the Battle (${mv}).`);
+            } else if (kind === 'encore') {
+                if (mine('encore')) return;
+                const key = battleChosenKey(record, oppSlot);
+                if (!key) return;
+                record.restrict = record.restrict.filter(r => !(r.kind === 'encore' && r.uid === dst));
+                record.restrict.push({ kind: 'encore', uid: dst, src, round: record.round, key });
+                showBattleArenaNotice(`${nm} can only select ${key} for the rest of the Battle (Encore).`);
+            }
+        }
+        function battleRevertRestrictions(record, srcUid, lockOnly) { // the Move became Struggle: what it just set up is undone
+            if (!record || !Array.isArray(record.restrict)) return;
+            record.restrict = record.restrict.filter(r => !(r.src === srcUid && r.round === record.round && (!lockOnly || r.kind === 'disable' || r.kind === 'taunt')));
+        }
         function getBattleMemberMoveButtons(member, slotName) {
             const forcedBy = getBattleStruggleStatus(member);
             const moves = getBattleMemberMoves(member);
@@ -19491,12 +19588,14 @@
                 if (forcedBy.id === 'sleep') moves.filter(n => n === 'Snore' || n === 'Sleep Talk').forEach(n => list.push(become(n)));
                 return list;
             }
-            if (!member.dynamaxed) return moves.map(become);
-            return moves.map(move => {
+            const all = !member.dynamaxed ? moves.map(become) : moves.map(move => {
                 const alreadyMax = /^(Max |G-Max )/.test(move);
                 const maxName = alreadyMax ? null : getMaxMoveForKnownMove(move);
                 return maxName ? { name: maxName, base: move } : { name: move, base: null };
             });
+            const allowed = battleRestrictFilter(member, slotName, all);
+            if (!allowed.length && all.length) return [{ name: BATTLE_STRUGGLE_MOVE_NAME, base: null, forcedBy: 'its Move restrictions' }]; // every Move is blocked: Struggle
+            return allowed;
         }
 
         function getBattleMemberMoves(member) {
