@@ -8175,6 +8175,10 @@
                 const guidedWhy = guidedApplyOp(st.record, String(req.op || ''), slot, guidedCtx());
                 if (guidedWhy) sendBattleNotice(peerKey, guidedWhy);
                 guidedAdvance(st.record, guidedCtx());
+            } else if (req && req.action === 'copy-note') { // a Copy Move result for the Battle Record (kept Move, Type change)
+                if (!st.record) st.record = makeEmptyBattleRecord();
+                const nt = req.note && typeof req.note === 'object' ? req.note : null;
+                if (nt && typeof nt.kind === 'string' && st[slot] && st[slot].member && ensureMemberUid(st[slot].member) === nt.uid) battleApplyCopyNote(st.record, { kind: nt.kind, key: String(nt.key || ''), uid: nt.uid, move: String(nt.move || '').slice(0, 80), types: nt.types });
             } else if (req && req.action === 'note-cursed') { // the first Pokémon on a side to gain Cursed is the only one that can this Battle
                 if (!st.record) st.record = makeEmptyBattleRecord();
                 if (!st.record.cursedBy) st.record.cursedBy = {};
@@ -17565,6 +17569,8 @@
             if (!member) return [];
             const rec = battleInProgress ? getBattleRecordStore() : null; // Conversion / Conversion 2: the Type it took until the Battle ends (not for STAB, and Terastallization wins over it)
             const taken = (rec && rec.typeOverride && member.uid && !(opts && opts.original) && !getBattleMemberTeraType(member)) ? rec.typeOverride[member.uid] : null;
+            const once = (rec && rec.typeOnce && member.uid && !(opts && opts.original) && !getBattleMemberTeraType(member)) ? rec.typeOnce[member.uid] : null; // a Metronomed Transform: this Round only
+            if (once && once.round === rec.round && Array.isArray(once.types) && once.types.length) return once.types.slice();
             if (Array.isArray(taken) && taken.length) return taken.slice();
             const gymMon = getGymLeaderMemberData(member);
             if (gymMon) {
@@ -19389,8 +19395,9 @@
             if (!key) return;
             if (!record[key] || typeof record[key] !== 'object') record[key] = {};
             if (record[key][uid] === undefined) record[key][uid] = moveName;
-            if (!record.copyTypes || typeof record.copyTypes !== 'object') record.copyTypes = {};
-            if (record.copyTypes[uid + '|' + base] === undefined && stabTypes.length) record.copyTypes[uid + '|' + base] = stabTypes.slice();
+            if (!record.copyStab || typeof record.copyStab !== 'object') record.copyStab = {};
+            const copiedType = getBattleMoveType(moveName);
+            if (record.copyStab[uid + '|' + base] === undefined && copiedType) record.copyStab[uid + '|' + base] = stabTypes.includes(copiedType); // STAB: yes / no, judged against the Pok\u00e9mon it was copied from
         }
         const BATTLE_ROUND_LOCKED_BECOMES = ['Metronome', 'Nature Power', 'Sleep Talk']; // the draw / die / random pick is made once per Round per Pok\u00e9mon (clicking the Move again can't re-roll it)
         function battleNoteMetronomeDrawn(record, member, moveName, manual, base) {
@@ -19463,22 +19470,57 @@
             const base = battleCalcBaseMove[slotName];
             if (!base || !moveName || !['Mimic', 'Sketch', 'Transform', 'Metronome'].includes(base)) return null;
             const clean = a => (Array.isArray(a) ? a.map(t => String(t).toLowerCase().trim()).filter(t => BATTLE_MOVE_TYPE_NAMES.includes(t)) : []);
-            if (base === 'Metronome') { // the drawn token's own Types
-                const m = battleCalcManualValue[slotName], e = (m && m.moveName === 'Metronome' && typeof m.choice === 'string') ? POKEMON_BY_NAME[m.choice] : null;
+            const metroManual = battleCalcManualValue[slotName];
+            if (base === 'Metronome' && !(metroManual && metroManual.moveName === 'Metronome' && typeof metroManual.choice !== 'string')) { // the drawn token's own Types (a copied Move, with no token, takes the Pok\u00e9mon it copies from)
+                const e = (metroManual && metroManual.moveName === 'Metronome' && typeof metroManual.choice === 'string') ? POKEMON_BY_NAME[metroManual.choice] : null;
                 const t = e ? clean(e.types) : [];
                 return t.length ? t : null;
             }
             const member = getBattleSlotMember(slotName), opp = getBattleSlotMember(getBattleOpposingSlotName(slotName)), rec = getBattleRecordStore();
             if (!member) return null;
-            const locked = rec && rec.copyTypes && member.uid && rec.copyTypes[member.uid + '|' + base];
-            if (Array.isArray(locked) && locked.length) return locked.slice();
-            if (base === 'Sketch' && member.sketchMove === moveName && Array.isArray(member.sketchTypes) && member.sketchTypes.length) return member.sketchTypes.slice();
-            if (base === 'Mimic') {
+            const yesNo = v => (v ? [getBattleMoveType(moveName)] : []);
+            const locked = rec && rec.copyStab && member.uid && rec.copyStab[member.uid + '|' + base];
+            if (typeof locked === 'boolean') return yesNo(locked);
+            if (base === 'Sketch' && member.sketchMove === moveName) {
+                if (typeof member.sketchStab === 'boolean') return yesNo(member.sketchStab);
+                if (Array.isArray(member.sketchTypes) && member.sketchTypes.length) return member.sketchTypes.slice(); // saved by an older version
+            }
+            if (base === 'Mimic' || base === 'Metronome') {
                 const last = rec && rec.lastUsed && rec.lastUsed[getBattleOpposingSlotName(slotName)];
                 if (last && last.move === moveName && Array.isArray(last.types) && last.types.length) return last.types.slice();
             }
             const live = opp ? getBattleMemberTypes(opp, { original: true }) : [];
             return live.length ? live : null;
+        }
+        function battleBecomeStruggle(slot, why) { // a Metronome / Nature Power / Sleep Talk that can't resolve: Struggle is the Move that gets used
+            if (why) showBattleArenaNotice(why);
+            if (guidedState()) {
+                if (!guidedBecomePending(slot)) return;
+                guidedForceStruggle(slot);
+                guidedOp('becomedone', slot);
+            } else selectBattleMove(slot, BATTLE_STRUGGLE_MOVE_NAME, null);
+        }
+        function battleApplyCopyNote(record, n) { // a Copy Move result that has to be remembered in the Battle Record (kept Move, Type changes)
+            if (!record || !n || typeof n.uid !== 'string' || !n.uid) return;
+            const uid = n.uid.slice(0, 64), types = Array.isArray(n.types) ? n.types.filter(t => BATTLE_MOVE_TYPE_NAMES.includes(t)).slice(0, 2) : [];
+            if (n.kind === 'keep') {
+                if (!['mimic', 'transform'].includes(n.key) || !battleBecomeValid(n.move)) return;
+                if (!record[n.key] || typeof record[n.key] !== 'object') record[n.key] = {};
+                const was = record[n.key][uid];
+                record[n.key][uid] = n.move;
+                if (n.key === 'transform' && was !== n.move) { const t = getBattleMoveType(n.move); if (BATTLE_MOVE_TYPE_NAMES.includes(t)) battleSetTypeOverride(record, uid, [t]); } // Transform: the user's Type becomes that Move's printed Type
+            } else if (n.kind === 'typeset' && types.length) battleSetTypeOverride(record, uid, types);
+            else if (n.kind === 'typeonce' && types.length) { if (!record.typeOnce || typeof record.typeOnce !== 'object') record.typeOnce = {}; record.typeOnce[uid] = { round: record.round, types }; } // this Round only
+        }
+        function battleSendCopyNote(slot, note) {
+            if (lobbyState.role === 'guest') { requestBattleDice(slot, { action: 'copy-note', note }); return; }
+            battleApplyCopyNote(getBattleRecordStore(), note);
+            if (lobbyState.role === 'host') broadcastBattleArenaState();
+        }
+        function battleKeepCopy(slot, member, owner, move) { // a Mimic / Transform that has become a Copy Move keeps it until the Battle ends; Sketch keeps it for the rest of the game
+            if (!member || !member.uid || !battleBecomeValid(move)) return;
+            if (owner === 'Sketch') { battleSaveSketch(slot, move); return; }
+            if (owner === 'Mimic' || owner === 'Transform') battleSendCopyNote(slot, { kind: 'keep', key: owner.toLowerCase(), uid: member.uid, move });
         }
         function battleBecomeFail(slot, why) { // the Move can't turn into another: it stays as it is with an Attack Strength of 0 (Guided rounds move on)
             if (why) showBattleArenaNotice(why);
@@ -19497,7 +19539,8 @@
             const mem = typeof idx === 'number' ? getTeamSlotMember(idx) : null;
             if (mem && !isActiveSaveReadOnly() && getBattleSlotMember(slot) === mem) {
                 const foe = getBattleSlotMember(getBattleOpposingSlotName(slot));
-                mem.sketchMove = choice; mem.sketchTypes = foe ? getBattleMemberTypes(foe, { original: true }) : []; // STAB follows the Pok\u00e9mon it was sketched from
+                const ft = foe ? getBattleMemberTypes(foe, { original: true }) : [], mt = getBattleMoveType(choice);
+                mem.sketchMove = choice; mem.sketchStab = !!(mt && ft.includes(mt)); delete mem.sketchTypes; // STAB (yes / no) is judged against the Pok\u00e9mon it was sketched from
                 persistTeamSlotChange(idx);
             }
         }
@@ -19515,7 +19558,7 @@
                 battleMetronomePending[slot] = Date.now();
                 battleMetronomeRequestDraw(member, (drawn, cancelled) => {
                     battleMetronomePending[slot] = 0;
-                    if (!drawn) { if (!cancelled) battleBecomeFail(slot, 'No Tokens Left to Draw.'); return; }
+                    if (!drawn) { if (!cancelled) battleBecomeStruggle(slot, 'No Tokens Left to Draw: Metronome can\u2019t resolve, so Struggle is used.'); return; }
                     showBattleArenaNotice(`Metronome drew ${drawn.token}: ${drawn.move}.` + (drawn.skipped ? ` (${drawn.skipped} token${drawn.skipped === 1 ? '' : 's'} with a Move Metronome can\u2019t use went back to the pool.)` : ''));
                     battleCalcManualValue[slot] = { moveName: 'Metronome', value: 0, choice: ['Mimic', 'Sketch', 'Transform'].includes(drawn.move) ? undefined : drawn.token }; // carries the token (for its STAB) with the pick; a Move that needs its own pick replaces it (a copied Move takes the Pok\u00e9mon it copies from)
                     if (battleCalcManualValue[slot].choice === undefined) delete battleCalcManualValue[slot].choice;
@@ -19523,7 +19566,7 @@
                 });
                 return true;
             }
-            if ((name === 'Sleep Talk' || name === 'Nature Power') && battleReuseBecome(slot, member, name)) return true;
+            if (name === 'Nature Power' && battleReuseBecome(slot, member, name)) return true;
             if (name === 'Mimic') {
                 const rec = getBattleRecordStore(), kept = via === 'Metronome' ? null : (rec && rec.mimic && member.uid && rec.mimic[member.uid]);
                 const cand = battleBecomeValid(kept) ? kept : battleMimicCandidate(slot);
@@ -19537,10 +19580,19 @@
                 return true;
             }
             if (name === 'Sleep Talk') {
-                if (member.status !== 'sleep') { battleBecomeFail(slot, via ? 'Sleep Talk: the user is not asleep, so it has no effect (Attack Strength 0).' : 'Sleep Talk can only be selected while the user has Sleep.'); return true; }
-                const others = getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n));
-                if (!others.length) { battleBecomeFail(slot, 'Sleep Talk has no other Move to use.'); return true; }
-                const pick = others[Math.floor(Math.random() * others.length)], shown = battleReplacedMove(member, pick), final = shown || pick;
+                if (member.status !== 'sleep') {
+                    if (via || guidedState()) battleBecomeStruggle(slot, 'Sleep Talk: the user is not asleep, so Struggle is used.'); else showBattleArenaNotice('Sleep Talk can only be selected while the user has Sleep.');
+                    return true;
+                }
+                const rec = getBattleRecordStore(), lk = rec && rec.stPick && member.uid && rec.stPick[member.uid];
+                const others = getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n) && battleReplacedMove(member, n) !== 'Sleep Talk'); // a second Sleep Talk (a Transform that became it) can't be picked while there are other Moves
+                let pick = (lk && lk.round === rec.round && others.includes(lk.pick)) ? lk.pick : null; // the pick is made once per Round (classic mode: clicking again can't re-roll)
+                if (!pick) {
+                    if (!others.length) { battleBecomeStruggle(slot, 'Sleep Talk has no other Move to use, so Struggle is used.'); return true; }
+                    pick = others[Math.floor(Math.random() * others.length)];
+                    if (rec && lobbyState.role === null && member.uid) { if (!rec.stPick || typeof rec.stPick !== 'object') rec.stPick = {}; rec.stPick[member.uid] = { round: rec.round, pick }; }
+                }
+                const shown = battleReplacedMove(member, pick), final = shown || pick;
                 showBattleArenaNotice(`Sleep Talk picked ${pick}${shown ? ' (' + shown + ')' : ''}.`);
                 if (BATTLE_BECOME_MOVES.includes(final)) { // Mimic / Sketch / Transform: that Move is what gets replaced (not Sleep Talk); Metronome / Nature Power just resolve
                     if (!battleResolveBecoming(slot, final, shown ? pick : null)) battleBecomeFail(slot, `${final} has nothing to turn into, so it has an Attack Strength of 0.`);
@@ -19555,6 +19607,11 @@
                 openBattleManualOverlay(slot, name, null, name, 'oppmove', { moves, roll: true, text: 'Roll the Nature Power Die (or pick the Move it shows). This Move becomes that Move for this Battle Round.' });
                 return true;
             }
+            if (name === 'Transform' && !oppMoves.length && (via === 'Mimic' || via === 'Sketch')) { // it can only copy Transform: Mimic / Sketch become Transform, which has no effect (Attack Strength 0)
+                battleKeepCopy(slot, member, via, 'Transform');
+                battleBecomeFail(slot, 'Transform can only copy Transform here, so it has no effect and an Attack Strength of 0 this Round.');
+                return true;
+            }
             if ((name === 'Sketch' || name === 'Transform') && oppMoves.length) { // not chosen yet
                 const roundOnly = via === 'Metronome';
                 openBattleManualOverlay(slot, name, via || null, name, 'oppmove', { moves: oppMoves, text: `${name}: select one of the opponent Pok\u00e9mon\u2019s Moves. This Move becomes that Move${roundOnly ? ' for this Battle Round' : name === 'Transform' ? ', and the user\u2019s Type becomes its Type for the rest of this Battle' : ' until the end of the game'}.` });
@@ -19566,6 +19623,9 @@
             if (!battleBecomeValid(choice)) return;
             const owner = base || via;
             if (owner === 'Sketch' && via === 'Sketch' && !['Mimic', 'Sketch', 'Transform'].includes(choice)) battleSaveSketch(slot, choice); // a copied Mimic / Transform carries on to the Move it finally becomes
+            const pickMember = getBattleSlotMember(slot), pickType = getBattleMoveType(choice);
+            if (via === 'Transform' && owner !== 'Transform' && pickMember && pickMember.uid && BATTLE_MOVE_TYPE_NAMES.includes(pickType)) // Transform reached through Metronome (this Round only), Mimic or Sketch: the user's Type becomes that Move's Type
+                battleSendCopyNote(slot, { kind: owner === 'Metronome' ? 'typeonce' : 'typeset', uid: pickMember.uid, types: [pickType] });
             selectBattleMove(slot, choice, owner);
         }
         // ---- Disable, Encore, Taunt, Torment, G-Max Meltdown: Moves the opponent's Pok\u00e9mon can't choose. They stay for the rest of the Battle (record.restrict: { kind, uid (the target), src, round, key }) ----
@@ -19695,7 +19755,7 @@
             const become = n => { const to = (slotName && !member.dynamaxed) ? battleBecomesMove(slotName, member, n) : null; return to ? { name: to, base: n } : { name: n, base: null }; };
             if (forcedBy) { // Sleep still allows Snore and Sleep Talk
                 const list = [{ name: BATTLE_STRUGGLE_MOVE_NAME, base: null, forcedBy: forcedBy.name }];
-                if (forcedBy.id === 'sleep') moves.filter(n => n === 'Snore' || n === 'Sleep Talk').forEach(n => list.push(become(n)));
+                if (forcedBy.id === 'sleep') moves.filter(n => n === 'Snore' || n === 'Sleep Talk' || battleReplacedMove(member, n) === 'Sleep Talk').forEach(n => list.push(become(n)));
                 return list;
             }
             const all = !member.dynamaxed ? moves.map(become) : moves.map(move => {
@@ -19792,8 +19852,10 @@
             if (guidedMoveWhy) { showBattleArenaNotice(guidedMoveWhy); return; }
             const guidedSel = guidedState(), deferBecome = !!(guidedSel && guidedSel.phase === 'moves' && !baseMove && BATTLE_BECOME_MOVES.includes(moveName) && getBattleSlotMember(slot) && !getBattleSlotMember(slot).dynamaxed);
             const chainMember = getBattleSlotMember(slot);
+            if (moveName === 'Sleep Talk' && ['Mimic', 'Sketch', 'Transform'].includes(baseMove) && chainMember && chainMember.status !== 'sleep') { showBattleArenaNotice('Sleep Talk can only be selected while the user has Sleep.'); return; }
             if (baseMove && BATTLE_BECOME_MOVES.includes(moveName) && chainMember && !chainMember.dynamaxed && !(guidedSel && guidedSel.phase === 'moves')) { // the pick is itself a Copy Move (drawn by Metronome, picked by Sleep Talk, or what Mimic / Sketch / Transform became): it resolves in turn
                 if (BATTLE_ROUND_LOCKED_BECOMES.includes(baseMove) && lobbyState.role === null) battleNoteMetronomeDrawn(battleRecord, chainMember, moveName, battleCalcManualValue[slot], baseMove);
+                if ((baseMove === 'Mimic' || baseMove === 'Transform') && ['Metronome', 'Nature Power', 'Sleep Talk'].includes(moveName)) battleKeepCopy(slot, chainMember, baseMove, moveName); // it becomes that Move until the Battle ends
                 if (!battleResolveBecoming(slot, moveName, baseMove)) battleBecomeFail(slot, `${moveName} has nothing to turn into, so it has an Attack Strength of 0.`);
                 return;
             }
