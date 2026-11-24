@@ -16543,7 +16543,7 @@
         }
         function guidedBecomeNeeded(slot) { // the side's chosen Move is one that turns into another (and hasn't yet)
             const m = getBattleSlotMember(slot), name = battleCalcMoveName[slot];
-            return !!(m && !m.dynamaxed && name && !battleCalcBaseMove[slot] && BATTLE_BECOME_MOVES.includes(name));
+            return !!(m && !m.dynamaxed && name && BATTLE_BECOME_MOVES.includes(name)); // a Copy Move that hasn't turned into its result yet (also one that Mimic / Sketch / Transform already became, such as Metronome)
         }
         function guidedBecomePending(slot) {
             const g = guidedState();
@@ -16555,17 +16555,13 @@
             const name = battleCalcMoveName[slot], member = getBattleSlotMember(slot);
             const giveUp = why => { if (why) showBattleArenaNotice(why); guidedOp('becomedone', slot); };
             if (!guidedBecomeNeeded(slot)) { guidedScheduleTick(); return; }
-            if (name === 'Mimic') {
-                const cand = battleMimicCandidate(slot);
-                if (!cand) { giveUp('Mimic: the opponent used no Move last Round, so this Move has an Attack Strength of 0.'); return; }
-                selectBattleMove(slot, cand, 'Mimic');
-                return;
-            }
+            const via = battleCalcBaseMove[slot] || undefined;
+            if (name === 'Mimic') { battleResolveBecoming(slot, 'Mimic', via); return; }
             if (name === 'Sleep Talk') {
                 const others = getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n));
                 if (member.status !== 'sleep' || !others.length) { giveUp(member.status !== 'sleep' ? 'Sleep Talk: the user is not asleep, so it has no effect.' : 'Sleep Talk has no other Move to use.'); return; }
             }
-            if (!battleResolveBecoming(slot, name)) giveUp(name === 'Nature Power' ? '' : `${name} has nothing to turn into, so it has an Attack Strength of 0.`);
+            if (!battleResolveBecoming(slot, name, via)) giveUp(name === 'Nature Power' ? '' : `${name} has nothing to turn into, so it has an Attack Strength of 0.`);
         }
         function guidedPromptPending(slot) {
             const g = guidedState(), pr = g && g.prompts && g.prompts[slot];
@@ -19262,7 +19258,7 @@
             if (!pending) return;
             if (answer && typeof answer === 'object' && typeof answer.choice === 'string' && pending.mode === 'oppmove' && BATTLE_BECOME_PICKS.includes(pending.manualName)) { // Sketch / Transform / Nature Power: this Move becomes the one picked
                 closeBattleManualOverlay();
-                battleFinishBecomePick(pending.slotName, pending.manualName, answer.choice);
+                battleFinishBecomePick(pending.slotName, pending.manualName, answer.choice, pending.baseMoveName);
                 return;
             }
             if (answer && typeof answer === 'object' && typeof answer.choice === 'string' && pending.mode === 'oppmove') { // an opponent's Move (Conversion, Conversion 2)
@@ -19428,7 +19424,7 @@
         }
         function battleMetronomeMoveOf(entry) { // the first Move on a token, if Metronome can use it
             const mv = entry && Array.isArray(entry.known_moves) && entry.known_moves.length ? entry.known_moves[0] : null;
-            return (mv && !BATTLE_BECOME_MOVES.includes(mv) && battleBecomeValid(mv)) ? mv : null;
+            return (mv && mv !== 'Metronome' && battleBecomeValid(mv)) ? mv : null; // a drawn Copy Move (Mimic, Sketch, Transform, Nature Power, Sleep Talk) works for this Round only; only Metronome itself is put back
         }
         function battleMetronomeHostDraw(c, color) { // the real token pool: a token whose Move Metronome can't use is thrown back and another drawn; the one used goes back too
             const rejected = [];
@@ -19484,33 +19480,73 @@
             const live = opp ? getBattleMemberTypes(opp, { original: true }) : [];
             return live.length ? live : null;
         }
-        function battleResolveBecoming(slot, name) { // a Move that turns into another when it is picked; true when it took over the pick
+        function battleBecomeFail(slot, why) { // the Move can't turn into another: it stays as it is with an Attack Strength of 0 (Guided rounds move on)
+            if (why) showBattleArenaNotice(why);
+            if (guidedBecomePending(slot)) guidedOp('becomedone', slot);
+        }
+        function battleReplacedMove(member, n) { // the Move a Mimic / Sketch / Transform on this Pok\u00e9mon has already turned into, or null
+            const rec = getBattleRecordStore(), uid = member && member.uid;
+            let kept = null;
+            if (n === 'Mimic') kept = rec && rec.mimic && uid && rec.mimic[uid];
+            else if (n === 'Sketch') kept = (member && battleBecomeValid(member.sketchMove) && member.sketchMove) || (rec && rec.sketch && uid && rec.sketch[uid]);
+            else if (n === 'Transform') kept = rec && rec.transform && uid && rec.transform[uid];
+            return battleBecomeValid(kept) ? kept : null;
+        }
+        function battleSaveSketch(slot, choice) { // Sketch stays on the Pok\u00e9mon for the rest of the game
+            const idx = slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
+            const mem = typeof idx === 'number' ? getTeamSlotMember(idx) : null;
+            if (mem && !isActiveSaveReadOnly() && getBattleSlotMember(slot) === mem) {
+                const foe = getBattleSlotMember(getBattleOpposingSlotName(slot));
+                mem.sketchMove = choice; mem.sketchTypes = foe ? getBattleMemberTypes(foe, { original: true }) : []; // STAB follows the Pok\u00e9mon it was sketched from
+                persistTeamSlotChange(idx);
+            }
+        }
+        function battleResolveBecoming(slot, name, via) { // a Move that turns into another when it is picked; true when it took over the pick. via: the Move this is a step of (Metronome drew it, Sleep Talk picked it, or it is what Mimic / Sketch / Transform already became) -- the result is picked as that Move
             if (!BATTLE_BECOME_MOVES.includes(name)) return false;
             const member = getBattleSlotMember(slot);
             if (!member || member.dynamaxed) return false;
             const opp = getBattleSlotMember(getBattleOpposingSlotName(slot));
-            const oppMoves = name === 'Transform' ? battleTransformChoices(slot, member) : (opp ? getBattleMemberMoves(opp).filter(battleBecomeValid) : []);
+            let oppMoves = opp ? getBattleMemberMoves(opp).filter(battleBecomeValid) : [];
+            if (name === 'Transform') oppMoves = battleTransformChoices(slot, member); // never Transform itself (a Transform that can only copy Transform has no effect)
+            else if (name === 'Sketch') oppMoves = oppMoves.filter(n => n !== 'Sketch');
             if (name === 'Metronome') {
                 if (battleReuseBecome(slot, member, 'Metronome')) return true;
                 if (Date.now() - battleMetronomePending[slot] < 10000) return true; // a draw is already on its way
                 battleMetronomePending[slot] = Date.now();
                 battleMetronomeRequestDraw(member, (drawn, cancelled) => {
                     battleMetronomePending[slot] = 0;
-                    if (!drawn) { if (!cancelled) showBattleArenaNotice('No Tokens Left to Draw.'); return; }
+                    if (!drawn) { if (!cancelled) battleBecomeFail(slot, 'No Tokens Left to Draw.'); return; }
                     showBattleArenaNotice(`Metronome drew ${drawn.token}: ${drawn.move}.` + (drawn.skipped ? ` (${drawn.skipped} token${drawn.skipped === 1 ? '' : 's'} with a Move Metronome can\u2019t use went back to the pool.)` : ''));
-                    battleCalcManualValue[slot] = { moveName: 'Metronome', value: 0, choice: drawn.token }; // carries the token (for its STAB) with the pick; a Move that needs its own pick replaces it
+                    battleCalcManualValue[slot] = { moveName: 'Metronome', value: 0, choice: ['Mimic', 'Sketch', 'Transform'].includes(drawn.move) ? undefined : drawn.token }; // carries the token (for its STAB) with the pick; a Move that needs its own pick replaces it (a copied Move takes the Pok\u00e9mon it copies from)
+                    if (battleCalcManualValue[slot].choice === undefined) delete battleCalcManualValue[slot].choice;
                     selectBattleMove(slot, drawn.move, 'Metronome');
                 });
                 return true;
             }
             if ((name === 'Sleep Talk' || name === 'Nature Power') && battleReuseBecome(slot, member, name)) return true;
+            if (name === 'Mimic') {
+                const rec = getBattleRecordStore(), kept = via === 'Metronome' ? null : (rec && rec.mimic && member.uid && rec.mimic[member.uid]);
+                const cand = battleBecomeValid(kept) ? kept : battleMimicCandidate(slot);
+                if (!cand || cand === 'Mimic') { // nothing to copy, or it copied Mimic itself: Attack Strength 0, and it keeps its copy effect until it becomes a different Move
+                    if (!via && !guidedState()) return false;
+                    battleBecomeFail(slot, cand ? 'Mimic copied Mimic: this Move has an Attack Strength of 0 and keeps its copy effect.' : 'Mimic: the opponent used no Move last Round, so this Move has an Attack Strength of 0.');
+                    return true;
+                }
+                if (via === 'Sketch' && !BATTLE_BECOME_MOVES.includes(cand)) battleSaveSketch(slot, cand);
+                selectBattleMove(slot, cand, via || 'Mimic');
+                return true;
+            }
             if (name === 'Sleep Talk') {
-                if (member.status !== 'sleep') { showBattleArenaNotice('Sleep Talk can only be selected while the user has Sleep.'); return true; }
+                if (member.status !== 'sleep') { battleBecomeFail(slot, via ? 'Sleep Talk: the user is not asleep, so it has no effect (Attack Strength 0).' : 'Sleep Talk can only be selected while the user has Sleep.'); return true; }
                 const others = getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n));
-                if (!others.length) { showBattleArenaNotice('Sleep Talk has no other Move to use.'); return true; }
-                const pick = others[Math.floor(Math.random() * others.length)];
-                showBattleArenaNotice(`Sleep Talk picked ${pick}.`);
-                selectBattleMove(slot, pick, 'Sleep Talk');
+                if (!others.length) { battleBecomeFail(slot, 'Sleep Talk has no other Move to use.'); return true; }
+                const pick = others[Math.floor(Math.random() * others.length)], shown = battleReplacedMove(member, pick), final = shown || pick;
+                showBattleArenaNotice(`Sleep Talk picked ${pick}${shown ? ' (' + shown + ')' : ''}.`);
+                if (BATTLE_BECOME_MOVES.includes(final)) { // Mimic / Sketch / Transform: that Move is what gets replaced (not Sleep Talk); Metronome / Nature Power just resolve
+                    if (!battleResolveBecoming(slot, final, shown ? pick : null)) battleBecomeFail(slot, `${final} has nothing to turn into, so it has an Attack Strength of 0.`);
+                    return true;
+                }
+                selectBattleMove(slot, final, 'Sleep Talk');
                 return true;
             }
             if (name === 'Nature Power') {
@@ -19520,23 +19556,17 @@
                 return true;
             }
             if ((name === 'Sketch' || name === 'Transform') && oppMoves.length) { // not chosen yet
-                openBattleManualOverlay(slot, name, null, name, 'oppmove', { moves: oppMoves, text: `${name}: select one of the opponent Pok\u00e9mon\u2019s Moves. This Move becomes that Move${name === 'Transform' ? ', and the user\u2019s Type becomes its Type for the rest of this Battle' : ' until the end of the game'}.` });
+                const roundOnly = via === 'Metronome';
+                openBattleManualOverlay(slot, name, via || null, name, 'oppmove', { moves: oppMoves, text: `${name}: select one of the opponent Pok\u00e9mon\u2019s Moves. This Move becomes that Move${roundOnly ? ' for this Battle Round' : name === 'Transform' ? ', and the user\u2019s Type becomes its Type for the rest of this Battle' : ' until the end of the game'}.` });
                 return true;
             }
             return false; // Mimic (the button already shows what it became), or nothing to copy: Attack Strength 0
         }
-        function battleFinishBecomePick(slot, via, choice) { // the player picked the Move that Sketch / Transform / Nature Power turns into
+        function battleFinishBecomePick(slot, via, choice, base) { // the player picked the Move that Sketch / Transform / Nature Power turns into. base: the Move this is a step of (null when it is the picked Move itself)
             if (!battleBecomeValid(choice)) return;
-            if (via === 'Sketch') { // Sketch stays on the Pok\u00e9mon for the rest of the game
-                const idx = slot === 'attacker' ? battleAttackerMemberIndex : battleDefenderMemberIndex;
-                const mem = typeof idx === 'number' ? getTeamSlotMember(idx) : null;
-                if (mem && !isActiveSaveReadOnly() && getBattleSlotMember(slot) === mem) {
-                    const foe = getBattleSlotMember(getBattleOpposingSlotName(slot));
-                    mem.sketchMove = choice; mem.sketchTypes = foe ? getBattleMemberTypes(foe, { original: true }) : []; // STAB follows the Pok\u00e9mon it was sketched from
-                    persistTeamSlotChange(idx);
-                }
-            }
-            selectBattleMove(slot, choice, via);
+            const owner = base || via;
+            if (owner === 'Sketch' && via === 'Sketch' && !['Mimic', 'Sketch', 'Transform'].includes(choice)) battleSaveSketch(slot, choice); // a copied Mimic / Transform carries on to the Move it finally becomes
+            selectBattleMove(slot, choice, owner);
         }
         // ---- Disable, Encore, Taunt, Torment, G-Max Meltdown: Moves the opponent's Pok\u00e9mon can't choose. They stay for the rest of the Battle (record.restrict: { kind, uid (the target), src, round, key }) ----
         const BATTLE_RESTRICT_MOVES = { 'Disable': 'disable', 'Taunt': 'taunt', 'Torment': 'torment', 'G-Max Meltdown': 'torment', 'Encore': 'encore' };
@@ -19545,9 +19575,16 @@
             const opp = getBattleSlotMember(getBattleOpposingSlotName(slotName)), rec = getBattleRecordStore();
             const all = opp ? getBattleMemberMoves(opp).filter(battleBecomeValid) : [];
             const taunted = !!(rec && Array.isArray(rec.restrict) && member && rec.restrict.some(r => r.kind === 'taunt' && r.uid === member.uid));
-            return taunted ? all.filter(n => !battleMoveZeroStrength(slotName, member, n, null)) : all;
+            const usable = all.filter(n => n !== 'Transform');
+            return taunted ? usable.filter(n => !battleMoveZeroStrength(slotName, member, n, null)) : usable;
         }
-        function battleMoveZeroStrength(slotName, member, key, btn) { // Taunt: a Move whose Attack Strength is 0 (Spit Up with no Attach Card and Poltergeist against no card count)
+        let battleZeroDepth = 0;
+        function battleMoveZeroStrength(slotName, member, key, btn) {
+            if (battleZeroDepth > 6) return true; // Copy Moves that point at each other
+            battleZeroDepth++;
+            try { return battleMoveZeroStrengthInner(slotName, member, key, btn); } finally { battleZeroDepth--; }
+        }
+        function battleMoveZeroStrengthInner(slotName, member, key, btn) { // Taunt: a Move whose Attack Strength is 0 (Spit Up with no Attach Card and Poltergeist against no card count)
             if (key === 'Sleep Talk' && member) { // it turns into one of the user's own other Moves (public): blocked if any of them could have an Attack Strength of 0
                 return getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n)).some(n => battleMoveZeroStrength(slotName, member, n, null));
             }
@@ -19557,7 +19594,7 @@
                 if (key === 'Mimic') kept = (rec && rec.mimic && uid && rec.mimic[uid]) || battleMimicCandidate(slotName); // what it copied, or what the opponent used last Round
                 else if (key === 'Sketch') kept = (member && battleBecomeValid(member.sketchMove) && member.sketchMove) || (rec && rec.sketch && uid && rec.sketch[uid]);
                 else kept = rec && rec.transform && uid && rec.transform[uid];
-                if (battleBecomeValid(kept)) return battleMoveZeroStrength(slotName, member, kept, null);
+                if (battleBecomeValid(kept)) return kept === key ? true : battleMoveZeroStrength(slotName, member, kept, null);
                 if (key !== 'Transform') return true; // nothing to copy yet
                 return battleTransformChoices(slotName, member).length === 0; // Transform picks from the opponent's Moves, but never one that Taunt would block
             }
@@ -19754,6 +19791,12 @@
             const guidedMoveWhy = guidedGateReason('move', slot, null, { baseMove }); // Guided rounds: Moves are chosen in phase 1, until locked in
             if (guidedMoveWhy) { showBattleArenaNotice(guidedMoveWhy); return; }
             const guidedSel = guidedState(), deferBecome = !!(guidedSel && guidedSel.phase === 'moves' && !baseMove && BATTLE_BECOME_MOVES.includes(moveName) && getBattleSlotMember(slot) && !getBattleSlotMember(slot).dynamaxed);
+            const chainMember = getBattleSlotMember(slot);
+            if (baseMove && BATTLE_BECOME_MOVES.includes(moveName) && chainMember && !chainMember.dynamaxed && !(guidedSel && guidedSel.phase === 'moves')) { // the pick is itself a Copy Move (drawn by Metronome, picked by Sleep Talk, or what Mimic / Sketch / Transform became): it resolves in turn
+                if (BATTLE_ROUND_LOCKED_BECOMES.includes(baseMove) && lobbyState.role === null) battleNoteMetronomeDrawn(battleRecord, chainMember, moveName, battleCalcManualValue[slot], baseMove);
+                if (!battleResolveBecoming(slot, moveName, baseMove)) battleBecomeFail(slot, `${moveName} has nothing to turn into, so it has an Attack Strength of 0.`);
+                return;
+            }
             if (deferBecome && moveName === 'Sleep Talk' && getBattleSlotMember(slot).status !== 'sleep') { showBattleArenaNotice('Sleep Talk can only be selected while the user has Sleep.'); return; }
             if (!baseMove && !deferBecome && battleResolveBecoming(slot, moveName)) return; // Guided rounds: the Move turns into the other one in Phase 3 instead
             if (battlePreSelect(slot, moveName, baseMove)) return;
