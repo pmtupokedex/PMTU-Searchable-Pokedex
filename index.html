@@ -1609,6 +1609,7 @@
                 <p class="game-battle-manual-effect" id="game-battle-manual-effect"></p>
                 <div class="game-battle-manual-roll-top" id="game-battle-manual-roll-top"></div>
                 <div class="game-battle-manual-types" id="game-battle-manual-types" hidden></div>
+                <p class="game-battle-manual-note" id="game-battle-manual-note" hidden></p>
                 <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" class="game-battle-manual-input" id="game-battle-manual-input" placeholder="Enter the number" aria-label="Number to use for this move's power">
                 <p class="game-battle-manual-error" id="game-battle-manual-error">Enter a whole number, 0 or higher.</p>
                 <div class="game-save-slot-actions">
@@ -16240,7 +16241,7 @@
             g = g || guidedState();
             if (!g || guidedBypass) return '';
             if (kind === 'move') {
-                if (g.phase === 'effects' && g.become && g.become[slotName] === 'pending' && move && BATTLE_BECOME_MOVES.includes(move.baseMove)) return ''; // the Move turning into the other one (Phase 3)
+                if (g.phase === 'effects' && g.become && g.become[slotName] === 'pending' && move && (BATTLE_BECOME_MOVES.includes(move.baseMove) || BATTLE_LATE_TYPE_MOVES.includes(move.moveName))) return ''; // the Move turning into the other one, or picking its Type (Phase 3)
                 if (g.phase !== 'moves') return 'Moves are chosen in the Choose Moves phase.';
                 if (g.locked[slotName]) return 'That Move is locked in. Use Change Move first.';
                 return '';
@@ -16552,8 +16553,10 @@
             if (!rec.revived || typeof rec.revived !== 'object') rec.revived = {};
             rec.revived[key] = true;
         }
+        const BATTLE_LATE_TYPE_MOVES = ['Camouflage']; // Guided rounds: the Type is picked in Phase 3 (the Move itself is chosen in Phase 1 as usual)
         function guidedBecomeNeeded(slot) { // the side's chosen Move is one that turns into another (and hasn't yet)
             const m = getBattleSlotMember(slot), name = battleCalcMoveName[slot];
+            if (m && !m.dynamaxed && BATTLE_LATE_TYPE_MOVES.includes(name) && !battlePickedType(slot, name)) return true; // its Type hasn't been picked yet
             return !!(m && !m.dynamaxed && name && BATTLE_BECOME_MOVES.includes(name)); // a Copy Move that hasn't turned into its result yet (also one that Mimic / Sketch / Transform already became, such as Metronome)
         }
         function guidedBecomePending(slot) {
@@ -16567,6 +16570,7 @@
             const giveUp = why => { if (why) showBattleArenaNotice(why); guidedOp('becomedone', slot); };
             if (!guidedBecomeNeeded(slot)) { guidedScheduleTick(); return; }
             const via = battleCalcBaseMove[slot] || undefined;
+            if (BATTLE_LATE_TYPE_MOVES.includes(name)) { openBattleManualOverlay(slot, name, battleCalcBaseMove[slot] || null, name, 'type'); return; }
             if (name === 'Mimic') { battleResolveBecoming(slot, 'Mimic', via); return; }
             if (name === 'Sleep Talk') {
                 const others = getBattleMemberMoves(member).filter(n => n !== 'Sleep Talk' && battleBecomeValid(n));
@@ -16960,7 +16964,7 @@
                     text = 'Move Effects apply Attacker first, then Defender; a side with nothing to apply by hand continues by itself. ' + status(s => g.fxDone[s] ? 'done' : (s === 'defender' && !g.fxDone.attacker ? 'waiting' : reasonText(s)));
                     GUIDED_SLOTS.forEach(s => { const sum = battleExtraRollSummary(s) || battleEffectDieMoveSummary(s); if (sum) text += ' ' + guidedSideLabel(s) + ' \u2014 ' + sum; });
                     GUIDED_SLOTS.forEach(s => { const was = g.struggled && g.struggled[s]; if (was) text += ` ${guidedSideLabel(s)} can\u2019t use ${was === true ? 'its Move' : was} and uses Struggle instead.`; });
-                    mine.forEach(s => { if (!g.fxDone[s] && guidedBecomePending(s)) buttons += guidedBtn('pickbecome', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: use ${battleCalcMoveName[s] || 'the Move'}`); });
+                    mine.forEach(s => { if (!g.fxDone[s] && guidedBecomePending(s)) buttons += guidedBtn('pickbecome', s, BATTLE_LATE_TYPE_MOVES.includes(battleCalcMoveName[s]) ? `${s === 'attacker' ? 'Attacker' : 'Defender'}: choose ${battleCalcMoveName[s]}\u2019s Type` : `${s === 'attacker' ? 'Attacker' : 'Defender'}: use ${battleCalcMoveName[s] || 'the Move'}`); });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedPromptPending(s)) { const pr = g.prompts[s]; buttons += guidedBtn('pickprompt', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: ${pr.revival === 'pending' ? 'choose Pok\u00e9mon for Revival' : pr.heal === 'pending' ? 'choose Pok\u00e9mon for Status Heal' : 'place the Field Move card'}`); } });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedEffectsManualReason(s) === 'status') buttons += guidedBtn('fxdone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}\u2019s effects are done`, s === 'defender' && !g.fxDone.attacker); });
                 }
@@ -17568,7 +17572,7 @@
                 openBattleManualOverlay(slot, moveName, baseMove, name, 'oppmove', { moves: keys, text: 'Disable: select one of the opponent Pok\u00e9mon\u2019s Moves. They can\u2019t use it for the rest of the Battle.' });
                 return true;
             }
-            if (name === 'Camouflage') { openBattleManualOverlay(slot, moveName, baseMove, name, 'type'); return true; } // a new Type every Round
+            if (name === 'Camouflage') { const gs = guidedState(); if (gs && gs.phase === 'moves') return false; openBattleManualOverlay(slot, moveName, baseMove, name, 'type'); return true; } // a new Type every Round (Guided rounds ask in Phase 3)
             if (name === 'Hidden Power' || name === 'Multi-Attack') {
                 const kept = battleStoredType(slot, name);
                 if (kept) { battleCalcManualValue[slot] = { moveName: name, value: 0, type: kept }; return false; } // already has its Type: no roll
@@ -19251,8 +19255,12 @@
             const dieTable = (getBattleMoveEntry(manualName) || {}).uniqueEffectTable, rollOf = {}; // the Die numbers, so a physical die can be read off the prompt
             (Array.isArray(dieTable) ? dieTable : []).forEach(r => { const k = r && (r.type || r.move); if (k) (rollOf[k] = rollOf[k] || []).push(r.roll); });
             const numHtml = k => (rollOf[k] && rollOf[k].length ? `<span class="game-battle-manual-die">${escapeHtml(rollOf[k].join(', '))}</span>` : '');
-            if (mode === 'oppmove') typeBox.innerHTML = ((opts && opts.moves) || []).map(n => { const t = getBattleMoveType(n); return `<button class="filter-btn game-battle-manual-type-btn game-battle-manual-move-btn${t ? ' poke-type-' + t : ''}" type="button" data-move="${escapeHtml(n)}">${numHtml(n)}${escapeHtml(n)}</button>`; }).join('');
-            if (mode === 'type') typeBox.innerHTML = ((opts && opts.types) || BATTLE_MOVE_TYPE_NAMES).map(t => `<button class="filter-btn game-battle-manual-type-btn poke-type-${t}" type="button" data-type="${t}">${numHtml(t)}${t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('');
+            const byRoll = list => (list.some(k => rollOf[k]) ? list.slice().sort((a, b) => ((rollOf[a] ? Math.min(...rollOf[a]) : 999) - (rollOf[b] ? Math.min(...rollOf[b]) : 999))) : list); // table order, left to right, top to bottom
+            const noteEl = document.getElementById('game-battle-manual-note'), rerolls = (Array.isArray(dieTable) ? dieTable : []).filter(r => r && r.label && /re-?roll/i.test(r.label)).map(r => r.roll);
+            noteEl.hidden = !(picker && rerolls.length && !(opts && opts.noRoll));
+            noteEl.textContent = rerolls.length ? 'Roll again on a ' + rerolls.join(' or ') + '.' : '';
+            if (mode === 'oppmove') typeBox.innerHTML = byRoll((opts && opts.moves) || []).map(n => { const t = getBattleMoveType(n); return `<button class="filter-btn game-battle-manual-type-btn game-battle-manual-move-btn${t ? ' poke-type-' + t : ''}" type="button" data-move="${escapeHtml(n)}">${numHtml(n)}<span class="game-battle-manual-tname">${escapeHtml(n)}</span></button>`; }).join('');
+            if (mode === 'type') typeBox.innerHTML = byRoll((opts && opts.types) || BATTLE_MOVE_TYPE_NAMES).map(t => `<button class="filter-btn game-battle-manual-type-btn poke-type-${t}" type="button" data-type="${t}">${numHtml(t)}<span class="game-battle-manual-tname">${t.charAt(0).toUpperCase() + t.slice(1)}</span></button>`).join('');
             if (picker) { inp.hidden = true; document.getElementById('game-battle-manual-confirm-btn').hidden = true; }
             document.getElementById('game-battle-manual-yes-btn').hidden = mode !== 'yesno';
             document.getElementById('game-battle-manual-no-btn').hidden = mode !== 'yesno';
@@ -19281,6 +19289,7 @@
             battleManualPending = null;
             document.getElementById('game-battle-manual-input').hidden = false;
             document.getElementById('game-battle-manual-types').hidden = true;
+            document.getElementById('game-battle-manual-note').hidden = true;
             document.getElementById('game-battle-manual-overlay').classList.remove('visible');
         }
 
@@ -19884,7 +19893,7 @@
                 showBattleArenaNotice(`${moveName} was already used this Battle (Recharge).`);
                 return;
             }
-            const guidedMoveWhy = guidedGateReason('move', slot, null, { baseMove }); // Guided rounds: Moves are chosen in phase 1, until locked in
+            const guidedMoveWhy = guidedGateReason('move', slot, null, { baseMove, moveName }); // Guided rounds: Moves are chosen in phase 1, until locked in
             if (guidedMoveWhy) { showBattleArenaNotice(guidedMoveWhy); return; }
             const guidedSel = guidedState(), deferBecome = !!(guidedSel && guidedSel.phase === 'moves' && !baseMove && BATTLE_BECOME_MOVES.includes(moveName) && getBattleSlotMember(slot) && !getBattleSlotMember(slot).dynamaxed);
             const chainMember = getBattleSlotMember(slot);
