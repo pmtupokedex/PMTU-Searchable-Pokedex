@@ -4575,6 +4575,18 @@
             return statusBadge;
         }
 
+        let battleTypeBadgeDrawn = '';
+        function battleTypeBadgeSig() { // which Pok\u00e9mon wear a Type badge right now (and which Type)
+            return ['attacker', 'defender'].map(sl => { const m = getBattleSlotMember(sl), b = buildTypeChangeBadge(m); return m && b ? `${m.uid}:${b.title}` : ''; }).join('|');
+        }
+        function battleSyncTypeBadges() { // a Type change just applied (or was undone): redraw the slot cards so the badge appears / goes away at once
+            if (!battleInProgress) { battleTypeBadgeDrawn = ''; return; }
+            const sig = battleTypeBadgeSig();
+            if (sig === battleTypeBadgeDrawn) return;
+            battleTypeBadgeDrawn = sig;
+            renderBattleAttackerSlotCard();
+            renderBattleDefenderSlotCard();
+        }
         function buildTypeChangeBadge(member) { // the Type this Pok\u00e9mon has taken (Conversion, Transform, ...): only shown while its own Type differs
             if (!member || !battleInProgress) return null;
             const rec = getBattleRecordStore();
@@ -18298,6 +18310,7 @@
                 record.typeOverrideRound[uid] = record.round;
             }
             record.typeOverride[uid] = types;
+            if (typeof setTimeout === 'function' && typeof battleSyncTypeBadges === 'function') setTimeout(battleSyncTypeBadges, 0); // the slot card shows the new Type at once
         }
         function battleApplyLastingEffects(record, slotName, only, delayed) { // the side's Move Effects have applied (or its Attack Roll was made): idempotent. only: 'blockitem' | 'lock' | null (both). delayed: the end-of-Round pass for a target that had Priority
             if (!record || !slotName) return;
@@ -19264,6 +19277,7 @@
         }
 
         function renderBattleCalcReadout(slotName, isMirror) {
+            if (!isMirror) battleSyncTypeBadges();
             scheduleTeraWindowRefresh();
             if (!isMirror) renderBattleCalcReadout(getBattleOpposingSlotName(slotName), true);
             syncBattleMoveSelection(slotName);
@@ -19589,7 +19603,7 @@
                 record[n.key][uid] = n.move;
                 if (n.key === 'transform' && was !== n.move) { const t = getBattleMoveType(n.move); if (BATTLE_MOVE_TYPE_NAMES.includes(t)) battleSetTypeOverride(record, uid, [t]); } // Transform: the user's Type becomes that Move's printed Type
             } else if (n.kind === 'typeset' && types.length) battleSetTypeOverride(record, uid, types);
-            else if (n.kind === 'typeonce' && types.length) { if (!record.typeOnce || typeof record.typeOnce !== 'object') record.typeOnce = {}; record.typeOnce[uid] = { round: record.round, types }; } // this Round only
+            else if (n.kind === 'typeonce' && types.length) { if (!record.typeOnce || typeof record.typeOnce !== 'object') record.typeOnce = {}; record.typeOnce[uid] = { round: record.round, types }; if (typeof setTimeout === 'function') setTimeout(battleSyncTypeBadges, 0); } // this Round only
         }
         function battleSendCopyNote(slot, note) {
             if (lobbyState.role === 'guest') { requestBattleDice(slot, { action: 'copy-note', note }); return; }
