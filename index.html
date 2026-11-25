@@ -16553,10 +16553,16 @@
             if (!rec.revived || typeof rec.revived !== 'object') rec.revived = {};
             rec.revived[key] = true;
         }
-        const BATTLE_LATE_TYPE_MOVES = ['Camouflage']; // Guided rounds: the Type is picked in Phase 3 (the Move itself is chosen in Phase 1 as usual)
+        const BATTLE_LATE_TYPE_MOVES = ['Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment']; // Guided rounds: the Type is picked in Phase 3 (the Move itself is chosen in Phase 1 as usual)
+        function battleLateTypeNeeded(slot, name) { // a Phase 3 Type prompt is still owed (not when the Type is already known)
+            if (!BATTLE_LATE_TYPE_MOVES.includes(name) || battlePickedType(slot, name)) return false;
+            if ((name === 'Hidden Power' || name === 'Multi-Attack') && battleStoredType(slot, name)) return false;
+            if (name === 'Judgment' && battleBoosterType(slot)) return false;
+            return true;
+        }
         function guidedBecomeNeeded(slot) { // the side's chosen Move is one that turns into another (and hasn't yet)
             const m = getBattleSlotMember(slot), name = battleCalcMoveName[slot];
-            if (m && !m.dynamaxed && BATTLE_LATE_TYPE_MOVES.includes(name) && !battlePickedType(slot, name)) return true; // its Type hasn't been picked yet
+            if (m && !m.dynamaxed && battleLateTypeNeeded(slot, name)) return true; // its Type hasn't been picked yet
             return !!(m && !m.dynamaxed && name && BATTLE_BECOME_MOVES.includes(name)); // a Copy Move that hasn't turned into its result yet (also one that Mimic / Sketch / Transform already became, such as Metronome)
         }
         function guidedBecomePending(slot) {
@@ -17576,11 +17582,13 @@
             if (name === 'Hidden Power' || name === 'Multi-Attack') {
                 const kept = battleStoredType(slot, name);
                 if (kept) { battleCalcManualValue[slot] = { moveName: name, value: 0, type: kept }; return false; } // already has its Type: no roll
+                { const gs = guidedState(); if (gs && gs.phase === 'moves') return false; } // Guided rounds ask in Phase 3
                 openBattleManualOverlay(slot, moveName, baseMove, name, 'type');
                 return true;
             }
             if (name === 'Judgment') {
                 if (battleBoosterType(slot)) return false; // a Type Booster sets the Type
+                { const gs = guidedState(); if (gs && gs.phase === 'moves') return false; } // Guided rounds ask in Phase 3
                 openBattleManualOverlay(slot, moveName, baseMove, name, 'type'); // none attached: roll the Type Die, or leave it Normal
                 return true;
             }
@@ -34478,7 +34486,7 @@
             const table = Array.isArray(entry.uniqueEffectTable) ? entry.uniqueEffectTable : [];
             const isTypeTable = table.some(r => r.type);
             const tableHtml = table.length
-                ? `${isTypeTable ? `<details class="pim-table-fold"${opts && opts.foldKey ? ` data-fold="${escapeHtml(opts.foldKey)}"${moveTableFolds[opts.foldKey] === false ? '' : ' open'}` : ''}><summary>Type table</summary>` : ''}<div class="pim-move-table${isTypeTable ? ' pim-table-types' : ''}">${table.map(r => `<div class="pim-table-cell">`
+                ? `${isTypeTable ? `<details class="pim-table-fold"${opts && opts.foldKey ? ` data-fold="${escapeHtml(opts.foldKey)}"${moveTableFolds[opts.foldKey] === true ? ' open' : ''}` : ''}><summary>Type table</summary>` : ''}<div class="pim-move-table${isTypeTable ? ' pim-table-types' : ''}">${table.map(r => `<div class="pim-table-cell">`
                     + `<span class="pim-table-roll">${escapeHtml(r.roll)}</span>`
                     + (r.type
                         ? `<span class="poke-type-badge poke-type-${escapeHtml(String(r.type).toLowerCase())}">${escapeHtml(capitalize(String(r.type)))}</span>`
