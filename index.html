@@ -4575,6 +4575,23 @@
             return statusBadge;
         }
 
+        function buildTypeChangeBadge(member) { // the Type this Pok\u00e9mon has taken (Conversion, Transform, ...): only shown while its own Type differs
+            if (!member || !battleInProgress) return null;
+            const rec = getBattleRecordStore();
+            if (!rec || !member.uid || getBattleMemberTeraType(member)) return null;
+            const once = rec.typeOnce && rec.typeOnce[member.uid], taken = rec.typeOverride && rec.typeOverride[member.uid];
+            const changed = (once && once.round === rec.round && Array.isArray(once.types) && once.types.length) || (Array.isArray(taken) && taken.length);
+            if (!changed) return null;
+            const types = getBattleMemberTypes(member);
+            if (!types.length) return null;
+            const badge = document.createElement('div');
+            badge.className = 'game-team-slot-type';
+            badge.title = 'Type: ' + types.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(' / ');
+            const url = TYPE_ICON_URLS[types[0]];
+            badge.innerHTML = url ? `<img class="game-team-slot-type-img" src="${url}" alt="${escapeHtml(types[0])}">` : `<span class="game-team-slot-type-img">${escapeHtml(types[0])}</span>`;
+            return badge;
+        }
+
         function buildLevelBadge(member, index) {
             const normalLevel = getTeamMemberBaseLevel(member) + (member.level || 0);
             if (typeof member.levelOverride === 'number' && member.levelOverride > normalLevel) { // Black Flute: replaces the Level counter for the rest of the Battle (not tappable -- the counter underneath is untouched)
@@ -4791,6 +4808,7 @@
 
                     slot.appendChild(buildCardsBadge(member, i, naturesEnabled));
 
+                    { const tb = buildTypeChangeBadge(member); if (tb) slot.appendChild(tb); }
                     slot.appendChild(buildStatusBadge(member, i));
 
                     slot.appendChild(buildLevelBadge(member, i));
@@ -16553,11 +16571,17 @@
             if (!rec.revived || typeof rec.revived !== 'object') rec.revived = {};
             rec.revived[key] = true;
         }
-        const BATTLE_LATE_TYPE_MOVES = ['Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment']; // Guided rounds: the Type is picked in Phase 3 (the Move itself is chosen in Phase 1 as usual)
+        const BATTLE_LATE_FOE_MOVES = ['Conversion', 'Conversion 2']; // Guided rounds: the opponent's Move is picked in Phase 3
+        const BATTLE_LATE_TYPE_MOVES = ['Camouflage', 'Hidden Power', 'Multi-Attack', 'Judgment', ...BATTLE_LATE_FOE_MOVES]; // Guided rounds: the Type is picked in Phase 3 (the Move itself is chosen in Phase 1 as usual)
+        function battleFoeMovesFor(slot) { // the opposing Pok\u00e9mon's Moves that have a Type
+            const opp = getBattleSlotMember(getBattleOpposingSlotName(slot));
+            return opp ? getBattleMemberMoves(opp).filter(n => getBattleMoveType(n)) : [];
+        }
         function battleLateTypeNeeded(slot, name) { // a Phase 3 Type prompt is still owed (not when the Type is already known)
             if (!BATTLE_LATE_TYPE_MOVES.includes(name) || battlePickedType(slot, name)) return false;
             if ((name === 'Hidden Power' || name === 'Multi-Attack') && battleStoredType(slot, name)) return false;
             if (name === 'Judgment' && battleBoosterType(slot)) return false;
+            if (BATTLE_LATE_FOE_MOVES.includes(name) && !battleFoeMovesFor(slot).length) return false; // nothing to pick from: no effect
             return true;
         }
         function guidedBecomeNeeded(slot) { // the side's chosen Move is one that turns into another (and hasn't yet)
@@ -16576,6 +16600,7 @@
             const giveUp = why => { if (why) showBattleArenaNotice(why); guidedOp('becomedone', slot); };
             if (!guidedBecomeNeeded(slot)) { guidedScheduleTick(); return; }
             const via = battleCalcBaseMove[slot] || undefined;
+            if (BATTLE_LATE_FOE_MOVES.includes(name)) { openBattleManualOverlay(slot, name, battleCalcBaseMove[slot] || null, name, 'oppmove', { moves: battleFoeMovesFor(slot), text: `${name}: select one of the opponent Pok\u00e9mon\u2019s Moves.` }); return; }
             if (BATTLE_LATE_TYPE_MOVES.includes(name)) { openBattleManualOverlay(slot, name, battleCalcBaseMove[slot] || null, name, 'type'); return; }
             if (name === 'Mimic') { battleResolveBecoming(slot, 'Mimic', via); return; }
             if (name === 'Sleep Talk') {
@@ -16970,7 +16995,7 @@
                     text = 'Move Effects apply Attacker first, then Defender; a side with nothing to apply by hand continues by itself. ' + status(s => g.fxDone[s] ? 'done' : (s === 'defender' && !g.fxDone.attacker ? 'waiting' : reasonText(s)));
                     GUIDED_SLOTS.forEach(s => { const sum = battleExtraRollSummary(s) || battleEffectDieMoveSummary(s); if (sum) text += ' ' + guidedSideLabel(s) + ' \u2014 ' + sum; });
                     GUIDED_SLOTS.forEach(s => { const was = g.struggled && g.struggled[s]; if (was) text += ` ${guidedSideLabel(s)} can\u2019t use ${was === true ? 'its Move' : was} and uses Struggle instead.`; });
-                    mine.forEach(s => { if (!g.fxDone[s] && guidedBecomePending(s)) buttons += guidedBtn('pickbecome', s, BATTLE_LATE_TYPE_MOVES.includes(battleCalcMoveName[s]) ? `${s === 'attacker' ? 'Attacker' : 'Defender'}: choose ${battleCalcMoveName[s]}\u2019s Type` : `${s === 'attacker' ? 'Attacker' : 'Defender'}: use ${battleCalcMoveName[s] || 'the Move'}`); });
+                    mine.forEach(s => { if (!g.fxDone[s] && guidedBecomePending(s)) buttons += guidedBtn('pickbecome', s, (BATTLE_LATE_TYPE_MOVES.includes(battleCalcMoveName[s]) && !BATTLE_LATE_FOE_MOVES.includes(battleCalcMoveName[s])) ? `${s === 'attacker' ? 'Attacker' : 'Defender'}: choose ${battleCalcMoveName[s]}\u2019s Type` : `${s === 'attacker' ? 'Attacker' : 'Defender'}: use ${battleCalcMoveName[s] || 'the Move'}`); });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedPromptPending(s)) { const pr = g.prompts[s]; buttons += guidedBtn('pickprompt', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}: ${pr.revival === 'pending' ? 'choose Pok\u00e9mon for Revival' : pr.heal === 'pending' ? 'choose Pok\u00e9mon for Status Heal' : 'place the Field Move card'}`); } });
                     mine.forEach(s => { if (!g.fxDone[s] && guidedEffectsManualReason(s) === 'status') buttons += guidedBtn('fxdone', s, `${s === 'attacker' ? 'Attacker' : 'Defender'}\u2019s effects are done`, s === 'defender' && !g.fxDone.attacker); });
                 }
@@ -17565,9 +17590,9 @@
             }
             if (name === 'Flying Press') { openBattleManualOverlay(slot, moveName, baseMove, name, 'type', { types: ['fighting', 'flying'], noRoll: true, text: 'Flying Press: treat this Move as Fighting Type or as Flying Type this Round.' }); return true; }
             if (name === 'Conversion' || name === 'Conversion 2') {
-                const opp = getBattleSlotMember(getBattleOpposingSlotName(slot));
-                const moves = opp ? getBattleMemberMoves(opp).filter(n => getBattleMoveType(n)) : [];
+                const moves = battleFoeMovesFor(slot);
                 if (!moves.length) return false; // nothing to pick from: no effect
+                { const gs = guidedState(); if (gs && gs.phase === 'moves') return false; } // Guided rounds ask in Phase 3
                 openBattleManualOverlay(slot, moveName, baseMove, name, 'oppmove', { moves, text: `${name}: select one of the opponent Pok\u00e9mon\u2019s Moves.` });
                 return true;
             }
@@ -19267,6 +19292,7 @@
             const noteEl = document.getElementById('game-battle-manual-note'), rerolls = (Array.isArray(dieTable) ? dieTable : []).filter(r => r && r.label && /re-?roll/i.test(r.label)).map(r => r.roll);
             noteEl.hidden = !(picker && rerolls.length && !(opts && opts.noRoll));
             noteEl.textContent = rerolls.length ? 'Roll again on a ' + rerolls.join(' or ') + '.' : '';
+            typeBox.classList.toggle('one-col', mode === 'oppmove'); // Move buttons: one per line
             if (mode === 'oppmove') typeBox.innerHTML = byRoll((opts && opts.moves) || []).map(n => { const t = getBattleMoveType(n); return `<button class="filter-btn game-battle-manual-type-btn game-battle-manual-move-btn${t ? ' poke-type-' + t : ''}" type="button" data-move="${escapeHtml(n)}">${numHtml(n)}<span class="game-battle-manual-tname">${escapeHtml(n)}</span></button>`; }).join('');
             if (mode === 'type') typeBox.innerHTML = byRoll((opts && opts.types) || BATTLE_MOVE_TYPE_NAMES).map(t => `<button class="filter-btn game-battle-manual-type-btn poke-type-${t}" type="button" data-type="${t}">${numHtml(t)}<span class="game-battle-manual-tname">${t.charAt(0).toUpperCase() + t.slice(1)}</span></button>`).join('');
             if (picker) { inp.hidden = true; document.getElementById('game-battle-manual-confirm-btn').hidden = true; }
@@ -19324,7 +19350,7 @@
                 const moveType = getBattleMoveType(answer.choice);
                 if (pending.manualName === 'Conversion 2') { // next: a Type that resists it
                     const resists = BATTLE_MOVE_TYPE_NAMES.filter(t => ['-', 'x'].includes(typeEffectivenessSymbol(moveType, t)));
-                    if (!moveType || !resists.length) { closeBattleManualOverlay(); return; }
+                    if (!moveType || !resists.length) { closeBattleManualOverlay(); if (guidedBecomePending(pending.slotName)) guidedOp('becomedone', pending.slotName); return; }
                     openBattleManualOverlay(pending.slotName, pending.moveName, pending.baseMoveName, pending.manualName, 'type',
                         { types: resists, noRoll: true, choice: answer.choice, text: `${answer.choice} is ${moveType.charAt(0).toUpperCase() + moveType.slice(1)} Type. Pick a Type that resists it: the user becomes that Type until the end of the Battle.` });
                     return;
@@ -20312,6 +20338,7 @@
                 }
                 const field = line.querySelector('.game-battle-zone-badge');
                 line.insertBefore(hpBadge, field);
+                { const tb = buildTypeChangeBadge(member); if (tb) line.insertBefore(tb, field); }
                 line.insertBefore(statusBadge, field);
             } else if (container.id === 'game-team-opponent-preview-card') {
                 hpBadge.classList.add('game-battle-readonly-slot');
@@ -20319,9 +20346,11 @@
                 previewBadgeLine = document.createElement('div');
                 previewBadgeLine.className = 'game-battle-gym-badge-line';
                 previewBadgeLine.appendChild(hpBadge);
+                { const tb = buildTypeChangeBadge(member); if (tb) previewBadgeLine.appendChild(tb); }
                 previewBadgeLine.appendChild(statusBadge);
             } else {
                 slot.appendChild(hpBadge);
+                { const tb = buildTypeChangeBadge(member); if (tb) slot.appendChild(tb); }
                 slot.appendChild(statusBadge);
             }
 
@@ -20368,6 +20397,7 @@
 
             slot.appendChild(buildHpBadge(member, sentinel, hpRule));
             slot.appendChild(buildCardsBadge(member, sentinel, naturesEnabled));
+            { const tb = buildTypeChangeBadge(member); if (tb) slot.appendChild(tb); }
             slot.appendChild(buildStatusBadge(member, sentinel));
             slot.appendChild(buildLevelBadge(member, sentinel));
 
