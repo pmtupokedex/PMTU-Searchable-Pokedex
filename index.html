@@ -1607,6 +1607,7 @@
             <div class="game-confirm-card">
                 <p class="game-confirm-title" id="game-battle-manual-title">Manual Move</p>
                 <p class="game-battle-manual-effect" id="game-battle-manual-effect"></p>
+                <div class="game-battle-manual-roll-top" id="game-battle-manual-roll-top"></div>
                 <div class="game-battle-manual-types" id="game-battle-manual-types" hidden></div>
                 <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="3" class="game-battle-manual-input" id="game-battle-manual-input" placeholder="Enter the number" aria-label="Number to use for this move's power">
                 <p class="game-battle-manual-error" id="game-battle-manual-error">Enter a whole number, 0 or higher.</p>
@@ -7932,6 +7933,11 @@
                     secretBaseWin = (!noOutcome && pvpOutcome && pvpOutcome.winnerId === sb.initiatorId) ? sb : null;
                     pvpOutcome = null; // only the challenger is ever rewarded for a Secret Base battle
                 }
+                if (!noOutcome && st.inProgress && !(opts && opts.forfeit) && st.record) { // the final Round's end-of-Round form changes: guests get them in one more update before the Battle closes
+                    battleAddEndForms(st.record);
+                    battleApplyFormTasksNow(st.record);
+                    broadcastBattleArenaState();
+                }
                 const gd = st.defender;
                 if (!noOutcome && st.inProgress && !isHostAttackerSideSpent(st) && gd && !gd.ownerId && gd.member && gd.member.gymLeaderId && gd.member.fainted
                     && !(gd.member.gymLeaderQueue && gd.member.gymLeaderQueue.length)) {
@@ -8395,6 +8401,7 @@
             if (bfPrev && !battleInProgress) battlePayDayClaim(recordBeforeEnd); // the Battle just ended
             noteBattleParticipationSnapshot(battleRecord);
             try { battleReconcileHeldCards(); } catch (e) { /* not ready */ }
+            if (battleInProgress) { try { battleApplyFormTasksNow(battleRecord); } catch (e) { /* not ready */ } }
             setTimeout(battleProcessStatusTasks, 0);
             renderBattleCardZones(payload.cards);
             if (payload.fields) renderBattleFieldZones(payload.fields);
@@ -17067,7 +17074,7 @@
 
         function guidedHandleButton(op, slot) {
             if (op === 'playcard') { if (isVirtualDecksEnabledForActiveSave()) beginBattleCardHandPlay(slot); else showBattleArenaNotice('Tap the Battle Card zone to play a card.'); return; }
-            if (op === 'forfeit') { if (lobbyState.role === null) endBattle(); else requestBattlePhase('end'); return; }
+            if (op === 'forfeit') { if (lobbyState.role === null) endBattle({ forfeit: true }); else requestBattlePhase('end'); return; }
             if (op === 'faint') { const idx = guidedSlotIndexVar(slot); if (idx !== null && idx !== undefined) faintTeamMember(idx); guidedScheduleTick(); renderGuidedBar(); return; }
             if (op === 'pickswap') { guidedOpenSwapPicker(slot); return; }
             if (op === 'pickprompt') { guidedRunPrompt(slot); return; }
@@ -17105,6 +17112,28 @@
         let battleStatusTaskLocal = new Set(), battleStatusTaskShowing = null;
         function battleStatusMyId() { return lobbyState.role === null ? 'solo' : (getMyLobbyPlayerId() || 'host'); }
         function battleStatusTaskKey(t) { return t.kind === 'uproar' ? t.id + '|' + battleStatusMyId() : t.id; }
+        function battleAddEndForms(record) { // the Battle ends right after this Round (one side ran out of Pok\u00e9mon): the end-of-Round form changes (Aura Wheel) still happen
+            if (!record) return;
+            let o = null;
+            try { o = guidedComputeOutcome(); } catch (err) { o = null; }
+            if (!o || (!o.loser && !o.tie)) return; // the Round was never decided
+            ['attacker', 'defender'].forEach(slot => {
+                const mv = battleCalcMoveName[slot], member = getBattleSlotMember(slot);
+                if (mv && member && /^Aura Wheel/.test(mv) && !member.fainted && /^Morpeko/i.test(member.name || '')) battleAddStatusTask(record, { kind: 'form', uid: ensureMemberUid(member), why: 'Aura Wheel' });
+            });
+        }
+        function battleApplyFormTasksNow(record) { // form changes need no prompt: this device's Pok\u00e9mon change right away (used when the Battle is about to close)
+            if (!record || !Array.isArray(record.statusTasks)) return;
+            record.statusTasks.forEach(t => {
+                if (!t || t.kind !== 'form') return;
+                const key = battleStatusTaskKey(t), lk = (record.id || '') + '|' + key;
+                if ((record.statusDone && record.statusDone[key]) || battleStatusTaskLocal.has(lk)) return;
+                const found = battleStatusFind(t.uid);
+                if (!found) return;
+                battleStatusTaskLocal.add(lk);
+                battleMorpekoToggle(found.member, found.index);
+            });
+        }
         function battleStatusFind(uid) { // the Pok\u00e9mon this device looks after: its own team, or (solo / Host) the wild / trainer / Gym Leader Pok\u00e9mon
             if (!uid) return null;
             const team = ((getActiveSaveData().team || {}).members) || [];
@@ -17334,6 +17363,7 @@
             const noOutcome = !!(opts && opts.noOutcome === true);
             if (lobbyState.role !== null) { requestBattlePhase('end', noOutcome ? { noOutcome: true } : undefined); return; }
             const earnedLeaderId = (!noOutcome && battleInProgress && !isSoloAttackerSideSpent()) ? getDefeatedGymLeaderIdInDefender() : null;
+            if (battleInProgress && !noOutcome && !(opts && opts.forfeit)) { battleAddEndForms(battleRecord); battleApplyFormTasksNow(battleRecord); }
             if (battleInProgress) battlePayDayClaim(battleRecord);
             battleInProgress = false;
             battleFormsOnChange(true);
@@ -19216,8 +19246,13 @@
             document.getElementById('game-battle-manual-roll-btn').textContent = mode === 'type' ? 'Roll the Type Die' : (mode === 'oppmove' ? 'Roll the Nature Power Die' : 'Roll d4');
             const typeBox = document.getElementById('game-battle-manual-types');
             typeBox.hidden = !picker;
-            if (mode === 'oppmove') typeBox.innerHTML = ((opts && opts.moves) || []).map(n => { const t = getBattleMoveType(n); return `<button class="filter-btn game-battle-manual-type-btn game-battle-manual-move-btn${t ? ' poke-type-' + t : ''}" type="button" data-move="${escapeHtml(n)}">${escapeHtml(n)}</button>`; }).join('');
-            if (mode === 'type') typeBox.innerHTML = ((opts && opts.types) || BATTLE_MOVE_TYPE_NAMES).map(t => `<button class="filter-btn game-battle-manual-type-btn poke-type-${t}" type="button" data-type="${t}">${t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('');
+            const rollBtnEl = document.getElementById('game-battle-manual-roll-btn'), rollHome = rollBtnEl.closest('.game-save-slot-actions') || document.querySelector('#game-battle-manual-overlay .game-save-slot-actions'), rollTop = document.getElementById('game-battle-manual-roll-top');
+            if (picker) rollTop.appendChild(rollBtnEl); else if (rollHome && rollBtnEl.parentNode !== rollHome) rollHome.insertBefore(rollBtnEl, rollHome.firstChild); // the roll button sits above the pick buttons
+            const dieTable = (getBattleMoveEntry(manualName) || {}).uniqueEffectTable, rollOf = {}; // the Die numbers, so a physical die can be read off the prompt
+            (Array.isArray(dieTable) ? dieTable : []).forEach(r => { const k = r && (r.type || r.move); if (k) (rollOf[k] = rollOf[k] || []).push(r.roll); });
+            const numHtml = k => (rollOf[k] && rollOf[k].length ? `<span class="game-battle-manual-die">${escapeHtml(rollOf[k].join(', '))}</span>` : '');
+            if (mode === 'oppmove') typeBox.innerHTML = ((opts && opts.moves) || []).map(n => { const t = getBattleMoveType(n); return `<button class="filter-btn game-battle-manual-type-btn game-battle-manual-move-btn${t ? ' poke-type-' + t : ''}" type="button" data-move="${escapeHtml(n)}">${numHtml(n)}${escapeHtml(n)}</button>`; }).join('');
+            if (mode === 'type') typeBox.innerHTML = ((opts && opts.types) || BATTLE_MOVE_TYPE_NAMES).map(t => `<button class="filter-btn game-battle-manual-type-btn poke-type-${t}" type="button" data-type="${t}">${numHtml(t)}${t.charAt(0).toUpperCase() + t.slice(1)}</button>`).join('');
             if (picker) { inp.hidden = true; document.getElementById('game-battle-manual-confirm-btn').hidden = true; }
             document.getElementById('game-battle-manual-yes-btn').hidden = mode !== 'yesno';
             document.getElementById('game-battle-manual-no-btn').hidden = mode !== 'yesno';
@@ -19250,6 +19285,7 @@
         }
 
         function finishBattleManualPick(pending) { // the picked value is in place: select the Move and share it
+            if (pending && pending.mode === 'type') { const r0 = getBattleRecordStore(); moveTableFolds[`${pending.slotName}|${pending.moveName}|${(r0 && r0.round) || 1}`] = false; } // the Type table folds away once its Type is chosen
             battleCalcMoveName[pending.slotName] = pending.moveName;
             battleCalcBaseMove[pending.slotName] = pending.baseMoveName;
             if (lobbyState.role === null && !(battleDiceResults[pending.slotName] && battleDiceResults[pending.slotName].attack && battleDiceResults[pending.slotName].attack.length)) {
@@ -27642,7 +27678,7 @@
                 closeFrontierOverlay();
                 if (forfeitBtn.dataset.act === 'forfeit') {
                     if (lobbyState.role !== null) requestBattlePhase('end', { forfeit: true });
-                    else endBattle();
+                    else endBattle({ forfeit: true });
                 }
                 return;
             }
@@ -34407,6 +34443,11 @@
                 : '';
         }
 
+        const moveTableFolds = {}; // Arena: whether a Type table is open, per slot / Move / Round (open until its Type is chosen)
+        document.addEventListener('toggle', e => {
+            const d = e.target;
+            if (d && d.classList && d.classList.contains('pim-table-fold') && d.dataset.fold) moveTableFolds[d.dataset.fold] = d.open;
+        }, true);
         function buildMoveEffectBodyHtml(entry, opts) {
             const showTbd = !opts || opts.showTbd !== false;
             const dataAttr = it => it.code ? ` data-pim-code="${escapeHtml(it.code)}"`
@@ -34428,14 +34469,14 @@
             const table = Array.isArray(entry.uniqueEffectTable) ? entry.uniqueEffectTable : [];
             const isTypeTable = table.some(r => r.type);
             const tableHtml = table.length
-                ? `<div class="pim-move-table${isTypeTable ? ' pim-table-types' : ''}">${table.map(r => `<div class="pim-table-cell">`
+                ? `${isTypeTable ? `<details class="pim-table-fold"${opts && opts.foldKey ? ` data-fold="${escapeHtml(opts.foldKey)}"${moveTableFolds[opts.foldKey] === false ? '' : ' open'}` : ''}><summary>Type table</summary>` : ''}<div class="pim-move-table${isTypeTable ? ' pim-table-types' : ''}">${table.map(r => `<div class="pim-table-cell">`
                     + `<span class="pim-table-roll">${escapeHtml(r.roll)}</span>`
                     + (r.type
                         ? `<span class="poke-type-badge poke-type-${escapeHtml(String(r.type).toLowerCase())}">${escapeHtml(capitalize(String(r.type)))}</span>`
                         : r.imageUrl
                         ? `<img src="${escapeHtml(r.imageUrl)}" alt="${escapeHtml(r.move)}" title="${escapeHtml(r.move)}" loading="lazy" decoding="async">`
                         : `<span class="pim-table-label">${escapeHtml(r.move || r.label || '')}</span>`)
-                    + `</div>`).join('')}</div>`
+                    + `</div>`).join('')}</div>${isTypeTable ? '</details>' : ''}`
                 : '';
             return {
                 iconsHtml, uniqueHtml, tableHtml, isTypeTable, isTable: table.length > 0,
@@ -34562,11 +34603,11 @@
                 box.dataset.moveKey = key;
                 hideEffectToast();
                 let detail = '';
-                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, forceD4, hazed, codeAdds, effectDieResult, ignoreOpponentEffects }).bodyHtml;
+                if (entry && EFFECTS_STATE === 'ok') detail = buildMoveEffectBodyHtml(entry, { foldKey: `${slotName}|${moveName}|${(getBattleRecordStore() || {}).round || 1}`, showTbd: false, upgradeDie, forceD4, hazed, codeAdds, effectDieResult, ignoreOpponentEffects }).bodyHtml;
                 else if (entry && EFFECTS_STATE === 'failed') detail = '<div class="pim-note">effects.json could not be loaded (is it in the repo root?)</div>';
                 let body = detail;
                 if (entry && EFFECTS_STATE === 'ok') {
-                    const parts = buildMoveEffectBodyHtml(entry, { showTbd: false, upgradeDie, forceD4, hazed, codeAdds, effectDieResult, ignoreOpponentEffects });
+                    const parts = buildMoveEffectBodyHtml(entry, { foldKey: `${slotName}|${moveName}|${(getBattleRecordStore() || {}).round || 1}`, showTbd: false, upgradeDie, forceD4, hazed, codeAdds, effectDieResult, ignoreOpponentEffects });
                     const extra = buildGrantedMoveEffectsHtml(grantedIds, !!parts.iconsHtml);
                     // the granted effects join the move's own icon row (right-aligned); the row wraps if they don't fit
                     body = ((parts.iconsHtml || extra) ? `<div class="pim-move-icons gbd-icons-row">${parts.iconsHtml}${extra}</div>` : '') + parts.uniqueHtml + parts.tableHtml;
