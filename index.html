@@ -34623,6 +34623,21 @@
             stages += getBattleTriggeredEffects(slotName).upgradeMoveDie;
             return stages;
         }
+        function battleMimicPreview(slotName, moveName) { // Mimic: the Move it will copy (kept copy, else the opponent's Move from last Round), shown in a collapsible section
+            if (moveName !== 'Mimic' || battleCalcBaseMove[slotName] === 'Mimic') return { key: '', html: '' };
+            const member = getBattleSlotMember(slotName), rec = getBattleRecordStore();
+            const kept = member && member.uid && rec && rec.mimic && rec.mimic[member.uid];
+            const target = (battleBecomeValid(kept) && kept) || battleMimicCandidate(slotName);
+            if (!target) return { key: 'none', html: '<p class="game-battle-mimic-none"><strong>No Move to copy.</strong></p>' };
+            const entry = getBattleMoveEntry(target);
+            if (!entry || EFFECTS_STATE !== 'ok') return { key: target, html: `<p class="game-battle-mimic-none"><strong>Copies ${escapeHtml(target)}.</strong></p>` };
+            const parts = buildMoveEffectBodyHtml(entry, { showTbd: false });
+            const foldKey = `mimic|${slotName}|${(rec && rec.round) || 1}`;
+            const shown = getBattleMatchupMoveType(slotName, target);
+            const inner = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(target)}</span>${buildMoveTypeBadgeHtml(entry, shown)}</div>`
+                + ((parts.iconsHtml) ? `<div class="pim-move-icons gbd-icons-row">${parts.iconsHtml}</div>` : '') + parts.uniqueHtml + parts.tableHtml;
+            return { key: target, html: `<details class="pim-table-fold" data-fold="${escapeHtml(foldKey)}"${moveTableFolds[foldKey] === true ? ' open' : ''}><summary>Move to copy: ${escapeHtml(target)}</summary>${inner}</details>` };
+        }
         function renderBattleMoveDetails(slotName) {
             if (!moveEffectsPanelReady) return;
             const box = document.getElementById(`game-battle-${slotName}-move-details`);
@@ -34664,7 +34679,8 @@
             const left = box.querySelector('.gbd-left');
             const right = box.querySelector('.gbd-right');
             const shownType = moveName ? getBattleMatchupMoveType(slotName, moveName) : '';
-            const key = `${shownType}|${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|up${upgradeDie}|d4${forceD4 ? 1 : 0}|hz${hazed ? 1 : 0}|e${effectDieResult === null ? '' : effectDieResult}|ign${ignoreOpponentEffects ? 1 : 0}|${codeAdds.map(a => a.code).join(',')}|${itemsHtml}`;
+            const mimicPrev = battleMimicPreview(slotName, moveName);
+            const key = `${shownType}|${moveName}|${EFFECTS_STATE}|${entry ? 1 : 0}|${grantedIds.join(',')}|up${upgradeDie}|d4${forceD4 ? 1 : 0}|hz${hazed ? 1 : 0}|e${effectDieResult === null ? '' : effectDieResult}|ign${ignoreOpponentEffects ? 1 : 0}|${codeAdds.map(a => a.code).join(',')}|mm${mimicPrev.key}|${itemsHtml}`;
             if (box.dataset.moveKey !== key) {
                 box.dataset.moveKey = key;
                 hideEffectToast();
@@ -34680,7 +34696,7 @@
                 } else if (grantedIds.length) {
                     body += `<div class="pim-move-icons gbd-icons-row">${buildGrantedMoveEffectsHtml(grantedIds, false)}</div>`;
                 }
-                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry, shownType) : ''}</div>${body}${itemsHtml}`;
+                left.innerHTML = `<div class="pim-move-head"><span class="pim-move-name">${escapeHtml(moveName)}</span>${entry ? buildMoveTypeBadgeHtml(entry, shownType) : ''}</div>${body}${mimicPrev.html}${itemsHtml}`;
             }
             right.innerHTML = breakdown ? buildBattleCalcHtml(breakdown) : '';
             right.hidden = !breakdown;
