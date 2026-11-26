@@ -19858,32 +19858,74 @@
                 const m = battleCalcManualValue[slotName], key = (m && m.moveName === 'Disable' && typeof m.choice === 'string') ? m.choice : null;
                 const avail = getBattleMemberMoveButtons(opp, oppSlot).filter(b => !b.forcedBy && !isBattleMoveSpent(oppSlot, b.name));
                 if (avail.length <= 1 || !key) {
-                    record.restrict.push({ kind: 'disable', uid: dst, src, round: record.round, key: null });
+                    record.restrict.push({ kind: 'disable', uid: dst, src, by: mv, round: record.round, key: null });
                     showBattleArenaNotice(avail.length <= 1 ? `Disable has no effect: ${nm} has only one available Move.` : 'Disable: no Move was picked, so it has no effect.');
                     return;
                 }
-                record.restrict.push({ kind: 'disable', uid: dst, src, round: record.round, key });
+                record.restrict.push({ kind: 'disable', uid: dst, src, by: mv, round: record.round, key });
                 showBattleArenaNotice(`${nm} can\u2019t use ${key} for the rest of the Battle (Disable).`);
             } else if (kind === 'taunt') {
                 if (mine('taunt')) return;
-                record.restrict.push({ kind: 'taunt', uid: dst, src, round: record.round });
+                record.restrict.push({ kind: 'taunt', uid: dst, src, by: mv, round: record.round });
                 showBattleArenaNotice(`${nm} can\u2019t select a Move with an Attack Strength of 0 for the rest of the Battle (if it has any other) (Taunt).`);
             } else if (kind === 'torment') {
                 if (record.restrict.some(r => r.kind === 'torment' && r.uid === dst)) return;
-                record.restrict.push({ kind: 'torment', uid: dst, src, round: record.round });
+                record.restrict.push({ kind: 'torment', uid: dst, src, by: mv, round: record.round });
                 showBattleArenaNotice(`${nm} can\u2019t use the same Move in consecutive Rounds for the rest of the Battle (${mv}).`);
             } else if (kind === 'encore') {
                 if (mine('encore')) return;
                 const key = battleChosenKey(record, oppSlot);
                 if (!key) return;
                 record.restrict = record.restrict.filter(r => !(r.kind === 'encore' && r.uid === dst));
-                record.restrict.push({ kind: 'encore', uid: dst, src, round: record.round, key });
+                record.restrict.push({ kind: 'encore', uid: dst, src, by: mv, round: record.round, key });
                 showBattleArenaNotice(`${nm} can only select ${key} for the rest of the Battle (Encore).`);
             }
         }
         function battleRevertRestrictions(record, srcUid, lockOnly) { // the Move became Struggle: what it just set up is undone
             if (!record || !Array.isArray(record.restrict)) return;
             record.restrict = record.restrict.filter(r => !(r.src === srcUid && r.round === record.round && (!lockOnly || r.kind === 'disable' || r.kind === 'taunt')));
+        }
+        function battleAllMoveButtons(member, slotName, moves) { // every Move button before any restriction removes some
+            const list = moves || getBattleMemberMoves(member);
+            const become = n => { const to = (slotName && !member.dynamaxed) ? battleBecomesMove(slotName, member, n) : null; return to ? { name: to, base: n } : { name: n, base: null }; };
+            return !member.dynamaxed ? list.map(become) : list.map(move => {
+                const alreadyMax = /^(Max |G-Max )/.test(move);
+                const maxName = alreadyMax ? null : getMaxMoveForKnownMove(move);
+                return maxName ? { name: maxName, base: move } : { name: move, base: null };
+            });
+        }
+        function battleRestrictReason(member, slotName, b) { // which Move (or effect) keeps this button from being chosen
+            const rec = (battleInProgress && member && member.uid) ? getBattleRecordStore() : null;
+            const rs = (rec && Array.isArray(rec.restrict)) ? rec.restrict.filter(r => r.uid === member.uid) : [];
+            const key = battleMoveKey(b), by = r => r.by || ({ disable: 'Disable', taunt: 'Taunt', torment: 'Torment', encore: 'Encore' }[r.kind]);
+            let r = rs.find(x => x.kind === 'disable' && x.key && x.key === key);
+            if (r) return by(r);
+            if (rec && rs.some(x => x.kind === 'torment')) { const last = rec.lastChosen && rec.lastChosen[member.uid]; if (last && last.round === rec.round - 1 && last.key === key) return by(rs.find(x => x.kind === 'torment')); }
+            const enc = rs.filter(x => x.kind === 'encore').pop();
+            if (enc && enc.key !== key) return by(enc);
+            r = rs.find(x => x.kind === 'taunt');
+            if (r && battleMoveZeroStrength(slotName, member, key, b)) return by(r);
+            return 'a Move Effect';
+        }
+        function getBattleMemberMoveButtonsShown(member, slotName) { // the buttons the Arena shows: the usable ones, plus the blocked ones (greyed out, with what blocks them), in their usual order
+            const usable = getBattleMemberMoveButtons(member, slotName);
+            if (getBattleStruggleStatus(member)) return usable;
+            const rec = (battleInProgress && member && member.uid) ? getBattleRecordStore() : null;
+            const same = (x, y) => x.name === y.name && (x.base || null) === (y.base || null);
+            const full = battleAllMoveButtons(member, slotName);
+            if (rec && battleMemberAttachBlocked(member) && !member.dynamaxed) { // Block Item / Spit Up: the card's Moves are hidden
+                const own = getBattleMemberMoves(member);
+                const hidden = getBattleMemberAttachCardMoves(member, true).filter(n => !own.includes(n));
+                const why = (rec.blocked && rec.blocked[member.uid] !== undefined) ? 'Block Item' : 'Spit Up';
+                battleAllMoveButtons(member, slotName, hidden).forEach(b => full.push(Object.assign({}, b, { blockedBy: why })));
+            }
+            const out = usable.filter(u => !full.some(f => same(f, u))); // e.g. Struggle when every Move is blocked
+            full.forEach(f => {
+                if (f.blockedBy) out.push(f);
+                else if (usable.some(u => same(u, f))) out.push(usable.find(u => same(u, f)));
+                else out.push(Object.assign({}, f, { blockedBy: battleRestrictReason(member, slotName, f) }));
+            });
+            return out;
         }
         function getBattleMemberMoveButtons(member, slotName) {
             const forcedBy = getBattleStruggleStatus(member);
@@ -19894,11 +19936,7 @@
                 if (forcedBy.id === 'sleep') moves.filter(n => n === 'Snore' || n === 'Sleep Talk' || battleReplacedMove(member, n) === 'Sleep Talk').forEach(n => list.push(become(n)));
                 return list;
             }
-            const all = !member.dynamaxed ? moves.map(become) : moves.map(move => {
-                const alreadyMax = /^(Max |G-Max )/.test(move);
-                const maxName = alreadyMax ? null : getMaxMoveForKnownMove(move);
-                return maxName ? { name: maxName, base: move } : { name: move, base: null };
-            });
+            const all = battleAllMoveButtons(member, slotName, moves);
             const allowed = battleRestrictFilter(member, slotName, all);
             if (!allowed.length && all.length) return [{ name: BATTLE_STRUGGLE_MOVE_NAME, base: null, forcedBy: 'its Move restrictions' }]; // every Move is blocked: Struggle
             return allowed;
@@ -19915,8 +19953,8 @@
             return moves;
         }
 
-        function getBattleMemberAttachCardMoves(member) {
-            const card = (member && battleAttachIdOf(member) && !battleMemberAttachBlocked(member)) ? CARDS_BY_ID[battleAttachIdOf(member)] : null; // Block Item hides what the card teaches
+        function getBattleMemberAttachCardMoves(member, ignoreBlock) {
+            const card = (member && battleAttachIdOf(member) && (ignoreBlock || !battleMemberAttachBlocked(member))) ? CARDS_BY_ID[battleAttachIdOf(member)] : null; // Block Item hides what the card teaches
             if (!card) return [];
             const names = [];
             if (typeof card.taught_move === 'string' && card.taught_move) names.push(card.taught_move);
@@ -19937,22 +19975,24 @@
             if (!container) return;
             const member = getBattleSlotMember(slotName);
             const buttons = (member && battleInProgress) ? getBattleMemberMoveButtons(member, slotName) : [];
+            const shown = (member && battleInProgress) ? getBattleMemberMoveButtonsShown(member, slotName) : [];
             const selectedName = battleCalcMoveName[slotName];
             if (selectedName && !buttons.some(b => b.name === selectedName && (b.base || null) === (battleCalcBaseMove[slotName] || null))) {
                 resetBattleCalcResult(slotName);
                 if (lobbyState.role !== null && battleInProgress && canIChooseBattleMoves(slotName)) requestBattleSetMove(slotName, null);
             }
             const lockedClass = canIChooseBattleMoves(slotName) ? '' : ' game-battle-move-locked';
-            container.innerHTML = buttons.map(b => {
+            container.innerHTML = shown.map(b => {
                 const type = getBattleMoveType(b.name);
                 const typeClasses = type ? ` game-battle-move-typed poke-type-${type}` : '';
                 const baseAttr = b.base ? ` data-base-move="${escapeHtml(b.base)}"` : '';
-                const fromLabel = b.base
+                const fromLabel = (b.base && !b.blockedBy)
                     ? `<span class="game-battle-move-from">from ${escapeHtml(b.base)}</span>`
                     : (b.forcedBy ? `<span class="game-battle-move-from">forced by ${escapeHtml(b.forcedBy)}</span>` : '');
-                const spent = isBattleMoveSpent(slotName, b.name);
-                const spentLabel = spent ? '<span class="game-battle-move-from">already used</span>' : ''; // Recharge
-                return `<button class="filter-btn game-battle-move-btn${typeClasses}${lockedClass}${spent ? ' game-battle-move-spent' : ''}" data-battle-slot="${slotName}" data-move-name="${escapeHtml(b.name)}"${baseAttr}${spent ? ' disabled' : ''}>${escapeHtml(b.name)}${fromLabel}${spentLabel}</button>`;
+                const blocked = !!b.blockedBy;
+                const spent = !blocked && isBattleMoveSpent(slotName, b.name);
+                const spentLabel = blocked ? `<span class="game-battle-move-from">Blocked by ${escapeHtml(b.blockedBy)}</span>` : (spent ? '<span class="game-battle-move-from">already used</span>' : ''); // Recharge
+                return `<button class="filter-btn game-battle-move-btn${typeClasses}${lockedClass}${spent ? ' game-battle-move-spent' : ''}${blocked ? ' game-battle-move-blocked' : ''}" data-battle-slot="${slotName}" data-move-name="${escapeHtml(b.name)}"${baseAttr}${(spent || blocked) ? ' disabled' : ''}>${escapeHtml(b.name)}${fromLabel}${spentLabel}</button>`;
             }).join('');
             syncBattleMoveSelection(slotName);
             const randomRow = document.getElementById(`game-battle-${slotName}-random-row`);
