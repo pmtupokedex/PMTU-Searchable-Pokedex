@@ -4577,7 +4577,7 @@
 
         let battleTypeBadgeDrawn = '';
         function battleTypeBadgeSig() { // which Pok\u00e9mon wear a Type badge right now (and which Type)
-            return ['attacker', 'defender'].map(sl => { const m = getBattleSlotMember(sl), b = buildTypeChangeBadge(m); return m && b ? `${m.uid}:${b.title}` : ''; }).join('|');
+            return ['attacker', 'defender'].map(sl => { const m = getBattleSlotMember(sl), b = buildTypeChangeBadge(m); const held = m ? battleAttachIdOf(m) : ''; return m ? `${m.uid}:${b ? b.title : ''}:${held || ''}` : ''; }).join('|');
         }
         function battleSyncTypeBadges() { // a Type change just applied (or was undone): redraw the slot cards so the badge appears / goes away at once
             if (!battleInProgress) { battleTypeBadgeDrawn = ''; return; }
@@ -4587,6 +4587,7 @@
             if (typeof renderTeamGrid === 'function') renderTeamGrid(); // the Arena card is a copy of the Team slot, so refresh that first
             renderBattleAttackerSlotCard();
             renderBattleDefenderSlotCard();
+            if (typeof battleRefreshOpenCardViews === 'function') battleRefreshOpenCardViews();
         }
         function buildTypeChangeBadge(member) { // the Type this Pok\u00e9mon has taken (Conversion, Transform, ...): only shown while its own Type differs
             if (!member || !battleInProgress || member.fainted) return null; // a Fainted Pok\u00e9mon hides it (the Type stays recorded)
@@ -9355,6 +9356,7 @@
             const slot = getAttachSlotForCard(cardId);
             const member = getTeamSlotMember(memberIndex);
             const previousCardId = member ? (slot === 'nature' ? member.natureCardId : member.attachCardId) : null;
+            if (slot === 'attach' && battleAttachSwapped(member)) { showGameToast('This Pok\u00e9mon\u2019s Attach Card is swapped for this Battle. Its cards go back when the Battle ends.'); exitAttachFromHandMode(); return; } // (nothing is used up)
             if (member && getCardOnAttachTopCard(CARDS_BY_ID[cardId])) ensureMemberUid(member);
             commitTeamMemberCard(memberIndex, slot, cardId);
             if (previousCardId && previousCardId !== cardId && isVirtualDecksEnabledForActiveSave()) {
@@ -11118,6 +11120,36 @@
             if (teamDetailIndex === index) renderTeamDetailCardsSection();
             persistTeamSlotChange(index);
         }
+        function battleAttachSwapped(member) { // this Pok\u00e9mon's Attach slot is changed for this Battle (Covet / Thief / Switcheroo / Trick): the saved card can't be edited
+            if (!member || !member.uid || !battleInProgress) return false;
+            const rec = getBattleRecordStore();
+            return !!(rec && rec.attachHeld && rec.attachHeld[member.uid] !== undefined);
+        }
+        function battleRefreshOpenCardViews() { // a card changed hands: whatever Attach Card screen is open shows the new state, and an attach that was half-done is dropped
+            let dropped = false;
+            if (pendingAttachReplaceIndex !== null) { closeAttachFromHandConfirmOverlay(); dropped = true; }
+            if (teamCardsOverlayAddingSlot === 'attach') { teamCardsOverlayAddingSlot = null; dropped = true; }
+            if (teamDetailCardsAddingSlot === 'attach') { teamDetailCardsAddingSlot = null; dropped = true; }
+            if (teamCardsOverlayIndex !== null) renderTeamCardsOverlay();
+            if (teamDetailIndex !== null) renderTeamDetailCardsSection();
+            if (dropped) showGameToast('A Move Effect changed that Pok\u00e9mon\u2019s Attach Card, so the attach was cancelled.');
+        }
+        function battleBorrowedAttachNote(member) { // an Attach Card that changed hands through a Move Effect (Covet, Thief, Switcheroo, Trick): where the saved card is
+            if (!member || !member.uid || !battleInProgress) return '';
+            const rec = getBattleRecordStore();
+            if (!rec || !rec.attachHeld || rec.attachHeld[member.uid] === undefined) return '';
+            const held = rec.attachHeld[member.uid] || null, own = member.attachCardId || null;
+            if (held === own) return '';
+            const ownCard = own ? CARDS_BY_ID[own] : null;
+            const text = ownCard
+                ? `Taken via a Move Effect. Original card is ${escapeHtml(ownCard.name)}, which will be returned at the end of the Battle.`
+                : 'Taken via a Move Effect. This Pok\u00e9mon had no Attach Card of its own; the taken card will be returned at the end of the Battle.';
+            return `<p class="game-team-cards-borrowed-note">${text}</p>`;
+        }
+        function addBorrowedAttachNote(elId, member) {
+            const el = document.getElementById(elId), html = battleBorrowedAttachNote(member);
+            if (el && html) el.insertAdjacentHTML('beforeend', html);
+        }
         function renderTeamCardSlotPanel(elId, slot, cardId, emptyText, addingSlot, expandedDecks, counterValue, allowWithVirtualDecks = false) {
             const pickingAllowed = allowWithVirtualDecks || !isVirtualDecksEnabledForActiveSave();
             const el = document.getElementById(elId);
@@ -11186,6 +11218,7 @@
             const member = teamCardsOverlayIndex !== null ? getTeamSlotMember(teamCardsOverlayIndex) : null;
 
             renderTeamCardSlotPanel('game-team-cards-attach-detail', 'attach', member ? battleAttachIdOf(member) : null, 'No Attach Card equipped.', teamCardsOverlayAddingSlot, teamCardsOverlayExpandedDecks, (member && battleAttachIdOf(member) === (member.attachCardId || null) && cardHasItemCounter(CARDS_BY_ID[member.attachCardId])) ? (member.attachCounter ?? 0) : null);
+            addBorrowedAttachNote('game-team-cards-attach-detail', member);
 
             const natureSectionEl = document.getElementById('game-team-cards-nature-section');
             const titleEl = document.getElementById('game-team-cards-title');
@@ -12059,6 +12092,7 @@
             if (!member) return;
 
             renderTeamCardSlotPanel('game-team-detail-attach-card-detail', 'attach', battleAttachIdOf(member), 'No Attach Card equipped.', teamDetailCardsAddingSlot, teamDetailCardsExpandedDecks, (battleAttachIdOf(member) === (member.attachCardId || null) && cardHasItemCounter(CARDS_BY_ID[member.attachCardId])) ? (member.attachCounter ?? 0) : null);
+            addBorrowedAttachNote('game-team-detail-attach-card-detail', member);
 
             const natureSectionEl = document.getElementById('game-team-detail-nature-card-section');
             const naturesEnabled = isNaturesEnabledForActiveSave();
@@ -16278,7 +16312,7 @@
             if (kind === 'move') {
                 if (g.phase === 'effects' && g.become && g.become[slotName] === 'pending' && move && (BATTLE_BECOME_MOVES.includes(move.baseMove) || BATTLE_LATE_TYPE_MOVES.includes(move.moveName))) return ''; // the Move turning into the other one, or picking its Type (Phase 3)
                 if (g.phase !== 'moves') return 'Moves are chosen in the Choose Moves phase.';
-                if (g.locked[slotName]) return 'That Move is locked in. Use Change Move first.';
+                if (g.locked[slotName]) return 'That Move is locked in.';
                 return '';
             }
             if (kind === 'card') return g.phase === 'cards' ? '' : 'Battle Cards are played in the Battle Card phase.';
@@ -16396,6 +16430,7 @@
                     if (!ctx.moveChosen(slot)) return 'Choose a Move first.';
                     g.locked[slot] = true; if (ctx.onLock) ctx.onLock(slot); return '';
                 case 'unlock':
+                    return 'A locked-in Move is final.';
                     if (g.phase !== 'moves' || g.resume) return 'That Move is final now.';
                     if (ctx.blockItemTookEffect && ctx.blockItemTookEffect(slot)) return 'Block Item has already taken effect, so this Move is final.';
                     if (ctx.attachTookEffect && ctx.attachTookEffect(slot)) return 'The Attach Cards have already changed hands, so this Move is final.';
@@ -17118,8 +17153,8 @@
                 const btn = row && row.querySelector('.game-battle-lock-btn');
                 if (!btn) return;
                 const show = guidedLockButtonVisible(slot), locked = !!(g && g.locked[slot]);
-                btn.hidden = !show;
-                btn.textContent = locked ? 'Change Move' : 'Lock In';
+                btn.hidden = !show || locked; // a locked-in Move is final (unless a Move Effect or a stolen card forces a new pick)
+                btn.textContent = 'Lock In';
                 btn.disabled = !locked && !battleCalcMoveName[slot]; // a Move has to be chosen first
                 btn.classList.toggle('include', !locked);
                 const randomBtn = row.querySelector('.game-battle-random-btn');
